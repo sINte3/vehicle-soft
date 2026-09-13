@@ -24,14 +24,24 @@ import unittest
 from pathlib import Path
 
 from drone_collector.session import (
+    DEFAULT_LOGIN_WAIT_S,
     MAX_SESSION_BYTES,
     SessionMissing,
+    authorized_url,
+    canonical_hosts,
+    clean_host,
+    context_carries_session,
+    context_page_urls,
+    host_problem,
     inspect_session,
     landed_where_expected,
     login_url,
+    login_wait_seconds,
     require_session,
+    sanitize_url,
     save_state_atomically,
     session_exists,
+    wait_for_records_page,
 )
 
 # Тридцать байт первого живого запуска, дословно.
@@ -409,6 +419,466 @@ class TestLandedWhereExpected(unittest.TestCase):
     def test_the_login_url_is_on_the_records_host(self):
         self.assertEqual(login_url(self.RECORDS),
                          'https://www.example.invalid/login')
+
+
+# ─── DJI-SESSION-HOTFIX-001 ─────────────────────────────────────────────────
+
+RECORDS = 'https://www.djiag.com/records/list'
+LOGIN = 'https://www.djiag.com/login'
+APEX = 'https://djiag.com/records/list'
+
+
+class _Driver(object):
+    """Модель СИНХРОННОГО API Playwright, включая устаревание кэша.
+
+    [REASON]: это не удобная абстракция, а воспроизведение той семантики, из
+    которой вырос дефект. `page.url` в sync API -- чтение локального кэша, и
+    кэш двигается ТОЛЬКО когда диспетчер получает управление, то есть внутри
+    прокачивающего вызова. Поэтому здесь `tick` растёт исключительно в
+    `pump`, а чтение `.url` не двигает ничего. Фейк, у которого адрес
+    менялся от каждого ЧТЕНИЯ, проходил бы и на реализации с `time.sleep` --
+    то есть на неисправленном коде.
+    """
+
+    def __init__(self, step=0.5):
+        self.now = 0.0
+        self.tick = 0
+        self.pumps = 0
+        self.step = step
+        self.raise_on_pump = False
+
+    def clock(self):
+        return self.now
+
+    def pump(self, seconds):
+        if self.raise_on_pump:
+            raise RuntimeError('browser stopped responding')
+        self.pumps += 1
+        self.tick += 1
+        self.now += seconds or self.step
+
+
+class _FakePage(object):
+    """Страница, чей адрес обновляется только при прокачке диспетчера."""
+
+    def __init__(self, urls, driver, closed=False, raises=False):
+        self._urls = list(urls)
+        self._driver = driver
+        self.closed = closed
+        self.raises = raises
+
+    def is_closed(self):
+        return self.closed
+
+    @property
+    def url(self):
+        if self.raises:
+            raise RuntimeError('page is gone')
+        if not self._urls:
+            return ''
+        return self._urls[min(self._driver.tick, len(self._urls) - 1)]
+
+
+class _PagesContext(object):
+    def __init__(self, pages, cookies=None, cookies_raise=False):
+        self.pages = list(pages)
+        self._cookies = list(cookies or [])
+        self._cookies_raise = cookies_raise
+
+    def cookies(self):
+        if self._cookies_raise:
+            raise RuntimeError('context is gone')
+        return list(self._cookies)
+
+
+class TestCanonicalHosts(unittest.TestCase):
+    """Ровно два хоста, и это МНОЖЕСТВО, а не суффикс."""
+
+    def test_www_config_accepts_the_apex_too(self):
+        self.assertEqual(canonical_hosts(RECORDS),
+                         frozenset(['www.djiag.com', 'djiag.com']))
+
+    def test_apex_config_accepts_www_too(self):
+        self.assertEqual(canonical_hosts(APEX),
+                         frozenset(['www.djiag.com', 'djiag.com']))
+
+    def test_a_staging_host_is_not_widened_to_anything_unrelated(self):
+        hosts = canonical_hosts('https://staging.djiag.com/records/list')
+        self.assertEqual(hosts, frozenset(['staging.djiag.com',
+                                           'www.staging.djiag.com']))
+        self.assertNotIn('djiag.com', hosts)
+
+    def test_the_set_is_exactly_two_hosts(self):
+        """Контроль на разрастание: правило не должно стать подстановочным."""
+        self.assertEqual(len(canonical_hosts(RECORDS)), 2)
+
+    def test_a_url_without_a_host_yields_nothing(self):
+        self.assertEqual(canonical_hosts('not a url'), frozenset())
+
+    def test_clean_host_strips_one_trailing_dot_only(self):
+        self.assertEqual(clean_host('DJIAG.COM.'), 'djiag.com')
+        # [REASON]: не rstrip('.') -- иначе 'djiag.com...' стало бы равно хосту.
+        self.assertEqual(clean_host('djiag.com..'), 'djiag.com.')
+
+
+class TestHostProblem(unittest.TestCase):
+    """Форма хоста проверяется до сравнения, и на СЫРОМ netloc."""
+
+    def test_a_unicode_host_is_refused_before_it_folds_to_ascii(self):
+        """U+212A становится ASCII 'k' внутри .hostname -- измерено.
+
+        [REASON]: поэтому ascii-проверка идёт по netloc. Если спросить
+        hostname, она вернёт True для юникодного хоста и защита будет
+        пустой -- ровно та ошибка порядка, которую легко не заметить.
+        """
+        from urllib.parse import urlsplit
+        parts = urlsplit('https://www.dji\u212Ag.com/records/list')
+        self.assertFalse(parts.netloc.isascii())
+        self.assertTrue(parts.hostname.isascii(),
+                        'если это False, складывания больше нет -- '
+                        'перечитать обоснование проверки')
+        self.assertIn('ASCII', host_problem(parts.netloc, parts.hostname))
+
+    def test_user_info_is_refused_even_on_the_right_host(self):
+        problem = host_problem('user:pass@www.djiag.com', 'www.djiag.com')
+        self.assertIn('user-info', problem)
+
+    def test_an_empty_label_is_refused(self):
+        self.assertIn('well-formed', host_problem('www..djiag.com',
+                                                  'www..djiag.com'))
+
+    def test_percent_encoding_is_refused(self):
+        self.assertIn('well-formed', host_problem('djiag%2ecom',
+                                                  'djiag%2ecom'))
+
+    def test_a_plain_host_has_no_problem(self):
+        """Отрицательный контроль: строгость не отвергает нормальный хост."""
+        self.assertEqual(host_problem('www.djiag.com', 'www.djiag.com'), '')
+        self.assertEqual(host_problem('djiag.com', 'djiag.com'), '')
+
+
+class TestLandedHostAndPort(unittest.TestCase):
+    """Сценарии задания по хосту и порту."""
+
+    def test_www_to_apex_is_accepted(self):
+        ok, why = landed_where_expected(APEX, RECORDS)
+        self.assertTrue(ok, why)
+
+    def test_apex_to_www_is_accepted(self):
+        ok, why = landed_where_expected(RECORDS, APEX)
+        self.assertTrue(ok, why)
+
+    def test_uppercase_and_a_trailing_dot_are_accepted(self):
+        ok, why = landed_where_expected(
+            'https://DJIAG.COM./records/list', RECORDS)
+        self.assertTrue(ok, why)
+
+    def test_a_wrong_host_is_refused(self):
+        for host in ('evil-djiag.com', 'login.djiag.com',
+                     'evil.www.djiag.com', 'djiag.com.evil.example'):
+            ok, why = landed_where_expected(
+                'https://%s/records/list' % host, RECORDS)
+            self.assertFalse(ok, host)
+            self.assertIn(host, why)
+
+    def test_the_right_host_on_the_wrong_path_is_refused(self):
+        for path in ('/login', '/mission', '/', '/records'):
+            ok, why = landed_where_expected(
+                'https://djiag.com%s' % path, RECORDS)
+            self.assertFalse(ok, path)
+            self.assertIn('records page', why)
+
+    def test_port_zero_does_not_pass_as_the_https_default(self):
+        """`port or 443` подменял ноль на 443 -- измерено на urlsplit."""
+        ok, why = landed_where_expected('https://djiag.com:0/records/list',
+                                        RECORDS)
+        self.assertFalse(ok)
+        self.assertIn('port 0', why)
+
+    def test_another_port_is_refused(self):
+        ok, why = landed_where_expected('https://djiag.com:8443/records/list',
+                                        RECORDS)
+        self.assertFalse(ok)
+        self.assertIn('8443', why)
+
+    def test_an_explicit_https_port_in_the_config_still_matches(self):
+        """Отрицательный контроль: конфиг с портом не должен ломаться."""
+        ok, why = landed_where_expected('https://djiag.com:443/records/list',
+                                        RECORDS)
+        self.assertTrue(ok, why)
+
+
+class TestSanitizeUrl(unittest.TestCase):
+    """В диагностику уходит scheme://host/path и ничего больше."""
+
+    def test_the_query_is_dropped_because_it_carries_the_sso_code(self):
+        line = sanitize_url('https://djiag.com/records/list'
+                            '?code=SYNTHETIC-SSO-CODE&state=x')
+        self.assertEqual(line, 'https://djiag.com/records/list')
+        self.assertNotIn('SYNTHETIC-SSO-CODE', line)
+
+    def test_the_fragment_is_dropped_too(self):
+        self.assertEqual(sanitize_url('https://djiag.com/records/list#t=SECRET'),
+                         'https://djiag.com/records/list')
+
+    def test_user_info_never_reaches_the_line(self):
+        line = sanitize_url('https://user:SYNTHETIC-PASS@djiag.com/records/list')
+        self.assertNotIn('SYNTHETIC-PASS', line)
+        self.assertNotIn('user', line)
+
+    def test_a_nonstandard_port_is_shown_because_it_is_the_diagnosis(self):
+        self.assertEqual(sanitize_url('https://djiag.com:8443/records/list'),
+                         'https://djiag.com:8443/records/list')
+
+    def test_nothing_in_becomes_a_readable_marker(self):
+        self.assertEqual(sanitize_url(''), '(no URL)')
+
+
+class TestAuthorizedUrl(unittest.TestCase):
+    """Перебираются ВСЕ страницы, а не первая."""
+
+    def test_the_records_page_is_found_behind_the_login_page(self):
+        self.assertEqual(authorized_url([LOGIN, APEX], RECORDS), APEX)
+
+    def test_nothing_matches_when_every_page_is_wrong(self):
+        self.assertIsNone(authorized_url([LOGIN, 'https://evil.example/'],
+                                         RECORDS))
+
+    def test_an_empty_list_matches_nothing(self):
+        self.assertIsNone(authorized_url([], RECORDS))
+
+
+class TestWaitForRecordsPage(unittest.TestCase):
+    """Ожидание само доводит до подтверждённого состояния.
+
+    Во всех тестах адрес страницы двигается ТОЛЬКО при прокачке (см.
+    `_Driver`). Значит реализация, которая спит без прокачки диспетчера,
+    здесь не пройдёт -- а именно такой была первая редакция этой правки.
+    """
+
+    def wait(self, page_lists, timeout_s=5.0, driver=None):
+        driver = driver or _Driver()
+        pages = [_FakePage(u, driver) for u in page_lists]
+        outcome = wait_for_records_page(
+            lambda: [p.url for p in pages if not p.is_closed()],
+            RECORDS, driver.pump, timeout_s=timeout_s, poll_s=0.5,
+            clock=driver.clock)
+        return outcome, driver
+
+    def test_the_same_page_navigating_from_login_to_records_is_caught(self):
+        """Сценарий 1 задания: /login -> /records/list в той же page."""
+        outcome, driver = self.wait([[LOGIN, LOGIN, RECORDS]])
+        self.assertTrue(outcome.ok, outcome.reason)
+        self.assertEqual(outcome.url, RECORDS)
+        self.assertGreater(outcome.polls, 1, 'ожидание не дождалось, а угадало')
+        self.assertGreater(driver.pumps, 1)
+
+    def test_the_cache_is_pumped_before_the_very_first_read(self):
+        """Кэш устарел ещё до входа в петлю -- первое чтение обязано быть после прокачки.
+
+        [REASON]: оператор входит в браузер МИНУТАМИ. К моменту, когда поток
+        начинает ждать, снимок адреса относится к `page.goto(/login)`. Если
+        прокачать только между опросами, первый опрос всё равно прочтёт
+        `/login`; здесь страница уже на второй позиции списка и находится
+        ровно потому, что прокачка идёт первой.
+        """
+        outcome, driver = self.wait([[LOGIN, RECORDS]])
+        self.assertTrue(outcome.ok, outcome.reason)
+        self.assertEqual(outcome.polls, 1, 'нашлось не с первого опроса')
+        self.assertEqual(driver.pumps, 1)
+
+    def test_a_new_page_with_the_records_page_is_caught(self):
+        """Сценарий 2: вход открыл НОВУЮ вкладку, исходная осталась на /login.
+
+        Это и есть живой дефект 13.09.2026: прежняя проверка читала только
+        исходную page и сообщала про /login.
+        """
+        driver = _Driver()
+        first = _FakePage([LOGIN], driver)
+        second = _FakePage([RECORDS], driver)
+        pages = [first]
+
+        def list_urls():
+            # Вторая вкладка появляется после первой прокачки.
+            if driver.pumps >= 2 and second not in pages:
+                pages.append(second)
+            return [p.url for p in pages if not p.is_closed()]
+
+        outcome = wait_for_records_page(list_urls, RECORDS, driver.pump,
+                                        timeout_s=5.0, poll_s=0.5,
+                                        clock=driver.clock)
+        self.assertTrue(outcome.ok, outcome.reason)
+        self.assertEqual(outcome.url, RECORDS)
+        self.assertEqual(outcome.pages_seen, 2)
+
+    def test_the_apex_redirect_is_caught(self):
+        """Сценарий 3: www -> apex."""
+        outcome, _driver = self.wait([[LOGIN, APEX]])
+        self.assertTrue(outcome.ok, outcome.reason)
+        self.assertEqual(outcome.url, APEX)
+
+    def test_a_timeout_without_a_login_is_refused(self):
+        """Сценарий 7: оператор так и не вошёл."""
+        outcome, _driver = self.wait([[LOGIN]], timeout_s=2.0)
+        self.assertFalse(outcome.ok)
+        self.assertIn('within', outcome.reason)
+        self.assertGreater(outcome.polls, 1)
+
+    def test_a_closed_window_gives_up_early_instead_of_waiting_out(self):
+        driver = _Driver()
+        outcome = wait_for_records_page(lambda: [], RECORDS, driver.pump,
+                                        timeout_s=600.0, poll_s=0.5,
+                                        clock=driver.clock)
+        self.assertFalse(outcome.ok)
+        self.assertIn('window was closed', outcome.reason)
+        self.assertEqual(outcome.polls, 1, 'ждал закрытое окно')
+
+    def test_a_browser_that_cannot_be_asked_is_reported_not_hung(self):
+        def boom():
+            raise RuntimeError('browser is gone')
+        driver = _Driver()
+        outcome = wait_for_records_page(boom, RECORDS, driver.pump,
+                                        timeout_s=600.0, poll_s=0.5,
+                                        clock=driver.clock)
+        self.assertFalse(outcome.ok)
+        self.assertIn('could not be asked', outcome.reason)
+        self.assertEqual(outcome.polls, 1)
+
+    def test_a_pump_that_raises_ends_the_wait_instead_of_hanging(self):
+        driver = _Driver()
+        driver.raise_on_pump = True
+        outcome, _driver = self.wait([[LOGIN]], timeout_s=600.0,
+                                     driver=driver)
+        self.assertFalse(outcome.ok)
+        self.assertIn('stopped responding', outcome.reason)
+
+    def test_the_diagnostic_carries_counts_and_sanitized_addresses_only(self):
+        outcome, _driver = self.wait(
+            [['https://www.djiag.com/login?code=SYNTHETIC-SSO-CODE']],
+            timeout_s=1.0)
+        line = outcome.describe()
+        self.assertIn('pages=1', line)
+        self.assertIn('polls=', line)
+        self.assertIn('https://www.djiag.com/login', line)
+        self.assertNotIn('SYNTHETIC-SSO-CODE', line)
+
+    def test_a_wrong_host_never_satisfies_the_wait(self):
+        """Сценарий 5 внутри ожидания: чужой хост не завершает ожидание."""
+        outcome, _driver = self.wait([['https://evil-djiag.com/records/list']],
+                                     timeout_s=2.0)
+        self.assertFalse(outcome.ok)
+
+    def test_the_right_host_on_the_wrong_path_never_satisfies_the_wait(self):
+        """Сценарий 6 внутри ожидания."""
+        outcome, _driver = self.wait([['https://djiag.com/mission']],
+                                     timeout_s=2.0)
+        self.assertFalse(outcome.ok)
+
+    def test_the_pump_is_not_optional(self):
+        """Забыть прокачку нельзя: у параметра нет значения по умолчанию.
+
+        [REASON]: значение по умолчанию было бы ловушкой. `time.sleep` в
+        роли паузы выглядит правильно и не работает, а тест с подставной
+        паузой прошёл бы и на такой реализации.
+        """
+        with self.assertRaises(TypeError):
+            wait_for_records_page(lambda: [RECORDS], RECORDS)
+
+
+class TestContextPlumbing(unittest.TestCase):
+    """Чтение страниц и cookie у контекста -- защищённое."""
+
+    def test_closed_pages_are_skipped_not_fatal(self):
+        driver = _Driver()
+        context = _PagesContext([_FakePage([LOGIN], driver, closed=True),
+                                _FakePage([RECORDS], driver)])
+        self.assertEqual(context_page_urls(context), [RECORDS])
+
+    def test_a_closed_tab_on_the_records_page_never_confirms_a_sign_in(self):
+        """Опасное направление: ложное подтверждение по устаревшей строке.
+
+        [REASON]: закрытая страница НЕ бросает при чтении `.url` -- она
+        возвращает последний известный адрес, потому что закрытие не чистит
+        `_url`. Значит мёртвая вкладка, успевшая побывать на странице
+        вылетов, подтвердила бы вход и сессия закрытого окна была бы
+        сохранена. Первая редакция комментария в `context_page_urls`
+        объясняла фильтр тем, что чтение бросает -- неверно, и этот тест
+        держит настоящий риск, а не выдуманный.
+        """
+        driver = _Driver()
+        context = _PagesContext([_FakePage([RECORDS], driver, closed=True)])
+        self.assertEqual(context_page_urls(context), [])
+        self.assertIsNone(authorized_url(context_page_urls(context), RECORDS))
+
+    def test_a_live_tab_beside_a_closed_one_still_confirms(self):
+        """Отрицательный контроль: фильтр не гасит настоящий вход."""
+        driver = _Driver()
+        context = _PagesContext([_FakePage([RECORDS], driver, closed=True),
+                                 _FakePage([APEX], driver)])
+        self.assertEqual(authorized_url(context_page_urls(context), RECORDS),
+                         APEX)
+
+    def test_a_page_that_raises_on_url_is_skipped(self):
+        driver = _Driver()
+        context = _PagesContext([_FakePage([], driver, raises=True),
+                                _FakePage([RECORDS], driver)])
+        self.assertEqual(context_page_urls(context), [RECORDS])
+
+    def test_a_context_without_pages_yields_nothing(self):
+        self.assertEqual(context_page_urls(_PagesContext([])), [])
+
+    def test_cookies_are_counted_never_returned(self):
+        usable, note = context_carries_session(
+            _PagesContext([], cookies=[{'name': 'sid',
+                                       'value': COOKIE_VALUE}]))
+        self.assertTrue(usable)
+        self.assertIn('cookies=1', note)
+        self.assertNotIn(COOKIE_VALUE, note)
+
+    def test_a_context_without_a_cookie_is_refused(self):
+        usable, note = context_carries_session(_PagesContext([], cookies=[]))
+        self.assertFalse(usable)
+        self.assertIn('no cookie', note)
+
+    def test_a_failing_cookie_query_defers_instead_of_burning_the_login(self):
+        """Разовый сбой опроса не должен стоить оператору ручного входа.
+
+        [REASON]: проверка совещательная, итоговый гейт -- файловый и
+        безопасный по построению. Первая редакция отказывала здесь, то есть
+        сжигала только что сделанный вход ради проверки, которая ничего не
+        гарантирует сверх файловой.
+        """
+        usable, note = context_carries_session(
+            _PagesContext([], cookies_raise=True))
+        self.assertTrue(usable)
+        self.assertIn('deferring to the file gate', note)
+
+
+class TestLoginWaitSeconds(unittest.TestCase):
+    """Таймаут настраивается, мусор не роняет команду."""
+
+    def setUp(self):
+        self._saved = os.environ.get('DJI_LOGIN_WAIT_S')
+
+    def tearDown(self):
+        if self._saved is None:
+            os.environ.pop('DJI_LOGIN_WAIT_S', None)
+        else:
+            os.environ['DJI_LOGIN_WAIT_S'] = self._saved
+
+    def test_the_default_is_minutes_not_seconds(self):
+        os.environ.pop('DJI_LOGIN_WAIT_S', None)
+        self.assertEqual(login_wait_seconds(), DEFAULT_LOGIN_WAIT_S)
+        self.assertGreaterEqual(DEFAULT_LOGIN_WAIT_S, 300)
+
+    def test_the_environment_overrides_it(self):
+        os.environ['DJI_LOGIN_WAIT_S'] = '12.5'
+        self.assertEqual(login_wait_seconds(), 12.5)
+
+    def test_junk_falls_back_instead_of_timing_out_at_once(self):
+        for junk in ('abc', '-5', '0', ''):
+            os.environ['DJI_LOGIN_WAIT_S'] = junk
+            self.assertEqual(login_wait_seconds(), DEFAULT_LOGIN_WAIT_S, junk)
 
 
 if __name__ == '__main__':
