@@ -752,7 +752,9 @@ def save_session_interactive(cfg, print_fn=None, wait_s=None,
     target = Path(cfg.storage_state)
     target.parent.mkdir(parents=True, exist_ok=True)
     url = login_url(cfg.records_url)
-    allowed = ' or '.join(sorted(canonical_hosts(cfg.records_url)))
+    wanted_path = urlsplit(cfg.records_url).path or '/'
+    allowed = ' or '.join('%s%s' % (host, wanted_path)
+                          for host in sorted(canonical_hosts(cfg.records_url)))
 
     say('')
     say('A browser window is opening on %s' % url)
@@ -764,8 +766,7 @@ def save_session_interactive(cfg, print_fn=None, wait_s=None,
     say('     collector then quietly returns zero flights.')
     say('')
     say('You do NOT have to press anything. This program watches the browser')
-    say('and saves the session by itself once a tab is on %s%s'
-        % (allowed, urlsplit(cfg.records_url).path or '/'))
+    say('and saves the session by itself once a tab is on %s' % allowed)
     say('It waits up to %.0f seconds, and gives up early if you close the'
         % timeout_s)
     say('window. A new tab opened by the sign-in counts too.')
