@@ -58,7 +58,13 @@ Set-Location 'C:\VehicleSoft_Holdout\src'
 
 Вставлять целиком, ничего не редактируя. По одной команде на строку.
 
+Блок обёрнут в `& { ... }` намеренно: вставленные в консоль строки PowerShell
+исполняет по одной, и `throw` в одной из них следующие не останавливает. Без
+обёртки отказ на проверке приёмника не помешал бы сборщику запуститься строкой
+ниже. В обёртке блок — одно выражение, и `throw` прекращает его целиком.
+
 ```powershell
+& {
 $ErrorActionPreference = 'Continue'
 $review  = 'C:\VehicleSoft_DJI_Review_20260918'
 $work    = 'C:\VehicleSoft_Holdout'
@@ -120,6 +126,7 @@ if (($rc -ne 0) -and ($rc -ne 18)) { throw "STEP FAILED: source capture exit $rc
 if ($rc -eq 18) { Write-Host 'INCOMPLETE: run this block again -- only the missing flights will be visited' }
 Compress-Archive -Path "$planDir\*" -DestinationPath 'C:\VehicleSoft_Holdout\holdout_plan.zip' -Force
 Write-Host 'SEND BACK: C:\VehicleSoft_Holdout\holdout_plan.zip and the console text above'
+}
 ```
 
 ### Что блок W делает по шагам
@@ -164,6 +171,7 @@ Write-Host 'SEND BACK: C:\VehicleSoft_Holdout\holdout_plan.zip and the console t
 Служба площадки остановлена всю доказательную часть и поднимается в `finally`.
 
 ```powershell
+& {
 $ErrorActionPreference = 'Continue'
 $staging = 'C:\transport-report-staging'
 $db      = 'C:\transport-report-staging\instance\transport.db'
@@ -252,6 +260,7 @@ Copy-Item -LiteralPath (Join-Path $recalc 'apply2.json') -Destination $out -Forc
 Get-ChildItem -LiteralPath $out | Select-Object Name, Length | Format-Table -AutoSize
 Compress-Archive -Path "$out\*" -DestinationPath 'C:\VehicleSoft_Holdout_Staging\holdout_report.zip' -Force
 Write-Host 'SEND BACK: C:\VehicleSoft_Holdout_Staging\holdout_report.zip and the console text above'
+}
 ```
 
 Блоку S нужна ветка на GitHub: он клонирует её по адресу `origin` площадки, как

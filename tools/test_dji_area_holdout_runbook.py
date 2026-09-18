@@ -68,6 +68,22 @@ class EveryBlock(unittest.TestCase):
         self.assertEqual(sum('--send-sources' in b for b in found), 1)
         self.assertEqual(sum('Stop-Service' in b for b in found), 1)
 
+    def test_a_throw_stops_the_whole_paste_not_one_line(self):
+        # [REASON]: консоль исполняет вставленные строки по одной, и `throw`
+        # прекращает только свою. Без обёртки `& { ... }` отказ на проверке
+        # приёмника не остановил бы сборщик строкой ниже -- гейт площадки
+        # существовал бы только на бумаге.
+        for block in (block_w(), block_s()):
+            lines = [ln for ln in block.strip().splitlines() if ln.strip()]
+            self.assertEqual(lines[0], '& {')
+            self.assertEqual(lines[-1], '}')
+            depth = 0
+            for number, line in enumerate(lines):
+                depth += line.count('{') - line.count('}')
+                if number < len(lines) - 1:
+                    self.assertGreater(depth, 0, line)
+            self.assertEqual(depth, 0)
+
     def test_no_placeholders_survive(self):
         for block in blocks():
             self.assertIsNone(re.search(r'<[^>\n]{1,60}>', block), block[:80])
