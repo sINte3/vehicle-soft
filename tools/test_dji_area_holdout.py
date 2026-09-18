@@ -449,6 +449,107 @@ class TheLockCannotBeBypassed(Base):
         self.assertIn('not empty', text)
 
 
+class ThePlanCanBeBuiltWhereTheCollectorLives(Base):
+    """`list-db`: списочная база из дампа сборщика, хронология по нику."""
+
+    def dump(self, name, flights):
+        path = os.path.join(self.tmp, name)
+        records = []
+        for fid, unit, start, end, mode, width, raw in flights:
+            records.append({'id': fid, 'new_work_area': raw, 'mode_name': mode,
+                            'manual_mode': mode != 4, 'spray_width': width,
+                            'start_timestamp': ts(start),
+                            'end_timestamp': ts(end),
+                            'nickname': 'SYNTHETIC-%d' % unit})
+        with open(path, 'w', encoding='utf-8') as fh:
+            json.dump({'kind': 'backfill', 'count': len(records),
+                       'flights': records}, fh)
+        return path
+
+    def list_db(self, *dumps):
+        target = os.path.join(self.tmp, 'list', 'holdout_list.db')
+        argv = ['list-db', '--db', target]
+        for path in dumps:
+            argv += ['--list-json', path]
+        code, text = run(*argv)
+        return code, text, target
+
+    def test_it_flags_the_same_candidates_as_the_hardware_keyed_database(self):
+        # Чужой борт вклинивается по времени ровно между мостиком и кандидатом.
+        # Хронология по нику обязана его не заметить; общая на всех -- порвала бы
+        # цепочку, и C1 перестал бы быть кандидатом.
+        intruder = (2099, 2, '2026-09-02 10:07:10', '2026-09-02 10:07:30', 4,
+                    6.2, 700.0)
+        code, _text, target = self.list_db(
+            self.dump('dump.json', FLIGHTS + (intruder,)))
+        self.assertEqual(code, tool.EXIT_OK)
+        out = os.path.join(self.tmp, 'plan_from_list')
+        code, _ = run('plan', '--db', target, '--from', '2026-09-01', '--to',
+                      'auto', '--out', out, '--quiet')
+        self.assertEqual(code, tool.EXIT_OK)
+        with open(os.path.join(out, 'plan.json'), encoding='utf-8') as fh:
+            locked = json.load(fh)['locked']
+        self.assertEqual({c['flight_id']: c['scalar_source_check']
+                          for c in locked['candidates']},
+                         {C1: True, C2: False})
+        self.assertEqual(locked['population']['flights_without_hardware'], 0)
+        self.assertEqual({c['hardware_id'] for c in locked['candidates']},
+                         {'NICK:SYNTHETIC-1', 'NICK:SYNTHETIC-2'})
+        # Всё отобранное идёт в сбор: V4 в списочной базе не бывает.
+        self.assertEqual(len(locked['capture_ids']),
+                         len(locked['candidates']) + len(locked['controls']))
+
+    def test_two_dumps_are_merged_by_flight_id(self):
+        first = self.dump('a.json', FLIGHTS[:9])
+        second = self.dump('b.json', FLIGHTS[6:])
+        code, text, target = self.list_db(first, second)
+        self.assertEqual(code, tool.EXIT_OK)
+        con = sqlite3.connect(target)
+        n = con.execute('SELECT COUNT(*) FROM drone_flights').fetchone()[0]
+        con.close()
+        self.assertEqual(n, len(FLIGHTS))
+        self.assertIn('flights           : %d' % len(FLIGHTS), text)
+
+    def test_it_never_takes_the_application_database_name(self):
+        path = self.dump('dump.json', FLIGHTS)
+        target = os.path.join(self.tmp, 'fresh', 'transport.db')
+        code, text = run('list-db', '--db', target, '--list-json', path)
+        self.assertEqual(code, tool.EXIT_USAGE)
+        self.assertIn('refusing the application database name', text)
+        self.assertFalse(os.path.exists(target))
+
+    def test_it_never_overwrites_and_rejects_what_is_not_a_dump(self):
+        path = self.dump('dump.json', FLIGHTS)
+        code, _text, target = self.list_db(path)
+        self.assertEqual(code, tool.EXIT_OK)
+        before = sha(target)
+        code, text, _ = self.list_db(path)
+        self.assertEqual(code, tool.EXIT_USAGE)
+        self.assertIn('refusing to overwrite', text)
+        self.assertEqual(sha(target), before)
+        bogus = os.path.join(self.tmp, 'bogus.json')
+        with open(bogus, 'w', encoding='utf-8') as fh:
+            json.dump({'rows': []}, fh)
+        code, text = run('list-db', '--db', os.path.join(self.tmp, 'x.db'),
+                         '--list-json', bogus)
+        self.assertEqual(code, tool.EXIT_USAGE)
+        self.assertIn('not a collector list dump', text)
+
+    def test_a_planned_candidate_the_database_no_longer_flags_is_named(self):
+        self.plan()
+        # Мостик «уехал» на другой борт: цепочка A1 -> B1 -> C1 в этой базе
+        # больше не существует, и экран C1 кандидатом не назовёт.
+        con = sqlite3.connect(self.db)
+        con.execute('UPDATE drone_flights SET drone_unit_id=2 '
+                    'WHERE dji_flight_id=?', (B1,))
+        con.commit()
+        con.close()
+        _code, text, data = self.report()
+        self.assertEqual(data['candidates']['planned_but_not_flagged_now'],
+                         [C1])
+        self.assertIn('1 planned candidate(s) not flagged now', text)
+
+
 class ExitCodesAndConsole(Base):
 
     def test_missing_database_is_code_2_and_no_file_appears(self):

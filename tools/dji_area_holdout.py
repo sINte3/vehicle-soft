@@ -4,9 +4,13 @@
 DJI-AREA-SIMPLIFY-001. Протокол и критерии зафиксированы ДО раскрытия V4 в
 `docs/DJI_AREA_SIMPLIFY_001_HOLDOUT_PREREG.md`; этот файл их только исполняет.
 
-Два шага, между которыми лежит живой адресный сбор V4 (его делает владелец
-штатным `drone_collector --sources --ids-file`, не этот инструмент):
+Шаги, между которыми лежит живой адресный сбор V4 (его делает владелец штатным
+`drone_collector --sources --ids-file`, не этот инструмент):
 
+  list-db -- необязательный: одноразовая СПИСОЧНАЯ база из дампов
+             `drone_collector --from .. --to .. --dry-run`, чтобы план можно было
+             составить там, где живёт сборщик, не дотрагиваясь ни до одной базы
+             приложения. Хронология в ней ведётся по нику (ключ `NICK:<ник>`).
   plan    -- по СПИСОЧНЫМ данным периода: все кандидаты замороженного экрана,
              стратифицированный контроль NORMAL, предсказания и минимальный
              список вылетов для сбора V4. План хешируется; второй план в тот же
@@ -470,6 +474,114 @@ def build_plan(rows, items, date_from, date_to, seed, random_n, contiguous_n):
     }
 
 
+# ─── list-db: одноразовая списочная база ─────────────────────────────────────
+
+APP_DB_BASENAME = 'transport.db'
+NICK_KEY_PREFIX = 'NICK:'
+
+
+def _utc_text(epoch_s):
+    return (datetime(1970, 1, 1) + timedelta(seconds=int(epoch_s))).strftime(
+        '%Y-%m-%d %H:%M:%S')
+
+
+def cmd_list_db(args):
+    """Минимальная база из дампов списка: ровно то, что читает `pipeline`.
+
+    [REASON]: замороженный экран исполняет `dji_area.pipeline`, а ему нужна
+    база. Строить ради этого приложение нельзя -- `from app import app` зовёт
+    `db.create_all()` и превращает читателя в писателя. Здесь только stdlib
+    `sqlite3`, две таблицы с колонками, которые конвейер действительно читает,
+    и восемь таблиц `dji_*`, чей DDL берётся из САМОЙ миграции.
+    """
+    if os.path.basename(args.db_path).lower() == APP_DB_BASENAME:
+        # [REASON]: одноразовая база не имеет права носить имя базы приложения:
+        # одна опечатка в пути -- и инструмент создал бы `instance/transport.db`
+        # там, где приложение потом примет его за свою.
+        raise HoldoutError('refusing the application database name %s for a '
+                           'disposable list database' % APP_DB_BASENAME)
+    if os.path.exists(args.db_path):
+        raise HoldoutError('%s already exists - refusing to overwrite'
+                           % args.db_path)
+    import migrate_dji_area_evidence_001 as evidence_migration
+
+    records, inputs = {}, []
+    for path in args.list_json:
+        if not os.path.exists(path):
+            raise HoldoutError('list dump not found at %s' % path)
+        with open(path, encoding='utf-8-sig') as fh:
+            document = json.load(fh)
+        flights = document.get('flights') if isinstance(document, dict) else None
+        if not isinstance(flights, list):
+            raise HoldoutError('%s is not a collector list dump: no "flights" '
+                               'array' % path)
+        fresh = 0
+        for record in flights:
+            try:
+                fid = int(record['id'])
+                int(record['start_timestamp'])
+                int(record['end_timestamp'])
+            except (KeyError, TypeError, ValueError):
+                raise HoldoutError('%s: a flight record without numeric id / '
+                                   'start_timestamp / end_timestamp' % path)
+            if fid not in records:
+                records[fid] = record
+                fresh += 1
+        inputs.append({'path': os.path.abspath(path),
+                       'sha256': file_sha256(path),
+                       'flights': len(flights), 'new': fresh})
+    if not records:
+        raise HoldoutError('the list dumps hold no flight at all')
+
+    nicknames = sorted({(r.get('nickname') or '').strip()
+                        for r in records.values()} - {''})
+    unit_id = {nick: pos for pos, nick in enumerate(nicknames, start=1)}
+    os.makedirs(os.path.dirname(os.path.abspath(args.db_path)), exist_ok=True)
+    con = sqlite3.connect(args.db_path)
+    try:
+        con.execute('CREATE TABLE drone_units (id INTEGER PRIMARY KEY, '
+                    'hardware_id TEXT)')
+        con.execute('CREATE TABLE drone_flights (id INTEGER PRIMARY KEY, '
+                    'dji_flight_id BIGINT UNIQUE, started_at TEXT, '
+                    'finished_at TEXT, raw_json TEXT, drone_unit_id INTEGER, '
+                    'nickname_raw TEXT)')
+        for _name, ddl in evidence_migration.TABLES:
+            con.execute(ddl)
+        for nick, uid in unit_id.items():
+            con.execute('INSERT INTO drone_units (id, hardware_id) VALUES (?,?)',
+                        (uid, NICK_KEY_PREFIX + nick))
+        for fid in sorted(records):
+            record = records[fid]
+            nick = (record.get('nickname') or '').strip()
+            con.execute(
+                'INSERT INTO drone_flights (dji_flight_id, started_at, '
+                'finished_at, raw_json, drone_unit_id, nickname_raw) '
+                'VALUES (?,?,?,?,?,?)',
+                (fid, _utc_text(record['start_timestamp']),
+                 _utc_text(record['end_timestamp']),
+                 json.dumps(record, ensure_ascii=False, sort_keys=True),
+                 unit_id.get(nick), nick or None))
+        con.commit()
+    finally:
+        con.close()
+
+    starts = [int(r['start_timestamp']) for r in records.values()]
+    print('DJI AREA HOLDOUT LIST DATABASE')
+    for item in inputs:
+        print('  input             : %s (%d flights, %d new) sha256 %s'
+              % (item['path'], item['flights'], item['new'], item['sha256']))
+    print('  flights           : %d' % len(records))
+    print('  aircraft by nick  : %d (without nickname: %d)'
+          % (len(nicknames), sum(1 for r in records.values()
+                                 if not (r.get('nickname') or '').strip())))
+    print('  first / last start: %s .. %s UTC' % (_utc_text(min(starts)),
+                                                  _utc_text(max(starts))))
+    print('  database          : %s' % args.db_path)
+    print('This is a disposable LIST-only database. It is not an application '
+          'database.')
+    return EXIT_OK
+
+
 # ─── plan ────────────────────────────────────────────────────────────────────
 
 def cmd_plan(args):
@@ -759,6 +871,14 @@ def build_report(document, rows, nick_by_flight, frozen_problems,
     unplanned = sorted(r['flight_id'] for r in period_rows
                        if r.get('structural_candidate')
                        and r['flight_id'] not in planned_candidates)
+    # [REASON]: план мог быть составлен на списочной базе с хронологией по
+    # нику, а отчёт идёт по базе с паспортным hardware_id. Экран один и тот же,
+    # но если группировка записей разошлась, кандидат плана перестанет быть
+    # кандидатом здесь -- и это обязано быть видно, а не раствориться в итоге.
+    not_flagged_now = sorted(
+        c['flight_id'] for c in locked['candidates']
+        if c['flight_id'] in by_id
+        and not by_id[c['flight_id']].get('structural_candidate'))
 
     return {
         'protocol': PROTOCOL,
@@ -783,6 +903,7 @@ def build_report(document, rows, nick_by_flight, frozen_problems,
             'v4_present_at_plan': sum(1 for c in locked['candidates']
                                       if c['v4_present_at_plan']),
             'unplanned_candidates_now': unplanned,
+            'planned_but_not_flagged_now': not_flagged_now,
         },
         'controls': {
             'planned': len(locked['controls']),
@@ -848,9 +969,11 @@ def render_markdown(report):
     out.append('')
     out.append('Acceptance: hit share >= %s of evaluable, no REFUTED, evaluable '
                'share >= %s. Candidates with V4 already present at plan time: '
-               '%d. Candidates that appeared after the plan (not scored): %d.'
+               '%d. Candidates that appeared after the plan (not scored): %d. '
+               'Planned candidates this database does not flag: %d.'
                % (_pct(CANDIDATE_PASS_SHARE), _pct(MIN_EVALUABLE_SHARE),
-                  c['v4_present_at_plan'], len(c['unplanned_candidates_now'])))
+                  c['v4_present_at_plan'], len(c['unplanned_candidates_now']),
+                  len(c['planned_but_not_flagged_now'])))
     out.append('')
     out.append('## NORMAL control (rule misses)')
     out.append('')
@@ -982,6 +1105,10 @@ def cmd_report(args):
           % (c['planned'], c['scored'], c['evaluable']))
     print('  outcomes          : HIT %d, MISS %d, REFUTED %d, NOT_EVALUABLE %d'
           % (c['hit'], c['miss'], c['refuted'], c['not_evaluable']))
+    print('  plan vs database  : %d unplanned candidate(s) now, %d planned '
+          'candidate(s) not flagged now'
+          % (len(c['unplanned_candidates_now']),
+             len(c['planned_but_not_flagged_now'])))
     print('  hit share         : %s (lower 95%%: %s), evaluable share %s'
           % (_pct(c['hit_share_of_evaluable']).replace(' %', '%'),
              _pct(c['hit_share_lower_bound_95']).replace(' %', '%'),
@@ -1035,6 +1162,13 @@ def build_parser():
                     % (dji_area.STRUCTURAL_RULE_VERSION,
                        dji_area.AREA_ALGORITHM_VERSION))
     sub = parser.add_subparsers(dest='command')
+    list_db = sub.add_parser('list-db', help='build a disposable LIST-only '
+                                             'database from collector '
+                                             '--dry-run dumps')
+    list_db.add_argument('--list-json', action='append', required=True,
+                         metavar='PATH', help='out/flights_<from>_<to>.json; '
+                                              'may be given more than once')
+    list_db.add_argument('--db', dest='db_path', required=True, metavar='PATH')
     plan = sub.add_parser('plan', help='lock candidates, controls, predictions '
                                        'and the minimal V4 capture list')
     plan.add_argument('--db', dest='db_path', default=DEFAULT_DB, metavar='PATH')
@@ -1070,6 +1204,8 @@ def main(argv=None):
         parser.print_usage()
         return EXIT_USAGE
     try:
+        if args.command == 'list-db':
+            return cmd_list_db(args)
         if args.command == 'plan':
             if args.random_n < 0 or args.contiguous_n < 0:
                 raise HoldoutError('sample sizes must not be negative')
@@ -1078,7 +1214,7 @@ def main(argv=None):
     except HoldoutError as exc:
         print('ERROR: %s' % exc)
         return exc.code
-    except (ValueError, store.StoreError, pipeline.PipelineError,
+    except (ValueError, OSError, store.StoreError, pipeline.PipelineError,
             sqlite3.Error) as exc:
         print('ERROR: %s' % exc)
         return EXIT_USAGE
