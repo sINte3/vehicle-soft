@@ -29,7 +29,8 @@ from gps_collector import config, storage                          # noqa: E402
 from gps_collector.main import collect                             # noqa: E402
 from gps_collector.tests.support import (FakeServer, Installed,    # noqa: E402
                                          LAT, LON, count_points, epoch)
-from gps_collector.wialon import Client                            # noqa: E402
+from gps_collector.wialon import (Client, WialonError,            # noqa: E402
+                                   login_failure)
 
 NOW = epoch("2026-08-10 07:00")
 QUIET = lambda *args, **kwargs: None                               # noqa: E731
@@ -271,6 +272,43 @@ class WatermarkRules(unittest.TestCase):
             config.RETRY_PAUSE_S = saved
         self.assertEqual(summary.units_failed, 1)
         self.assertIsNone(storage.read_watermark(self.folder, 101))
+
+
+class LoginFailureReason(unittest.TestCase):
+    """The message a failed login prints must name the code, and only that.
+
+    Live case 19.09.2026: tools/gps_link_mappings.py answered
+    "ERROR: ne udalos voyti na https://web.gpstrack.uz (WialonError)".
+    The code the service returned -- the whole diagnostic value -- was built
+    into the exception and then thrown away by the caller.
+    """
+
+    def test_a_wialon_error_names_the_code_and_its_meaning(self):
+        self.assertEqual(login_failure(WialonError(7)),
+                         "error 7 (access denied)")
+        self.assertEqual(login_failure(WialonError(1011)),
+                         "error 1011 (your IP has changed, or the session "
+                         "has expired)")
+
+    def test_an_unknown_code_is_still_shown_rather_than_hidden(self):
+        self.assertEqual(login_failure(WialonError(999)),
+                         "error 999 (unknown)")
+
+    def test_a_foreign_exception_keeps_the_class_name_and_leaks_nothing(self):
+        # [REASON]: the negative control of this whole change. The token goes
+        # out in the POST body, so str() of a FOREIGN exception is not proven
+        # token-free; only our own error is. A blanket str(problem) would
+        # pass the two tests above and print the secret here.
+        secret = "a1b2c3d4e5f6-this-is-the-token"
+        self.assertEqual(login_failure(ValueError(secret)), "ValueError")
+        self.assertNotIn(secret, login_failure(ValueError(secret)))
+        self.assertEqual(login_failure(TimeoutError(secret)), "TimeoutError")
+        self.assertNotIn(secret, login_failure(TimeoutError(secret)))
+
+    def test_it_can_tell_the_two_cases_apart(self):
+        # A check that answers the same for right and wrong code is no check.
+        self.assertNotEqual(login_failure(WialonError(7)),
+                            login_failure(ValueError("boom")))
 
 
 class Positions(unittest.TestCase):

@@ -81,7 +81,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from gps_collector import config                                   # noqa: E402
-from gps_collector.wialon import Client                            # noqa: E402
+from gps_collector.wialon import Client, login_failure            # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(ROOT, 'instance', 'transport.db')
@@ -455,7 +455,7 @@ def main(argv=None):
             client.login(token)
         except Exception as problem:                               # noqa: BLE001
             sys.stderr.write('\nERROR: ne udalos voyti na %s (%s)\n'
-                             % (config.BASE_URL, type(problem).__name__))
+                             % (config.BASE_URL, login_failure(problem)))
             return 3
         print('login OK')
         try:
