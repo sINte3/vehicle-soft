@@ -18,6 +18,8 @@ DJI-AREA-SIMPLIFY-001. Протокол и критерии зафиксиров
   report  -- после сбора: классификация теми же `structural.py` + `resolver.py`
              через `dji_area.pipeline` (сухой прогон), приёмка кандидатов,
              поиск пропусков правила в контроле, раздельные величины периода.
+  fingerprint -- отпечаток замороженного кода: одно значение, которым ранбук
+             доказывает, что на машине лежит проверенная ревизия.
 
 Собственного классификатора здесь НЕТ: кандидата называет
 `dji_area.structural.screen`, статус -- `dji_area.resolver.resolve_area`, учётный
@@ -30,9 +32,10 @@ DJI-AREA-SIMPLIFY-001. Протокол и критерии зафиксиров
   & "C:\\Program Files\\Python314\\python.exe" tools\\dji_area_holdout.py report --db instance\\transport.db --plan C:\\VehicleSoft_Holdout\\plan\\plan.json --out C:\\VehicleSoft_Holdout\\report
 
 Коды возврата: 0 -- план записан / приёмка PASS; 1 -- ошибка командной строки
-или данных; 2 -- база не найдена (файл НЕ создаётся); 3 -- приёмка FAIL;
-4 -- нарушена целостность (хеш плана, замороженный код, база изменилась во время
-чтения); 5 -- приёмка INCONCLUSIVE (мало оцениваемых записей).
+или данных; 2 -- база не найдена (файл НЕ создаётся); 3 -- приёмка FAIL
+(кандидаты либо контрольные ворота); 4 -- нарушена целостность (хеш плана,
+замороженный код ВКЛЮЧАЯ ЭТОТ ФАЙЛ, база изменилась во время чтения);
+5 -- приёмка INCONCLUSIVE (мало оцениваемых записей).
 Вывод в консоль только ASCII.
 """
 
@@ -69,7 +72,11 @@ EXIT_INTEGRITY = 4
 EXIT_INCONCLUSIVE = 5
 
 PROTOCOL = 'DJI-AREA-SIMPLIFY-001-HOLDOUT'
-PROTOCOL_VERSION = 1
+# Версия 2: этот файл вошёл в список замороженных (его правка между plan и
+# report -- отказ, а не предупреждение), и контрольные ворота стали частью
+# общего вердикта. План версии 1 в обороте не был -- живой holdout не
+# начинался, -- но старый план обязан быть отвергнут, а не прочитан молча.
+PROTOCOL_VERSION = 2
 
 # ─── Пред-зарегистрированные константы (см. PREREG, разделы 5, 7, 8) ─────────
 # Менять их после раскрытия V4 нельзя: они входят в хеш плана, и `report`
@@ -104,15 +111,25 @@ STRATA_ORDER = (S_SHORT, S_NO_WIDTH, S_EQUAL, S_CONTIG, S_RANDOM)
 PRED_RETAINED = 'RETAINED'
 PRED_NORMAL = 'NORMAL'
 
+TOOL_FILE = 'tools/dji_area_holdout.py'
+
 # Файлы, чьё содержимое holdout обязан застать неизменным между plan и report.
+#
+# [REASON]: инструмент входит сюда НАРАВНЕ с правилом. Прежняя редакция считала
+# его правку предупреждением -- «ошибка в печати отчёта не должна стоить
+# повторного живого сбора». Это неверно: здесь же лежат `candidate_outcome`,
+# `control_outcome` и сам вердикт, то есть подмена порога или знака сравнения
+# между plan и report прошла бы с пометкой в углу отчёта. Стоимость повторного
+# прогона -- не довод против целостности: отчёт можно перестроить из того же
+# плана, вернув файл, а вот незамеченную подгонку вернуть нельзя.
 FROZEN_FILES = (
     'dji_area/__init__.py', 'dji_area/structural.py', 'dji_area/resolver.py',
     'dji_area/v4.py', 'dji_area/pipeline.py', 'dji_area/evidence.py',
-    'dji_area/store.py', 'dji_area/accounting.py',
+    'dji_area/store.py', 'dji_area/accounting.py', TOOL_FILE,
 )
-# Файл инструмента хешируется тоже, но его правка -- предупреждение, а не отказ:
-# ошибка в печати отчёта не должна стоить повторного живого сбора.
-TOOL_FILE = 'tools/dji_area_holdout.py'
+# [REASON]: тесты сюда НЕ входят намеренно. Они не участвуют ни в отборе, ни в
+# оценке; заморозив их, отпечаток ломался бы от любой новой проверки и перестал
+# бы что-либо значить.
 
 CORROBORATED = (rs.RAW_CORROBORATED, rs.RAW_CORROBORATED_QUALIFIED)
 OVERSTATED = (rs.COUNTER_FLAT_RAW_OVERSTATED, rs.PARTIAL_RECORDED_OVERSTATEMENT)
@@ -189,6 +206,19 @@ def strata_constants(random_n, contiguous_n):
         'n_random': random_n,
         'random_cell_floor': RANDOM_CELL_FLOOR,
     }
+
+
+def code_fingerprint():
+    """Одно значение вместо девяти хешей: SHA-256 канонического JSON
+    ``frozen_state()``.
+
+    [REASON]: ранбук обязан доказать, что на машине лежит ПРОВЕРЕННАЯ ревизия,
+    до первого обращения к кабинету DJI. Точный SHA коммита внутрь самого этого
+    коммита не положить, а отпечаток кода в круг не попадает: ранбук в
+    ``FROZEN_FILES`` не входит, поэтому вписывание отпечатка в ранбук его не
+    меняет.
+    """
+    return hashlib.sha256(canonical(frozen_state())).hexdigest()
 
 
 def canonical(obj):
@@ -792,8 +822,27 @@ def signature(control):
         'equal=%s' % ('Y' if control.get('equal_recent_lag') else 'N')))
 
 
-def build_report(document, rows, nick_by_flight, frozen_problems,
-                 tool_changed):
+def control_gate_of(random_misses, miss_signatures):
+    """Ворота контроля: (состояние, причина, подробность).
+
+    Пред-регистрация, раздел 8 с дополнением от 19.09.2026: приёмка КАНДИДАТОВ
+    не меняется, но общий holdout не может быть PASS при систематическом
+    пропуске правила в контроле. Пороги те же, что и прежде считали
+    ``systematic_miss_suspected``; изменилось только последствие.
+    """
+    if random_misses >= SYSTEMATIC_MIN_RANDOM_MISSES:
+        return 'FAIL', 'SYSTEMATIC_MISS_IN_RANDOM_STRATUM', (
+            '%d rule miss(es) in %s, threshold %d'
+            % (random_misses, S_RANDOM, SYSTEMATIC_MIN_RANDOM_MISSES))
+    repeated = sorted((sig, n) for sig, n in miss_signatures.items()
+                      if n >= SYSTEMATIC_MIN_SIGNATURE_MISSES)
+    if repeated:
+        return 'FAIL', 'SYSTEMATIC_MISS_BY_SIGNATURE', '; '.join(
+            '%s x%d' % (sig, n) for sig, n in repeated)
+    return 'PASS', 'NO_SYSTEMATIC_MISS', None
+
+
+def build_report(document, rows, nick_by_flight, frozen_problems):
     locked = document['locked']
     by_id = {r['flight_id']: r for r in rows}
     planned_candidates = {c['flight_id'] for c in locked['candidates']}
@@ -821,17 +870,16 @@ def build_report(document, rows, nick_by_flight, frozen_problems,
     hit_share = tally['HIT'] / float(evaluable) if evaluable else None
     evaluable_share = evaluable / float(scored) if scored else None
     if scored == 0:
-        verdict, verdict_reason = 'INCONCLUSIVE', 'NO_SCORED_CANDIDATES'
+        cand_verdict, cand_reason = 'INCONCLUSIVE', 'NO_SCORED_CANDIDATES'
     elif tally['REFUTED'] > 0:
-        verdict, verdict_reason = 'FAIL', 'CANDIDATE_REFUTED_BY_COUNTER'
+        cand_verdict, cand_reason = 'FAIL', 'CANDIDATE_REFUTED_BY_COUNTER'
     elif evaluable_share < MIN_EVALUABLE_SHARE:
-        verdict, verdict_reason = 'INCONCLUSIVE', 'EVALUABLE_SHARE_BELOW_MINIMUM'
+        cand_verdict, cand_reason = ('INCONCLUSIVE',
+                                     'EVALUABLE_SHARE_BELOW_MINIMUM')
     elif hit_share >= CANDIDATE_PASS_SHARE:
-        verdict, verdict_reason = 'PASS', 'BOTH_CRITERIA_MET'
+        cand_verdict, cand_reason = 'PASS', 'BOTH_CRITERIA_MET'
     else:
-        verdict, verdict_reason = 'FAIL', 'HIT_SHARE_BELOW_THRESHOLD'
-    if frozen_problems:
-        verdict, verdict_reason = 'INVALID', 'FROZEN_CODE_OR_CONSTANTS_CHANGED'
+        cand_verdict, cand_reason = 'FAIL', 'HIT_SHARE_BELOW_THRESHOLD'
 
     # ── Контроль ─────────────────────────────────────────────────────────
     ctrl_lines = []
@@ -854,9 +902,24 @@ def build_report(document, rows, nick_by_flight, frozen_problems,
     random_evaluable = (random_tally['CORROBORATED'] + random_tally['RULE_MISS']
                         + random_tally['OTHER'])
     total_misses = sum(t['RULE_MISS'] for t in by_stratum.values())
-    systematic = (random_tally['RULE_MISS'] >= SYSTEMATIC_MIN_RANDOM_MISSES
-                  or any(n >= SYSTEMATIC_MIN_SIGNATURE_MISSES
-                         for n in miss_signatures.values()))
+    gate, gate_reason, gate_detail = control_gate_of(
+        random_tally['RULE_MISS'], miss_signatures)
+    systematic = gate == 'FAIL'
+
+    # ── Общий вердикт ────────────────────────────────────────────────────
+    # [REASON]: порядок намеренный. Целостность важнее любого числа; отказ по
+    # кандидатам и отказ по воротам оба дают FAIL, и оба обязаны перебивать
+    # INCONCLUSIVE -- «мало данных» не смеет прятать доказанную находку.
+    if frozen_problems:
+        verdict, verdict_reason = 'INVALID', 'FROZEN_CODE_OR_CONSTANTS_CHANGED'
+    elif cand_verdict == 'FAIL':
+        verdict, verdict_reason = 'FAIL', cand_reason
+    elif gate == 'FAIL':
+        verdict, verdict_reason = 'FAIL', gate_reason
+    elif cand_verdict == 'INCONCLUSIVE':
+        verdict, verdict_reason = 'INCONCLUSIVE', cand_reason
+    else:
+        verdict, verdict_reason = 'PASS', 'CANDIDATES_AND_CONTROL_GATE_PASSED'
 
     # ── Раздельные величины периода ──────────────────────────────────────
     lo, hi = locked['period']['from'], locked['period']['to']
@@ -885,9 +948,13 @@ def build_report(document, rows, nick_by_flight, frozen_problems,
         'plan_sha256': document['locked_sha256'],
         'period': locked['period'],
         'frozen_problems': frozen_problems,
-        'tool_changed_since_plan': tool_changed,
         'verdict': verdict,
         'verdict_reason': verdict_reason,
+        'candidate_verdict': cand_verdict,
+        'candidate_verdict_reason': cand_reason,
+        'control_gate': gate,
+        'control_gate_reason': gate_reason,
+        'control_gate_detail': gate_detail,
         'candidates': {
             'planned': len(locked['candidates']),
             'scored': scored,
@@ -916,6 +983,9 @@ def build_report(document, rows, nick_by_flight, frozen_problems,
                 random_tally['RULE_MISS'], random_evaluable)
             if random_evaluable else None,
             'systematic_miss_suspected': systematic,
+            'gate': gate,
+            'gate_reason': gate_reason,
+            'gate_detail': gate_detail,
         },
         'period_totals': summary['total'],
         'by_aircraft': {hw: dict(bucket, nickname=(
@@ -946,16 +1016,19 @@ def render_markdown(report):
     out.append('Plan SHA-256: `%s`. Verdict: **%s** (%s).'
                % (report['plan_sha256'], report['verdict'],
                   report['verdict_reason']))
+    out.append('')
+    out.append('Candidate verdict: **%s** (%s). Control gate: **%s** (%s).'
+               % (report['candidate_verdict'],
+                  report['candidate_verdict_reason'], report['control_gate'],
+                  report['control_gate_reason']))
+    if report['control_gate_detail']:
+        out.append('')
+        out.append('Control gate detail: %s.' % report['control_gate_detail'])
     if report['frozen_problems']:
         out.append('')
         out.append('**INVALID: frozen code or constants changed since the '
                    'plan was locked.**')
         out.extend('- %s' % p for p in report['frozen_problems'])
-    if report['tool_changed_since_plan']:
-        out.append('')
-        out.append('Note: `%s` changed since the plan was locked (reporting '
-                   'code only; the frozen rule files are checked separately).'
-                   % TOOL_FILE)
     out.append('')
     out.append('## Candidates (retained branch)')
     out.append('')
@@ -986,11 +1059,15 @@ def render_markdown(report):
             b.get('OTHER', 0), b.get('NOT_EVALUABLE', 0)))
     out.append('')
     out.append('Rule misses: %d. Random stratum: %d of %d evaluable, upper 95 %% '
-               'bound on prevalence %s. Systematic missed class suspected: %s.'
+               'bound on prevalence %s. Control gate: %s (%s). Thresholds: >= %d '
+               'rule miss(es) in %s, or >= %d of one signature in any stratum, '
+               'fail the holdout; single non-systematic findings stay visible '
+               'and do not.'
                % (k['rule_misses'], k['random_rule_misses'],
                   k['random_evaluable'],
-                  _pct(k['random_miss_prevalence_upper_95']),
-                  'YES' if k['systematic_miss_suspected'] else 'no'))
+                  _pct(k['random_miss_prevalence_upper_95']), k['gate'],
+                  k['gate_reason'], SYSTEMATIC_MIN_RANDOM_MISSES, S_RANDOM,
+                  SYSTEMATIC_MIN_SIGNATURE_MISSES))
     for sig, n in sorted(k['rule_miss_signatures'].items()):
         out.append('- `%s`: %d' % (sig, n))
     out.append('')
@@ -1051,8 +1128,6 @@ def cmd_report(args):
     document = load_plan(args.plan_path)
     locked = document['locked']
     frozen_problems = check_frozen(locked)
-    tool_changed = document.get('tool_sha256') != lf_sha256(
-        os.path.join(ROOT, TOOL_FILE.replace('/', os.sep)))
     if os.path.exists(args.out) and os.listdir(args.out):
         raise HoldoutError('output directory %s is not empty - refusing to mix '
                            'two reports' % args.out)
@@ -1072,7 +1147,7 @@ def cmd_report(args):
         raise HoldoutError('the database changed while it was being read '
                            '(is the service running?)', EXIT_INTEGRITY)
 
-    report = build_report(document, rows, nicks, frozen_problems, tool_changed)
+    report = build_report(document, rows, nicks, frozen_problems)
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, 'holdout_report.json'), 'w',
               encoding='utf-8', newline='\n') as fh:
@@ -1113,10 +1188,14 @@ def cmd_report(args):
           % (_pct(c['hit_share_of_evaluable']).replace(' %', '%'),
              _pct(c['hit_share_lower_bound_95']).replace(' %', '%'),
              _pct(c['evaluable_share']).replace(' %', '%')))
-    print('  control misses    : %d (random stratum %d of %d evaluable); '
-          'systematic class suspected: %s'
-          % (k['rule_misses'], k['random_rule_misses'], k['random_evaluable'],
-             'YES' if k['systematic_miss_suspected'] else 'no'))
+    print('  control misses    : %d (random stratum %d of %d evaluable)'
+          % (k['rule_misses'], k['random_rule_misses'], k['random_evaluable']))
+    print('  candidate verdict : %s (%s)' % (report['candidate_verdict'],
+                                             report['candidate_verdict_reason']))
+    print('  control gate      : %s (%s)%s'
+          % (report['control_gate'], report['control_gate_reason'],
+             '' if not report['control_gate_detail']
+             else ' -- ' + report['control_gate_detail']))
     print('  RAW ha            : %s over %d records'
           % (_ha(t['raw_sum_m2']), t['records']))
     print('  PROVEN            : %d records, exposure %s ha, validated delta '
@@ -1194,6 +1273,8 @@ def build_parser():
     report.add_argument('--out', required=True, metavar='DIR')
     report.add_argument('--skip-db-hash', action='store_true')
     report.add_argument('--quiet', action='store_true')
+    sub.add_parser('fingerprint', help='print the frozen-code fingerprint and '
+                                       'the hash of every frozen file')
     return parser
 
 
@@ -1204,6 +1285,15 @@ def main(argv=None):
         parser.print_usage()
         return EXIT_USAGE
     try:
+        if args.command == 'fingerprint':
+            state = frozen_state()
+            print('DJI AREA HOLDOUT CODE FINGERPRINT')
+            for name, value in sorted(state['versions'].items()):
+                print('  %-18s: %s' % (name, value))
+            for rel, sha in sorted(state['files'].items()):
+                print('  %-40s %s' % (rel, sha))
+            print('  CODE FINGERPRINT  : %s' % code_fingerprint())
+            return EXIT_OK
         if args.command == 'list-db':
             return cmd_list_db(args)
         if args.command == 'plan':

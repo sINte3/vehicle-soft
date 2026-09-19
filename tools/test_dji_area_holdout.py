@@ -9,8 +9,14 @@
 Сценарий построен как РАСХОЖДЕНИЕ: рядом с кандидатом замороженного экрана
 стоят записи, которые на него похожи и им не являются -- настоящий повтор
 площади, авто-запись без ширины вне цепочки, скрытый фантом с заполненной
-шириной. Приёмка проверяется в четырёх исходах (PASS, FAIL по опровержению,
-FAIL по доле, INCONCLUSIVE), чтобы ни один из них не оказался недостижимым.
+шириной. Приёмка проверяется в шести исходах (PASS, FAIL по опровержению,
+FAIL по доле, FAIL по контрольным воротам в двух вариантах, INCONCLUSIVE),
+чтобы ни один из них не оказался недостижимым.
+
+Отдельно держатся два свойства пред-live ужесточения: правка САМОГО
+инструмента между plan и report -- отказ с кодом 4, а не пометка; и
+систематический пропуск правила в контроле валит общий holdout, не трогая
+приёмку кандидатов.
 
 Запуск:  python tools\\test_dji_area_holdout.py
 """
@@ -348,10 +354,15 @@ class TheControlFindsWhatTheRuleMisses(Base):
         self.capture_everything_normal(skip=(C1, HIDDEN))
         add_v4(self.db, C1, 17.15, 17.15)
         add_v4(self.db, HIDDEN, 13.5, 13.5)
-        _code, _text, data = self.report()
+        code, _text, data = self.report()
         k = data['controls']
         self.assertEqual(k['rule_misses'], 1)
         self.assertEqual(k['by_stratum'][tool.S_SHORT]['RULE_MISS'], 1)
+        # Одиночная несистематическая находка ВИДНА, но holdout не валит.
+        self.assertEqual(k['gate'], 'PASS')
+        self.assertEqual(data['control_gate'], 'PASS')
+        self.assertEqual(data['verdict'], 'PASS')
+        self.assertEqual(code, tool.EXIT_OK)
         self.assertEqual(k['rule_miss_signatures'],
                          {'mode=4|width=Y|gap=0-1s|equal=Y': 1})
         self.assertFalse(k['systematic_miss_suspected'])
@@ -396,10 +407,20 @@ class TheControlFindsWhatTheRuleMisses(Base):
         document = {'locked_sha256': 'x', 'locked': {
             'period': {'from': '2026-09-01', 'to': '2026-09-02'},
             'candidates': [], 'controls': controls}}
-        report = tool.build_report(document, rows, {}, [], False)
+        report = tool.build_report(document, rows, {}, [])
         self.assertTrue(report['controls']['systematic_miss_suspected'])
-        report = tool.build_report(document, rows[:2], {}, [], False)
+        self.assertEqual(report['control_gate'], 'FAIL')
+        self.assertEqual(report['control_gate_reason'],
+                         'SYSTEMATIC_MISS_BY_SIGNATURE')
+        # Три одинаковые сигнатуры валят ОБЩИЙ вердикт...
+        self.assertEqual(report['verdict'], 'FAIL')
+        self.assertEqual(report['verdict_reason'],
+                         'SYSTEMATIC_MISS_BY_SIGNATURE')
+        # ...не трогая приёмку кандидатов: их тут просто нет.
+        self.assertEqual(report['candidate_verdict'], 'INCONCLUSIVE')
+        report = tool.build_report(document, rows[:2], {}, [])
         self.assertFalse(report['controls']['systematic_miss_suspected'])
+        self.assertEqual(report['control_gate'], 'PASS')
 
 
 class TheLockCannotBeBypassed(Base):
@@ -447,6 +468,134 @@ class TheLockCannotBeBypassed(Base):
         code, text, _ = self.report()
         self.assertEqual(code, tool.EXIT_USAGE)
         self.assertIn('not empty', text)
+
+
+class TheControlGateBindsTheOverallVerdict(Base):
+    """Пороги те же, что и прежде; изменилось последствие (PREREG, доп. 13)."""
+
+    def test_two_random_stratum_misses_fail_the_holdout_end_to_end(self):
+        self.plan()
+        # P1 и P4 лежат в случайной страте и кандидатами не являются. Плоский
+        # счётчик при положительном RAW делает каждую из них пропуском правила.
+        self.capture_everything_normal(skip=(C1, P1, P4))
+        add_v4(self.db, C1, 17.15, 17.15)
+        add_v4(self.db, P1, 9.0, 9.0)
+        add_v4(self.db, P4, 11.0, 11.0)
+        code, text, data = self.report()
+        self.assertEqual(data['controls']['by_stratum'][tool.S_RANDOM]
+                         ['RULE_MISS'], 2)
+        self.assertEqual(data['control_gate'], 'FAIL')
+        self.assertEqual(data['control_gate_reason'],
+                         'SYSTEMATIC_MISS_IN_RANDOM_STRATUM')
+        self.assertIn('threshold 2', data['control_gate_detail'])
+        # Приёмка КАНДИДАТОВ не изменилась -- изменился общий вердикт.
+        self.assertEqual(data['candidate_verdict'], 'PASS')
+        self.assertEqual(data['verdict'], 'FAIL')
+        self.assertEqual(code, tool.EXIT_ACCEPTANCE_FAIL)
+        self.assertNotEqual(code, tool.EXIT_OK)
+        self.assertIn('SYSTEMATIC_MISS_IN_RANDOM_STRATUM', text)
+
+    def test_one_random_stratum_miss_leaves_the_holdout_passing(self):
+        # Отрицательный контроль к проверке выше: тот же путь, одна находка.
+        self.plan()
+        self.capture_everything_normal(skip=(C1, P1))
+        add_v4(self.db, C1, 17.15, 17.15)
+        add_v4(self.db, P1, 9.0, 9.0)
+        code, _text, data = self.report()
+        self.assertEqual(data['controls']['by_stratum'][tool.S_RANDOM]
+                         ['RULE_MISS'], 1)
+        self.assertEqual(data['control_gate'], 'PASS')
+        self.assertEqual(data['verdict'], 'PASS')
+        self.assertEqual(code, tool.EXIT_OK)
+
+    def test_the_gate_is_a_pure_function_of_the_two_thresholds(self):
+        # Границы обоих порогов, включая случай «много разных сигнатур по две».
+        self.assertEqual(tool.control_gate_of(0, {})[0], 'PASS')
+        self.assertEqual(tool.control_gate_of(1, {'a': 1})[0], 'PASS')
+        self.assertEqual(tool.control_gate_of(2, {})[0], 'FAIL')
+        self.assertEqual(tool.control_gate_of(0, {'a': 2, 'b': 2})[0], 'PASS')
+        self.assertEqual(tool.control_gate_of(0, {'a': 3})[0], 'FAIL')
+        self.assertEqual(tool.control_gate_of(2, {})[1],
+                         'SYSTEMATIC_MISS_IN_RANDOM_STRATUM')
+        self.assertEqual(tool.control_gate_of(0, {'a': 3})[1],
+                         'SYSTEMATIC_MISS_BY_SIGNATURE')
+        self.assertEqual(tool.control_gate_of(1, {'a': 1})[1],
+                         'NO_SYSTEMATIC_MISS')
+        self.assertIsNone(tool.control_gate_of(0, {})[2])
+
+    def test_a_candidate_failure_outranks_the_gate_in_the_reason(self):
+        # Оба отказа дают FAIL; называется тот, что о самом правиле.
+        self.plan()
+        self.capture_everything_normal(skip=(P1, P4))
+        add_v4(self.db, P1, 9.0, 9.0)
+        add_v4(self.db, P4, 11.0, 11.0)
+        code, _text, data = self.report()
+        self.assertEqual(data['candidate_verdict'], 'FAIL')
+        self.assertEqual(data['control_gate'], 'FAIL')
+        self.assertEqual(data['verdict'], 'FAIL')
+        self.assertEqual(data['verdict_reason'],
+                         'CANDIDATE_REFUTED_BY_COUNTER')
+        self.assertEqual(code, tool.EXIT_ACCEPTANCE_FAIL)
+
+
+class TheToolItselfIsFrozen(Base):
+    """Файл несёт scoring и вердикт, поэтому его правка -- отказ, не пометка."""
+
+    def test_the_tool_is_in_the_frozen_set_and_in_the_plan(self):
+        self.plan()
+        frozen = self.locked()['locked']['frozen']['files']
+        self.assertIn(tool.TOOL_FILE, frozen)
+        self.assertEqual(frozen[tool.TOOL_FILE],
+                         tool.lf_sha256(os.path.join(ROOT, 'tools',
+                                                     'dji_area_holdout.py')))
+        self.assertEqual(len(frozen), len(tool.FROZEN_FILES))
+
+    def test_a_changed_tool_sha_refuses_the_report(self):
+        self.plan()
+        self.capture_everything_normal()
+        document = self.locked()
+        document['locked']['frozen']['files'][tool.TOOL_FILE] = '0' * 64
+        document['locked_sha256'] = tool.locked_sha(document['locked'])
+        with open(self.plan_path, 'w', encoding='utf-8') as fh:
+            json.dump(document, fh)
+        code, text, data = self.report()
+        self.assertEqual(code, tool.EXIT_INTEGRITY)
+        self.assertEqual(data['verdict'], 'INVALID')
+        self.assertEqual(data['verdict_reason'],
+                         'FROZEN_CODE_OR_CONSTANTS_CHANGED')
+        self.assertIn(tool.TOOL_FILE, text)
+        self.assertTrue(any(tool.TOOL_FILE in p
+                            for p in data['frozen_problems']))
+
+    def test_a_plan_of_the_previous_protocol_version_is_refused(self):
+        self.plan()
+        document = self.locked()
+        document['locked']['protocol_version'] = 1
+        document['locked_sha256'] = tool.locked_sha(document['locked'])
+        with open(self.plan_path, 'w', encoding='utf-8') as fh:
+            json.dump(document, fh)
+        code, text, _data = self.report()
+        self.assertEqual(code, tool.EXIT_INTEGRITY)
+        self.assertIn('another protocol version', text)
+
+    def test_the_fingerprint_covers_every_frozen_file(self):
+        first = tool.code_fingerprint()
+        self.assertEqual(first, tool.code_fingerprint())
+        state = tool.frozen_state()
+        self.assertEqual(sorted(state['files']), sorted(tool.FROZEN_FILES))
+        # Отпечаток обязан двигаться от содержимого ЛЮБОГО замороженного файла.
+        for rel in tool.FROZEN_FILES:
+            spoiled = dict(state, files=dict(state['files'], **{rel: '0' * 64}))
+            self.assertNotEqual(
+                hashlib.sha256(tool.canonical(spoiled)).hexdigest(), first, rel)
+
+    def test_the_fingerprint_command_prints_it_in_ascii(self):
+        result = subprocess.run([sys.executable, TOOL, 'fingerprint'],
+                                capture_output=True)
+        self.assertEqual(result.returncode, tool.EXIT_OK, result.stderr)
+        self.assertTrue(all(b < 128 for b in result.stdout))
+        self.assertIn(tool.code_fingerprint().encode('ascii'), result.stdout)
+        self.assertIn(b'CODE FINGERPRINT', result.stdout)
 
 
 class ThePlanCanBeBuiltWhereTheCollectorLives(Base):
