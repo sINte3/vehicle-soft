@@ -548,6 +548,94 @@ class CollectionCompleteness(unittest.TestCase):
         self.assertTrue(log.isascii(), log)
 
 
+class CatchUpGaps(CollectionCompleteness):
+    """GPS-11b: a day with points but no row is picked up by --catch-up.
+
+    [REASON]: the second live run of 08.09.2026. An object whose tail was not
+    fetched yet had no points for its later days; the computation never
+    listed it, no row was written, and --catch-up had nothing to find. Once
+    the tail arrived, nobody came back for those days.
+    """
+
+    def test_a_day_with_points_and_no_row_is_computed(self):
+        storage.set_watermark(self.folder, self.UNIT, self.finish)
+        self.assertEqual(self.rows("gps_daily_aggregates"), [])
+        code, log = self.run_main("--catch-up", "--until", self.DAY,
+                                  "--window-days", "3")
+        self.assertEqual(code, 0, log)
+        self.assertIn("days without a row: 1 -- computed 1, marked "
+                      "sbor_nepolnyy 0", log)
+        rows = self.rows("gps_daily_aggregates")
+        self.assertEqual([(r["work_date"], r["wialon_id"], r["reason"])
+                          for r in rows], [(self.DAY, self.UNIT, None)])
+        self.assertGreater(len(self.rows("gps_work_polygons")), 0)
+
+    def test_a_gap_day_the_collector_has_not_finished_is_marked_not_computed(self):
+        storage.set_watermark(self.folder, self.UNIT, self.finish - 3600)
+        code, log = self.run_main("--catch-up", "--until", self.DAY,
+                                  "--window-days", "3")
+        self.assertEqual(code, 0, log)
+        self.assertIn("computed 0, marked sbor_nepolnyy 1", log)
+        rows = self.rows("gps_daily_aggregates")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["reason"], "sbor_nepolnyy")
+        self.assertEqual(self.rows("gps_work_polygons"), [])
+        # and the next catch-up, once the watermark has passed, publishes it
+        storage.set_watermark(self.folder, self.UNIT, self.finish)
+        code, log = self.run_main("--catch-up", "--until", self.DAY,
+                                  "--window-days", "3")
+        self.assertEqual(code, 0, log)
+        self.assertIsNone(self.rows("gps_daily_aggregates")[0]["reason"])
+
+    def test_a_day_that_already_has_a_row_is_left_alone(self):
+        storage.set_watermark(self.folder, self.UNIT, self.finish)
+        daily.run_day(self.DAY, self.UNIT, folder=self.folder,
+                      db_path=self.db, contours={})
+        # a sentinel a recomputation would erase
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute("UPDATE gps_daily_aggregates SET reason = 'redkaya_zapis'")
+            con.commit()
+        finally:
+            con.close()
+        code, log = self.run_main("--catch-up", "--until", self.DAY,
+                                  "--window-days", "3")
+        self.assertEqual(code, 0, log)
+        self.assertIn("nothing is waiting", log)
+        self.assertEqual(self.rows("gps_daily_aggregates")[0]["reason"],
+                         "redkaya_zapis")
+
+    def test_the_window_is_inclusive_and_counted_in_days(self):
+        storage.set_watermark(self.folder, self.UNIT, self.finish)
+        self.assertEqual(daily.window_days("2026-07-27", 3),
+                         ["2026-07-25", "2026-07-26", "2026-07-27"])
+        self.assertEqual(daily.window_days("2026-07-27", 1), ["2026-07-27"])
+        # a window that ends the day before the points sees nothing
+        code, log = self.run_main("--catch-up", "--until", "2026-07-26",
+                                  "--window-days", "1")
+        self.assertEqual(code, 0, log)
+        self.assertIn("nothing is waiting", log)
+        self.assertEqual(self.rows("gps_daily_aggregates"), [])
+        # the same window one day later picks the day up
+        code, log = self.run_main("--catch-up", "--until", "2026-07-27",
+                                  "--window-days", "1")
+        self.assertEqual(code, 0, log)
+        self.assertEqual(len(self.rows("gps_daily_aggregates")), 1)
+
+    def test_bad_window_arguments_are_refused(self):
+        err, saved = io.StringIO(), sys.stderr
+        sys.stderr = err
+        try:
+            code, _ = self.run_main("--catch-up", "--window-days", "0")
+            self.assertEqual(code, 2)
+            code, _ = self.run_main("--catch-up", "--until", "vchera")
+            self.assertEqual(code, 2)
+        finally:
+            sys.stderr = saved
+        self.assertIn("--window-days", err.getvalue())
+        self.assertIn("--until", err.getvalue())
+
+
 class CommandLine(unittest.TestCase):
     """День по умолчанию считает сам расчёт, а не обёртка расписания.
 

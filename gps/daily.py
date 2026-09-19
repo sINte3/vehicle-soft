@@ -499,21 +499,60 @@ def pending_days(con):
         "WHERE reason = ? ORDER BY work_date, wialon_id", (REASON_INCOMPLETE,))]
 
 
-def catch_up(folder, db_path, log=print):
-    """Recompute the days marked incomplete whose collection has completed.
+CATCH_UP_WINDOW_DAYS = 30
+
+
+def window_days(until, count):
+    """The last `count` local days ending at `until` (YYYY-MM-DD), inclusive."""
+    last = datetime.strptime(until, "%Y-%m-%d")
+    return [(last - timedelta(days=offset)).strftime("%Y-%m-%d")
+            for offset in range(max(0, count - 1), -1, -1)]
+
+
+def days_without_a_row(con, folder, days):
+    """(day, unit_id) that have points in the file but no aggregate at all.
+
+    [REASON]: the second live run of 08.09.2026. An object whose tail the
+    collector had not fetched yet had NO points for its later days, so the
+    day's computation never listed it -- no row, no reason, nothing for
+    --catch-up to find -- and once the tail arrived nobody came back for those
+    days. A missing row reads as "we did not look", which is honest, but the
+    nightly job computes only yesterday, so "we did not look" would have stayed
+    for ever. Here the window is walked and every such day is picked up.
+    """
+    if not days:
+        return []
+    have = {(row[0], int(row[1])) for row in con.execute(
+        "SELECT work_date, wialon_id FROM gps_daily_aggregates "
+        "WHERE work_date >= ? AND work_date <= ?", (days[0], days[-1]))}
+    missing = []
+    for day in days:
+        for unit_id in storage.units_with_points(folder, day):
+            if (day, unit_id) not in have:
+                missing.append((day, unit_id))
+    return missing
+
+
+def catch_up(folder, db_path, log=print, window=CATCH_UP_WINDOW_DAYS,
+             until=None):
+    """Recompute the days marked incomplete whose collection has completed,
+    and pick up the days of the window that have points but no row at all.
 
     The nightly job runs this right after the day's computation, so a backlog
     that took several runs to fetch is published the night it completes, not
     never. Days whose watermark still stands short are left exactly as they
-    are and counted.
+    are (or marked, if they had no row) and counted.
     """
+    until = until or (datetime.now(TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
+    days = window_days(until, window)
     con = sqlite3.connect(db_path, timeout=30)
     try:
         pending = pending_days(con)
-        contours = load_contours(con) if pending else {}
+        missing = days_without_a_row(con, folder, days)
+        contours = load_contours(con) if (pending or missing) else {}
     finally:
         con.close()
-    if not pending:
+    if not pending and not missing:
         log("catch-up: nothing is waiting for the collector")
         return 0
     recomputed = waiting = 0
@@ -533,6 +572,20 @@ def catch_up(folder, db_path, log=print):
                    sum(s["area_ha"] for s in result.sites)))
     log("catch-up: recomputed %d | still waiting for the collector: %d"
         % (recomputed, waiting))
+
+    filled = marked = 0
+    for day, unit_id in missing:
+        result = run_day(day, unit_id, folder=folder, db_path=db_path,
+                         contours=contours, log=log)
+        if result.reason == REASON_INCOMPLETE:
+            marked += 1
+        else:
+            filled += 1
+        log("  %s %-8s %s" % (day, unit_id, result.reason or
+                              "%d site(s)" % len(result.sites)))
+    log("catch-up window %s..%s: days without a row: %d -- computed %d, "
+        "marked %s %d" % (days[0], days[-1], len(missing), filled,
+                          REASON_INCOMPLETE, marked))
     return 0
 
 
@@ -540,7 +593,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--catch-up", action="store_true",
                         help="recompute the days marked sbor_nepolnyy whose "
-                             "collection has since completed; takes no --date")
+                             "collection has since completed, and pick up the "
+                             "days of the window that have points but no row; "
+                             "takes no --date")
+    parser.add_argument("--window-days", type=int, default=CATCH_UP_WINDOW_DAYS,
+                        help="how many days back --catch-up looks for days "
+                             "without a row (default %d)" % CATCH_UP_WINDOW_DAYS)
+    parser.add_argument("--until", default=None,
+                        help="last day of the --catch-up window, YYYY-MM-DD "
+                             "(default: yesterday, local)")
     parser.add_argument("--date", default=None,
                         help="local day, YYYY-MM-DD. По умолчанию -- вчерашние "
                              "сутки по местному времени")
@@ -577,7 +638,18 @@ def main(argv=None):
             # ignored argument is how a day gets computed twice by mistake.
             sys.stderr.write("ERROR: --catch-up takes no --date and no --unit\n")
             return 2
-        return catch_up(folder, db_path)
+        if args.window_days < 1:
+            sys.stderr.write("ERROR: --window-days must be at least 1\n")
+            return 2
+        if args.until:
+            try:
+                datetime.strptime(args.until, "%Y-%m-%d")
+            except ValueError:
+                sys.stderr.write("ERROR: --until must be YYYY-MM-DD, got %r\n"
+                                 % args.until)
+                return 2
+        return catch_up(folder, db_path, window=args.window_days,
+                        until=args.until)
 
     units = args.unit or storage.units_with_points(folder, day)
     if not units:
