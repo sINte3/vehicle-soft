@@ -30,11 +30,15 @@ from . import config
 
 
 class WialonError(Exception):
-    """A service answered with an error code."""
+    """A service answered with an error code, and sometimes with a word why."""
 
-    def __init__(self, code):
+    def __init__(self, code, reason=None):
         self.code = code
-        super().__init__("error %s (%s)" % (code, config.ERRORS.get(code, "unknown")))
+        self.reason = reason
+        text = "error %s (%s)" % (code, config.ERRORS.get(code, "unknown"))
+        if reason:
+            text += ", reason %s" % reason
+        super().__init__(text)
 
 
 def login_failure(problem):
@@ -57,6 +61,29 @@ def err_code(result):
     if isinstance(result, dict) and "error" in result:
         return result["error"]
     return None
+
+
+def err_reason(result):
+    """Wialon's own one-word explanation beside the code, when it sends one.
+
+    [REASON]: on 19.09.2026 the server answered
+    {"error": 8, "reason": "INVALID_AUTH_TOKEN"} and the collector printed only
+    the 8. That word is what finally said the TOKEN was refused rather than the
+    request built around it, and the track spent a day without it.
+
+    Exactly one key is taken, and only when it is a short plain string. A
+    foreign answer is not ours to copy into a log wholesale: the rest of it may
+    be long, may carry anything, and nothing here needs it.
+    """
+    if not isinstance(result, dict):
+        return None
+    value = result.get("reason")
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or len(value) > 64:
+        return None
+    return config.ascii_only(value)
 
 
 def describe(result):
@@ -167,7 +194,7 @@ class Client:
         answer = self.call("token/login", {"token": token}, with_sid=False)
         code = err_code(answer)
         if code is not None:
-            raise WialonError(code)
+            raise WialonError(code, err_reason(answer))
         self.sid = answer.get("eid")
         self.logins += 1
         return self.sid
@@ -196,7 +223,7 @@ class Client:
             "from": 0, "to": 0})
         code = err_code(answer)
         if code is not None:
-            raise WialonError(code)
+            raise WialonError(code, err_reason(answer))
         units = []
         for item in (answer.get("items") or []):
             if not item.get("id"):
@@ -220,7 +247,7 @@ class Client:
             "force": 1, "flags": config.ZONE_LIST_FLAGS, "from": 0, "to": 0})
         code = err_code(answer)
         if code is not None:
-            raise WialonError(code)
+            raise WialonError(code, err_reason(answer))
         for item in (answer.get("items") or []):
             if item.get("id") == int(resource_id):
                 return sorted(int(z) for z in (item.get("zl") or {}))
@@ -239,7 +266,7 @@ class Client:
                             "flags": config.ZONE_DATA_FLAGS})
         code = err_code(answer)
         if code is not None:
-            raise WialonError(code)
+            raise WialonError(code, err_reason(answer))
         if isinstance(answer, list):
             return answer
         return answer.get("items") or []
@@ -261,7 +288,7 @@ class Client:
         if code == 1001:
             return []
         if code is not None:
-            raise WialonError(code)
+            raise WialonError(code, err_reason(answer))
         messages = answer.get("messages") or []
         self._note_messages(len(messages))
         return messages

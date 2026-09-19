@@ -30,7 +30,7 @@ from gps_collector.main import collect                             # noqa: E402
 from gps_collector.tests.support import (FakeServer, Installed,    # noqa: E402
                                          LAT, LON, count_points, epoch)
 from gps_collector.wialon import (Client, WialonError,            # noqa: E402
-                                   login_failure)
+                                   err_reason, login_failure)
 
 NOW = epoch("2026-08-10 07:00")
 QUIET = lambda *args, **kwargs: None                               # noqa: E731
@@ -309,6 +309,58 @@ class LoginFailureReason(unittest.TestCase):
         # A check that answers the same for right and wrong code is no check.
         self.assertNotEqual(login_failure(WialonError(7)),
                             login_failure(ValueError("boom")))
+
+
+class ReasonBesideTheCode(unittest.TestCase):
+    """Wialon's own word for WHY, which the collector used to throw away.
+
+    Live case 19.09.2026: the server answered
+    {"error": 8, "reason": "INVALID_AUTH_TOKEN"}. The code alone said only
+    "something is wrong"; the word said the TOKEN was refused -- which is a
+    different day's work from a malformed request.
+    """
+
+    def test_the_word_reaches_the_message(self):
+        problem = WialonError(8, "INVALID_AUTH_TOKEN")
+        self.assertIn("error 8", str(problem))
+        self.assertIn("INVALID_AUTH_TOKEN", str(problem))
+        self.assertEqual(problem.reason, "INVALID_AUTH_TOKEN")
+        self.assertIn("INVALID_AUTH_TOKEN", login_failure(problem))
+
+    def test_code_8_is_named_not_unknown(self):
+        # Observed on the server, so it belongs in the table.
+        self.assertIn("the token was not accepted", str(WialonError(8)))
+
+    def test_without_a_reason_the_message_is_unchanged(self):
+        self.assertEqual(str(WialonError(7)), "error 7 (access denied)")
+        self.assertNotIn("reason", str(WialonError(7)))
+
+    def test_it_is_picked_out_of_a_real_answer(self):
+        self.assertEqual(
+            err_reason({"error": 8, "reason": "INVALID_AUTH_TOKEN"}),
+            "INVALID_AUTH_TOKEN")
+
+    def test_only_a_short_plain_string_is_taken(self):
+        # [REASON]: the negative control. The answer comes from a machine we do
+        # not own; a blanket copy would let it put anything, of any length,
+        # into our log. Each of these must come back as "no reason".
+        self.assertIsNone(err_reason({"error": 8}))
+        self.assertIsNone(err_reason({"error": 8, "reason": 12345}))
+        self.assertIsNone(err_reason({"error": 8, "reason": {"a": "b"}}))
+        self.assertIsNone(err_reason({"error": 8, "reason": "   "}))
+        self.assertIsNone(err_reason({"error": 8, "reason": "x" * 65}))
+        self.assertIsNone(err_reason("not a dict at all"))
+        self.assertEqual(err_reason({"error": 8, "reason": "x" * 64}),
+                         "x" * 64)
+
+    def test_the_console_stays_ascii(self):
+        # The charter says console output is ASCII whatever the code page.
+        got = err_reason({"error": 8, "reason": "ОТКАЗ"})
+        self.assertTrue(got.isascii(), got)
+
+    def test_it_can_tell_the_two_cases_apart(self):
+        self.assertNotEqual(str(WialonError(8, "INVALID_AUTH_TOKEN")),
+                            str(WialonError(8)))
 
 
 class Positions(unittest.TestCase):

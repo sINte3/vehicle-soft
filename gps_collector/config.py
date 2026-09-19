@@ -92,8 +92,13 @@ LIMIT_BACKOFF_S = 30.0
 MESSAGE_WINDOW_S = 120.0
 MESSAGE_WINDOW_LIMIT = 7000000
 
+# [REASON]: code 8 is here because the server SENT it on 19.09.2026, beside
+# reason "INVALID_AUTH_TOKEN", not because a manual was read. The wording stays
+# deliberately narrow: "not accepted" is what was observed; whether the token
+# was expired, revoked or restricted, the answer did not say.
 ERRORS = {1: "invalid session", 2: "invalid service", 4: "invalid input",
           5: "request failed", 7: "access denied",
+          8: "the token was not accepted",
           1001: "no messages for the interval",
           1003: "only one request is allowed at the moment",
           1004: "the limit of messages has been exceeded",
