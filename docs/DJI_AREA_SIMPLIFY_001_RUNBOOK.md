@@ -1,4 +1,4 @@
-# DJI-AREA-SIMPLIFY-001 — слепой holdout сентября: два блока для владельца
+# DJI-AREA-SIMPLIFY-001 — слепой holdout сентября: блоки для владельца
 
 Протокол и критерии зафиксированы заранее в
 `docs/DJI_AREA_SIMPLIFY_001_HOLDOUT_PREREG.md`. Здесь — только исполнение.
@@ -8,15 +8,47 @@
 сессия не используются. Данные идут только на площадку (порт 5051), и блок
 отказывается работать, если приёмник в `.env` — не она.
 
-Блоков два, потому что работа идёт на двух машинах, и порядок жёсткий:
+Рабочих блока три, порядок жёсткий:
 
 | # | Где | Что делает | Пишет |
 |---|---|---|---|
+| 0 | рабочая машина | одноразовое сохранение сессии DJI из hotfix PR #127 | только файл состояния на диск |
 | W | рабочая машина, где живёт сборщик | список сентября → план (SHA-256) → адресный сбор V4 по плану | только в площадку |
 | S | SRV-YOQSH, площадка | пересчёт сентября и отчёт holdout | только в базу площадки, после резервной копии |
 
+Блок 0 выполняется один раз и повторяется, только если сессия истекла.
+
 Между ними — один ручной шаг: скопировать `plan.json` с рабочей машины на
 сервер (путь назван ниже).
+
+## Пин проверенной ревизии
+
+Блоки W и S обязаны доказать, что работают на ревизии, которую смотрел ревьюер, —
+**до** первого обращения к кабинету DJI и до первого обращения к базе площадки.
+Имени ветки для этого недостаточно: ветка подвижна.
+
+Точный SHA коммита внутрь самого этого коммита положить невозможно: вписывание
+SHA в файл меняет содержимое коммита и, значит, его SHA. Поэтому пин двойной, и
+ни одна его половина не ссылается сама на себя.
+
+| Пин | Что доказывает | Почему не самореференция |
+|---|---|---|
+| Аннотированный тег `dji-area-simplify-001-reviewed` | `git rev-parse HEAD` совпадает с коммитом, на который указывает тег: это ровно та ревизия целиком | тег создаётся **после** коммита и живёт отдельной ссылкой; в блоке записано только его ИМЯ |
+| Отпечаток кода `$ExpectedFingerprint` | содержимое девяти файлов, которые считают вердикт, не разошлось с проверенным | отпечаток берётся по `FROZEN_FILES`, а этот файл в них не входит |
+
+Тег отвечает на вопрос «та ли ревизия», отпечаток — на вопрос «не правили ли
+рабочую копию после клонирования». Блок дополнительно требует чистый
+`git status`.
+
+Отпечаток печатает сам инструмент:
+
+```powershell
+& 'C:\Program Files\Python314\python.exe' tools\dji_area_holdout.py fingerprint
+```
+
+Самотест ранбука сверяет число, записанное в блоках, с настоящим отпечатком
+кода. Если кто-то правит замороженный файл и забывает про ранбук, проверка
+падает в CI, а не на сервере.
 
 ## Что именно разрешает владелец
 
@@ -41,18 +73,65 @@
    нет, запустите блок один раз: он остановится на проверке `.env` и ничего не
    соберёт.
 2. Положите `C:\VehicleSoft_Holdout\src\drone_collector\.env` с адресом
-   **площадки** в `VEHICLE_SOFT_BASE_URL` (порт 5051) и токеном площадки в
-   `DRONE_API_TOKEN`. Блок проверяет только порт и значение токена не печатает.
-3. Сохраните сессию:
+   **площадки** в `VEHICLE_SOFT_BASE_URL` (порт 5051), токеном площадки в
+   `DRONE_API_TOKEN` и строкой
+
+   ```
+   DJI_STORAGE_STATE=C:\VehicleSoft_Holdout\session\storage_state.json
+   ```
+
+   Блок проверяет только порт приёмника; значение токена он не печатает.
+3. Сохраните сессию **из hotfix PR #127**, а не из этой ветки (см. ниже).
+
+### Почему сессия сохраняется не отсюда
+
+`drone_collector/session.py` в ветке holdout — заведомо старый: в нём тот самый
+дефект `--save-session`, который чинит PR #127. Запускать его значило бы начинать
+с известно сломанного пути.
+
+Поэтому сессия создаётся отдельной временной копией на точном коммите PR #127
+`b1c57ab3b99e22e4ecf4a68de4d1057ec7c3d8db` и передаётся holdout-сборщику файлом
+через `DJI_STORAGE_STATE`. **PR #127 в эту ветку не мержится и не
+cherry-pick-ается**: код holdout остаётся тем, что смотрел ревьюер, а из hotfix
+берётся только результат его работы — `storage_state.json`.
+
+Блок ниже одноразовый: он ставит временную копию, открывает браузер, ждёт вашего
+входа руками и сохраняет состояние в общий каталог. Он ничего не собирает, никуда
+не отправляет и к площадке не обращается.
 
 ```powershell
-Set-Location 'C:\VehicleSoft_Holdout\src'
-& 'C:\Program Files\Python314\python.exe' -m drone_collector.main --save-session
+& {
+$ErrorActionPreference = 'Continue'
+$review  = 'C:\VehicleSoft_DJI_Review_20260918'
+$tmp     = 'C:\VehicleSoft_Holdout\session_src'
+$state   = 'C:\VehicleSoft_Holdout\session\storage_state.json'
+$sha     = 'b1c57ab3b99e22e4ecf4a68de4d1057ec7c3d8db'
+$py      = 'C:\Program Files\Python314\python.exe'
+if (-not (Test-Path -LiteralPath $py)) { throw "STEP FAILED: python not found: $py" }
+if (-not (Test-Path -LiteralPath $review)) { throw "STEP FAILED: review clone not found: $review" }
+if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
+& git clone --quiet $review $tmp
+if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: git clone exit $LASTEXITCODE" }
+& git -C $tmp fetch --quiet origin $sha
+if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: the PR #127 commit is not reachable from this clone; fetch it first" }
+& git -C $tmp checkout --quiet --detach $sha
+if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: git checkout $sha exit $LASTEXITCODE" }
+$at = (& git -C $tmp rev-parse HEAD)
+if ($at -ne $sha) { throw "STEP FAILED: the temporary copy is at $at, expected $sha" }
+Write-Host "SESSION SOURCE: PR127 $at"
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $state) | Out-Null
+$env:DJI_STORAGE_STATE = $state
+Set-Location $tmp
+& $py -m drone_collector.main --save-session
+if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: --save-session exit $LASTEXITCODE" }
+if (-not (Test-Path -LiteralPath $state)) { throw "STEP FAILED: $state was not written" }
+Write-Host ("SESSION SAVED: " + $state + "  " + (Get-Item -LiteralPath $state).Length + " bytes")
+Write-Host 'Now set DJI_STORAGE_STATE to that path in the holdout .env and run block W'
+}
 ```
 
-Если `--save-session` ведёт себя так, как описано в PR #127, сессию можно
-сохранить из ветки этого PR и указать путь к файлу в `DJI_STORAGE_STATE` того же
-`.env`. Ветка holdout `drone_collector/session.py` не трогает.
+Временную копию `C:\VehicleSoft_Holdout\session_src` после этого можно удалить:
+нужен только файл состояния.
 
 ## Блок W — рабочая машина
 
@@ -77,6 +156,8 @@ $plan    = 'C:\VehicleSoft_Holdout\plan\plan.json'
 $ids     = 'C:\VehicleSoft_Holdout\plan\capture_ids.txt'
 $py      = 'C:\Program Files\Python314\python.exe'
 $branch  = 'claude/dji-area-simplify-001'
+$ExpectedTag = 'dji-area-simplify-001-reviewed'
+$ExpectedFingerprint = 'e217d22c31f1ec027bd4c3db354b34e381822e7dae53fe9fb40b6f4abbf24caa'
 if (-not (Test-Path -LiteralPath $py)) { throw "STEP FAILED: python not found: $py" }
 if (-not (Test-Path -LiteralPath $review)) { throw "STEP FAILED: review clone not found: $review" }
 if (-not (Test-Path -LiteralPath $work)) { New-Item -ItemType Directory -Force -Path $work | Out-Null }
@@ -85,6 +166,13 @@ if (-not (Test-Path -LiteralPath $src)) { throw "STEP FAILED: git clone did not 
 & git -C $src --no-pager log --oneline -1
 $head = (& git -C $src rev-parse --abbrev-ref HEAD)
 if ($head -ne $branch) { throw "STEP FAILED: $src is on $head, expected $branch" }
+$pinned = (& git -C $src rev-parse --verify --quiet "$ExpectedTag^{commit}")
+if (-not $pinned) { throw "STEP FAILED: tag $ExpectedTag is not in $src -- fetch it: git -C $src fetch --tags" }
+$headSha = (& git -C $src rev-parse HEAD)
+if ($headSha -ne $pinned) { throw "STEP FAILED: HEAD is $headSha, the reviewed revision is $pinned" }
+$dirty = @(& git -C $src status --porcelain)
+if ($dirty.Count -gt 0) { throw "STEP FAILED: the clone has local modifications -- refusing to run an unreviewed working tree" }
+Write-Host "REVISION PIN: $headSha"
 if (-not (Test-Path -LiteralPath $envFile)) { throw "STEP FAILED: $envFile not found -- see the preparation section of the runbook; nothing was collected" }
 $urlLines = @(Select-String -LiteralPath $envFile -Pattern '^\s*VEHICLE_SOFT_BASE_URL\s*=')
 if ($urlLines.Count -eq 0) { throw "STEP FAILED: VEHICLE_SOFT_BASE_URL is not set in $envFile" }
@@ -93,6 +181,9 @@ if ($notStaging.Count -gt 0) { throw "STEP FAILED: a receiver line in .env is no
 if ($env:VEHICLE_SOFT_BASE_URL -and ($env:VEHICLE_SOFT_BASE_URL -notmatch ':5051')) { throw "STEP FAILED: the process environment overrides the receiver with a non-staging address" }
 Write-Host 'RECEIVER CHECK: staging port 5051'
 Set-Location $src
+$fp = (& $py tools\dji_area_holdout.py fingerprint | Select-String -Pattern 'CODE FINGERPRINT' | ForEach-Object { ($_ -split ':')[-1].Trim() })
+if ($fp -ne $ExpectedFingerprint) { throw "STEP FAILED: code fingerprint is $fp, the reviewed one is $ExpectedFingerprint" }
+Write-Host "CODE FINGERPRINT: $fp"
 & $py tools\test_dji_area_holdout.py
 if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: holdout tool self-test exit $LASTEXITCODE" }
 & $py -m unittest tests.test_dji_area_accounting
@@ -184,6 +275,8 @@ $recalc  = 'C:\VehicleSoft_Holdout_Staging\recalc'
 $backup  = 'C:\transport-report-staging\backups\dji-area'
 $py      = 'C:\Program Files\Python314\python.exe'
 $branch  = 'claude/dji-area-simplify-001'
+$ExpectedTag = 'dji-area-simplify-001-reviewed'
+$ExpectedFingerprint = 'e217d22c31f1ec027bd4c3db354b34e381822e7dae53fe9fb40b6f4abbf24caa'
 if ($staging -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a root that is not the staging checkout" }
 if ($db -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a database outside the staging checkout" }
 if ($service -ne 'TransportReportStaging') { throw "STEP FAILED: refusing a service that is not the staging service" }
@@ -195,10 +288,20 @@ if (-not $origin) { throw "STEP FAILED: cannot read origin url from $staging" }
 if (Test-Path -LiteralPath $src) { Remove-Item -LiteralPath $src -Recurse -Force }
 if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force }
 if (Test-Path -LiteralPath $recalc) { Remove-Item -LiteralPath $recalc -Recurse -Force }
-& git clone --branch $branch --depth 1 --quiet $origin $src
+& git clone --branch $branch --quiet $origin $src
 if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: git clone exit $LASTEXITCODE" }
 & git -C $src --no-pager log --oneline -1
+$pinned = (& git -C $src rev-parse --verify --quiet "$ExpectedTag^{commit}")
+if (-not $pinned) { throw "STEP FAILED: tag $ExpectedTag is not in $src -- fetch it: git -C $src fetch --tags" }
+$headSha = (& git -C $src rev-parse HEAD)
+if ($headSha -ne $pinned) { throw "STEP FAILED: HEAD is $headSha, the reviewed revision is $pinned" }
+$dirty = @(& git -C $src status --porcelain)
+if ($dirty.Count -gt 0) { throw "STEP FAILED: the clone has local modifications -- refusing to run an unreviewed working tree" }
+Write-Host "REVISION PIN: $headSha"
 Set-Location $src
+$fp = (& $py tools\dji_area_holdout.py fingerprint | Select-String -Pattern 'CODE FINGERPRINT' | ForEach-Object { ($_ -split ':')[-1].Trim() })
+if ($fp -ne $ExpectedFingerprint) { throw "STEP FAILED: code fingerprint is $fp, the reviewed one is $ExpectedFingerprint" }
+Write-Host "CODE FINGERPRINT: $fp"
 & $py tools\test_dji_area_holdout.py
 if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: holdout tool self-test exit $LASTEXITCODE" }
 & $py tools\test_dji_area_idempotence_gate.py
@@ -269,9 +372,14 @@ Write-Host 'SEND BACK: C:\VehicleSoft_Holdout_Staging\holdout_report.zip and the
 ## Что прислать обратно
 
 `holdout_plan.zip` с рабочей машины, `holdout_report.zip` с сервера и полный
-текст обеих консолей. В выводе должны быть: `RECEIVER CHECK`, `PLAN SHA256` (одно
-и то же значение в обоих блоках), путь резервной копии, слово `unchanged` во
-второй сводке пересчёта, обе строки `DB SHA256` и `HOLDOUT EXIT CODE`.
+текст обеих консолей. В выводе должны быть: `REVISION PIN` и `CODE FINGERPRINT`
+(одинаковые в обоих блоках), `RECEIVER CHECK`, `PLAN SHA256` (одно и то же
+значение в обоих блоках), путь резервной копии, слово `unchanged` во второй
+сводке пересчёта, обе строки `DB SHA256` и `HOLDOUT EXIT CODE`.
+
+`HOLDOUT EXIT CODE` читается так: 0 — `PASS`; 3 — `FAIL` (либо приёмка
+кандидатов, либо контрольные ворота: причина названа строкой выше); 5 —
+`INCONCLUSIVE`; 4 — план или замороженный код изменены после фиксации.
 
 ## Если блок остановился
 
@@ -281,8 +389,12 @@ Write-Host 'SEND BACK: C:\VehicleSoft_Holdout_Staging\holdout_report.zip and the
 - `list walk (dry-run) exit 2` — нет сессии DJI; см. подготовку.
 - `plan exit 1` с текстом `no complete report day` — в списке нет ни одного
   полного дня сентября; прислать вывод.
-- `holdout report exit 4` — план или замороженный код изменены после фиксации.
-  Это находка, а не сбой: прислать вывод как есть.
+- `tag ... is not in` — клон без тегов. `git -C <клон> fetch --tags` и повторить.
+- `HEAD is ..., the reviewed revision is ...` — ветка ушла вперёд после ревью.
+  Остановиться и сообщить оба SHA: запускать непроверенную ревизию нельзя.
+- `code fingerprint is ...` — рабочая копия правлена после клонирования.
+- `holdout report exit 4` — план или замороженный код (включая сам инструмент)
+  изменены после фиксации. Это находка, а не сбой: прислать вывод как есть.
 - `idempotence gate refused ...` — второй пересчёт написал новые строки; прислать
   `apply1.json`, `apply2.json` и вывод ворот.
 - `service did not reach Running` — **поднять службу площадки вручную** и сообщить.

@@ -14,6 +14,12 @@ DJI и пишет на площадку. Свойства ниже ломают�
     и печатает хеш плана ДО первого запроса V4: на этом держится слово «слепой»;
   * блок S делает резервную копию до записи, доказывает идемпотентность
     воротами, берёт оба хеша вокруг отчёта и поднимает службу в `finally`;
+  * оба рабочих блока доказывают ревизию ДО первого обращения к DJI и к базе:
+    `git rev-parse HEAD` против аннотированного тега плюс отпечаток кода, и
+    отпечаток в тексте блока сверяется с настоящим отпечатком инструмента --
+    иначе пин тихо устаревает;
+  * сессия сохраняется из ТОЧНОГО коммита PR #127, а не из этой ветки, и без
+    merge/cherry-pick;
   * коды 3 и 5 отчёта -- результат, а не сбой: блок не имеет права упасть на
     них и потерять архив;
   * названные файлы репозитория существуют.
@@ -30,9 +36,12 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from tools import dji_area_holdout as tool  # noqa: E402
+
 RUNBOOK = os.path.join(REPO_ROOT, 'docs', 'DJI_AREA_SIMPLIFY_001_RUNBOOK.md')
 BRANCH = 'claude/dji-area-simplify-001'
 PY_PATH = r'C:\Program Files\Python314\python.exe'
+PR127 = 'b1c57ab3b99e22e4ecf4a68de4d1057ec7c3d8db'
 
 
 def read():
@@ -52,6 +61,15 @@ def block_s():
     return [b for b in blocks() if 'Stop-Service' in b][0]
 
 
+def block_session():
+    return [b for b in blocks() if '--save-session' in b][0]
+
+
+def working_blocks():
+    """Блоки, которые что-то делают: сессия, W, S. Без примера-однострочника."""
+    return [b for b in blocks() if '& {' in b]
+
+
 def pos(block, needle):
     index = block.find(needle)
     if index < 0:
@@ -61,19 +79,55 @@ def pos(block, needle):
 
 class EveryBlock(unittest.TestCase):
 
-    def test_there_are_exactly_three_blocks_and_each_is_recognised(self):
+    def test_every_block_is_recognised_and_none_is_a_stray(self):
         found = blocks()
-        self.assertEqual(len(found), 3)
+        self.assertEqual(len(found), 4)
         self.assertEqual(sum('--save-session' in b for b in found), 1)
         self.assertEqual(sum('--send-sources' in b for b in found), 1)
         self.assertEqual(sum('Stop-Service' in b for b in found), 1)
+        # Четвёртый -- однострочный пример «как напечатать отпечаток».
+        self.assertEqual(len(working_blocks()), 3)
+        example = [b for b in found if b not in working_blocks()][0]
+        self.assertIn('fingerprint', example)
+        self.assertEqual(len(example.strip().splitlines()), 1)
+
+    def test_the_pinned_fingerprint_is_the_real_one(self):
+        # [REASON]: пин, который никто не сверяет, устаревает молча. Правка
+        # любого замороженного файла без правки ранбука обязана падать здесь,
+        # в CI, а не на сервере посреди живого сбора.
+        real = tool.code_fingerprint()
+        for block in (block_w(), block_s()):
+            self.assertIn("$ExpectedFingerprint = '%s'" % real, block)
+
+    def test_both_working_blocks_prove_the_revision_before_touching_anything(self):
+        for block, first_contact in ((block_w(), '-m drone_collector.main'),
+                                     (block_s(), 'Stop-Service')):
+            # [REASON]: каждый гейт ищется строкой С `throw`. Поиск по одному
+            # лишь `status --porcelain` проходил бы при удалённом `throw`:
+            # проверка осталась бы на месте и ничего не делала.
+            for guard in ('$ExpectedTag', '$ExpectedFingerprint',
+                          'rev-parse --verify --quiet "$ExpectedTag^{commit}"',
+                          'if (-not $pinned) { throw',
+                          'if ($headSha -ne $pinned) { throw',
+                          'if ($fp -ne $ExpectedFingerprint) { throw',
+                          '$dirty = @(& git -C $src status --porcelain)',
+                          'if ($dirty.Count -gt 0) { throw'):
+                self.assertLess(pos(block, guard), pos(block, first_contact),
+                                guard)
+
+    def test_the_pin_is_a_tag_not_a_branch_name(self):
+        for block in (block_w(), block_s()):
+            self.assertRegex(block, r"\$ExpectedTag = '[\w.-]+'")
+            self.assertNotIn("$ExpectedTag = '%s'" % BRANCH, block)
+            # Полный SHA HEAD сверяется, а не префикс.
+            self.assertIn('$headSha = (& git -C $src rev-parse HEAD)', block)
 
     def test_a_throw_stops_the_whole_paste_not_one_line(self):
         # [REASON]: консоль исполняет вставленные строки по одной, и `throw`
         # прекращает только свою. Без обёртки `& { ... }` отказ на проверке
         # приёмника не остановил бы сборщик строкой ниже -- гейт площадки
         # существовал бы только на бумаге.
-        for block in (block_w(), block_s()):
+        for block in working_blocks():
             lines = [ln for ln in block.strip().splitlines() if ln.strip()]
             self.assertEqual(lines[0], '& {')
             self.assertEqual(lines[-1], '}')
@@ -95,17 +149,18 @@ class EveryBlock(unittest.TestCase):
             self.assertNotIn('&&', block)
 
     def test_python_with_a_space_in_its_path_is_called_through_ampersand(self):
+        # [REASON]: проверяются именно ВЫЗОВЫ -- `$py` (или полный путь) перед
+        # аргументом. Присваивание, Test-Path и подстановка в сообщение вызовами
+        # не являются, а `$fp = (& $py ...)` -- является и обязано нести `&`.
         for block in blocks():
             self.assertIn(PY_PATH, block)
-            for line in block.splitlines():
-                stripped = line.strip()
-                if not re.search(r'(\$py\b|python\.exe)', stripped):
-                    continue
-                # Присваивание и проверка существования python не вызывают.
-                if stripped.startswith('$py') or stripped.startswith(
-                        'if (-not (Test-Path -LiteralPath $py))'):
-                    continue
-                self.assertTrue(stripped.startswith('&'), line)
+            call = re.compile(r'(\$py|%s)\s+(?=(-m\b|\w+\\))'
+                              % re.escape("'" + PY_PATH + "'"))
+            for match in call.finditer(block):
+                prefix = block[:match.start()]
+                self.assertTrue(prefix.endswith('& '),
+                                block[max(0, match.start() - 60):
+                                      match.end() + 30])
 
     def test_every_throw_is_guarded_on_its_own_line(self):
         for block in blocks():
@@ -148,6 +203,49 @@ class EveryBlock(unittest.TestCase):
         # Отрицательный контроль к проверке выше: она обязана уметь падать.
         path = os.path.join(REPO_ROOT, 'tools', 'dji_area_holdout_NOT_THERE.py')
         self.assertFalse(os.path.exists(path))
+
+
+class TheSessionBlock(unittest.TestCase):
+    """Сессия берётся из проверенного hotfix, а не из заведомо старого файла."""
+
+    def test_it_uses_the_exact_pr127_commit(self):
+        block = block_session()
+        self.assertIn("$sha     = '%s'" % PR127, block)
+        self.assertIn('checkout --quiet --detach $sha', block)
+        self.assertIn('if ($at -ne $sha) { throw', block)
+        self.assertLess(pos(block, 'if ($at -ne $sha) { throw'),
+                        pos(block, '--save-session'))
+
+    def test_it_never_merges_or_cherry_picks_the_hotfix(self):
+        for block in blocks():
+            for forbidden in ('git merge', 'cherry-pick', 'git rebase',
+                              'git am '):
+                self.assertNotIn(forbidden, block)
+
+    def test_it_works_in_a_throwaway_copy_and_hands_over_only_the_state_file(self):
+        block = block_session()
+        self.assertIn("$tmp     = 'C:\\VehicleSoft_Holdout\\session_src'", block)
+        self.assertIn('$env:DJI_STORAGE_STATE = $state', block)
+        self.assertIn('if (-not (Test-Path -LiteralPath $state)) { throw', block)
+        for line in block.splitlines():
+            if 'Remove-Item' in line:
+                self.assertIn('-LiteralPath $tmp ', line)
+
+    def test_it_collects_nothing_and_never_reaches_staging(self):
+        block = block_session()
+        for forbidden in ('--sources', '--send', '--from', '5051',
+                          'VEHICLE_SOFT_BASE_URL', 'dji_area_recalc',
+                          'dji_area_holdout'):
+            self.assertNotIn(forbidden, block)
+
+    def test_the_holdout_branch_does_not_carry_the_hotfix(self):
+        # Отрицательный контроль: если PR #127 когда-нибудь вольют в эту ветку,
+        # весь смысл отдельной временной копии пропадёт, и это надо заметить.
+        session_py = os.path.join(REPO_ROOT, 'drone_collector', 'session.py')
+        self.assertTrue(os.path.exists(session_py))
+        with open(session_py, encoding='utf-8') as fh:
+            text = fh.read()
+        self.assertNotIn('DJI-SESSION-HOTFIX-001', text)
 
 
 class TheWorkstationBlock(unittest.TestCase):
