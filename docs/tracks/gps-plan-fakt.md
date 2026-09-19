@@ -73,7 +73,7 @@ Wialon.
 | GPS-10 | Связка `VialonMapping.wialon_id` с объектами Wialon: `tools/gps_link_mappings.py`, точное имя → id, сухой прогон по умолчанию, решения из CSV через `--set`/`--unset`; 30 тестов, 13 мутаций | [#119](https://github.com/sINte3/vehicle-soft/pull/119) | `12f3785` |
 | GPS-11 | Полнота сбора в суточном расчёте: сутки, до конца которых отметка коллектора не дошла, получают `sbor_nepolnyy` без площади, полигоны и ответы не трогаются, `--catch-up` досчитывает; «усечено» на приёме; 9 тестов + 2 экранных, 4 мутации | [#120](https://github.com/sINte3/vehicle-soft/pull/120) | `ee29725` |
 | GPS-LABEL-014 | Выгрузка ответов с экрана «Факт по технике» для замороженного судьи `gps_label_evaluate.py`: `tools/gps_label_export.py`, только чтение, счётчик до критерия 40/15; 10 тестов | [#120](https://github.com/sINte3/vehicle-soft/pull/120) | `ee29725` |
-| GPS-11b | `--catch-up` добирает сутки, у которых есть точки, но нет строки (окно 30 дней, `--window-days`, `--until`); 5 тестов, 3 мутации | — | — |
+| GPS-11b | `--catch-up` добирает сутки, у которых есть точки, но нет строки (окно 30 дней, `--window-days`, `--until`); 5 тестов, 3 мутации | [#122](https://github.com/sINte3/vehicle-soft/pull/122) | `448194c` |
 
 До 2026-08-12 трек был исследовательским и намеренно не трогал репозиторий.
 Решением владельца от 2026-08-12 переведён в кодовый; первый инкремент —
@@ -213,15 +213,17 @@ Wialon.
 
 Читать в этом порядке: `CLAUDE.md` → `docs/AGENT_SESSION.md` → этот файл →
 `docs/GPS_PLAN_FAKT_VISION_ROADMAP.md` разделы 2.8 (работа/проезд), 4.1.1
-(лимиты Wialon) и 9 (открытые вопросы). Ветка
-`claude/gps-work-volume-verification-xk7vji`; всё, что перечислено ниже, влито
-в `main` шестью PR — [#89](https://github.com/sINte3/vehicle-soft/pull/89),
+(лимиты Wialon) и 9 (открытые вопросы). Всё, что перечислено ниже, влито в
+`main` семью PR с ветки `claude/gps-work-volume-verification-xk7vji` —
+[#89](https://github.com/sINte3/vehicle-soft/pull/89),
 [#91](https://github.com/sINte3/vehicle-soft/pull/91),
 [#93](https://github.com/sINte3/vehicle-soft/pull/93),
 [#95](https://github.com/sINte3/vehicle-soft/pull/95),
 [#119](https://github.com/sINte3/vehicle-soft/pull/119),
-[#120](https://github.com/sINte3/vehicle-soft/pull/120); GPS-11b — на ветке
-(мерж-коммиты в таблице раздела 3).
+[#120](https://github.com/sINte3/vehicle-soft/pull/120),
+[#122](https://github.com/sINte3/vehicle-soft/pull/122); незакрытых инкрементов
+на ветках не осталось (мерж-коммиты в таблице раздела 3). Дальше трек
+продолжается с ветки `claude/gps-plan-fakt-track-mot2uo`.
 
 **Что сделано и живёт в репозитории:** движок площади `gps/` (41 тест,
 мутационно проверен), размеченный набор `gps/data/labelled_sites.json`,
