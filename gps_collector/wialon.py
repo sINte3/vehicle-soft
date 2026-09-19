@@ -37,6 +37,22 @@ class WialonError(Exception):
         super().__init__("error %s (%s)" % (code, config.ERRORS.get(code, "unknown")))
 
 
+def login_failure(problem):
+    """A one-line, printable reason for a failed login.
+
+    [REASON]: WialonError already carries the service's error code and its
+    meaning, and all three callers used to print only type(problem).__name__
+    -- so on 19.09.2026 the owner got the bare word "WialonError" and could
+    not tell an expired token from a denied IP. Anything that is NOT our own
+    error keeps the class name on purpose: the token travels in the POST body
+    (wialon._fetch), and no foreign exception promises to keep it out of
+    str(), so this must never become a blanket str(problem).
+    """
+    if isinstance(problem, WialonError):
+        return str(problem)
+    return type(problem).__name__
+
+
 def err_code(result):
     if isinstance(result, dict) and "error" in result:
         return result["error"]

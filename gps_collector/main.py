@@ -37,7 +37,7 @@ import time
 from datetime import datetime
 
 from . import config, storage, sync_log
-from .wialon import Client, WialonError, positions
+from .wialon import Client, WialonError, login_failure, positions
 
 
 class Summary:
@@ -219,7 +219,7 @@ def main(argv=None):
             "\nERROR: ne udalos voyti na %s (%s).\n"
             "Proverte v PowerShell odnoy strokoy:\n"
             "  Test-NetConnection web.gpstrack.uz -Port 443\n"
-            % (config.BASE_URL, type(problem).__name__))
+            % (config.BASE_URL, login_failure(problem)))
         return 3
     print("login OK | tochki: %s" % folder)
 
