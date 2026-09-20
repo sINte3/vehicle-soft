@@ -51,7 +51,7 @@ SHA в файл меняет содержимое коммита и, значи�
 
 | Пин | Что доказывает | Почему не самореференция |
 |---|---|---|
-| Аннотированный тег `dji-area-simplify-001-reviewed-3` | `git rev-parse HEAD` совпадает с коммитом, на который указывает тег: это ровно та ревизия целиком | тег создаётся **после** коммита и живёт отдельной ссылкой; в блоке записано только его ИМЯ |
+| Аннотированный тег `dji-area-simplify-001-reviewed-4` | `git rev-parse HEAD` совпадает с коммитом, на который указывает тег: это ровно та ревизия целиком | тег создаётся **после** коммита и живёт отдельной ссылкой; в блоке записано только его ИМЯ |
 | Отпечаток кода `$ExpectedFingerprint` | содержимое девяти файлов, которые считают вердикт, не разошлось с проверенным | отпечаток берётся по `FROZEN_FILES`, а этот файл в них не входит |
 
 Тег отвечает на вопрос «та ли ревизия», отпечаток — на вопрос «не правили ли
@@ -89,7 +89,7 @@ $out     = 'C:\VehicleSoft_Holdout_Staging\reparse'
 $backup  = 'C:\transport-report-staging\backups\dji-area'
 $py      = 'C:\Program Files\Python314\python.exe'
 $branch  = 'claude/dji-area-simplify-001'
-$ExpectedTag = 'dji-area-simplify-001-reviewed-3'
+$ExpectedTag = 'dji-area-simplify-001-reviewed-4'
 $ExpectedFingerprint = '316dfd536f88dda392144f844627608dd37ca2e9201e114db625c88f7cf1998c'
 $from    = '2026-09-01'
 $to      = '2026-09-18'
@@ -189,6 +189,13 @@ Write-Host 'SEND BACK: C:\VehicleSoft_Holdout_Staging\reparse.zip and the consol
 | `list scalars lost` == 0 во всех трёх прогонах | иначе код возврата 3 и блок останавливается сам |
 | второй `--apply`: `rows changed : 0` | идемпотентность |
 | `calc writes` второго пересчёта -- только `unchanged` | ворота идемпотентности |
+
+**Если `list scalars lost` не ноль, восстанавливать из копии не нужно.** Запись
+атомарна: весь прогон идёт одной транзакцией, решение записывать принимается
+ПОСЛЕ подсчёта потерь, и при любой потере выполняется `ROLLBACK`. В выводе будет
+строка `ROLLED BACK`, база останется побайтово прежней, а код возврата 3 не даст
+стартовать пересчёту. Резервная копия выше остаётся страховкой от того, чего эта
+гарантия не покрывает, -- от сбоя питания и от ошибки оператора.
 
 Ожидаемые значения (реплика площадки, собранная из тех же конвертов):
 
@@ -317,7 +324,7 @@ $plan    = 'C:\VehicleSoft_Holdout\plan\plan.json'
 $ids     = 'C:\VehicleSoft_Holdout\plan\capture_ids.txt'
 $py      = 'C:\Program Files\Python314\python.exe'
 $branch  = 'claude/dji-area-simplify-001'
-$ExpectedTag = 'dji-area-simplify-001-reviewed-3'
+$ExpectedTag = 'dji-area-simplify-001-reviewed-4'
 $ExpectedFingerprint = '316dfd536f88dda392144f844627608dd37ca2e9201e114db625c88f7cf1998c'
 if (-not (Test-Path -LiteralPath $py)) { throw "STEP FAILED: python not found: $py" }
 if (-not (Test-Path -LiteralPath $review)) { throw "STEP FAILED: review clone not found: $review" }
@@ -438,7 +445,7 @@ $recalc  = 'C:\VehicleSoft_Holdout_Staging\recalc'
 $backup  = 'C:\transport-report-staging\backups\dji-area'
 $py      = 'C:\Program Files\Python314\python.exe'
 $branch  = 'claude/dji-area-simplify-001'
-$ExpectedTag = 'dji-area-simplify-001-reviewed-3'
+$ExpectedTag = 'dji-area-simplify-001-reviewed-4'
 $ExpectedFingerprint = '316dfd536f88dda392144f844627608dd37ca2e9201e114db625c88f7cf1998c'
 if ($staging -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a root that is not the staging checkout" }
 if ($db -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a database outside the staging checkout" }
