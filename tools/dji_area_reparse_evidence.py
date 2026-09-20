@@ -20,7 +20,14 @@
 Он перечитывает уже имеющиеся байты и обновляет ровно одну таблицу улик.
 Пересчёт после него -- отдельный шаг (`tools/dji_area_recalc.py`).
 
-Идемпотентен: второй прогон на том же входе не меняет ни одной строки.
+Идемпотентен ФИЗИЧЕСКИ, а не только по смыслу: второй прогон на том же
+входе не переписывает ни одной строки, и файл базы остаётся побайтово
+прежним. Просто «не менять смысл» тут мало -- `refresh_flight_evidence`
+ставит новый `updated_at` при каждом вызове и делает UPDATE безусловно,
+поэтому строка, совпавшая во всех содержательных полях, всё равно
+переписывалась. На площадке второй `--apply` отчитался `rows changed : 0`
+и при этом изменил 4623 строки. Теперь каждая строка пересобирается
+внутри точки сохранения и при совпадении откатывается.
 
 Запуск (служба площадки остановлена либо база -- копия):
 
@@ -134,6 +141,50 @@ def select_flights(con, date_from, date_to, only_unparsed):
     return [int(row['flight_id']) for row in con.execute(sql, params)]
 
 
+# Содержательные колонки строки улик: всё, кроме отметки времени записи.
+# [REASON]: `store.refresh_flight_evidence` ставит новый `updated_at` при
+# КАЖДОМ вызове и выполняет UPDATE безусловно, даже когда все остальные поля
+# совпали. Смысл от этого не менялся, а файл базы -- менялся: на площадке
+# второй `--apply` отчитался `rows changed : 0` и переписал 4623 строки
+# (`UPDATED_AT_DIFFERENCES=4623`, `NON_TIMESTAMP_MISMATCHES=0`). Сравниваем
+# без `updated_at`, иначе разница будет всегда.
+CONTENT_COLUMNS = tuple(c for c in store.EVIDENCE_COLUMNS if c != 'updated_at')
+
+
+def content_of(con, flight_id):
+    """Строка улик без `updated_at`, либо None, если строки ещё нет."""
+    row = con.execute(
+        'SELECT %s FROM dji_flight_evidence WHERE flight_id=?'
+        % ', '.join(CONTENT_COLUMNS), (int(flight_id),)).fetchone()
+    return None if row is None else tuple(row)
+
+
+def refresh_if_it_changes_anything(con, root, flight_id):
+    """Пересобрать строку и ОСТАВИТЬ запись, только если смысл изменился.
+
+    Возвращает True, если строка действительно переписана.
+
+    [REASON]: точка сохранения нужна потому, что узнать результат разбора
+    можно лишь выполнив его. Пересборка идёт внутрь точки, результат
+    сравнивается по `CONTENT_COLUMNS`, и при совпадении откатывается вместе с
+    `updated_at` -- физически не остаётся ни одной изменённой страницы.
+    Альтернатива (разобрать тела самим и сравнить до записи) продублировала бы
+    логику `store.py`, а этот файл заморожен и правке не подлежит.
+
+    `ROLLBACK TO` точку не закрывает, поэтому `RELEASE` нужен в обоих путях.
+    Если пересборка бросит исключение, точка останется открытой -- и это
+    безопасно: внешняя транзакция в этом случае не коммитится вовсе.
+    """
+    before = content_of(con, flight_id)
+    con.execute('SAVEPOINT reparse_row')
+    store.refresh_flight_evidence(con, root, flight_id)
+    changed = content_of(con, flight_id) != before
+    if not changed:
+        con.execute('ROLLBACK TO SAVEPOINT reparse_row')
+    con.execute('RELEASE SAVEPOINT reparse_row')
+    return changed
+
+
 def snapshot(con, flight_ids):
     """{flight_id: кортеж скаляров} -- чтобы увидеть, что именно изменилось."""
     out = {}
@@ -195,8 +246,10 @@ def main(argv=None):
         # запись атомарна: решение `COMMIT`/`ROLLBACK` принимается после
         # проверки, и при любой потере не меняется ни одна строка.
         store.begin_immediate(con)
+        rewritten = 0
         for n, flight_id in enumerate(flights, 1):
-            store.refresh_flight_evidence(con, root, flight_id)
+            if refresh_if_it_changes_anything(con, root, flight_id):
+                rewritten += 1
             if not args.quiet and n % 1000 == 0:
                 print('  ... %d/%d' % (n, len(flights)))
         after = snapshot(con, flights)
@@ -206,9 +259,19 @@ def main(argv=None):
         lost = [f for f in changed
                 if any(before.get(f) or ()) and not any(after.get(f) or ())]
         wrote = bool(args.apply) and not lost
-        con.execute('COMMIT' if wrote else 'ROLLBACK')
+        # [REASON]: пустой COMMIT всё равно поднимает счётчик изменений в
+        # заголовке файла (смещения 24 и 92) -- база меняется на два байта при
+        # нулевой работе, и побайтовое сравнение перестаёт быть доказательством
+        # идемпотентности. Если не переписано ни одной строки, коммитить
+        # нечего: ROLLBACK даёт ровно тот же результат и не трогает файл.
+        con.execute('COMMIT' if (wrote and rewritten) else 'ROLLBACK')
         print('  rows changed                : %d' % len(changed) if wrote
               else '  rows that would change      : %d' % len(changed))
+        # [REASON]: `rows changed` считается по семи скалярам списка и на
+        # площадке показал 0 ровно тогда, когда база всё же менялась. Число
+        # физически переписанных строк такой лазейки не оставляет: при
+        # повторном прогоне оно обязано быть нулём.
+        print('  rows rewritten physically   : %d' % rewritten)
         print('  list scalars recovered      : %d' % len(recovered))
         print('  list scalars lost           : %d' % len(lost))
         if lost:

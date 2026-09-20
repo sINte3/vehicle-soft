@@ -24,7 +24,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
-from datetime import datetime
+from datetime import datetime, timedelta
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -119,10 +119,45 @@ class Base(unittest.TestCase):
         con.close()
 
     def run_tool(self, *argv):
+        # Каждый запуск инструмента -- новая отметка управляемых часов.
+        if getattr(self, 'clock', None) is not None:
+            self.clock['run'] += 1
         out = io.StringIO()
         with redirect_stdout(out):
             code = tool.main(['--db', self.db] + list(argv))
         return code, out.getvalue()
+
+    def controlled_clock(self, step_minutes=17):
+        """Часы, которые ГАРАНТИРОВАННО идут вперёд между прогонами.
+
+        [REASON]: `store.utcnow` округляет до секунды, а фикстура крошечная --
+        два `--apply` подряд укладывались в одну секунду, получали один и тот
+        же `updated_at` и совпадали побайтово СЛУЧАЙНО. Проверка, которая
+        одинаково проходит и на исправном, и на дефектном коде, проверкой не
+        является: на площадке тот же код переписал 4623 строки. Часы делают
+        расхождение неизбежным, без `sleep`.
+        """
+        state = {'run': 0, 'n': 0}
+
+        def fake_utcnow():
+            # Внутри одного прогона время стоит, между прогонами -- идёт.
+            state['n'] += 1
+            return datetime(2026, 9, 20, 0, 0, 0) + timedelta(
+                minutes=step_minutes * state['run'])
+
+        real = store.utcnow
+        store.utcnow = fake_utcnow
+        self.addCleanup(setattr, store, 'utcnow', real)
+        self.clock = state
+        return state
+
+    def updated_at_values(self):
+        con = sqlite3.connect(self.db)
+        con.row_factory = sqlite3.Row
+        rows = {int(r['flight_id']): r['updated_at'] for r in con.execute(
+            'SELECT flight_id, updated_at FROM dji_flight_evidence')}
+        con.close()
+        return rows
 
     def evidence_dump(self):
         """Полное содержимое `dji_flight_evidence`, а не одна колонка."""
@@ -161,12 +196,116 @@ class ItRecoversWhatIsAlreadyStored(Base):
                          {fid: AREA[fid] for fid in ALL_IDS})
 
     def test_a_second_run_changes_nothing(self):
-        self.run_tool('--apply', '--quiet')
-        before = self.db_sha()
+        """Повтор не меняет базу ФИЗИЧЕСКИ, и это не зависит от секунд.
+
+        [REASON]: прежняя редакция запускала два `--apply` подряд и сверяла
+        SHA. На крошечной фикстуре оба попадали в одну секунду, получали один
+        `updated_at` и совпадали СЛУЧАЙНО -- а на площадке тот же код
+        отчитался `rows changed : 0` и переписал 4623 строки. Управляемые часы
+        убирают совпадение: между прогонами гарантированно проходит время.
+        """
+        clock = self.controlled_clock()
+        code, first = self.run_tool('--apply', '--quiet')
+        self.assertEqual(code, tool.EXIT_OK)
+        self.assertIn('list scalars recovered      : 4', first)
+        self.assertIn('rows rewritten physically   : 4', first)
+        stamps = self.updated_at_values()
+        before_sha = self.db_sha()
+        before_dump = self.evidence_dump()
+        ticks = clock['n']
+        self.assertGreater(ticks, 0, 'часы не использовались -- проверка пуста')
+
         code, text = self.run_tool('--apply', '--quiet')
+
         self.assertEqual(code, tool.EXIT_OK)
         self.assertIn('rows changed                : 0', text)
-        self.assertEqual(self.db_sha(), before)
+        self.assertIn('rows rewritten physically   : 0', text)
+        self.assertIn('list scalars recovered      : 0', text)
+        self.assertIn('list scalars lost           : 0', text)
+        # Часы во втором прогоне ДЕЙСТВИТЕЛЬНО шли: расхождение было
+        # доступно, и код обязан был его не записать.
+        self.assertGreater(clock['n'], ticks)
+        self.assertEqual(self.updated_at_values(), stamps)
+        self.assertEqual(self.evidence_dump(), before_dump)
+        self.assertEqual(self.db_sha(), before_sha)
+
+    def test_the_controlled_clock_really_moves(self):
+        """Отрицательный контроль к часам.
+
+        [REASON]: если бы подмена `store.utcnow` не действовала, тест выше
+        проходил бы ровно по той причине, из-за которой дефект и прожил --
+        одинаковый `updated_at`. Здесь часы обязаны дать РАЗНЫЕ отметки на
+        двух настоящих записях.
+        """
+        self.controlled_clock()
+        self.run_tool('--apply', '--quiet')
+        first = set(self.updated_at_values().values())
+        self.assertEqual(len(first), 1, first)
+        # Скаляры стёрты -- второй прогон обязан записать строку заново.
+        con = sqlite3.connect(self.db)
+        con.execute('UPDATE dji_flight_evidence SET %s'
+                    % ', '.join('%s = NULL' % c for c in tool.SCALARS))
+        con.commit()
+        con.close()
+        self.run_tool('--apply', '--quiet')
+        second = set(self.updated_at_values().values())
+        self.assertEqual(len(second), 1, second)
+        self.assertNotEqual(first, second)
+
+    def test_a_non_scalar_column_also_counts_as_a_real_change(self):
+        """Сравнение идёт по ВСЕМ содержательным колонкам, не по семи скалярам.
+
+        [REASON]: если сузить сравнение до `SCALARS`, строка, у которой
+        разошлось любое другое поле, будет молча откачена -- инструмент
+        перестанет применять настоящее исправление и отчитается нулём.
+        `drone_flight_id` не входит в `SCALARS`, и его достаточно.
+        """
+        self.controlled_clock()
+        self.run_tool('--apply', '--quiet')
+        target = IN_PERIOD[0]
+        self.assertNotIn('drone_flight_id', tool.SCALARS)
+
+        con = sqlite3.connect(self.db)
+        con.execute('UPDATE dji_flight_evidence SET drone_flight_id = NULL '
+                    'WHERE flight_id = ?', (target,))
+        con.commit()
+        con.close()
+
+        code, text = self.run_tool('--apply', '--quiet')
+        self.assertEqual(code, tool.EXIT_OK)
+        self.assertIn('rows rewritten physically   : 1', text)
+        con = sqlite3.connect(self.db)
+        restored = con.execute(
+            'SELECT drone_flight_id FROM dji_flight_evidence '
+            'WHERE flight_id = ?', (target,)).fetchone()[0]
+        con.close()
+        self.assertIsNotNone(restored)
+
+    def test_a_row_whose_body_changed_is_still_rewritten(self):
+        """Точка сохранения откатывает ТОЛЬКО совпавшие строки.
+
+        [REASON]: откат «на всякий случай» сделал бы инструмент бесполезным.
+        Здесь одна строка обязана быть переписана, а три -- нет.
+        """
+        self.controlled_clock()
+        self.run_tool('--apply', '--quiet')
+        stamps = self.updated_at_values()
+        target = IN_PERIOD[0]
+
+        con = sqlite3.connect(self.db)
+        con.execute('UPDATE dji_flight_evidence SET list_raw_area_m2 = NULL '
+                    'WHERE flight_id = ?', (target,))
+        con.commit()
+        con.close()
+
+        code, text = self.run_tool('--apply', '--quiet')
+        self.assertEqual(code, tool.EXIT_OK)
+        self.assertIn('rows rewritten physically   : 1', text)
+        now = self.updated_at_values()
+        self.assertNotEqual(now[target], stamps[target])
+        for fid, stamp in stamps.items():
+            if fid != target:
+                self.assertEqual(now[fid], stamp, fid)
 
     def test_dry_run_writes_nothing_at_all(self):
         before = self.db_sha()
