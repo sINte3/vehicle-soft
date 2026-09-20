@@ -58,7 +58,14 @@ def block_w():
 
 
 def block_s():
-    return [b for b in blocks() if 'Stop-Service' in b][0]
+    # [REASON]: блоков со `Stop-Service` теперь два -- R и S. Различать их по
+    # порядку в документе нельзя: вставили блок выше, и проверки S молча
+    # переехали бы на R.
+    return [b for b in blocks() if 'dji_area_holdout.py report' in b][0]
+
+
+def block_r():
+    return [b for b in blocks() if r'\dji_area_reparse_evidence.py' in b][0]
 
 
 def block_session():
@@ -66,7 +73,7 @@ def block_session():
 
 
 def working_blocks():
-    """Блоки, которые что-то делают: сессия, W, S. Без примера-однострочника."""
+    """Блоки, которые что-то делают: R, сессия, W, S. Без однострочника."""
     return [b for b in blocks() if '& {' in b]
 
 
@@ -81,15 +88,25 @@ class EveryBlock(unittest.TestCase):
 
     def test_every_block_is_recognised_and_none_is_a_stray(self):
         found = blocks()
-        self.assertEqual(len(found), 4)
+        self.assertEqual(len(found), 5)
         self.assertEqual(sum('--save-session' in b for b in found), 1)
         self.assertEqual(sum('--send-sources' in b for b in found), 1)
-        self.assertEqual(sum('Stop-Service' in b for b in found), 1)
-        # Четвёртый -- однострочный пример «как напечатать отпечаток».
-        self.assertEqual(len(working_blocks()), 3)
+        self.assertEqual(sum('Stop-Service' in b for b in found), 2)
+        self.assertEqual(sum('dji_area_reparse_evidence.py' in b
+                             for b in found), 1)
+        self.assertEqual(sum('dji_area_holdout.py report' in b
+                             for b in found), 1)
+        self.assertIsNot(block_r(), block_s())
+        # Пятый -- однострочный пример «как напечатать отпечаток».
+        self.assertEqual(len(working_blocks()), 4)
         example = [b for b in found if b not in working_blocks()][0]
         self.assertIn('fingerprint', example)
         self.assertEqual(len(example.strip().splitlines()), 1)
+
+    def test_the_pinned_fingerprint_is_in_every_block_that_runs_code(self):
+        real = tool.code_fingerprint()
+        for block in (block_w(), block_r(), block_s()):
+            self.assertIn("$ExpectedFingerprint = '%s'" % real, block)
 
     def test_the_pinned_fingerprint_is_the_real_one(self):
         # [REASON]: пин, который никто не сверяет, устаревает молча. Правка
@@ -101,6 +118,7 @@ class EveryBlock(unittest.TestCase):
 
     def test_both_working_blocks_prove_the_revision_before_touching_anything(self):
         for block, first_contact in ((block_w(), '-m drone_collector.main'),
+                                     (block_r(), 'Stop-Service'),
                                      (block_s(), 'Stop-Service')):
             # [REASON]: каждый гейт ищется строкой С `throw`. Поиск по одному
             # лишь `status --porcelain` проходил бы при удалённом `throw`:
@@ -116,7 +134,7 @@ class EveryBlock(unittest.TestCase):
                                 guard)
 
     def test_the_pin_is_a_tag_not_a_branch_name(self):
-        for block in (block_w(), block_s()):
+        for block in (block_w(), block_r(), block_s()):
             self.assertRegex(block, r"\$ExpectedTag = '[\w.-]+'")
             self.assertNotIn("$ExpectedTag = '%s'" % BRANCH, block)
             # Полный SHA HEAD сверяется, а не префикс.
@@ -246,6 +264,61 @@ class TheSessionBlock(unittest.TestCase):
         with open(session_py, encoding='utf-8') as fh:
             text = fh.read()
         self.assertNotIn('DJI-SESSION-HOTFIX-001', text)
+
+
+class TheReparseBlock(unittest.TestCase):
+    """Блок R пишет в базу площадки и не обращается к DJI вовсе."""
+
+    def test_it_never_reaches_dji_or_the_collector(self):
+        block = block_r()
+        for forbidden in ('drone_collector', '--sources', '--save-session',
+                          'djiag', 'storage_state', 'VEHICLE_SOFT_BASE_URL'):
+            self.assertNotIn(forbidden, block)
+
+    def test_no_write_happens_before_a_backup_is_taken(self):
+        block = block_r()
+        self.assertLess(pos(block, 'Copy-Item -LiteralPath $db'),
+                        pos(block, '--apply'))
+        self.assertLess(pos(block, 'backup was not created'),
+                        pos(block, '--apply'))
+
+    def test_the_reparse_is_proved_idempotent_and_so_is_the_recalc(self):
+        block = block_r()
+        # Ведущая косая отделяет ИНСТРУМЕНТ от его самотеста, чьё имя несёт
+        # то же слово: без неё счёт всегда был бы на единицу больше.
+        self.assertEqual(block.count(r'\dji_area_reparse_evidence.py'), 3)
+        self.assertEqual(block.count('--dry-run'), 1)
+        self.assertEqual(block.count(r'\dji_area_recalc.py'), 2)
+        gate = pos(block, 'dji_area_idempotence_gate.py --summary')
+        self.assertLess(block.rfind('dji_area_recalc.py'), gate)
+        self.assertIn("recalc2.json')", block[gate:gate + 120])
+
+    def test_the_dry_run_comes_before_the_first_apply(self):
+        block = block_r()
+        self.assertLess(pos(block, '--dry-run'), pos(block, '--apply'))
+
+    def test_a_stopped_service_is_always_restarted_in_a_finally(self):
+        block = block_r()
+        self.assertLess(pos(block, 'Stop-Service'), pos(block, '} finally {'))
+        tail = block[pos(block, '} finally {'):]
+        self.assertIn('Restart-Service -Name $service', tail)
+        self.assertIn("-ne 'Running'", tail)
+
+    def test_everything_that_touches_the_database_is_inside_try(self):
+        block = block_r()
+        start = pos(block, 'try {')
+        end = pos(block, '} finally {')
+        for needle in (r'\dji_area_reparse_evidence.py',
+                       r'\dji_area_recalc.py',
+                       'Copy-Item -LiteralPath $db'):
+            for match in re.finditer(re.escape(needle), block):
+                self.assertTrue(start < match.start() < end, needle)
+
+    def test_the_period_is_explicit_and_not_a_placeholder(self):
+        block = block_r()
+        self.assertIn("$from    = '2026-09-01'", block)
+        self.assertIn("$to      = '2026-09-18'", block)
+        self.assertIn('--from $from --to $to', block)
 
 
 class TheWorkstationBlock(unittest.TestCase):

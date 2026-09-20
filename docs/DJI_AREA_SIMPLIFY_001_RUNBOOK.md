@@ -8,18 +8,36 @@
 сессия не используются. Данные идут только на площадку (порт 5051), и блок
 отказывается работать, если приёмник в `.env` — не она.
 
-Рабочих блока три, порядок жёсткий:
+## Сентябрь уже пройден — что осталось
+
+Слепой holdout 01.09–18.09.2026 **выполнен 19.09.2026**: 233 кандидата из 233
+попаданий, опровержений нет, нижняя граница 98,72 %, контрольные ворота PASS,
+общий вердикт PASS. Переигрывать его нельзя и не нужно.
+
+Тот же прогон вскрыл два дефекта, которые к приёмке кандидатов отношения не
+имеют, но делают сентябрьский ИТОГ неполным (`docs/DJI_AREA_SIMPLIFY_001_SEPTEMBER_FINDINGS.md`):
+
+1. **идентичность машины** — исправлено в коде (impl-4);
+2. **скаляры списка на площадке не разобраны** — тела целы, их надо перечитать.
+
+Поэтому сейчас нужен **блок R**, и только он. Новых обращений к DJI не
+требуется: всё, что нужно, уже лежит в неизменяемом хранилище площадки.
+
+Блоки 0, W и S остаются инструкцией для СЛЕДУЮЩЕГО периода. Повторно
+использовать сентябрьский `plan.json` нельзя: код изменился, и `report`
+откажется (код 4) — так и задумано.
+
+## Блоки
 
 | # | Где | Что делает | Пишет |
 |---|---|---|---|
+| R | SRV-YOQSH, площадка | перечитать сохранённые тела в улики и пересчитать | в базу площадки, после резервной копии |
 | 0 | рабочая машина | одноразовое сохранение сессии DJI из hotfix PR #127 | только файл состояния на диск |
-| W | рабочая машина, где живёт сборщик | список сентября → план (SHA-256) → адресный сбор V4 по плану | только в площадку |
-| S | SRV-YOQSH, площадка | пересчёт сентября и отчёт holdout | только в базу площадки, после резервной копии |
+| W | рабочая машина, где живёт сборщик | список периода → план (SHA-256) → адресный сбор V4 по плану | только в площадку |
+| S | SRV-YOQSH, площадка | пересчёт периода и отчёт holdout | только в базу площадки, после резервной копии |
 
-Блок 0 выполняется один раз и повторяется, только если сессия истекла.
-
-Между ними — один ручной шаг: скопировать `plan.json` с рабочей машины на
-сервер (путь назван ниже).
+Блок 0 выполняется один раз и повторяется, только если сессия истекла. Между
+W и S — один ручной шаг: скопировать `plan.json` с рабочей машины на сервер.
 
 ## Пин проверенной ревизии
 
@@ -33,7 +51,7 @@ SHA в файл меняет содержимое коммита и, значи�
 
 | Пин | Что доказывает | Почему не самореференция |
 |---|---|---|
-| Аннотированный тег `dji-area-simplify-001-reviewed` | `git rev-parse HEAD` совпадает с коммитом, на который указывает тег: это ровно та ревизия целиком | тег создаётся **после** коммита и живёт отдельной ссылкой; в блоке записано только его ИМЯ |
+| Аннотированный тег `dji-area-simplify-001-reviewed-2` | `git rev-parse HEAD` совпадает с коммитом, на который указывает тег: это ровно та ревизия целиком | тег создаётся **после** коммита и живёт отдельной ссылкой; в блоке записано только его ИМЯ |
 | Отпечаток кода `$ExpectedFingerprint` | содержимое девяти файлов, которые считают вердикт, не разошлось с проверенным | отпечаток берётся по `FROZEN_FILES`, а этот файл в них не входит |
 
 Тег отвечает на вопрос «та ли ревизия», отпечаток — на вопрос «не правили ли
@@ -49,6 +67,110 @@ SHA в файл меняет содержимое коммита и, значи�
 Самотест ранбука сверяет число, записанное в блоках, с настоящим отпечатком
 кода. Если кто-то правит замороженный файл и забывает про ранбук, проверка
 падает в CI, а не на сервере.
+
+## Блок R — площадка: вернуть скаляры списка и пересчитать
+
+Приёмник площадки развёрнут на ревизии от 08.09.2026, а она разбирает ревизию
+списка как ОДНУ запись. Живой захват кладёт целую страницу ответа DJI, поэтому
+разбор падал на каждом вылете: строка улик получала `list_revision_id`, а
+скаляры оставались пустыми. Проверено на 300 из 300 настоящих тел.
+
+Блок ничего не собирает: он перечитывает уже сохранённые байты нынешним кодом.
+Обращений к кабинету DJI в нём нет вовсе.
+
+```powershell
+& {
+$ErrorActionPreference = 'Continue'
+$staging = 'C:\transport-report-staging'
+$db      = 'C:\transport-report-staging\instance\transport.db'
+$service = 'TransportReportStaging'
+$src     = 'C:\VehicleSoft_Holdout_Staging\src_r'
+$out     = 'C:\VehicleSoft_Holdout_Staging\reparse'
+$backup  = 'C:\transport-report-staging\backups\dji-area'
+$py      = 'C:\Program Files\Python314\python.exe'
+$branch  = 'claude/dji-area-simplify-001'
+$ExpectedTag = 'dji-area-simplify-001-reviewed-2'
+$ExpectedFingerprint = '316dfd536f88dda392144f844627608dd37ca2e9201e114db625c88f7cf1998c'
+$from    = '2026-09-01'
+$to      = '2026-09-18'
+if ($staging -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a root that is not the staging checkout" }
+if ($db -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a database outside the staging checkout" }
+if ($service -ne 'TransportReportStaging') { throw "STEP FAILED: refusing a service that is not the staging service" }
+if (-not (Test-Path -LiteralPath $db)) { throw "STEP FAILED: database not found: $db" }
+if (-not (Test-Path -LiteralPath $py)) { throw "STEP FAILED: python not found: $py" }
+$origin = (& git -C $staging config --get remote.origin.url)
+if (-not $origin) { throw "STEP FAILED: cannot read origin url from $staging" }
+if (Test-Path -LiteralPath $src) { Remove-Item -LiteralPath $src -Recurse -Force }
+if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force }
+& git clone --branch $branch --quiet $origin $src
+if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: git clone exit $LASTEXITCODE" }
+& git -C $src --no-pager log --oneline -1
+$pinned = (& git -C $src rev-parse --verify --quiet "$ExpectedTag^{commit}")
+if (-not $pinned) { throw "STEP FAILED: tag $ExpectedTag is not in $src -- fetch it: git -C $src fetch --tags" }
+$headSha = (& git -C $src rev-parse HEAD)
+if ($headSha -ne $pinned) { throw "STEP FAILED: HEAD is $headSha, the reviewed revision is $pinned" }
+$dirty = @(& git -C $src status --porcelain)
+if ($dirty.Count -gt 0) { throw "STEP FAILED: the clone has local modifications -- refusing to run an unreviewed working tree" }
+Write-Host "REVISION PIN: $headSha"
+Set-Location $src
+$fp = (& $py tools\dji_area_holdout.py fingerprint | Select-String -Pattern 'CODE FINGERPRINT' | ForEach-Object { ($_ -split ':')[-1].Trim() })
+if ($fp -ne $ExpectedFingerprint) { throw "STEP FAILED: code fingerprint is $fp, the reviewed one is $ExpectedFingerprint" }
+Write-Host "CODE FINGERPRINT: $fp"
+& $py tools\test_dji_area_reparse_evidence.py
+if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: reparse self-test exit $LASTEXITCODE" }
+& $py -m unittest tests.test_dji_area_identity_001
+if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: identity self-test exit $LASTEXITCODE" }
+New-Item -ItemType Directory -Force -Path $backup | Out-Null
+New-Item -ItemType Directory -Force -Path $out | Out-Null
+$stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+try {
+  Stop-Service -Name $service
+  $deadline = (Get-Date).AddSeconds(90)
+  while ((Get-Service -Name $service).Status -ne 'Stopped') {
+    if ((Get-Date) -gt $deadline) { throw "STEP FAILED: service did not reach Stopped within 90s" }
+    Start-Sleep -Seconds 2
+  }
+  Write-Host ("SERVICE STOPPED: " + (Get-Service -Name $service).Status)
+  $dest = Join-Path $backup ("transport.db.pre_reparse_" + $stamp + ".bak")
+  Copy-Item -LiteralPath $db -Destination $dest -Force
+  foreach ($sfx in @('-wal','-shm')) { if (Test-Path -LiteralPath ($db + $sfx)) { Copy-Item -LiteralPath ($db + $sfx) -Destination ($dest + $sfx) -Force } }
+  if (-not (Test-Path -LiteralPath $dest)) { throw "STEP FAILED: backup was not created" }
+  Write-Host ("BACKUP: " + $dest + "  " + (Get-Item -LiteralPath $dest).Length + " bytes")
+  & $py tools\dji_area_reparse_evidence.py --db $db --from $from --to $to --dry-run
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: reparse dry-run exit $LASTEXITCODE" }
+  & $py tools\dji_area_reparse_evidence.py --db $db --from $from --to $to --apply
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: reparse apply exit $LASTEXITCODE" }
+  & $py tools\dji_area_reparse_evidence.py --db $db --from $from --to $to --apply
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: reparse second apply exit $LASTEXITCODE" }
+  & $py tools\dji_area_recalc.py --db $db --from $from --to $to --apply --json (Join-Path $out 'recalc1.json')
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: recalc apply exit $LASTEXITCODE" }
+  & $py tools\dji_area_recalc.py --db $db --from $from --to $to --apply --json (Join-Path $out 'recalc2.json')
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: recalc second apply exit $LASTEXITCODE" }
+  & $py tools\dji_area_idempotence_gate.py --summary (Join-Path $out 'recalc2.json')
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: idempotence gate refused the second apply, exit $LASTEXITCODE" }
+} finally {
+  Restart-Service -Name $service
+  $deadline2 = (Get-Date).AddSeconds(90)
+  while ((Get-Service -Name $service).Status -ne 'Running') {
+    if ((Get-Date) -gt $deadline2) { throw "STEP FAILED: service did not reach Running within 90s -- START IT BY HAND" }
+    Start-Sleep -Seconds 2
+  }
+  Write-Host ("SERVICE RUNNING: " + (Get-Service -Name $service).Status)
+}
+Get-ChildItem -LiteralPath $out | Select-Object Name, Length | Format-Table -AutoSize
+Compress-Archive -Path "$out\*" -DestinationPath 'C:\VehicleSoft_Holdout_Staging\reparse.zip' -Force
+Write-Host 'SEND BACK: C:\VehicleSoft_Holdout_Staging\reparse.zip and the console text above'
+}
+```
+
+Что смотреть в выводе: `list scalars recovered` в первом `--apply` должно быть
+близко к 3980, во втором -- ровно 0 (`rows changed : 0`); `list scalars lost`
+обязан быть 0. В сводке пересчёта `raw sum m2` вырастет с 521 га до примерно
+4413 га, `structural cand.` -- с 0 до примерно 233, а `raw missing` упадёт до 0.
+
+На локальной реплике площадки, собранной из тех же конвертов, эти числа вышли
+такими: восстановлено 4623, второй прогон 0, RAW 4413,28 га, кандидатов 233,
+`raw missing` 0.
 
 ## Что именно разрешает владелец
 
@@ -156,8 +278,8 @@ $plan    = 'C:\VehicleSoft_Holdout\plan\plan.json'
 $ids     = 'C:\VehicleSoft_Holdout\plan\capture_ids.txt'
 $py      = 'C:\Program Files\Python314\python.exe'
 $branch  = 'claude/dji-area-simplify-001'
-$ExpectedTag = 'dji-area-simplify-001-reviewed'
-$ExpectedFingerprint = 'e217d22c31f1ec027bd4c3db354b34e381822e7dae53fe9fb40b6f4abbf24caa'
+$ExpectedTag = 'dji-area-simplify-001-reviewed-2'
+$ExpectedFingerprint = '316dfd536f88dda392144f844627608dd37ca2e9201e114db625c88f7cf1998c'
 if (-not (Test-Path -LiteralPath $py)) { throw "STEP FAILED: python not found: $py" }
 if (-not (Test-Path -LiteralPath $review)) { throw "STEP FAILED: review clone not found: $review" }
 if (-not (Test-Path -LiteralPath $work)) { New-Item -ItemType Directory -Force -Path $work | Out-Null }
@@ -275,8 +397,8 @@ $recalc  = 'C:\VehicleSoft_Holdout_Staging\recalc'
 $backup  = 'C:\transport-report-staging\backups\dji-area'
 $py      = 'C:\Program Files\Python314\python.exe'
 $branch  = 'claude/dji-area-simplify-001'
-$ExpectedTag = 'dji-area-simplify-001-reviewed'
-$ExpectedFingerprint = 'e217d22c31f1ec027bd4c3db354b34e381822e7dae53fe9fb40b6f4abbf24caa'
+$ExpectedTag = 'dji-area-simplify-001-reviewed-2'
+$ExpectedFingerprint = '316dfd536f88dda392144f844627608dd37ca2e9201e114db625c88f7cf1998c'
 if ($staging -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a root that is not the staging checkout" }
 if ($db -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a database outside the staging checkout" }
 if ($service -ne 'TransportReportStaging') { throw "STEP FAILED: refusing a service that is not the staging service" }
