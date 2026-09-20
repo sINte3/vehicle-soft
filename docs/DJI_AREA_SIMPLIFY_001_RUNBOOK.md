@@ -113,7 +113,9 @@ $dirty = @(& git -C $src status --porcelain)
 if ($dirty.Count -gt 0) { throw "STEP FAILED: the clone has local modifications -- refusing to run an unreviewed working tree" }
 Write-Host "REVISION PIN: $headSha"
 Set-Location $src
-$fp = (& $py tools\dji_area_holdout.py fingerprint | Select-String -Pattern 'CODE FINGERPRINT' | ForEach-Object { ($_ -split ':')[-1].Trim() })
+$fpFound = @(& $py tools\dji_area_holdout.py fingerprint | Select-String -Pattern '^\s*CODE FINGERPRINT\s*:\s*([0-9a-f]{64})\s*$' | ForEach-Object { $_.Matches[0].Groups[1].Value })
+if ($fpFound.Count -ne 1) { throw "STEP FAILED: expected exactly one CODE FINGERPRINT line, got $($fpFound.Count)" }
+$fp = $fpFound[0]
 if ($fp -ne $ExpectedFingerprint) { throw "STEP FAILED: code fingerprint is $fp, the reviewed one is $ExpectedFingerprint" }
 Write-Host "CODE FINGERPRINT: $fp"
 & $py tools\test_dji_area_reparse_evidence.py
@@ -163,14 +165,51 @@ Write-Host 'SEND BACK: C:\VehicleSoft_Holdout_Staging\reparse.zip and the consol
 }
 ```
 
-Что смотреть в выводе: `list scalars recovered` в первом `--apply` должно быть
-близко к 3980, во втором -- ровно 0 (`rows changed : 0`); `list scalars lost`
-обязан быть 0. В сводке пересчёта `raw sum m2` вырастет с 521 га до примерно
-4413 га, `structural cand.` -- с 0 до примерно 233, а `raw missing` упадёт до 0.
+### Контрольные числа блока R
 
-На локальной реплике площадки, собранной из тех же конвертов, эти числа вышли
-такими: восстановлено 4623, второй прогон 0, RAW 4413,28 га, кандидатов 233,
-`raw missing` 0.
+**Восстановлено будет 4623, а не 3980.** Числа 3980 и 4623 отвечают на разные
+вопросы, и их легко перепутать:
+
+- **3980** -- это `raw_missing_records`: записи, у которых площадь не известна
+  ВООБЩЕ;
+- **4623** -- это записи периода, у которых отсутствуют **скаляры списка**. Их
+  все: разбор страницы падал одинаково на каждом вылете;
+- **643** -- разница. У этих записей скаляры списка тоже отсутствовали, но
+  площадь пришла запасным путём `card_raw_area_m2`, поэтому в
+  `raw_missing_records` они не попали.
+
+Пересборка чинит именно скаляры списка, поэтому её итог -- 4623.
+
+Два инварианта, которые обязаны выполниться ТОЧНО, какими бы ни были
+абсолютные числа на площадке:
+
+| Инвариант | Где смотреть |
+|---|---|
+| `list scalars recovered` == `list scalars missing before` | первый `--apply` |
+| `list scalars lost` == 0 во всех трёх прогонах | иначе код возврата 3 и блок останавливается сам |
+| второй `--apply`: `rows changed : 0` | идемпотентность |
+| `calc writes` второго пересчёта -- только `unchanged` | ворота идемпотентности |
+
+Ожидаемые значения (реплика площадки, собранная из тех же конвертов):
+
+| Показатель | До | После |
+|---|---|---|
+| `flights with stored sources` | -- | 4623 |
+| `list scalars missing before` (первый прогон) | -- | 4623 |
+| `list scalars recovered` (первый `--apply`) | -- | 4623 |
+| `list scalars missing before` (второй прогон) | -- | 0 |
+| `rows changed` (второй `--apply`) | -- | 0 |
+| `raw missing` в сводке пересчёта | 3980 | 0 |
+| `raw sum m2` | 5 210 833 (521,08 га) | 44 132 825 (4413,28 га) |
+| `structural cand.` | 0 | 233 |
+| `calc writes` | `new` | `unchanged` |
+
+**Оговорка о точности.** Реплика собрана по дампу списка, снятому более ранним
+проходом: в ней 4838 вылетов против 4861 у площадки. Поэтому абсолютные числа
+площадки могут отличаться на пару десятков записей и в четвёртом знаке
+гектаров. Инварианты выше от этого не зависят и обязаны выполниться точно;
+если `recovered` окажется заметно меньше, чем `missing before`, прогон
+неуспешен независимо от того, что напечатано в остальных строках.
 
 ## Что именно разрешает владелец
 
@@ -303,7 +342,9 @@ if ($notStaging.Count -gt 0) { throw "STEP FAILED: a receiver line in .env is no
 if ($env:VEHICLE_SOFT_BASE_URL -and ($env:VEHICLE_SOFT_BASE_URL -notmatch ':5051')) { throw "STEP FAILED: the process environment overrides the receiver with a non-staging address" }
 Write-Host 'RECEIVER CHECK: staging port 5051'
 Set-Location $src
-$fp = (& $py tools\dji_area_holdout.py fingerprint | Select-String -Pattern 'CODE FINGERPRINT' | ForEach-Object { ($_ -split ':')[-1].Trim() })
+$fpFound = @(& $py tools\dji_area_holdout.py fingerprint | Select-String -Pattern '^\s*CODE FINGERPRINT\s*:\s*([0-9a-f]{64})\s*$' | ForEach-Object { $_.Matches[0].Groups[1].Value })
+if ($fpFound.Count -ne 1) { throw "STEP FAILED: expected exactly one CODE FINGERPRINT line, got $($fpFound.Count)" }
+$fp = $fpFound[0]
 if ($fp -ne $ExpectedFingerprint) { throw "STEP FAILED: code fingerprint is $fp, the reviewed one is $ExpectedFingerprint" }
 Write-Host "CODE FINGERPRINT: $fp"
 & $py tools\test_dji_area_holdout.py
@@ -421,7 +462,9 @@ $dirty = @(& git -C $src status --porcelain)
 if ($dirty.Count -gt 0) { throw "STEP FAILED: the clone has local modifications -- refusing to run an unreviewed working tree" }
 Write-Host "REVISION PIN: $headSha"
 Set-Location $src
-$fp = (& $py tools\dji_area_holdout.py fingerprint | Select-String -Pattern 'CODE FINGERPRINT' | ForEach-Object { ($_ -split ':')[-1].Trim() })
+$fpFound = @(& $py tools\dji_area_holdout.py fingerprint | Select-String -Pattern '^\s*CODE FINGERPRINT\s*:\s*([0-9a-f]{64})\s*$' | ForEach-Object { $_.Matches[0].Groups[1].Value })
+if ($fpFound.Count -ne 1) { throw "STEP FAILED: expected exactly one CODE FINGERPRINT line, got $($fpFound.Count)" }
+$fp = $fpFound[0]
 if ($fp -ne $ExpectedFingerprint) { throw "STEP FAILED: code fingerprint is $fp, the reviewed one is $ExpectedFingerprint" }
 Write-Host "CODE FINGERPRINT: $fp"
 & $py tools\test_dji_area_holdout.py

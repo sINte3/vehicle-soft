@@ -29,6 +29,7 @@ DJI и пишет на площадку. Свойства ниже ломают�
 
 import os
 import re
+import subprocess
 import sys
 import unittest
 
@@ -221,6 +222,88 @@ class EveryBlock(unittest.TestCase):
         # Отрицательный контроль к проверке выше: она обязана уметь падать.
         path = os.path.join(REPO_ROOT, 'tools', 'dji_area_holdout_NOT_THERE.py')
         self.assertFalse(os.path.exists(path))
+
+
+class TheFingerprintParser(unittest.TestCase):
+    """Парсер отпечатка обязан брать РОВНО финальный SHA.
+
+    [REASON]: этот дефект уже сработал на SRV-YOQSH. Прежний парсер искал
+    подстроку `CODE FINGERPRINT`, а она встречается в выводе ДВАЖДЫ -- в
+    заголовке `DJI AREA HOLDOUT CODE FINGERPRINT` и в финальной строке.
+    `Select-String` возвращал две строки, `$fp` становился массивом, а `-ne`
+    на массиве фильтрует и возвращает непустой результат, то есть ИСТИНУ.
+    Блок бросал `throw` при ВЕРНОМ отпечатке и не начинался вовсе.
+
+    Проверки ниже берут шаблон из самого ранбука и подают ему НАСТОЯЩИЙ
+    многострочный вывод `fingerprint`, а не выдуманный образец.
+    """
+
+    def setUp(self):
+        self.output = subprocess.run(
+            [sys.executable,
+             os.path.join(REPO_ROOT, 'tools', 'dji_area_holdout.py'),
+             'fingerprint'],
+            capture_output=True, text=True, cwd=REPO_ROOT).stdout
+        # Вывод обязан быть многострочным, иначе проверка ничего не различает.
+        self.assertGreater(len(self.output.splitlines()), 5, self.output)
+
+    def patterns(self):
+        """Шаблоны `Select-String` из каждого блока, который считает код."""
+        found = []
+        for block in (block_w(), block_r(), block_s()):
+            match = re.search(
+                r"Select-String -Pattern '([^']*CODE FINGERPRINT[^']*)'", block)
+            self.assertIsNotNone(match, block[:200])
+            found.append(match.group(1))
+        self.assertEqual(len(found), 3)
+        return found
+
+    def test_the_header_line_really_does_collide(self):
+        """Без этого расхождения всё остальное здесь ничего не доказывает."""
+        loose = [ln for ln in self.output.splitlines()
+                 if 'CODE FINGERPRINT' in ln]
+        self.assertEqual(len(loose), 2, loose)
+        self.assertNotIn(':', loose[0])
+
+    def test_every_block_extracts_exactly_one_sha(self):
+        real = tool.code_fingerprint()
+        for pattern in self.patterns():
+            hits = re.findall(pattern, self.output, re.M)
+            self.assertEqual(len(hits), 1, (pattern, hits))
+            self.assertEqual(hits[0], real)
+            self.assertEqual(len(hits[0]), 64)
+
+    def test_the_pattern_is_anchored_and_demands_64_hex(self):
+        for pattern in self.patterns():
+            self.assertTrue(pattern.startswith('^'), pattern)
+            self.assertTrue(pattern.endswith('$'), pattern)
+            self.assertIn('[0-9a-f]{64}', pattern)
+            # Захват ровно один: блок берёт `Groups[1]`.
+            self.assertEqual(pattern.count('('), 1, pattern)
+
+    def test_a_truncated_or_uppercase_sha_is_not_accepted(self):
+        for pattern in self.patterns():
+            for bad in ('  CODE FINGERPRINT  : deadbeef',
+                        '  CODE FINGERPRINT  : ' + 'A' * 64,
+                        '  CODE FINGERPRINT  : ' + 'a' * 63,
+                        'DJI AREA HOLDOUT CODE FINGERPRINT'):
+                self.assertEqual(re.findall(pattern, bad, re.M), [], bad[:40])
+
+    def test_the_block_refuses_when_the_count_is_not_one(self):
+        # Одного regex мало: если строк ноль, `$fpFound[0]` был бы $null и
+        # сравнение молча прошло бы мимо. Счёт обязан проверяться явно.
+        for block in (block_w(), block_r(), block_s()):
+            self.assertIn('$fpFound.Count -ne 1', block)
+            self.assertLess(pos(block, '$fpFound.Count -ne 1'),
+                            pos(block, '$fp = $fpFound[0]'))
+            self.assertLess(pos(block, '$fp = $fpFound[0]'),
+                            pos(block, '$fp -ne $ExpectedFingerprint'))
+
+    def test_no_block_still_uses_the_loose_parser(self):
+        for block in working_blocks():
+            self.assertNotIn("Select-String -Pattern 'CODE FINGERPRINT'",
+                             block)
+            self.assertNotIn("($_ -split ':')[-1]", block)
 
 
 class TheSessionBlock(unittest.TestCase):
