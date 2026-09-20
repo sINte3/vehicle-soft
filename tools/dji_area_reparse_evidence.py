@@ -41,6 +41,13 @@
 блоке R сухой прогон стоит перед `--apply` именно как ворота: он перебирает те
 же тела и откатывает транзакцию, поэтому видит ровно тот же набор потерь, что
 дал бы `--apply`. Ненулевой код останавливает цепочку ранбука до первой записи.
+
+Запись АТОМАРНА. Весь прогон идёт одной транзакцией, и решение записывать
+принимается ПОСЛЕ подсчёта потерь: при любой потере выполняется `ROLLBACK`, и
+ни одна строка улик не меняется. Кода возврата тут мало -- он защищает
+следующий шаг, но не эту базу. Промежуточных `COMMIT` нет намеренно: пока
+`--apply` коммитил батчами, испорченные строки успевали лечь в базу до того,
+как потеря вообще была замечена.
 """
 
 import argparse
@@ -88,7 +95,6 @@ def build_parser():
                         help='report what would change, write nothing')
     parser.add_argument('--apply', action='store_true',
                         help='rewrite the evidence rows')
-    parser.add_argument('--batch-size', type=int, default=500)
     parser.add_argument('--quiet', action='store_true')
     return parser
 
@@ -99,8 +105,6 @@ def check_usage(args):
     if not args.dry_run and not args.apply:
         raise ValueError('choose a mode explicitly: --dry-run writes nothing, '
                          '--apply rewrites the evidence rows')
-    if args.batch_size <= 0:
-        raise ValueError('--batch-size must be positive')
     if (args.date_from is None) != (args.date_to is None):
         raise ValueError('--from and --to are given together or not at all')
 
@@ -183,15 +187,16 @@ def main(argv=None):
         # [REASON]: пересборка идёт ВСЕГДА (и в dry-run тоже), иначе нечего
         # сравнивать; в dry-run транзакция откатывается целиком, и база
         # остаётся байт в байт прежней.
+        #
+        # ОДНА транзакция на весь прогон, без промежуточных `COMMIT`. Прежде
+        # `--apply` коммитил батчами по 500, а потерю скаляров замечал ПОСЛЕ --
+        # когда испорченные строки уже лежали в базе. Код возврата 3 при этом
+        # останавливал только СЛЕДУЮЩИЙ шаг, а улики успевал испортить. Теперь
+        # запись атомарна: решение `COMMIT`/`ROLLBACK` принимается после
+        # проверки, и при любой потере не меняется ни одна строка.
         store.begin_immediate(con)
-        pending = 0
         for n, flight_id in enumerate(flights, 1):
             store.refresh_flight_evidence(con, root, flight_id)
-            pending += 1
-            if args.apply and pending >= args.batch_size:
-                con.execute('COMMIT')
-                store.begin_immediate(con)
-                pending = 0
             if not args.quiet and n % 1000 == 0:
                 print('  ... %d/%d' % (n, len(flights)))
         after = snapshot(con, flights)
@@ -200,13 +205,10 @@ def main(argv=None):
                      if not any(before.get(f) or ()) and any(after.get(f) or ())]
         lost = [f for f in changed
                 if any(before.get(f) or ()) and not any(after.get(f) or ())]
-        if args.apply:
-            con.execute('COMMIT')
-        else:
-            con.execute('ROLLBACK')
-        print('  rows that would change      : %d' % len(changed)
-              if not args.apply else '  rows changed                : %d'
-              % len(changed))
+        wrote = bool(args.apply) and not lost
+        con.execute('COMMIT' if wrote else 'ROLLBACK')
+        print('  rows changed                : %d' % len(changed) if wrote
+              else '  rows that would change      : %d' % len(changed))
         print('  list scalars recovered      : %d' % len(recovered))
         print('  list scalars lost           : %d' % len(lost))
         if lost:
@@ -214,6 +216,9 @@ def main(argv=None):
             print('  FAILED: %d row(s) lost their list scalars; the stored '
                   'body no longer reads. First: %s'
                   % (len(lost), lost[:5]))
+            if args.apply:
+                print('  ROLLED BACK: nothing was written; the evidence rows '
+                      'are exactly as they were before this run.')
     except (store.StoreError, ValueError) as exc:
         con.close()
         print('ERROR: %s' % exc)
@@ -229,8 +234,8 @@ def main(argv=None):
         # Fail-closed: сухой прогон обязан остановить блок R до `--apply`, а
         # `--apply` -- до пересчёта. Потерянные скаляры не «предупреждение», а
         # причина не продолжать.
-        print('EXIT %d: list scalars were lost; this run is NOT a success.'
-              % EXIT_LOST_SCALARS)
+        print('EXIT %d: list scalars were lost; nothing was written and '
+              'this run is NOT a success.' % EXIT_LOST_SCALARS)
         return EXIT_LOST_SCALARS
     return EXIT_OK
 

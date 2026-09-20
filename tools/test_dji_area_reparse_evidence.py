@@ -124,6 +124,15 @@ class Base(unittest.TestCase):
             code = tool.main(['--db', self.db] + list(argv))
         return code, out.getvalue()
 
+    def evidence_dump(self):
+        """Полное содержимое `dji_flight_evidence`, а не одна колонка."""
+        con = sqlite3.connect(self.db)
+        con.row_factory = sqlite3.Row
+        rows = [tuple(r) for r in con.execute(
+            'SELECT * FROM dji_flight_evidence ORDER BY flight_id')]
+        con.close()
+        return rows
+
     def scalars(self):
         con = sqlite3.connect(self.db)
         con.row_factory = sqlite3.Row
@@ -224,24 +233,68 @@ class ItInventsNothing(Base):
         self.assertIn('list scalars recovered      : 0', text)
         self.assertEqual(set(self.scalars().values()), {None})
 
-    def test_losing_a_body_after_a_recovery_is_reported_not_silent(self):
-        """Тело пропало ПОСЛЕ восстановления -- строка честно опустеет.
+    def test_a_failed_apply_keeps_every_scalar_it_already_had(self):
+        """Тело пропало ПОСЛЕ восстановления -- и база остаётся прежней.
 
-        [REASON]: строка улик -- производная от тел, и пересборка по
-        пропавшему телу законно даёт пустые скаляры. Опасно здесь не это, а
-        молчание: без отдельного счётчика прогон выглядел бы успешным ровно
-        тогда, когда он стёр восстановленное. Поэтому потеря считается и
-        печатается предупреждением.
+        [REASON]: кода возврата здесь МАЛО. Он защищает следующий шаг
+        цепочки, но не эту базу. Пока `--apply` коммитил батчами, испорченные
+        строки ложились в базу до того, как потеря вообще была замечена:
+        прогон возвращал 3, пересчёт не стартовал, а улики уже были стёрты.
+        Проверка требует, чтобы прежние значения скаляров УЦЕЛЕЛИ, а не стали
+        `None`.
         """
         self.run_tool('--apply', '--quiet')
-        self.assertEqual(self.scalars()[IN_PERIOD[0]], AREA[IN_PERIOD[0]])
+        good = dict(self.scalars())
+        self.assertEqual(good[IN_PERIOD[0]], AREA[IN_PERIOD[0]])
+        # Расхождение обязано быть настоящим: скаляры непусты у всех строк.
+        self.assertNotIn(None, good.values())
+
         root = store.source_root(os.path.abspath(self.db))
         shutil.rmtree(root, ignore_errors=True)
         code, text = self.run_tool('--apply', '--quiet')
+
         self.assertEqual(code, tool.EXIT_LOST_SCALARS)
         self.assertIn('list scalars lost           : 4', text)
         self.assertIn('FAILED', text)
-        self.assertEqual(set(self.scalars().values()), {None})
+        self.assertIn('ROLLED BACK', text)
+        # Главное: ни один уже известный скаляр не потерян в БАЗЕ.
+        self.assertEqual(self.scalars(), good)
+        self.assertNotIn(None, self.scalars().values())
+
+    def test_a_failed_apply_leaves_the_database_byte_for_byte(self):
+        """Отрицательный контроль по содержимому файла, а не по одной колонке.
+
+        [REASON]: сравнение одной колонки прошло бы и тогда, когда прогон
+        испортил соседние поля строки улик или другую таблицу. Здесь
+        сверяется SHA-256 всего файла базы и полный дамп `dji_flight_evidence`.
+        """
+        self.run_tool('--apply', '--quiet')
+        before_sha = self.db_sha()
+        before_dump = self.evidence_dump()
+
+        root = store.source_root(os.path.abspath(self.db))
+        shutil.rmtree(root, ignore_errors=True)
+        code, _text = self.run_tool('--apply', '--quiet')
+
+        self.assertEqual(code, tool.EXIT_LOST_SCALARS)
+        self.assertEqual(self.evidence_dump(), before_dump)
+        self.assertEqual(self.db_sha(), before_sha)
+
+    def test_the_byte_comparison_can_actually_see_a_change(self):
+        """Без этого две проверки выше ничего не различают.
+
+        [REASON]: если бы `db_sha` читал не тот файл или дамп всегда выходил
+        пустым, неуспешный `--apply` «сохранял» бы базу тривиально. Здесь тот
+        же контроль применяется к УСПЕШНОМУ прогону, который обязан базу
+        изменить.
+        """
+        before_sha = self.db_sha()
+        before_dump = self.evidence_dump()
+        self.assertTrue(before_dump)
+        code, _text = self.run_tool('--apply', '--quiet')
+        self.assertEqual(code, tool.EXIT_OK)
+        self.assertNotEqual(self.evidence_dump(), before_dump)
+        self.assertNotEqual(self.db_sha(), before_sha)
 
     def test_a_dry_run_that_would_lose_scalars_exits_nonzero(self):
         """Ворота блока R: сухой прогон обязан НЕ пустить `--apply`.
