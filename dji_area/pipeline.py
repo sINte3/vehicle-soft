@@ -4,7 +4,25 @@
 Один проход: записи периода (плюс граничные дни для хронологии борта) ->
 сводки V4 (кэш в `dji_v4_summaries`) -> структурный экран и пересечения по
 борту -> качество канала применения по борту и месяцу -> резолвер площади
--> резолвер поля -> append-only запись. Без `--apply` ничего не пишется, но
+-> резолвер поля -> append-only запись.
+
+ДВЕ ИДЕНТИЧНОСТИ, и их нельзя смешивать:
+
+* ``chronology_key`` -- УСТОЙЧИВАЯ идентичность машины: она не зависит от того,
+  какие доказательства по вылету успели собраться. По ней и только по ней
+  группируются хронологические экраны -- структурный и пересечения интервалов;
+* ``hardware_id`` -- идентичность из ДОКАЗАТЕЛЬСТВА (карточка, маршрут), с
+  происхождением в ``hardware_id_source``. Она ложится в строку расчёта и
+  никуда не исчезает.
+
+[REASON]: сентябрьский holdout поймал, чем оборачивается их смешение. На
+площадке 643 вылета имели карточку и получили ``1581F...`` (серийный номер
+полётного контроллера), а остальные 3980 -- ``64TBL...`` из паспорта машины
+(код корпуса) либо ничего. Один и тот же борт распался на две группы, цепочки
+``A -> мостик -> C`` порвались на границе доказательства, и структурный экран
+не нашёл НИ ОДНОГО кандидата из 233 запланированных. Замороженное правило при
+этом не виновато: оно говорит «один и тот же борт», а ошибкой было то, чем
+«тот же борт» определялся. Без `--apply` ничего не пишется, но
 сводка считается полностью -- по статусам, доступности V4, baseline, tiers,
 нерешённым записям, пересечениям, применению без площади.
 
@@ -30,6 +48,11 @@ from dji_area.hashing import calculation_input_hash, field_input_hash
 
 HW_SOURCE_UNIT_NICKNAME = 'unit_nickname'
 BOUNDARY_DAYS = 1
+
+# Происхождение устойчивого ключа хронологии, в порядке предпочтения.
+CHRONOLOGY_FROM_UNIT = 'unit'
+CHRONOLOGY_FROM_NICKNAME = 'nickname'
+CHRONOLOGY_FROM_HARDWARE = 'hardware'
 
 # Откуда взяты скаляры списка (площадь, ширина, режим, границы интервала).
 # Различие несёт доказательную силу и обязано входить в отпечаток входа.
@@ -69,6 +92,42 @@ def _epoch(dt):
 
 def report_day_of(dt):
     return (dt + timedelta(hours=REPORT_UTC_OFFSET_HOURS)).date()
+
+
+def normalized_nickname(value):
+    """Ник без регистра и пробелов -- та же нормализация, что у справочника."""
+    if not value:
+        return None
+    text = ''.join(str(value).lower().split())
+    return text or None
+
+
+def chronology_identity(drone_unit_id, nickname_raw, hardware_id):
+    """(ключ, происхождение) устойчивой идентичности машины.
+
+    Порядок предпочтения и причина каждого шага:
+
+    1. ``drone_unit_id`` -- машина Vehicle Soft. Её ставит приём вылетов по
+       нику, и она НЕ зависит от того, собрана ли карточка;
+    2. нормализованный ник -- когда машина по нику ещё не заведена. Ник тоже
+       приходит со списком, то есть доступен всем записям одинаково;
+    3. hardware из доказательства -- последнее средство для записи, у которой
+       нет ни машины, ни ника. Такая запись хотя бы не смешается с чужой.
+
+    [REASON]: hardware из доказательства НЕ может быть первым шагом. Он есть
+    только у части вылетов, и ровно поэтому он разрывал цепочки.
+    """
+    if drone_unit_id is not None:
+        return '%s:%s' % (CHRONOLOGY_FROM_UNIT, drone_unit_id), \
+            CHRONOLOGY_FROM_UNIT
+    nick = normalized_nickname(nickname_raw)
+    if nick:
+        return '%s:%s' % (CHRONOLOGY_FROM_NICKNAME, nick), \
+            CHRONOLOGY_FROM_NICKNAME
+    if hardware_id:
+        return '%s:%s' % (CHRONOLOGY_FROM_HARDWARE, hardware_id), \
+            CHRONOLOGY_FROM_HARDWARE
+    return None, None
 
 
 def load_flights(con, date_from, date_to, flight_ids=None):
@@ -161,6 +220,8 @@ def load_flights(con, date_from, date_to, flight_ids=None):
             # ник -> машина -> паспортный hardware_id даёт хронологию, но
             # помечается как выведенный, а не прочитанный.
             hardware, hw_source = r['unit_hardware_id'], HW_SOURCE_UNIT_NICKNAME
+        chronology_key, chronology_source = chronology_identity(
+            r['drone_unit_id'], r['nickname_raw'], hardware)
         item = {
             'flight_id': int(r['flight_id']),
             'drone_flight_id': r['drone_flight_id'],
@@ -173,6 +234,8 @@ def load_flights(con, date_from, date_to, flight_ids=None):
             and (wanted is None or int(r['flight_id']) in wanted),
             'hardware_id': hardware,
             'hardware_id_source': hw_source,
+            'chronology_key': chronology_key,
+            'chronology_key_source': chronology_source,
             'mode_name': lst['mode_name'] if lst else None,
             'manual_mode': lst['manual_mode'] if lst else None,
             'spray_width': lst['spray_width'] if lst else None,
@@ -350,17 +413,37 @@ def _recalculate(con, root, date_from, date_to, apply, flight_ids,
     targets = [i for i in items if i['in_period']]
     summary['flights_in_period'] = len(targets)
 
-    # ── Хронология по борту ──────────────────────────────────────────────
-    by_hw = defaultdict(list)
+    # ── Хронология по МАШИНЕ, а не по доказательству ─────────────────────
+    # [REASON]: ключ здесь -- `chronology_key`. Пока группировка шла по
+    # `hardware_id`, появление карточки у части вылетов переносило их в другую
+    # группу, и цепочка рвалась там, где её разорвала доступность источника, а
+    # не полёт. Сентябрь: 233 кандидата из 233 перестали быть кандидатами.
+    by_key = defaultdict(list)
     for item in items:
-        if item['hardware_id']:
-            by_hw[item['hardware_id']].append(item)
-    for hw, records in by_hw.items():
+        if item['chronology_key']:
+            by_key[item['chronology_key']].append(item)
+    for key, records in by_key.items():
         records.sort(key=lambda r: (r['start_ts'] or 0, r['flight_id']))
+    # Идентичность машины В КОНФИГУРАЦИИ -- это серийный номер из
+    # доказательства; паспортный код корпуса в ней не назван. Берём его у
+    # группы, чтобы запись без карточки отвечала на вопрос «этот борт известен
+    # как ненадёжный?» так же, как её соседка с карточкой.
+    group_evidence_hw = {}
+    group_hw_conflict = set()
+    for key, records in by_key.items():
+        seen = sorted({r['hardware_id'] for r in records
+                       if r['hardware_id'] and r['hardware_id_source']
+                       in (ev.HW_SOURCE_CARD, ev.HW_SOURCE_ROUTE)})
+        if len(seen) == 1:
+            group_evidence_hw[key] = seen[0]
+        elif len(seen) > 1:
+            # Две разные прочитанные идентичности на одной машине -- это
+            # находка, а не повод выбрать одну из них монеткой.
+            group_hw_conflict.add(key)
     structural_by_flight = {}
     overlap_by_flight = {}
     neighbours_by_flight = {}
-    for hw, records in by_hw.items():
+    for key, records in by_key.items():
         screens = st.screen_all(records)
         groups = st.overlap_groups(records)
         for idx, rec in enumerate(records):
@@ -417,9 +500,9 @@ def _recalculate(con, root, date_from, date_to, apply, flight_ids,
             # Файл с чужой идентичностью не свидетельствует и о канале борта:
             # он вообще не о нём.
             if ((summ.get('application_frames') or 0) > 0
-                    and item['hardware_id'] and month in months_wanted
+                    and item['chronology_key'] and month in months_wanted
                     and item.get('v4_identity_status') != ev.V4_MISMATCH):
-                channel_evidence[(item['hardware_id'], month)] = True
+                channel_evidence[(item['chronology_key'], month)] = True
         if progress and n % 200 == 0:
             progress('v4 %d/%d' % (n, len(channel_items)))
 
@@ -432,9 +515,19 @@ def _recalculate(con, root, date_from, date_to, apply, flight_ids,
         fid = item['flight_id']
         summ, summ_id = v4_by_flight.get(fid, (None, None))
         hw = item['hardware_id']
+        key = item['chronology_key']
         month = _month_key(item['report_day'])
-        channel = rs.channel_quality_for(hw, channel_evidence.get((hw, month),
-                                                                 False))
+        # [REASON]: свидетельство канала собирается по МАШИНЕ (иначе вылеты без
+        # карточки не увидят того, что доказала соседка), а вопрос «известен ли
+        # этот борт как ненадёжный» задаётся об идентичности ИЗ ДОКАЗАТЕЛЬСТВА:
+        # в конфигурации названы серийные номера, а не коды корпуса. Своя
+        # прочитанная идентичность записи важнее групповой.
+        channel_hw = hw
+        if item['hardware_id_source'] not in (ev.HW_SOURCE_CARD,
+                                              ev.HW_SOURCE_ROUTE):
+            channel_hw = group_evidence_hw.get(key) or hw
+        channel = rs.channel_quality_for(
+            channel_hw, channel_evidence.get((key, month), False))
         structural = structural_by_flight.get(fid) or {}
         overlap_group = overlap_by_flight.get(fid)
         overlap = {'group_id': overlap_group, 'conflict': bool(overlap_group)}
@@ -460,6 +553,10 @@ def _recalculate(con, root, date_from, date_to, apply, flight_ids,
             decision.anomaly_flags.append(v4_failure)
         if item['hardware_id_source'] == HW_SOURCE_UNIT_NICKNAME:
             decision.anomaly_flags.append('HARDWARE_FROM_NICKNAME')
+        if key in group_hw_conflict:
+            decision.anomaly_flags.append('CHRONOLOGY_GROUP_HARDWARE_CONFLICT')
+        if channel_hw and channel_hw != hw:
+            decision.anomaly_flags.append('CHANNEL_IDENTITY_FROM_GROUP')
         if item.get('list_value_source') == LIST_FROM_MUTABLE_RAW_JSON:
             decision.anomaly_flags.append('LIST_FROM_MUTABLE_RAW_JSON')
         elif item.get('list_value_source') == LIST_REVISION_UNPARSED:
@@ -476,9 +573,22 @@ def _recalculate(con, root, date_from, date_to, apply, flight_ids,
              'card': revision_sha(con, item['card_revision_id'], sha_cache),
              'route': revision_sha(con, item['route_revision_id'], sha_cache),
              'v4': revision_sha(con, item['v4_revision_id'], sha_cache)},
-            neighbours, channel_evidence.get((hw, month), False),
+            # [REASON]: тем же ключом, что и решение выше. Спросить
+            # словарь идентичностью из доказательства значило бы
+            # всегда получать `False`: свидетельство приходит от
+            # СОСЕДА по борту, и пересчёт отвечал бы `unchanged` на
+            # запись, качество канала которой уже изменилось.
+            neighbours, channel_evidence.get((key, month), False),
             extra={'hardware_id': hw, 'hardware_id_source':
                    item['hardware_id_source'],
+                   # [REASON]: от ключа хронологии зависит и структурный экран,
+                   # и свидетельство канала. Не войди он в отпечаток --
+                   # пересчёт после исправления идентичности ответил бы
+                   # `unchanged` и навсегда оставил строки, посчитанные по
+                   # разорванной цепочке.
+                   'chronology_key': item.get('chronology_key'),
+                   'chronology_key_source': item.get('chronology_key_source'),
+                   'channel_identity': channel_hw,
                    'route_identity': item.get('route_identity_status'),
                    'v4_identity': item.get('v4_identity_status'),
                    # [REASON]: различить ревизию и raw_json отпечаток умел и
@@ -717,6 +827,11 @@ def _flight_line(item, decision, field):
         'counter_window_quality': decision.counter_window_quality,
         'anomaly_flags': list(decision.anomaly_flags),
         'application_activity': decision.application_activity,
+        # [REASON]: качество канала решает, читается ли «флагов не было» как
+        # NOT_OBSERVED или как UNKNOWN, и с impl-4 оно берётся по машине, а не
+        # по идентичности из доказательства. Не показать его в построчной
+        # диагностике значило бы спрятать ровно то, что изменилось.
+        'application_channel_quality': decision.application_channel_quality,
         'application_evidence_kind': decision.application_evidence_kind,
         'application_without_area': decision.application_without_area,
         'structural_candidate': decision.structural_candidate,
