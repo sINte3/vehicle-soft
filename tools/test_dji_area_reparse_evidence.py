@@ -238,10 +238,40 @@ class ItInventsNothing(Base):
         root = store.source_root(os.path.abspath(self.db))
         shutil.rmtree(root, ignore_errors=True)
         code, text = self.run_tool('--apply', '--quiet')
-        self.assertEqual(code, tool.EXIT_OK)
+        self.assertEqual(code, tool.EXIT_LOST_SCALARS)
         self.assertIn('list scalars lost           : 4', text)
-        self.assertIn('WARNING', text)
+        self.assertIn('FAILED', text)
         self.assertEqual(set(self.scalars().values()), {None})
+
+    def test_a_dry_run_that_would_lose_scalars_exits_nonzero(self):
+        """Ворота блока R: сухой прогон обязан НЕ пустить `--apply`.
+
+        [REASON]: цепочка ранбука читает только `$LASTEXITCODE`. Пока потеря
+        была предупреждением при коде 0, сухой прогон заканчивался успехом,
+        за ним стартовал `--apply`, и тот же обвал повторялся уже с записью в
+        базу. Проверка построена на КОДЕ, а не на тексте: текст мог бы
+        печататься и при нуле -- и печатался.
+        """
+        self.run_tool('--apply', '--quiet')
+        self.assertEqual(self.scalars()[IN_PERIOD[0]], AREA[IN_PERIOD[0]])
+        root = store.source_root(os.path.abspath(self.db))
+        shutil.rmtree(root, ignore_errors=True)
+
+        code, text = self.run_tool('--dry-run', '--quiet')
+        self.assertEqual(code, tool.EXIT_LOST_SCALARS)
+        self.assertNotEqual(tool.EXIT_LOST_SCALARS, tool.EXIT_OK)
+        self.assertIn('NOT a success', text)
+        # Сухой прогон остаётся сухим: он ничего не стёр, и потому потерю
+        # увидит и следующий за ним `--apply`.
+        self.assertEqual(self.scalars()[IN_PERIOD[0]], AREA[IN_PERIOD[0]])
+
+    def test_a_clean_run_still_exits_zero(self):
+        # Отрицательный контроль к двум проверкам выше: если бы код 3
+        # возвращался всегда, они прошли бы, ничего не различая.
+        code, _text = self.run_tool('--dry-run', '--quiet')
+        self.assertEqual(code, tool.EXIT_OK)
+        code, _text = self.run_tool('--apply', '--quiet')
+        self.assertEqual(code, tool.EXIT_OK)
 
     def test_a_missing_database_is_code_2_and_no_file_appears(self):
         ghost = os.path.join(self.tmp, 'nowhere', 'absent.db')

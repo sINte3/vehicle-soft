@@ -32,7 +32,15 @@
   --only-unparsed                     -- только строки с названной, но неразобранной ревизией списка
 
 Коды возврата: 0 выполнено; 1 ошибка командной строки или данных; 2 база не
-найдена (файл НЕ создаётся). Вывод в консоль только ASCII.
+найдена (файл НЕ создаётся); 3 хотя бы одна строка ПОТЕРЯЛА уже известные
+скаляры списка -- тело перестало читаться, и прогон успехом не считается ни в
+сухом виде, ни с `--apply`. Вывод в консоль только ASCII.
+
+Про код 3 отдельно. Восстановление и потеря -- разные события, и складывать их
+в один итог нельзя: прогон, стерший восстановленное, выглядел бы успешным. В
+блоке R сухой прогон стоит перед `--apply` именно как ворота: он перебирает те
+же тела и откатывает транзакцию, поэтому видит ровно тот же набор потерь, что
+дал бы `--apply`. Ненулевой код останавливает цепочку ранбука до первой записи.
 """
 
 import argparse
@@ -52,6 +60,12 @@ DEFAULT_DB = os.path.join(ROOT, 'instance', 'transport.db')
 EXIT_OK = 0
 EXIT_USAGE = 1
 EXIT_NO_DATABASE = 2
+# [REASON]: потеря уже известных скаляров списка -- НЕ успех, и код возврата
+# обязан это сказать. Иначе сухой прогон в блоке R заканчивается нулём, за ним
+# стартует `--apply`, и тот же обвал повторяется уже с записью в базу.
+# Цепочка ранбука ловит только ненулевой код; предупреждения в тексте она не
+# читает.
+EXIT_LOST_SCALARS = 3
 
 SCALARS = ('list_raw_area_m2', 'list_start_ts', 'list_end_ts',
            'list_mode_name', 'list_manual_mode', 'list_spray_width',
@@ -151,6 +165,7 @@ def main(argv=None):
 
     con = store.connect(args.db_path)
     root = store.source_root(os.path.abspath(args.db_path))
+    lost = []
     try:
         store.require_tables(con)
         flights = select_flights(con, date_from, date_to, args.only_unparsed)
@@ -196,7 +211,7 @@ def main(argv=None):
         print('  list scalars lost           : %d' % len(lost))
         if lost:
             # Потеря скаляров -- находка, а не успех: тело перестало читаться.
-            print('  WARNING: %d row(s) lost their list scalars; the stored '
+            print('  FAILED: %d row(s) lost their list scalars; the stored '
                   'body no longer reads. First: %s'
                   % (len(lost), lost[:5]))
     except (store.StoreError, ValueError) as exc:
@@ -210,6 +225,13 @@ def main(argv=None):
             pass
     if not args.apply:
         print('Nothing was written. Re-run with --apply to store the result.')
+    if lost:
+        # Fail-closed: сухой прогон обязан остановить блок R до `--apply`, а
+        # `--apply` -- до пересчёта. Потерянные скаляры не «предупреждение», а
+        # причина не продолжать.
+        print('EXIT %d: list scalars were lost; this run is NOT a success.'
+              % EXIT_LOST_SCALARS)
+        return EXIT_LOST_SCALARS
     return EXIT_OK
 
 
