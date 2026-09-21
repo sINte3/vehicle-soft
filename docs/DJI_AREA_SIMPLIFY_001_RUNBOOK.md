@@ -51,12 +51,21 @@ SHA в файл меняет содержимое коммита и, значи�
 
 | Пин | Что доказывает | Почему не самореференция |
 |---|---|---|
-| Аннотированный тег `dji-area-simplify-001-reviewed-5` | `git rev-parse HEAD` совпадает с коммитом, на который указывает тег: это ровно та ревизия целиком | тег создаётся **после** коммита и живёт отдельной ссылкой; в блоке записано только его ИМЯ |
+| Аннотированный тег `dji-area-productionization-001-rc1` | `git rev-parse HEAD` совпадает с коммитом, на который указывает тег: это ровно та ревизия целиком | тег создаётся **после** коммита и живёт отдельной ссылкой; в блоке записано только его ИМЯ |
 | Отпечаток кода `$ExpectedFingerprint` | содержимое девяти файлов, которые считают вердикт, не разошлось с проверенным | отпечаток берётся по `FROZEN_FILES`, а этот файл в них не входит |
 
 Тег отвечает на вопрос «та ли ревизия», отпечаток — на вопрос «не правили ли
 рабочую копию после клонирования». Блок дополнительно требует чистый
 `git status`.
+
+Тройка «ветка, тег, отпечаток» переезжает вместе с кодом и всегда называет одну
+ревизию. 21.09.2026 (DJI-AREA-PRODUCTIONIZATION-001) она переведена с
+`claude/dji-area-simplify-001` / `dji-area-simplify-001-reviewed-5` /
+`316dfd53…` на нынешние значения: в замороженном `dji_area/pipeline.py`
+исправлена зависимость идентичности группы от окна пересчёта, и отпечаток
+обязан был измениться. Сентябрьские результаты от этого не изменились (полный
+пересчёт 01.09–18.09 на копии площадки — `unchanged=4623`); блок R и holdout
+сентября исполнены на `reviewed-4` / `reviewed-5` и остаются историей этих тегов.
 
 Отпечаток печатает сам инструмент:
 
@@ -88,9 +97,9 @@ $src     = 'C:\VehicleSoft_Holdout_Staging\src_r'
 $out     = 'C:\VehicleSoft_Holdout_Staging\reparse'
 $backup  = 'C:\transport-report-staging\backups\dji-area'
 $py      = 'C:\Program Files\Python314\python.exe'
-$branch  = 'claude/dji-area-simplify-001'
-$ExpectedTag = 'dji-area-simplify-001-reviewed-5'
-$ExpectedFingerprint = '316dfd536f88dda392144f844627608dd37ca2e9201e114db625c88f7cf1998c'
+$branch  = 'claude/dji-area-productionization-001'
+$ExpectedTag = 'dji-area-productionization-001-rc1'
+$ExpectedFingerprint = '7c01a13148410b494d725984b2725618f3ef096535e52dfdd75305eb3d10edb6'
 $from    = '2026-09-01'
 $to      = '2026-09-18'
 if ($staging -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a root that is not the staging checkout" }
@@ -340,9 +349,9 @@ $planDir = 'C:\VehicleSoft_Holdout\plan'
 $plan    = 'C:\VehicleSoft_Holdout\plan\plan.json'
 $ids     = 'C:\VehicleSoft_Holdout\plan\capture_ids.txt'
 $py      = 'C:\Program Files\Python314\python.exe'
-$branch  = 'claude/dji-area-simplify-001'
-$ExpectedTag = 'dji-area-simplify-001-reviewed-5'
-$ExpectedFingerprint = '316dfd536f88dda392144f844627608dd37ca2e9201e114db625c88f7cf1998c'
+$branch  = 'claude/dji-area-productionization-001'
+$ExpectedTag = 'dji-area-productionization-001-rc1'
+$ExpectedFingerprint = '7c01a13148410b494d725984b2725618f3ef096535e52dfdd75305eb3d10edb6'
 if (-not (Test-Path -LiteralPath $py)) { throw "STEP FAILED: python not found: $py" }
 if (-not (Test-Path -LiteralPath $review)) { throw "STEP FAILED: review clone not found: $review" }
 if (-not (Test-Path -LiteralPath $work)) { New-Item -ItemType Directory -Force -Path $work | Out-Null }
@@ -461,9 +470,9 @@ $out     = 'C:\VehicleSoft_Holdout_Staging\report'
 $recalc  = 'C:\VehicleSoft_Holdout_Staging\recalc'
 $backup  = 'C:\transport-report-staging\backups\dji-area'
 $py      = 'C:\Program Files\Python314\python.exe'
-$branch  = 'claude/dji-area-simplify-001'
-$ExpectedTag = 'dji-area-simplify-001-reviewed-5'
-$ExpectedFingerprint = '316dfd536f88dda392144f844627608dd37ca2e9201e114db625c88f7cf1998c'
+$branch  = 'claude/dji-area-productionization-001'
+$ExpectedTag = 'dji-area-productionization-001-rc1'
+$ExpectedFingerprint = '7c01a13148410b494d725984b2725618f3ef096535e52dfdd75305eb3d10edb6'
 if ($staging -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a root that is not the staging checkout" }
 if ($db -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a database outside the staging checkout" }
 if ($service -ne 'TransportReportStaging') { throw "STEP FAILED: refusing a service that is not the staging service" }

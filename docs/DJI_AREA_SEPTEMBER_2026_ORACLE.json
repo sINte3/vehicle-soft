@@ -1,0 +1,123 @@
+{
+  "expected": {
+    "after_ha": 4245.4737,
+    "bridges_excluded": 0,
+    "by_drone": {
+      "10 Kogon": {
+        "after_ha": 547.9501,
+        "excluded_ha": 40.1556,
+        "pending_ha": 0.0,
+        "raw_ha": 588.1057,
+        "records": 489,
+        "review_ha": 2.9186
+      },
+      "11 Kogon": {
+        "after_ha": 151.2577,
+        "excluded_ha": 0.0,
+        "pending_ha": 0.0,
+        "raw_ha": 151.2577,
+        "records": 147,
+        "review_ha": 2.5159
+      },
+      "12 Servis": {
+        "after_ha": 579.4539,
+        "excluded_ha": 14.7186,
+        "pending_ha": 0.0,
+        "raw_ha": 594.1725,
+        "records": 671,
+        "review_ha": 0.262
+      },
+      "13 Peshku": {
+        "after_ha": 340.4993,
+        "excluded_ha": 1.4006,
+        "pending_ha": 0.0,
+        "raw_ha": 341.8999,
+        "records": 264,
+        "review_ha": 0.0
+      },
+      "14 Servis": {
+        "after_ha": 708.5522,
+        "excluded_ha": 31.2207,
+        "pending_ha": 0.0,
+        "raw_ha": 739.7729,
+        "records": 814,
+        "review_ha": 1.0653
+      },
+      "15 Servis": {
+        "after_ha": 353.9608,
+        "excluded_ha": 12.9455,
+        "pending_ha": 0.0,
+        "raw_ha": 366.9063,
+        "records": 412,
+        "review_ha": 0.0
+      },
+      "3 Gijduvon": {
+        "after_ha": 594.6119,
+        "excluded_ha": 19.0538,
+        "pending_ha": 0.0,
+        "raw_ha": 613.6657,
+        "records": 676,
+        "review_ha": 1.026
+      },
+      "5 Shofirko": {
+        "after_ha": 184.8411,
+        "excluded_ha": 21.1424,
+        "pending_ha": 0.0,
+        "raw_ha": 205.9835,
+        "records": 274,
+        "review_ha": 0.0
+      },
+      "6 Shofirko": {
+        "after_ha": 182.5172,
+        "excluded_ha": 1.7579,
+        "pending_ha": 0.0,
+        "raw_ha": 184.2751,
+        "records": 236,
+        "review_ha": 1.93
+      },
+      "8 GardenU": {
+        "after_ha": 481.2099,
+        "excluded_ha": 25.4136,
+        "pending_ha": 0.0,
+        "raw_ha": 506.6235,
+        "records": 530,
+        "review_ha": 0.6453
+      },
+      "9 Garden": {
+        "after_ha": 120.6197,
+        "excluded_ha": 0.0,
+        "pending_ha": 0.0,
+        "raw_ha": 120.6197,
+        "records": 110,
+        "review_ha": 0.0
+      }
+    },
+    "chains_shown": 233,
+    "complete": false,
+    "excluded_ha": 167.8088,
+    "excluded_records": 230,
+    "links_ok": true,
+    "partition_holds": true,
+    "pending_ha": 0.0,
+    "pending_records": 0,
+    "proven_by_control_only": 1,
+    "proven_structural": 229,
+    "raw_ha": 4413.2825,
+    "raw_missing_records": 0,
+    "records": 4623,
+    "review_application_with_flat_counter": 4,
+    "review_ha": 10.3631,
+    "review_records": 13,
+    "structural_candidates": 233
+  },
+  "notes": [
+    "The four APPLICATION_WITH_FLAT_COUNTER records were visually confirmed as phantoms by the owner, yet the machine must leave them in REVIEW. No flight id is hard-coded anywhere.",
+    "The rule miss caught by the control V4 sample must stay visible as an overstatement confirmed without a structural match."
+  ],
+  "oracle": "september-2026",
+  "period": [
+    "2026-09-01",
+    "2026-09-18"
+  ],
+  "provenance": "Blind September holdout (233/233 HIT) and the live Block R on staging 2026-09-20: 4623 calculations, RAW 44132825 m2, 233 structural candidates. Per-drone figures come from the local replica built from the same envelopes; it reproduced Block R totals to the square metre."
+}
