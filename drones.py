@@ -1628,6 +1628,74 @@ def api_land_geometry_manifest():
                    known=known, known_count=len(known))
 
 
+@drones_bp.route('/api/area_capture_manifest', methods=['POST'])
+def api_area_capture_manifest():
+    """Which fresh flights need an addressed source/V4 capture?
+
+    Body: {"token": "...", "date_from": "2026-09-16", "date_to": "2026-09-18",
+           "max_ids": 50}            -- every field but the token is optional
+    Answer: `dji_area.capture_manifest.build_manifest`.
+
+    READ ONLY: the database is opened `mode=ro`, and nothing here talks to
+    DJI. The default window is the last three report days (UTC+5): a chain can
+    cross midnight, evidence arrives late, and tomorrow's run has to heal
+    yesterday's record.
+
+    [REASON]: the window and the number of ids are both bounded on the
+    server. A leaked token must not be able to pull the structural state of a
+    whole year in one request, and an honest caller never needs more than a
+    few days. No signed link, cookie or source body is part of the answer --
+    only flight ids, days and which sources are already stored.
+    """
+    import sqlite3
+
+    from dji_area import capture_manifest as dji_manifest
+
+    payload = request.get_json(force=True, silent=True)
+    token = extract_token(payload)
+    if not verify_api_token(token, current_app.config.get('DRONE_API_TOKEN')):
+        return jsonify(error='unauthorized'), 401
+    try:
+        date_from = _drone_manifest_date(payload.get('date_from'))
+        date_to = _drone_manifest_date(payload.get('date_to'))
+        date_from, date_to = dji_manifest.resolve_window(
+            _drone_today_local(), date_from, date_to)
+        max_ids = _drone_int(payload.get('max_ids'))
+        if max_ids is None:
+            max_ids = dji_manifest.DEFAULT_MAX_IDS
+        if max_ids < 0:
+            raise ValueError('max_ids must not be negative')
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    try:
+        con = sqlite3.connect(
+            'file:%s?mode=ro' % os.path.abspath(
+                _drone_evidence_db_path()).replace('\\', '/'),
+            uri=True, timeout=30)
+        con.row_factory = sqlite3.Row
+    except Exception as exc:  # noqa: BLE001
+        return jsonify(status='error', error=str(exc)), 500
+    try:
+        manifest = dji_manifest.build_manifest(con, date_from, date_to,
+                                               max_ids=max_ids)
+    except Exception as exc:  # noqa: BLE001
+        con.close()
+        current_app.logger.exception('AREA CAPTURE MANIFEST failed')
+        return jsonify(status='error', error=str(exc)), 500
+    con.close()
+    manifest['status'] = 'ok'
+    return jsonify(manifest)
+
+
+def _drone_manifest_date(value):
+    """ISO date or None; anything else is a 400, never a silent default."""
+    if value is None or value == '':
+        return None
+    if not isinstance(value, str):
+        raise ValueError('dates must be YYYY-MM-DD strings')
+    return datetime.strptime(value.strip(), '%Y-%m-%d').date()
+
+
 @drones_bp.route('/api/land_snapshot_sync', methods=['POST'])
 def api_land_snapshot_sync():
     """Ingest an IMMUTABLE catalog snapshot: land revisions and geometry bytes.
@@ -5602,6 +5670,20 @@ DRONE_REPORT_TILES = (
                        'ёки носоз ҳисобланган',
     },
     {
+        # DJI-AREA-PRODUCTIONIZATION-001. The product view of the same
+        # evidence model: what DJI reported, what was provably excluded and
+        # what is left. The technical estimate below stays the audit trail.
+        'key': 'area-control',
+        'endpoint': 'drones.area_control',
+        'accent': 'is-primary',
+        'title_ru': 'Контроль площади DJI',
+        'title_uz': 'DJI майдони назорати',
+        'subtitle_ru': 'DJI показал, программа доказанно исключила, '
+                       'осталось — по дронам и по каждой корректировке',
+        'subtitle_uz': 'DJI кўрсатди, дастур исботланган ҳолда чиқарди, '
+                       'қолди — дронлар ва ҳар бир тузатиш бўйича',
+    },
+    {
         # DJI-AREA-REPORT-001. Reuses is-primary, the accent of the flight
         # summary and the calendar: this is the same flight data read through
         # the evidence model -- RAW DJI beside the checked estimate. A new
@@ -8373,8 +8455,12 @@ def _drone_area_limitation(row):
     return '; '.join(parts)
 
 
-def _drone_area_current_rows(filters):
+def _drone_area_current_rows(filters, columns=None):
     """Текущие строки расчёта под фильтром, обогащённые полем и машиной.
+
+    ``columns`` -- какие колонки расчёта положить в строку. По умолчанию --
+    набор технической страницы; экран контроля площади просит шире (признаки
+    экрана и цепочку), а техническая страница своего набора не меняет.
 
     Текущая строка -- `superseded_at IS NULL` под текущей версией алгоритма;
     привязка к полю -- то же под версией резолвера полей. Отсутствующая
@@ -8439,7 +8525,8 @@ def _drone_area_current_rows(filters):
             tier = dji_field.TIER5_UNKNOWN
         if filters['tier'] and tier != filters['tier']:
             continue
-        row = {col: getattr(c, col) for col in _DRONE_AREA_CALC_COLUMNS}
+        row = {col: getattr(c, col)
+               for col in (columns or _DRONE_AREA_CALC_COLUMNS)}
         row['field_attribution_tier'] = tier
         row['field_attribution_method'] = (
             attr.field_attribution_method if attr is not None else None)
@@ -8766,3 +8853,125 @@ def area_evidence_xlsx():
     st.style_table(ws, num_formats={6: '0', 7: '0.00', 8: '0', 9: '0.00',
                                     10: '0'})
     return _drone_xlsx_response(wb, 'drone_area_evidence', filters)
+
+
+# ─── Контроль площади DJI: продуктовый экран ─────────────────────────────────
+# DJI-AREA-PRODUCTIONIZATION-001. «DJI показал -> программа доказанно
+# исключила -> осталось». Величины и слова даёт `dji_area.control_report`
+# поверх `dji_area.accounting`; здесь только выборка строк и Flask.
+#
+# [REASON]: это ОТДЕЛЬНЫЙ экран, а не правка технической оценки выше. Та
+# страница по своему контракту не показывает ни одного производного итога
+# («полный итог не вычисляется намеренно»), и десяток её тестов проверяет
+# именно отсутствие таких чисел. «Площадь после подтверждённых
+# корректировок» -- ровно такой итог. Один экран с двумя противоположными
+# контрактами врал бы одному из читателей.
+#
+# RAW не переписывается: `drone_flights.area_ha` здесь не читается и не
+# пишется, `billable_area_m2` остаётся NULL. Мостик B не исключается.
+
+_DRONE_AREA_CONTROL_COLUMNS = _DRONE_AREA_CALC_COLUMNS + (
+    'structural_candidate', 'structural_rule_version', 'scalar_source_check',
+    'candidate_base_flight_id', 'bridge_flight_ids_json', 'v4_revision_id',
+    'v4_summary_id', 'counter_window_quality',
+)
+
+
+def _drone_area_control_filters(args):
+    from dji_area import control_report as dji_control
+
+    filters = _drone_area_filters(args)
+    # Статус резолвера и надёжность поля -- фильтры технической страницы.
+    filters['status'] = ''
+    filters['tier'] = ''
+    view = (args.get('view') or '').strip()
+    filters['view'] = view if view in dji_control.VIEWS \
+        else dji_control.VIEW_ALL
+    return filters
+
+
+def _drone_area_control_link_args(filters, **extra):
+    out = {'date_from': filters['date_from_s'],
+           'date_to': filters['date_to_s']}
+    if filters['unit_id']:
+        out['unit_id'] = filters['unit_id']
+    if filters['view'] != 'all':
+        out['view'] = filters['view']
+    out.update(extra)
+    return out
+
+
+def _drone_area_control_report(filters):
+    from dji_area import control_report as dji_control
+
+    rows = _drone_area_current_rows(filters,
+                                    columns=_DRONE_AREA_CONTROL_COLUMNS)
+    return dji_control.build(rows, lang=_drone_lang(), view=filters['view'])
+
+
+@drones_bp.route('/area-control')
+@module_required('drones')
+def area_control():
+    """Контроль площади DJI. Только чтение."""
+    from dji_area import accounting as dji_accounting
+    from dji_area import control_report as dji_control
+
+    filters = _drone_area_control_filters(request.args)
+    report = _drone_area_control_report(filters)
+    register = report['register']
+    truncated = len(register) > DRONE_AREA_MAX_DETAIL_ROWS
+    lang = _drone_lang()
+    views = (
+        (dji_control.VIEW_ALL, _drone_t('Барчаси', 'Все')),
+        (dji_control.VIEW_CONFIRMED,
+         _drone_t('Тасдиқланган тузатишлар', 'Подтверждённые корректировки')),
+        (dji_control.VIEW_PENDING, _drone_t('V4 кутилмоқда', 'Ожидает V4')),
+        (dji_control.VIEW_REVIEW,
+         _drone_t('Текшириш талаб қилинади', 'Требует проверки')),
+    )
+    return render_template(
+        'drones/area_control.html',
+        filters=filters,
+        link_args=_drone_area_control_link_args(filters),
+        view_links=[(code, label, _drone_area_control_link_args(
+            filters, view=code)) for code, label in views],
+        total=report['total'],
+        drones=report['drones'],
+        register=register[:DRONE_AREA_MAX_DETAIL_ROWS],
+        register_total=len(register),
+        truncated=truncated,
+        max_rows=DRONE_AREA_MAX_DETAIL_ROWS,
+        units=DroneUnit.query.order_by(DroneUnit.number).all(),
+        tips={key: dji_control.pick(pair, lang)
+              for key, pair in dji_control.TOOLTIPS.items()},
+        bridge_note=dji_control.pick(dji_control.BRIDGE_NOTE, lang),
+        ha=dji_control.ha,
+        rule_version=dji_area.STRUCTURAL_RULE_VERSION,
+        algorithm_version=dji_area.AREA_ALGORITHM_VERSION,
+        classes_version=dji_accounting.ACCOUNTING_CLASSES_VERSION,
+    )
+
+
+@drones_bp.route('/area-control.xlsx')
+@module_required('drones')
+def area_control_xlsx():
+    """«Отчёт контроля площади DJI»: сводка, по дронам, корректировки,
+    требует проверки. Отдельная книга: техническая выгрузка area-evidence и
+    `drones_flights_*.xlsx` не меняются."""
+    from dji_area import accounting as dji_accounting
+    from dji_area import control_report as dji_control
+
+    filters = _drone_area_control_filters(request.args)
+    # Книга -- всегда полный реестр, каким бы ни был фильтр экрана.
+    filters['view'] = dji_control.VIEW_ALL
+    report = _drone_area_control_report(filters)
+    wb = dji_control.build_workbook(
+        report, lang=_drone_lang(),
+        period=(filters['date_from_s'], filters['date_to_s']),
+        versions={
+            'area_algorithm': dji_area.AREA_ALGORITHM_VERSION,
+            'structural_rule': dji_area.STRUCTURAL_RULE_VERSION,
+            'accounting_classes': dji_accounting.ACCOUNTING_CLASSES_VERSION,
+            'report': dji_control.REPORT_VERSION,
+        })
+    return _drone_xlsx_response(wb, 'drone_area_control', filters)

@@ -172,6 +172,12 @@ def create_app():
         # it writes nothing at all.
         if request.path == '/drones/api/land_geometry_manifest':
             return True
+        # DJI-AREA-PRODUCTIONIZATION-001: read-only manifest of the fresh
+        # flights that need an addressed source/V4 capture. Same token in
+        # the body, same deny-by-default; the database is opened mode=ro.
+        # One exact path, not a prefix (see the [REASON] above).
+        if request.path == '/drones/api/area_capture_manifest':
+            return True
         # BOT001: Bot API endpoints use Bearer token auth, not browser sessions.
         if request.path.startswith('/api/bot/'):
             return True
