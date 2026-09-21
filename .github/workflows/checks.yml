@@ -253,6 +253,44 @@ jobs:
       - name: Block 1B evidence (the document matches the tables it quotes)
         run: python tools/test_dji_area_block1b_evidence.py
 
+      # DJI-AREA-SIMPLIFY-001. The September blind holdout and the live Block
+      # R both passed, and both leaned on properties that nothing in this
+      # workflow held. Every one of them is cheap to break and expensive to
+      # notice, because each produces a WRONG NUMBER rather than a failure:
+      #
+      #   * one aircraft must be ONE chronology group. Grouping by the
+      #     evidence hardware_id split eleven aircraft into twenty-two the
+      #     moment a card arrived for some flights, and the frozen structural
+      #     screen then found 0 of 233 planned candidates on staging. Every
+      #     check in the identity suite is built as a DISAGREEMENT -- the
+      #     records of one aircraft carry deliberately different hardware ids
+      #     -- so a suite that passes proves something;
+      #
+      #   * the reparse must be idempotent PHYSICALLY, not only in meaning.
+      #     The second --apply reported "rows changed: 0" and still rewrote
+      #     4623 rows with a fresh updated_at. The test pins that with a
+      #     controlled clock rather than a sleep, so it cannot pass by two
+      #     runs landing in the same second -- which is exactly how the
+      #     defect survived review;
+      #
+      #   * the runbook blocks are pasted into the server console verbatim.
+      #     One of them already threw on a CORRECT fingerprint, because the
+      #     loose parser matched the header line as well as the final one.
+      #
+      # Stdlib only: dji_area/ imports nothing from Flask, and the three tool
+      # self-tests build their own SQLite fixtures in a temporary directory.
+      # No new dependency, no network, no database, no server.
+      - name: DJI area SIMPLIFY-001 model (accounting classes, one aircraft one group)
+        run: |
+          python -m unittest tests.test_dji_area_accounting
+          python -m unittest tests.test_dji_area_identity_001
+
+      - name: DJI area SIMPLIFY-001 rig (holdout tool, runbook, reparse)
+        run: |
+          python tools/test_dji_area_holdout.py
+          python tools/test_dji_area_holdout_runbook.py
+          python tools/test_dji_area_reparse_evidence.py
+
       # The recomputation itself, on a temporary SQLite database built with
       # the migration's own DDL. Stdlib only: drone_coverage_recalc.py and
       # drone_useful_area.py are deliberately free of Flask, and this suite
