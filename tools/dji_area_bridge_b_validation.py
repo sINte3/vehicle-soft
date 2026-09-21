@@ -1131,7 +1131,8 @@ def main(argv=None):
                      'w', encoding='utf-8') as fh:
             fh.write('# bridges B with recorded area, no V4 and no LIST spray '
                      'usage\n')
-            for flight_id in summary['review_without_any_application_evidence']:
+            unresolved = summary['review_without_any_application_evidence']
+            for flight_id in unresolved:
                 fh.write('%d\n' % flight_id)
 
     print('  bridges per chain : %s' % summary['bridges_per_chain'])
