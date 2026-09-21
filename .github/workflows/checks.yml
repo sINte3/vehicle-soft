@@ -291,6 +291,55 @@ jobs:
           python tools/test_dji_area_holdout_runbook.py
           python tools/test_dji_area_reparse_evidence.py
 
+      # DJI-AREA-PRODUCTIONIZATION-001. The daily product built on the proven
+      # C correction. Every suite here is stdlib (plus openpyxl, installed
+      # above) and builds its own SQLite fixture: no Flask, no network, no DJI.
+      #
+      # What they hold is what breaks silently and costs money:
+      #
+      #   * the capture manifest never loses a structural candidate to the id
+      #     cap, never asks again for a flight whose V4 is already stored, and
+      #     keeps "DJI holds no V4" as a visible state instead of a daily visit;
+      #   * the control sample is deterministic per day -- otherwise every run
+      #     would pull in a fresh portion of the same day and the capture
+      #     would creep without end;
+      #   * RAW is never rewritten, the bridge B is never subtracted, a partial
+      #     phantom keeps its small real growth instead of being zeroed, and
+      #     PHANTOM_STRUCTURAL / REVIEW stay at RAW;
+      #   * the September oracle adds up by itself and the acceptance tool can
+      #     FAIL -- an acceptance that cannot fail accepts nothing;
+      #   * the daily cycle stops BEFORE DJI when the manifest is too large, and
+      #     a second run over the same evidence must write nothing.
+      #
+      # [REASON]: PR #131 shipped its regression suites without wiring them
+      # into this file, and they sat unexecuted until a review noticed. These
+      # are wired in the same PR that adds them.
+      #
+      # The Flask half (screen, workbook route, permissions, the endpoint's
+      # token) lives in tests/test_dji_area_control_web_001.py and runs locally
+      # and on the server: this workflow installs no application dependency.
+      - name: DJI area control (capture manifest, product semantics, workbook)
+        run: |
+          python -m unittest tests.test_dji_area_capture_manifest_001
+          python -m unittest tests.test_dji_area_control_report_001
+
+      - name: DJI area daily cycle (manifest client, orchestration, acceptance)
+        run: |
+          python -m unittest drone_collector.tests.test_area_manifest
+          python tools/test_dji_area_daily.py
+          python tools/test_dji_area_control_acceptance.py
+          python tools/test_dji_area_raw_guard.py
+
+      # The owner pastes these blocks VERBATIM into a server console: one stops
+      # the staging service and switches its revision, another contacts DJI.
+      # What is held: no placeholder and no production name, the revision pin
+      # equals the real code fingerprint, September is accepted BEFORE the
+      # revision is switched, the receiver is proven to be staging before the
+      # collector runs, the stop threshold is not raised, and the acceptance
+      # figures in the text are the oracle's own.
+      - name: DJI area production runbook (owner blocks)
+        run: python tools/test_dji_area_production_runbook.py
+
       # The recomputation itself, on a temporary SQLite database built with
       # the migration's own DDL. Stdlib only: drone_coverage_recalc.py and
       # drone_useful_area.py are deliberately free of Flask, and this suite
