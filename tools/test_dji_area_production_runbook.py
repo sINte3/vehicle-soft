@@ -338,10 +338,60 @@ class BlockW(unittest.TestCase):
         self.assertIn('.AddHours(5).AddDays(-1)', block)
         self.assertNotIn('--days', block)
 
-    def test_the_token_is_never_read_or_printed(self):
+    def test_the_token_value_is_never_read_from_the_file_or_printed(self):
         block = block_w()
-        self.assertNotIn('DRONE_API_TOKEN', block)
+        # `.env` копируется целиком: значение токена из файла не вычитывается.
         self.assertNotIn('Get-Content -LiteralPath $envF', block)
+        self.assertNotIn("Pattern '^\\s*DRONE_API_TOKEN", block)
+        for line in block.splitlines():
+            if 'Write-Host' in line or 'Write-Output' in line:
+                self.assertNotIn('$savedToken', line)
+                self.assertNotIn('$env:DRONE_API_TOKEN', line)
+        # Переменная окружения трогается ровно дважды: сохранить и вернуть.
+        self.assertEqual(block.count('$env:DRONE_API_TOKEN'), 2)
+
+    def test_an_inherited_process_token_cannot_silence_the_copied_env(self):
+        # [REASON]: живая квалификация 21.09.2026 остановилась ровно здесь. В
+        # консоли рабочей машины остался DRONE_API_TOKEN от прежней работы, а
+        # `drone_collector/config.py` НАМЕРЕННО отдаёт приоритет окружению
+        # процесса над `.env` (докстринг `load_dotenv_file`: «Existing
+        # environment variables win over the file»), чтобы задача планировщика
+        # побеждала устаревший файл. Приоритет правильный и не меняется,
+        # поэтому блок снимает переменную у себя -- и обязан вернуть её.
+        block = block_w()
+        order = ['$hadToken = Test-Path env:DRONE_API_TOKEN',
+                 'if ($hadToken) { $savedToken = $env:DRONE_API_TOKEN }',
+                 'if ($hadToken) { Remove-Item env:DRONE_API_TOKEN }',
+                 'if ($hadToken -and (Test-Path env:DRONE_API_TOKEN)) { throw',
+                 'try {',
+                 '& $cpy ',
+                 '} finally {',
+                 'if ($hadToken) { $env:DRONE_API_TOKEN = $savedToken }']
+        places = [pos(block, needle) for needle in order]
+        self.assertEqual(places, sorted(places), order)
+
+    def test_the_removal_is_proven_not_assumed(self):
+        # Снять переменную мало: без проверки блок ушёл бы в кабинет с чужим
+        # токеном и получил бы 401 уже после первого обращения к DJI.
+        block = block_w()
+        self.assertLess(
+            pos(block, 'if ($hadToken -and (Test-Path env:DRONE_API_TOKEN)) '
+                       '{ throw'),
+            pos(block, '& $cpy '))
+
+    def test_the_saved_value_does_not_outlive_the_block(self):
+        block = block_w()
+        tail = block[pos(block, '} finally {'):]
+        self.assertIn('$savedToken = $null', tail)
+        self.assertLess(tail.index('$env:DRONE_API_TOKEN = $savedToken'),
+                        tail.index('$savedToken = $null'))
+
+    def test_no_other_block_touches_the_token(self):
+        # Правка узкая: она про рабочую машину, где живёт сборщик.
+        mine = block_w()
+        for block in blocks():
+            if block != mine:
+                self.assertNotIn('DRONE_API_TOKEN', block)
 
     def test_incomplete_sources_are_a_result_not_a_crash(self):
         block = block_w()
@@ -398,6 +448,26 @@ class TheTextAgreesWithTheCode(unittest.TestCase):
                     'review_application_with_flat_counter'):
             self.assertRegex(text, r'(?<!\d)%d(?!\d)' % expected[key], key)
         self.assertIn('`{"unchanged": %d}`' % expected['records'], text)
+
+    def test_the_live_qualification_numbers_add_up(self):
+        # [REASON]: числа квалификации 21.09.2026 ниоткуда не выводятся -- это
+        # запись живого прогона, и repo их не может пересчитать. Проверить
+        # можно ровно одно, и это стоит проверять: чтобы запись не
+        # противоречила сама себе после правки документа.
+        text = read()
+        ids, candidates, controls = [int(x) for x in re.search(
+            r'\*\*(\d+) идентификатора = (\d+) кандидатов \+ (\d+)\s+'
+            r'контрольных\*\*', text).groups()]
+        self.assertEqual(ids, candidates + controls)
+        envelopes, per_id, kinds = [int(x) for x in re.search(
+            r'Отправлено (\d+) конвертов источников \((\d+) × (\d+)\)',
+            text).groups()]
+        self.assertEqual(envelopes, per_id * kinds)
+        self.assertEqual(per_id, ids)
+        square_metres, hectares = re.search(
+            r'RAW\s+([\d ]+) м² \(([\d,]+) га\)', text).groups()
+        self.assertAlmostEqual(int(square_metres.replace(' ', '')) / 10000.0,
+                               float(hectares.replace(',', '.')), places=4)
 
     def test_the_exit_code_table_is_the_tools_own(self):
         text = read()

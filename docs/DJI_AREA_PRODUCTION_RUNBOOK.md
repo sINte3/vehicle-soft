@@ -235,6 +235,67 @@ S печатает строкой `BACKUP:` (вместе с `-wal` и `-shm`); 
 остановленной службе. Готового блока для этого нет намеренно: в нём был бы
 путь-заполнитель.
 
+## Квалификация площадки: пройдена 21.09.2026
+
+Блоки **A → W → S исполнены владельцем**, все три PASS. Ревизия
+`ae42e23d40e38089329f90debd99cc6add98cc19`, тег
+`dji-area-productionization-001-rc1`, отпечаток кода `7c01a131…`. Production не
+затрагивался; служба `TransportReportStaging` поднята.
+
+**Блок A — PASS.** Приёмка сентября 01–18.09.2026 на БАЗЕ ПЛОЩАДКИ совпала с
+оракулом до последней цифры: 4623 записи, `raw_missing` 0, RAW 4413,2825 га,
+исключено 167,8088 га (230 записей), после корректировок 4245,4737 га, ждёт V4
+0, на проверке 10,3631 га (13), кандидатов 233, цепочек 233, доказано правилом
+229, только контрольной выборкой 1, `APPLICATION_WITH_FLAT_COUNTER` на проверке
+4, мостиков среди корректировок 0, сухой пересчёт `unchanged=4623`, SHA базы не
+изменился. Резервная копия —
+`backups\dji-area\transport.db.pre_area_control_20260921_145226.bak`. Экран
+осмотрен владельцем глазами: пять чисел и таблица по дронам на месте, цепочка
+A → B → C раскрывается, у мостика стоит «не корректируется», REVIEW остаётся
+по RAW.
+
+**Блок W — PASS.** Живой день — 20.09.2026. Обход списка: 620 вылетов за
+19–21.09, из них 557 новых для площадки, 63 дубликата, 0 нераспознанных, 0
+ошибок. Манифест за 20.09: **22 идентификатора = 15 кандидатов + 7
+контрольных**, `NO_V4_AT_SOURCE` 0, `over_cap` false — внутри предсказанного
+суточного диапазона 6–42 и ниже порога 50. Посещены все 22, и каждый отдал
+полный набор: карточка, маршрут, airlines, **V4**. Счётчики сборщика:
+`sources_requested=22 sources_visited=22 sources_full=22 sources_v4=22
+sources_no_v4=0 sources_v4_failed=0 sources_page_errors=0 sources_rejected=0`.
+Отправлено 88 конвертов источников (22 × 4), принято 88 новых, 0 ошибок приёма,
+код возврата 0. Сбора по всему парку не было.
+
+**Блок S — PASS.** Окно 19–21.09.2026. Первый пересчёт: 620 вылетов, RAW
+5 976 919 м² (597,6919 га), кандидатов экрана 24, V4 в наличии 22, `CERTIFIED`
+15, `COUNTER_FLAT_RAW_OVERSTATED` 15, записано `calc new=620` и
+`field new=620`. Второй пересчёт: `calc_writes unchanged=620`,
+`field_writes unchanged=620`, ворота идемпотентности PASS. Сторож RAW: снимок
+15 664 вылета, RAW сохранён у 15 664, изменён у 0, новых вылетов 557
+(разрешено), `billable` не NULL 0 — **RAW UNTOUCHED**. Повторная приёмка
+сентября после живого смоука — PASS ровно с теми же числами оракула: живой цикл
+не сдвинул уже принятый период. `STEP=PASS`.
+
+Числа блока S читаются так: адресный сбор шёл за ОДИН день (20.09), поэтому V4
+получили 15 кандидатов этого дня — и все 15 подтвердились как завышение. Ещё 9
+кандидатов окна приходятся на 19 и 21 сентября, V4 по ним не запрашивался, и они
+остались по RAW в графе «Ожидает доказательства / V4». Завтрашний прогон цикла
+берёт их сам: окно скользит.
+
+### Находка квалификации: унаследованный `DRONE_API_TOKEN`
+
+Единственная остановка за всю квалификацию, и она не в алгоритме и не в
+продукте. В консоли рабочей машины остался `DRONE_API_TOKEN` от прежней работы.
+Приоритет окружения процесса над `.env` — сознательное решение
+`drone_collector/config.py`, поэтому сборщик взял устаревшее значение и получил
+401. Владелец убрал переменную из процесса руками, после чего сборщик прочитал
+верный токен из скопированного `.env`, и блок прошёл целиком.
+
+Приоритет не меняется. Исправлен только блок W: он сам сохраняет унаследованное
+значение, убирает переменную, проверяет, что она убрана, и возвращает её в
+`finally`. Ни одно значение не печатается. Свойство держится тестом
+`tools/test_dji_area_production_runbook.py` в CI. Квалификация 21.09.2026 шла на
+тексте блока ДО этой правки — ручной обход владельца ей эквивалентен.
+
 ## Площадка: три блока
 
 Порядок: **A** (сервер) → **W** (рабочая машина) → **S** (сервер). Каждый блок
@@ -246,15 +307,18 @@ S печатает строкой `BACKUP:` (вместе с `-wal` и `-shm`); 
 `dji-area-productionization-001-rc1` плюс отпечаток кода — та же пара, что в
 `docs/DJI_AREA_SIMPLIFY_001_RUNBOOK.md`.
 
-Чем блоки проверены до выдачи. `tools/test_dji_area_production_runbook.py`
-держит их свойства в CI (порядок шагов, гейты, отсутствие production и
-заполнителей, равенство пина настоящему отпечатку, равенство чисел приёмки
-оракулу). Все блоки разобраны настоящим парсером PowerShell 5.1 и 7 без ошибок.
-HTTP-проверки блока A исполнены ВЕРБАТИМ в PowerShell 5.1 дважды: на нынешнем
-коде они проходят (200 / 401 / форма входа), на неразвёрнутой площадке — падают
-на `expected 401` (она отвечает 400), то есть проверка различает два случая.
-Целиком на SRV-YOQSH блоки этой сессией **не исполнялись**: консоли сервера у
-неё нет.
+Пин называет ревизию, которая прошла квалификацию. Закрывающие коммиты — раздел
+выше, правка блока W и тест к ней — легли ПОСЛЕ этого тега, поэтому перед любым
+следующим прогоном блоков пин обновляется на тег той ревизии, которую и будут
+запускать. Иначе откажет собственный гейт блока, и это правильно: он для того и
+стоит.
+
+Чем блоки проверены. `tools/test_dji_area_production_runbook.py` держит их
+свойства в CI (порядок шагов, гейты, обращение с унаследованным токеном,
+отсутствие production и заполнителей, равенство пина настоящему отпечатку,
+равенство чисел приёмки оракулу). Все блоки разобраны настоящим парсером
+PowerShell 5.1 и 7 без ошибок. Главное же — **все три блока исполнены живьём
+21.09.2026 и дали PASS**; результаты в разделе выше.
 
 | # | Где | Что делает | Пишет | DJI |
 |---|---|---|---|---|
@@ -463,6 +527,16 @@ Write-Host 'SEND BACK: C:\VehicleSoft_Area_Staging\area_acceptance.zip and the c
 берутся у holdout-сборщика, потому что они уже смотрят на площадку. Значение
 токена блок не печатает и не читает — файл копируется целиком.
 
+**Унаследованный токен процесса.** `drone_collector/config.py` намеренно отдаёт
+приоритет окружению процесса над `.env`: так задача планировщика, которая
+экспортирует токен, побеждает устаревший файл. Из-за этого же консоль, в которой
+`DRONE_API_TOKEN` остался от прежней работы, отправляет сборщика со старым
+токеном, и манифест отвечает 401 при верном `.env`. Это ровно то, на чём
+остановилась квалификация 21.09.2026. Приоритет не меняется — он правильный.
+Блок сам сохраняет унаследованное значение, убирает переменную на время своей
+работы, проверяет, что она действительно убрана, и возвращает её в `finally`;
+ни одно значение не печатается.
+
 До первого обращения к кабинету блок доказывает: ревизию, что приёмник —
 площадка, и что площадка отвечает на манифест (иначе обход вылетов потратил бы
 обращение к DJI впустую). Порог стоит дважды: на манифесте ДО обхода — тогда
@@ -525,25 +599,42 @@ Write-Host "CODE FINGERPRINT: $fp"
 if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: manifest client self-test exit $LASTEXITCODE" }
 & $py tools\test_dji_area_daily.py
 if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: daily cycle self-test exit $LASTEXITCODE" }
-$env:PLAYWRIGHT_BROWSERS_PATH = $browsers
-$day = (Get-Date).ToUniversalTime().AddHours(5).AddDays(-1).ToString('yyyy-MM-dd')
-Write-Host "SMOKE DAY (UTC+5, yesterday): $day"
-if (Test-Path -LiteralPath $send) { Remove-Item -LiteralPath $send -Recurse -Force }
-New-Item -ItemType Directory -Force -Path $send | Out-Null
-& $cpy -m drone_collector.area_manifest --out (Join-Path $send 'preflight_ids.txt') --summary (Join-Path $send 'preflight_manifest.json') --from $day --to $day --stop-above $StopAbove
-$pre = $LASTEXITCODE
-Write-Host "PREFLIGHT MANIFEST EXIT CODE: $pre  (0 ok, 22 larger than $StopAbove, 23 unavailable)"
-if ($pre -eq 22) { throw "STOP: the manifest is larger than $StopAbove before the walk -- DJI was NOT contacted; send back $send" }
-if ($pre -ne 0) { throw "STOP: staging does not serve the manifest (exit $pre) -- run block A first; DJI was NOT contacted" }
-& $cpy tools\dji_area_daily.py --skip-recalc --from $day --to $day --stop-above $StopAbove
-$rc = $LASTEXITCODE
-Write-Host "DAILY CYCLE EXIT CODE: $rc  (0 ok, 5 sources incomplete, 4 manifest too large)"
-foreach ($name in @('area_manifest.json','area_ids.txt')) { if (Test-Path -LiteralPath (Join-Path $daily $name)) { Copy-Item -LiteralPath (Join-Path $daily $name) -Destination $send -Force } }
-Compress-Archive -Path "$send\*" -DestinationPath 'C:\VehicleSoft_AreaDaily\area_smoke_w.zip' -Force
-if ($rc -eq 4) { throw "STOP: the manifest is larger than $StopAbove -- DJI was NOT contacted for sources; send back C:\VehicleSoft_AreaDaily\area_smoke_w.zip" }
-if (($rc -ne 0) -and ($rc -ne 5)) { throw "STEP FAILED: daily cycle exit $rc" }
-if ($rc -eq 5) { Write-Host 'INCOMPLETE: run this block again -- only the missing flights will be visited' }
-Write-Host 'SEND BACK: C:\VehicleSoft_AreaDaily\area_smoke_w.zip and the console text above'
+# The process may carry an inherited DRONE_API_TOKEN from earlier work,
+# and config.py lets the process environment win over .env BY DESIGN (see
+# the docstring of load_dotenv_file). A stale inherited token then beats
+# the copied staging .env and the manifest answers 401. Remove it for this
+# block only and put it back in finally. No token value is read or printed.
+$hadToken = Test-Path env:DRONE_API_TOKEN
+if ($hadToken) { $savedToken = $env:DRONE_API_TOKEN }
+if ($hadToken) { Remove-Item env:DRONE_API_TOKEN }
+if ($hadToken -and (Test-Path env:DRONE_API_TOKEN)) { throw "STEP FAILED: the inherited DRONE_API_TOKEN could not be removed from this process" }
+if ($hadToken) { Write-Host 'PROCESS TOKEN: an inherited one was found, removed for this block and restored at the end' }
+if (-not $hadToken) { Write-Host 'PROCESS TOKEN: none inherited; the copied staging .env is authoritative' }
+try {
+  $env:PLAYWRIGHT_BROWSERS_PATH = $browsers
+  $day = (Get-Date).ToUniversalTime().AddHours(5).AddDays(-1).ToString('yyyy-MM-dd')
+  Write-Host "SMOKE DAY (UTC+5, yesterday): $day"
+  if (Test-Path -LiteralPath $send) { Remove-Item -LiteralPath $send -Recurse -Force }
+  New-Item -ItemType Directory -Force -Path $send | Out-Null
+  & $cpy -m drone_collector.area_manifest --out (Join-Path $send 'preflight_ids.txt') --summary (Join-Path $send 'preflight_manifest.json') --from $day --to $day --stop-above $StopAbove
+  $pre = $LASTEXITCODE
+  Write-Host "PREFLIGHT MANIFEST EXIT CODE: $pre  (0 ok, 22 larger than $StopAbove, 23 unavailable)"
+  if ($pre -eq 22) { throw "STOP: the manifest is larger than $StopAbove before the walk -- DJI was NOT contacted; send back $send" }
+  if ($pre -ne 0) { throw "STOP: staging does not serve the manifest (exit $pre) -- run block A first; DJI was NOT contacted" }
+  & $cpy tools\dji_area_daily.py --skip-recalc --from $day --to $day --stop-above $StopAbove
+  $rc = $LASTEXITCODE
+  Write-Host "DAILY CYCLE EXIT CODE: $rc  (0 ok, 5 sources incomplete, 4 manifest too large)"
+  foreach ($name in @('area_manifest.json','area_ids.txt')) { if (Test-Path -LiteralPath (Join-Path $daily $name)) { Copy-Item -LiteralPath (Join-Path $daily $name) -Destination $send -Force } }
+  Compress-Archive -Path "$send\*" -DestinationPath 'C:\VehicleSoft_AreaDaily\area_smoke_w.zip' -Force
+  if ($rc -eq 4) { throw "STOP: the manifest is larger than $StopAbove -- DJI was NOT contacted for sources; send back C:\VehicleSoft_AreaDaily\area_smoke_w.zip" }
+  if (($rc -ne 0) -and ($rc -ne 5)) { throw "STEP FAILED: daily cycle exit $rc" }
+  if ($rc -eq 5) { Write-Host 'INCOMPLETE: run this block again -- only the missing flights will be visited' }
+  Write-Host 'SEND BACK: C:\VehicleSoft_AreaDaily\area_smoke_w.zip and the console text above'
+} finally {
+  if ($hadToken) { $env:DRONE_API_TOKEN = $savedToken }
+  $savedToken = $null
+  Write-Host "PROCESS TOKEN RESTORED: $hadToken"
+}
 }
 ```
 
