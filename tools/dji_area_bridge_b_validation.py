@@ -363,7 +363,8 @@ def research_category(profile):
         return B_VISUAL_REVIEW_REQUIRED, (
             'counter corroborates the recorded area, application channel '
             'cannot say (%s)' % channel)
-    return B_VISUAL_REVIEW_REQUIRED, 'resolver status %s needs a person' % status
+    return (B_VISUAL_REVIEW_REQUIRED,
+            'resolver status %s needs a person' % status)
 
 
 def build_profiles(con, root, items, chains, with_geometry=True):
@@ -410,13 +411,15 @@ def build_profiles(con, root, items, chains, with_geometry=True):
         chain['c_spray_usage'] = c_usage
         chain['b_spray_usage_sum'] = sum(u for u in b_usages if u is not None)
         # Сколько вылито за сам C сверх накопленного за A и B.
+        complete = len(known) == 1 + len(b_usages)
         chain['c_usage_residual'] = (c_usage - sum(known)) \
-            if c_usage is not None and len(known) == 1 + len(b_usages) else None
+            if c_usage is not None and complete else None
         chain['same_takeoff_point'] = _same_point(
             [a_raw, c_raw] + [usage(b)[1] for b in chain['b_ids']])
         a_area = _num(chain['a_raw_m2'])
         chain['a_litres_per_ha'] = round(
-            a_usage / 1000.0 / (a_area / 10000.0), 2)             if a_usage and a_area else None
+            a_usage / 1000.0 / (a_area / 10000.0), 2) \
+            if a_usage and a_area else None
         chain['signature'] = ''.join(
             segment_type(by_id[f]) for f in
             [chain['a_id']] + chain['b_ids'] + [chain['c_id']] if f in by_id)
@@ -510,8 +513,10 @@ def build_profiles(con, root, items, chains, with_geometry=True):
             }
             profile['ratio_b_to_a'] = _ratio(raw, profile['a_raw_m2'])
             profile['ratio_b_to_c'] = _ratio(raw, profile['c_raw_m2'])
-            profile['equals_a'] = raw is not None and raw == profile['a_raw_m2']
-            profile['equals_c'] = raw is not None and raw == profile['c_raw_m2']
+            profile['equals_a'] = (raw is not None
+                                   and raw == profile['a_raw_m2'])
+            profile['equals_c'] = (raw is not None
+                                   and raw == profile['c_raw_m2'])
             profile['litres_per_ha'] = round(
                 b_usage / 1000.0 / (raw / 10000.0), 2) \
                 if b_usage and raw else None
@@ -611,7 +616,8 @@ def summarize(chains, slots, signatures, takeoff_control):
 
     return {
         'tool_version': TOOL_VERSION,
-        'structural_rule_version': chains[0]['rule_version'] if chains else None,
+        'structural_rule_version':
+            chains[0]['rule_version'] if chains else None,
         'chains': len(chains),
         'bridges_per_chain': dict(sorted(Counter(
             len(c['b_ids']) for c in chains).items())),
@@ -916,7 +922,8 @@ def write_xlsx(path, summary, chains, slots, sample):
         ('B_EVIDENCE_CONFIRMED_OVERSTATEMENT, га',
          summary['B_EVIDENCE_CONFIRMED_OVERSTATEMENT_ha'],
          'только ZERO_PROVEN и PARTIAL; к C НЕ прибавляется'),
-        ('Потенциал: конфликт доказательств, га', pot['evidence_conflict'], ''),
+        ('Потенциал: конфликт доказательств, га',
+         pot['evidence_conflict'], ''),
         ('Потенциал: нет V4 и нет расхода LIST, га',
          pot['no_v4_and_no_list_usage'], ''),
         ('Нет V4, но расход LIST > 0, га',
