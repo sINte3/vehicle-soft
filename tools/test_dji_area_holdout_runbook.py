@@ -40,7 +40,7 @@ if REPO_ROOT not in sys.path:
 from tools import dji_area_holdout as tool  # noqa: E402
 
 RUNBOOK = os.path.join(REPO_ROOT, 'docs', 'DJI_AREA_SIMPLIFY_001_RUNBOOK.md')
-BRANCH = 'claude/dji-area-simplify-001'
+BRANCH = 'claude/dji-area-productionization-001'
 PY_PATH = r'C:\Program Files\Python314\python.exe'
 PR127 = 'b1c57ab3b99e22e4ecf4a68de4d1057ec7c3d8db'
 

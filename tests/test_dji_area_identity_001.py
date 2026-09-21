@@ -331,6 +331,81 @@ class ChannelCapabilityFollowsTheAircraft(unittest.TestCase):
             fx.close()
 
 
+class GroupIdentityDoesNotDependOnTheWindow(unittest.TestCase):
+    """Результат зависит от данных, а не от дат в командной строке.
+
+    [REASON]: найдено сквозным прогоном ежедневного цикла. Идентичность
+    группы собиралась по ЗАГРУЖЕННОМУ окну; в трёхдневном окне у борта не
+    оказывалось ни одного вылета с карточкой, флаг
+    `CHANNEL_IDENTITY_FROM_GROUP` пропадал, отпечаток входа менялся, и
+    ежедневный пересчёт переписывал строки, верно посчитанные месячным. Две
+    строки из 452 на настоящих сентябрьских данных -- и так каждый день.
+    """
+
+    LATE = 940030
+    LATE_DAY = date(2026, 9, 10)
+
+    def setUp(self):
+        self.fx = Fixture()
+        self.addCleanup(self.fx.close)
+        # Карточка есть только у вылета 2 сентября...
+        self.fx.add_card(BASE)
+        # ...а этот вылет того же борта -- 10 сентября и без карточки.
+        record = {'id': self.LATE, 'new_work_area': 7000.0, 'mode_name': 4,
+                  'manual_mode': False, 'spray_width': 6.0,
+                  'start_timestamp': ts('2026-09-10 09:00:00'),
+                  'end_timestamp': ts('2026-09-10 09:06:00'),
+                  'nickname': NICK}
+        con = sqlite3.connect(self.fx.db)
+        con.execute(
+            'INSERT INTO drone_flights (dji_flight_id, started_at, '
+            'finished_at, raw_json, drone_unit_id, nickname_raw) '
+            'VALUES (?,?,?,?,1,?)',
+            (self.LATE, '2026-09-10 09:00:00', '2026-09-10 09:06:00',
+             json.dumps(record), NICK))
+        con.commit()
+        con.close()
+
+    def flags(self, flight_id):
+        con = sqlite3.connect(self.fx.db)
+        row = con.execute(
+            'SELECT anomaly_flags_json FROM dji_area_calculations WHERE '
+            'flight_id=? AND superseded_at IS NULL', (flight_id,)).fetchone()
+        con.close()
+        return json.loads(row[0])
+
+    def test_a_narrow_window_agrees_with_the_whole_month(self):
+        month = pl.recalculate(self.fx.db, date(2026, 9, 1),
+                               date(2026, 9, 30), apply=True)
+        self.assertEqual(set(month['calc_writes']), {'new'})
+        self.assertIn('CHANNEL_IDENTITY_FROM_GROUP', self.flags(self.LATE))
+
+        narrow = pl.recalculate(self.fx.db, self.LATE_DAY, self.LATE_DAY,
+                                apply=True)
+        # Тот же вход -- та же строка: окно в один день ничего не переписывает.
+        self.assertEqual(narrow['calc_writes'], {'unchanged': 1},
+                         narrow['calc_writes'])
+        self.assertIn('CHANNEL_IDENTITY_FROM_GROUP', self.flags(self.LATE))
+
+    def test_another_month_does_not_lend_its_identity(self):
+        """Ключ -- (борт, МЕСЯЦ): сентябрьская карточка октябрю не свидетель.
+
+        Отрицательный контроль к проверке выше: независимость от окна
+        достигнута областью «свой полный месяц», а не тем, что идентичность
+        берётся откуда попало.
+        """
+        con = sqlite3.connect(self.fx.db)
+        con.execute("UPDATE drone_flights SET started_at = "
+                    "'2026-10-10 09:00:00', finished_at = "
+                    "'2026-10-10 09:06:00' WHERE dji_flight_id = ?",
+                    (self.LATE,))
+        con.commit()
+        con.close()
+        pl.recalculate(self.fx.db, date(2026, 9, 1), date(2026, 10, 31),
+                       apply=True)
+        self.assertNotIn('CHANNEL_IDENTITY_FROM_GROUP', self.flags(self.LATE))
+
+
 class TheInputHashFollowsTheIdentity(unittest.TestCase):
 
     def test_a_different_chronology_key_gives_a_different_hash(self):

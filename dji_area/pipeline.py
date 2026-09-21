@@ -424,22 +424,6 @@ def _recalculate(con, root, date_from, date_to, apply, flight_ids,
             by_key[item['chronology_key']].append(item)
     for key, records in by_key.items():
         records.sort(key=lambda r: (r['start_ts'] or 0, r['flight_id']))
-    # Идентичность машины В КОНФИГУРАЦИИ -- это серийный номер из
-    # доказательства; паспортный код корпуса в ней не назван. Берём его у
-    # группы, чтобы запись без карточки отвечала на вопрос «этот борт известен
-    # как ненадёжный?» так же, как её соседка с карточкой.
-    group_evidence_hw = {}
-    group_hw_conflict = set()
-    for key, records in by_key.items():
-        seen = sorted({r['hardware_id'] for r in records
-                       if r['hardware_id'] and r['hardware_id_source']
-                       in (ev.HW_SOURCE_CARD, ev.HW_SOURCE_ROUTE)})
-        if len(seen) == 1:
-            group_evidence_hw[key] = seen[0]
-        elif len(seen) > 1:
-            # Две разные прочитанные идентичности на одной машине -- это
-            # находка, а не повод выбрать одну из них монеткой.
-            group_hw_conflict.add(key)
     structural_by_flight = {}
     overlap_by_flight = {}
     neighbours_by_flight = {}
@@ -489,6 +473,35 @@ def _recalculate(con, root, date_from, date_to, apply, flight_ids,
     while probe <= ch_to:
         months_wanted.add(_month_key(probe))
         probe = (probe.replace(day=28) + timedelta(days=4)).replace(day=1)
+    # Идентичность машины В КОНФИГУРАЦИИ -- это серийный номер из
+    # доказательства; паспортный код корпуса в ней не назван. Берём его у
+    # группы, чтобы запись без карточки отвечала на вопрос «этот борт известен
+    # как ненадёжный?» так же, как её соседка с карточкой.
+    #
+    # [REASON]: ключ -- (борт, МЕСЯЦ), по тем же полным месяцам, что и
+    # свидетельство канала, и по той же причине. Пока идентичность группы
+    # собиралась по ЗАГРУЖЕННОМУ окну, она зависела от дат в командной строке:
+    # в трёхдневном окне у борта не оказывалось ни одного вылета с карточкой,
+    # флаг `CHANNEL_IDENTITY_FROM_GROUP` пропадал, отпечаток входа менялся, и
+    # ежедневный пересчёт переписывал строки, верно посчитанные месячным.
+    # Найдено сквозным прогоном ежедневного цикла на сентябрьских данных.
+    # Результат обязан зависеть от данных, а не от аргументов.
+    seen_hw = defaultdict(set)
+    for item in channel_items:
+        month = _month_key(item['report_day'])
+        if (item['chronology_key'] and month in months_wanted
+                and item['hardware_id'] and item['hardware_id_source']
+                in (ev.HW_SOURCE_CARD, ev.HW_SOURCE_ROUTE)):
+            seen_hw[(item['chronology_key'], month)].add(item['hardware_id'])
+    group_evidence_hw = {}
+    group_hw_conflict = set()
+    for scope, values in seen_hw.items():
+        if len(values) == 1:
+            group_evidence_hw[scope] = next(iter(values))
+        else:
+            # Две разные прочитанные идентичности на одной машине -- это
+            # находка, а не повод выбрать одну из них монеткой.
+            group_hw_conflict.add(scope)
     for n, item in enumerate(channel_items):
         summ, summ_id, failure = ensure_v4_summary(con, root, item, apply,
                                                    v4_cache)
@@ -525,7 +538,7 @@ def _recalculate(con, root, date_from, date_to, apply, flight_ids,
         channel_hw = hw
         if item['hardware_id_source'] not in (ev.HW_SOURCE_CARD,
                                               ev.HW_SOURCE_ROUTE):
-            channel_hw = group_evidence_hw.get(key) or hw
+            channel_hw = group_evidence_hw.get((key, month)) or hw
         channel = rs.channel_quality_for(
             channel_hw, channel_evidence.get((key, month), False))
         structural = structural_by_flight.get(fid) or {}
@@ -553,7 +566,7 @@ def _recalculate(con, root, date_from, date_to, apply, flight_ids,
             decision.anomaly_flags.append(v4_failure)
         if item['hardware_id_source'] == HW_SOURCE_UNIT_NICKNAME:
             decision.anomaly_flags.append('HARDWARE_FROM_NICKNAME')
-        if key in group_hw_conflict:
+        if (key, month) in group_hw_conflict:
             decision.anomaly_flags.append('CHRONOLOGY_GROUP_HARDWARE_CONFLICT')
         if channel_hw and channel_hw != hw:
             decision.anomaly_flags.append('CHANNEL_IDENTITY_FROM_GROUP')
