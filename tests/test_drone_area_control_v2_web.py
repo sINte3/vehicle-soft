@@ -712,6 +712,21 @@ class Refresh(Base):
         html = self.control_page(user_id=viewer)
         self.assertNotIn('action="/drones/dji-refresh"', html)
 
+    def test_the_panel_shows_the_last_flight_intake(self):
+        from models import DroneSyncLog
+        html = self.control_page()
+        self.assertIn('Последний приём вылетов: не было', html)
+        with app.app_context():
+            db.session.add(DroneSyncLog(
+                kind='incremental', status='ok', records_seen=3,
+                records_new=3, records_duplicate=0, records_unresolved=0,
+                records_error=0, started_at=datetime(2026, 9, 23, 1, 0),
+                finished_at=datetime(2026, 9, 23, 1, 2)))
+            db.session.commit()
+        html = self.control_page()
+        # 01:02 UTC -> 06:02 UTC+5.
+        self.assertIn('Последний приём вылетов: 23.09.2026 06:02', html)
+
     def test_the_uzbek_panel_is_cyrillic(self):
         html = self.control_page(language='uz')
         self.assertIn('DJI маълумотлари', html)

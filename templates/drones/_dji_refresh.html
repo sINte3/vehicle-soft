@@ -37,6 +37,8 @@
       <span class="vs-kpi-strip-label">{{ 'Последнее успешное обновление' if is_ru else 'Сўнгги муваффақиятли янгилаш' }}</span>
       <strong class="vs-kpi-strip-value is-text">{% if r_ok and r_ok.finished_local %}{{ r_ok.finished_local.strftime('%d.%m.%Y %H:%M') }}{% else %}{{ 'не было' if is_ru else 'бўлмаган' }}{% endif %}</strong>
       {% if r_ok %}<span class="vs-muted">{{ r_ok.trigger_label }}{% if r_ok.requested_by %}, {{ r_ok.requested_by }}{% endif %}{% if r_ok.window_from %} · {{ 'окно' if is_ru else 'ойна' }} {{ r_ok.window_from }} … {{ r_ok.window_to }}{% endif %}</span>{% endif %}
+      {% set r_intake = dji_last_flight_intake() %}
+      <span class="vs-muted">{{ 'Последний приём вылетов' if is_ru else 'Парвозларни сўнгги қабул қилиш' }}: {{ r_intake.strftime('%d.%m.%Y %H:%M') if r_intake else ('не было' if is_ru else 'бўлмаган') }}</span>
     </div>
     <div class="vs-kpi-strip-item">
       <span class="vs-kpi-strip-label">{{ 'Состояние' if is_ru else 'Ҳолат' }}</span>

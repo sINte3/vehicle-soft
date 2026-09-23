@@ -8691,6 +8691,7 @@ def area_evidence():
         tiers=[(code, DRONE_AREA_TIER_FILTER_LABELS[code][0 if is_ru else 1])
                for code in dji_field.TIERS],
         model_version=dji_area.MODEL_VERSION,
+        period_messages=drone_period.messages(filters, _drone_lang()),
     )
 
 
@@ -9496,10 +9497,27 @@ def _dji_refresh_state():
     return out
 
 
+def _dji_last_flight_intake():
+    """Когда вылеты DJI в последний раз успешно приняты (UTC+5) либо None.
+
+    [REASON]: ежедневный сбор вылетов (`DroneCollectorDaily`) -- не цикл
+    площади и в журнал циклов не пишет. Без этой строки панель на сервере,
+    где цикл площади по расписанию не настроен, молчала бы о том, что
+    вылеты всё же приходят каждое утро.
+    """
+    last = (DroneSyncLog.query.filter(DroneSyncLog.status == 'ok',
+                                      DroneSyncLog.finished_at.isnot(None))
+            .order_by(DroneSyncLog.finished_at.desc()).first())
+    if last is None:
+        return None
+    return last.finished_at + DRONE_DISPLAY_UTC_OFFSET
+
+
 @drones_bp.app_context_processor
 def _inject_dji_refresh_state():
     # Ленивый вызов: база читается только там, где шаблон рисует панель.
-    return {'dji_refresh_state': _dji_refresh_state}
+    return {'dji_refresh_state': _dji_refresh_state,
+            'dji_last_flight_intake': _dji_last_flight_intake}
 
 
 def _dji_refresh_json_run(view):

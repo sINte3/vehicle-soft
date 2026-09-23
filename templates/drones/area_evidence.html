@@ -1,5 +1,6 @@
 {% extends g.base_template %}
 {% set is_ru = (lang == 'ru') %}
+{% from 'drones/_period.html' import time_field, period_notes %}
 {% block title %}{{ 'Дроны — площадь DJI: техническая оценка' if is_ru else 'Дронлар — DJI майдони: техник баҳолаш' }}{% endblock %}
 {% block content %}
 {% include 'drones/_drones_nav.html' %}
@@ -42,10 +43,12 @@
         <label class="vs-label" for="areaDateFrom">{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
         <input type="date" name="date_from" id="areaDateFrom" class="vs-input" value="{{ filters.date_from_s }}">
       </div>
+      {{ time_field('time_from', filters.time_from_s, 'Время с' if is_ru else 'Вақт дан', 'areaTimeFrom') }}
       <div class="vs-field" style="width:160px;">
         <label class="vs-label" for="areaDateTo">{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
         <input type="date" name="date_to" id="areaDateTo" class="vs-input" value="{{ filters.date_to_s }}">
       </div>
+      {{ time_field('time_to', filters.time_to_s, 'Время по' if is_ru else 'Вақт гача', 'areaTimeTo') }}
       <div class="vs-field" style="min-width:180px;">
         <label class="vs-label" for="areaUnitFilter">{{ 'Машина' if is_ru else 'Машина' }}</label>
         <select name="unit_id" id="areaUnitFilter" class="vs-select">
@@ -84,6 +87,8 @@
     </form>
   </div>
 </div>
+
+{{ period_notes(period_messages) }}
 
 {# Карточки. NULL -- слово, не 0.00: ноль читался бы как измеренный ноль. #}
 <div class="vs-stat-grid vs-mb">
