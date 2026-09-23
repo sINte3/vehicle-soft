@@ -8169,6 +8169,7 @@ def operator_cash():
 # SmartFarm. Держится тестом tests/test_dji_area_report_001.py.
 
 import dji_area
+import drone_period
 from dji_area import aggregate as dji_aggregate
 from dji_area import field as dji_field
 from dji_area import resolver as dji_resolver
@@ -8365,18 +8366,14 @@ def _drone_area_ha(value_m2):
 
 
 def _drone_area_filters(args):
-    """Период, машина, статус и tier. Та же семантика дат, что у coverage:
-    отсутствие параметра -- окно по умолчанию, пустой параметр -- «за всё
-    время»."""
+    """Период (дата+время), машина, статус и tier. Та же семантика дат, что у
+    coverage: отсутствие параметра -- окно по умолчанию, пустой параметр --
+    «за всё время». Время -- общий фильтр модуля (`drone_period`): минуты в
+    UTC+5, конец полуоткрытый, по умолчанию 00:00 и 23:59."""
     today = _drone_today_local()
-    raw_from = args.get('date_from')
-    raw_to = args.get('date_to')
-    if raw_from is None and raw_to is None:
-        date_from = today - timedelta(days=DRONE_AREA_DEFAULT_DAYS)
-        date_to = today
-    else:
-        date_from = _drone_parse_date((raw_from or '').strip())
-        date_to = _drone_parse_date((raw_to or '').strip())
+    filters = drone_period.parse(
+        args, default_window=(today - timedelta(days=DRONE_AREA_DEFAULT_DAYS),
+                              today))
 
     status = (args.get('status') or '').strip()
     if status not in dji_resolver.AREA_STATUSES:
@@ -8384,23 +8381,30 @@ def _drone_area_filters(args):
     tier = (args.get('tier') or '').strip()
     if tier not in dji_field.TIERS:
         tier = ''
-    return {
-        'date_from': date_from,
-        'date_to': date_to,
-        'date_from_s': date_from.isoformat() if date_from else '',
-        'date_to_s': date_to.isoformat() if date_to else '',
+    filters.update({
         'unit_id': args.get('unit_id', type=int),
         'status': status,
         'tier': tier,
         'detail': (args.get('detail') or '').strip() == '1',
-    }
+    })
+    return filters
+
+
+def _drone_area_period_echo(filters):
+    """(с, по) для строки «Период» книги: дата, а при нестандартном времени --
+    дата и время UTC+5. Целые дни печатаются как раньше, датой."""
+    if filters.get('time_is_default', True):
+        return filters['date_from_s'], filters['date_to_s']
+    return drone_period.echo(filters)
 
 
 def _drone_area_link_args(filters, **extra):
     """Параметры ссылок страницы. Пустые даты передаются ПУСТЫМИ, а не
-    опускаются: опущенный параметр вернул бы окно по умолчанию."""
+    опускаются: опущенный параметр вернул бы окно по умолчанию. Время --
+    только когда оно не 00:00/23:59."""
     out = {'date_from': filters['date_from_s'],
            'date_to': filters['date_to_s']}
+    out.update(drone_period.link_args(filters))
     if filters['unit_id']:
         out['unit_id'] = filters['unit_id']
     if filters['status']:
@@ -8465,6 +8469,15 @@ def _drone_area_current_rows(filters, columns=None):
     Текущая строка -- `superseded_at IS NULL` под текущей версией алгоритма;
     привязка к полю -- то же под версией резолвера полей. Отсутствующая
     привязка считается TIER5 -- так же, как в dji_area.aggregate.
+
+    Период: грубо -- индексом по `report_start_date` (отчётный день начала в
+    UTC+5), точно -- по минутам момента начала `start_at_utc` в Python.
+
+    [REASON]: минуты уточняются в Python, а не в SQL. `start_at_utc` пишут
+    stdlib-писатели строкой из 19 символов, а SQLAlchemy связывает datetime
+    строкой из 26: сравнение строк у самой секунды врёт, и запись ровно в
+    00:00 местного пропадала бы. Отчётный день по построению равен дню
+    начала в UTC+5, поэтому грубый фильтр -- точное надмножество.
     """
     calc = DjiAreaCalculation
     q = (db.session.query(calc, DroneFlight)
@@ -8476,6 +8489,8 @@ def _drone_area_current_rows(filters, columns=None):
         q = q.filter(calc.report_start_date >= filters['date_from'])
     if filters['date_to']:
         q = q.filter(calc.report_start_date <= filters['date_to'])
+    refine_minutes = not filters.get('time_is_default', True) \
+        or filters.get('period_inverted')
     if filters['status']:
         q = q.filter(calc.area_status == filters['status'])
 
@@ -8507,6 +8522,9 @@ def _drone_area_current_rows(filters, columns=None):
 
     rows = []
     for c, flight in pairs:
+        if refine_minutes and not drone_period.contains_utc(filters,
+                                                            c.start_at_utc):
+            continue
         unit = None
         if flight is not None and flight.drone_unit_id is not None:
             unit = units_by_id.get(flight.drone_unit_id)
@@ -8695,6 +8713,7 @@ def area_evidence_xlsx():
     st = _drone_xlsx_styler()
     unbounded = _drone_t('чекланмаган', 'не ограничен')
     is_ru = _drone_lang() == 'ru'
+    period_from_s, period_to_s = _drone_area_period_echo(filters)
 
     wb = Workbook()
     ws = wb.active
@@ -8708,9 +8727,9 @@ def area_evidence_xlsx():
                   'Теневой режим: техническая оценка не заменяет площадь '
                   'DJI и не является счётом')),
         (_drone_t('Давр: бошланиши', 'Период: с'),
-         filters['date_from_s'] or unbounded),
+         period_from_s or unbounded),
         (_drone_t('Давр: тугаши', 'Период: по'),
-         filters['date_to_s'] or unbounded),
+         period_to_s or unbounded),
         (_drone_t('Модел версияси', 'Версия модели'), dji_area.MODEL_VERSION),
         (_drone_t('Майдон алгоритми', 'Алгоритм площади'),
          dji_area.AREA_ALGORITHM_VERSION),
@@ -8876,6 +8895,20 @@ _DRONE_AREA_CONTROL_COLUMNS = _DRONE_AREA_CALC_COLUMNS + (
     'v4_summary_id', 'counter_window_quality',
 )
 
+# DRONE-AREA-CONTROL-V2-MEGA. Дерево «Дрон -> День -> Вылет».
+#
+# [REASON]: вылетов за месяц -- десятки тысяч, а дерево рисуется на сервере
+# целиком (раскрытие -- без запросов, скриптом по уже отданным строкам).
+# Поэтому поимённо показываются записи, по которым есть что сказать
+# человеку (корректировки, ожидающие, спорные, решённые), а обычные вылеты
+# дня сворачиваются в одну строку «остальные -- приняты по DJI» с их суммой:
+# дочерние строки всегда складываются в родительскую. Список ВСЕХ вылетов
+# дня доступен переключателем, пока их не больше предела.
+DRONE_AREA_CONTROL_MAX_LISTED = 1500
+DRONE_AREA_CONTROL_LIST_ALL_MAX = 1500
+# Дерево раскрывается целиком при открытии, пока строк вылетов немного.
+DRONE_AREA_CONTROL_EXPAND_MAX = 60
+
 
 def _drone_area_control_filters(args):
     from dji_area import control_report as dji_control
@@ -8887,39 +8920,159 @@ def _drone_area_control_filters(args):
     view = (args.get('view') or '').strip()
     filters['view'] = view if view in dji_control.VIEWS \
         else dji_control.VIEW_ALL
+    filters['all_flights'] = (args.get('flights') or '').strip() == 'all'
     return filters
 
 
 def _drone_area_control_link_args(filters, **extra):
     out = {'date_from': filters['date_from_s'],
            'date_to': filters['date_to_s']}
+    out.update(drone_period.link_args(filters))
     if filters['unit_id']:
         out['unit_id'] = filters['unit_id']
     if filters['view'] != 'all':
         out['view'] = filters['view']
+    if filters.get('all_flights'):
+        out['flights'] = 'all'
     out.update(extra)
-    return out
+    return {key: value for key, value in out.items() if value is not None}
 
 
-def _drone_area_control_report(filters):
+def _drone_area_control_db():
+    """Соединение ТОЛЬКО для чтения либо None, если базы нет."""
+    import sqlite3
+
+    path = _drone_evidence_db_path()
+    if not path or not os.path.exists(path):
+        return None
+    con = sqlite3.connect('file:%s?mode=ro' % os.path.abspath(path).replace(
+        '\\', '/'), uri=True, timeout=30)
+    con.row_factory = sqlite3.Row
+    return con
+
+
+def _drone_area_decisions_for(flight_ids):
+    """({flight_id: действующее решение}, таблицы решений на месте)."""
+    from dji_area import control_store
+
+    con = _drone_area_control_db()
+    if con is None:
+        return {}, False
+    try:
+        if not control_store.tables_present(con):
+            return {}, False
+        return control_store.active_decisions(con, flight_ids), True
+    finally:
+        con.close()
+
+
+def _drone_area_chain_times(rows):
+    """{dji_flight_id: начало UTC} для звеньев A/B и самих записей.
+
+    [REASON]: A и B -- DJI-идентификаторы соседних вылетов того же борта, и
+    они нередко лежат вне отфильтрованного периода (цепочка пересекает
+    полночь). Время берётся из `drone_flights.started_at` -- каждый звено
+    экрана пришло оттуда, -- а не из выборки отчёта.
+    """
+    times = {int(r['flight_id']): r['start_at_utc'] for r in rows
+             if r.get('start_at_utc') is not None}
+    wanted = set()
+    for r in rows:
+        if r.get('structural_candidate') not in (True, 1) \
+                or not r.get('candidate_base_flight_id'):
+            continue
+        wanted.add(int(r['candidate_base_flight_id']))
+        try:
+            wanted.update(int(b) for b in json.loads(
+                r.get('bridge_flight_ids_json') or '[]'))
+        except (TypeError, ValueError):
+            pass
+    ids = sorted(wanted - set(times))
+    for start in range(0, len(ids), 400):
+        chunk = ids[start:start + 400]
+        for flight_id, started in (db.session.query(
+                DroneFlight.dji_flight_id, DroneFlight.started_at)
+                .filter(DroneFlight.dji_flight_id.in_(chunk)).all()):
+            times[int(flight_id)] = started
+    return times
+
+
+def _drone_area_control_report(filters, view=None):
     from dji_area import control_report as dji_control
 
     rows = _drone_area_current_rows(filters,
                                     columns=_DRONE_AREA_CONTROL_COLUMNS)
-    return dji_control.build(rows, lang=_drone_lang(), view=filters['view'])
+    decisions, ready = _drone_area_decisions_for(
+        [r['flight_id'] for r in rows])
+    list_all = bool(filters.get('all_flights')) \
+        and len(rows) <= DRONE_AREA_CONTROL_LIST_ALL_MAX
+    report = dji_control.build(
+        rows, lang=_drone_lang(), view=view or filters['view'],
+        decisions=decisions, times=_drone_area_chain_times(rows),
+        list_all=list_all)
+    report['decisions_ready'] = ready
+    report['rows_count'] = len(rows)
+    return report
+
+
+def _drone_area_control_truncate(report, limit):
+    """Оставить в дереве не больше ``limit`` вылетов поимённо.
+
+    Не показанные вылеты не пропадают: они переходят в строку «остальные»
+    своего дня, и сумма дня не меняется. Возвращает число скрытых строк.
+    """
+    from dji_area import control_report as dji_control
+
+    shown = 0
+    hidden = 0
+    for node in report['tree']:
+        for day in node['days']:
+            keep = []
+            moved = []
+            for item in day['flights']:
+                if shown < limit:
+                    keep.append(item)
+                    shown += 1
+                else:
+                    moved.append(item)
+            if moved:
+                rest = day['rest'] or dji_control.empty_rest()
+                for item in moved:
+                    dji_control.add_to_rest(rest, item)
+                day['rest'] = rest
+                day['flights'] = keep
+                hidden += len(moved)
+    return hidden
+
+
+def _drone_safe_next(value):
+    """Путь возврата внутри модуля либо None -- чужой адрес не принимается."""
+    value = (value or '').strip()
+    if (value.startswith('/drones/') and not value.startswith('//')
+            and '\\' not in value and '\n' not in value
+            and '\r' not in value):
+        return value
+    return None
+
+
+def _drone_user_name():
+    return (getattr(current_user, 'full_name', None)
+            or getattr(current_user, 'username', None) or '')
 
 
 @drones_bp.route('/area-control')
 @module_required('drones')
 def area_control():
-    """Контроль площади DJI. Только чтение."""
+    """Контроль площади DJI: формула, дерево по дронам и дням, решения."""
     from dji_area import accounting as dji_accounting
     from dji_area import control_report as dji_control
+    from dji_area import decisions as dji_decisions
 
     filters = _drone_area_control_filters(request.args)
     report = _drone_area_control_report(filters)
-    register = report['register']
-    truncated = len(register) > DRONE_AREA_MAX_DETAIL_ROWS
+    hidden = _drone_area_control_truncate(report,
+                                          DRONE_AREA_CONTROL_MAX_LISTED)
+    listed = report['listed_flights'] - hidden
     lang = _drone_lang()
     views = (
         (dji_control.VIEW_ALL, _drone_t('Барчаси', 'Все')),
@@ -8927,51 +9080,540 @@ def area_control():
          _drone_t('Тасдиқланган тузатишлар', 'Подтверждённые корректировки')),
         (dji_control.VIEW_PENDING, _drone_t('V4 кутилмоқда', 'Ожидает V4')),
         (dji_control.VIEW_REVIEW,
-         _drone_t('Текшириш талаб қилинади', 'Требует проверки')),
+         _drone_t('Қарор талаб қилинади', 'Требует решения')),
+        (dji_control.VIEW_DECIDED,
+         _drone_t('Администратор қарорлари', 'Решения администратора')),
     )
+    back_url = url_for('drones.area_control',
+                       **_drone_area_control_link_args(filters))
     return render_template(
         'drones/area_control.html',
         filters=filters,
         link_args=_drone_area_control_link_args(filters),
         view_links=[(code, label, _drone_area_control_link_args(
             filters, view=code)) for code, label in views],
+        flights_all_args=_drone_area_control_link_args(filters,
+                                                       flights='all'),
+        flights_register_args=_drone_area_control_link_args(filters,
+                                                            flights=None),
+        list_all=report['list_all'],
+        list_all_possible=(report['rows_count']
+                           <= DRONE_AREA_CONTROL_LIST_ALL_MAX),
+        list_all_max=DRONE_AREA_CONTROL_LIST_ALL_MAX,
         total=report['total'],
         drones=report['drones'],
-        register=register[:DRONE_AREA_MAX_DETAIL_ROWS],
-        register_total=len(register),
-        truncated=truncated,
-        max_rows=DRONE_AREA_MAX_DETAIL_ROWS,
+        tree=report['tree'],
+        listed=listed,
+        hidden=hidden,
+        max_listed=DRONE_AREA_CONTROL_MAX_LISTED,
+        expand_all=listed <= DRONE_AREA_CONTROL_EXPAND_MAX,
+        decisions_ready=report['decisions_ready'],
+        can_decide=bool(current_user.is_admin) and report['decisions_ready'],
+        back_url=back_url,
         units=DroneUnit.query.order_by(DroneUnit.number).all(),
         tips={key: dji_control.pick(pair, lang)
               for key, pair in dji_control.TOOLTIPS.items()},
+        rest_label=dji_control.pick(dji_control.REST_LABEL, lang),
         bridge_note=dji_control.pick(dji_control.BRIDGE_NOTE, lang),
+        period_label=drone_period.label(filters, lang),
+        period_messages=drone_period.messages(filters, lang),
         ha=dji_control.ha,
         rule_version=dji_area.STRUCTURAL_RULE_VERSION,
         algorithm_version=dji_area.AREA_ALGORITHM_VERSION,
         classes_version=dji_accounting.ACCOUNTING_CLASSES_VERSION,
+        decisions_version=dji_decisions.DECISIONS_VERSION,
     )
 
 
 @drones_bp.route('/area-control.xlsx')
 @module_required('drones')
 def area_control_xlsx():
-    """«Отчёт контроля площади DJI»: сводка, по дронам, корректировки,
-    требует проверки. Отдельная книга: техническая выгрузка area-evidence и
-    `drones_flights_*.xlsx` не меняются."""
+    """«Отчёт контроля площади DJI». Те же период, время и дрон, что на
+    экране, и те же эффективные итоги с решениями администратора.
+
+    [REASON]: вкладка экрана («Все», «Подтверждённые», ...) -- не фильтр
+    данных, а то, какие строки раскрыты в дереве; итоги от неё не зависят.
+    Книга поэтому всегда несёт полный реестр отобранного периода и прямо
+    пишет, какая вкладка была открыта. Период, время и дрон -- те же."""
     from dji_area import accounting as dji_accounting
     from dji_area import control_report as dji_control
+    from dji_area import control_store
+    from dji_area import decisions as dji_decisions
 
     filters = _drone_area_control_filters(request.args)
-    # Книга -- всегда полный реестр, каким бы ни был фильтр экрана.
-    filters['view'] = dji_control.VIEW_ALL
-    report = _drone_area_control_report(filters)
+    report = _drone_area_control_report(filters, view=dji_control.VIEW_ALL)
+    history = []
+    if report['decisions_ready']:
+        con = _drone_area_control_db()
+        if con is not None:
+            try:
+                history = control_store.history(
+                    con, [item['flight_id'] for item in report['items']])
+            finally:
+                con.close()
+    unit_label = _drone_t('барча дронлар', 'все дроны')
+    if filters['unit_id']:
+        unit = db.session.get(DroneUnit, filters['unit_id'])
+        if unit is not None:
+            unit_label = '№ %s' % unit.number
+    view_labels = {
+        'all': _drone_t('Барчаси', 'Все'),
+        'confirmed': _drone_t('Тасдиқланган тузатишлар',
+                              'Подтверждённые корректировки'),
+        'pending': _drone_t('V4 кутилмоқда', 'Ожидает V4'),
+        'review': _drone_t('Қарор талаб қилинади', 'Требует решения'),
+        'decided': _drone_t('Администратор қарорлари',
+                            'Решения администратора'),
+    }
+    filters_text = [
+        (_drone_t('Дрон', 'Дрон'), unit_label),
+        (_drone_t('Экрандаги варақ', 'Вкладка экрана'),
+         view_labels.get(filters['view'], filters['view'])
+         + _drone_t(' (китобда даврнинг тўлиқ реестри)',
+                    ' (в книге -- полный реестр периода)')),
+    ]
     wb = dji_control.build_workbook(
         report, lang=_drone_lang(),
-        period=(filters['date_from_s'], filters['date_to_s']),
+        period=_drone_area_period_echo(filters),
         versions={
             'area_algorithm': dji_area.AREA_ALGORITHM_VERSION,
             'structural_rule': dji_area.STRUCTURAL_RULE_VERSION,
             'accounting_classes': dji_accounting.ACCOUNTING_CLASSES_VERSION,
+            'decisions': dji_decisions.DECISIONS_VERSION,
             'report': dji_control.REPORT_VERSION,
-        })
+        },
+        history=history, filters_text=filters_text)
     return _drone_xlsx_response(wb, 'drone_area_control', filters)
+
+
+# ─── Карточка записи и решение администратора ────────────────────────────────
+# Блок B. Решение -- отдельный append-only слой (`drone_area_decisions`):
+# автоматический расчёт не переписывается, отмена и исправление -- новая
+# строка истории. Писатель -- `dji_area/control_store.py`.
+
+def _drone_area_flight_row(flight_id):
+    """Текущая строка расчёта одного вылета в виде строки отчёта либо None."""
+    calc = DjiAreaCalculation
+    pair = (db.session.query(calc, DroneFlight)
+            .outerjoin(DroneFlight, DroneFlight.id == calc.drone_flight_id)
+            .filter(calc.flight_id == flight_id,
+                    calc.superseded_at.is_(None),
+                    calc.area_algorithm_version
+                    == dji_area.AREA_ALGORITHM_VERSION)
+            .order_by(calc.id.desc()).first())
+    if pair is None:
+        return None
+    c, flight = pair
+    unit = None
+    if flight is not None and flight.drone_unit_id is not None:
+        unit = db.session.get(DroneUnit, flight.drone_unit_id)
+    if unit is None and c.hardware_id:
+        unit = DroneUnit.query.filter_by(hardware_id=c.hardware_id).first()
+    row = {col: getattr(c, col) for col in _DRONE_AREA_CONTROL_COLUMNS}
+    row['machine_key'], row['machine_label'] = _drone_area_machine(
+        unit, c.hardware_id)
+    return row
+
+
+@drones_bp.route('/area-control/flight/<int:flight_id>')
+@module_required('drones')
+def area_control_flight(flight_id):
+    """Карточка записи площади: автомат, итог, цепочка, история решений."""
+    from dji_area import control_report as dji_control
+    from dji_area import control_store
+    from dji_area import decisions as dji_decisions
+
+    row = _drone_area_flight_row(flight_id)
+    if row is None:
+        abort(404)
+    lang = _drone_lang()
+    chain = []
+    ready = False
+    con = _drone_area_control_db()
+    if con is not None:
+        try:
+            ready = control_store.tables_present(con)
+            if ready:
+                chain = control_store.decision_chains(
+                    con, [flight_id]).get(flight_id, [])
+        finally:
+            con.close()
+    active = control_store.active_from_chain(chain)
+    item = dji_control.record_view(row, lang, decision=active,
+                                   times=_drone_area_chain_times([row]))
+    history_rows = []
+    for entry in reversed(chain):
+        at_local = dji_control.local_time(entry.get('performed_at'))
+        kind = entry['decision_type']
+        history_rows.append({
+            'seq': entry['chain_seq'],
+            'label': dji_decisions.pick(dji_decisions.DECISION_SHORT.get(
+                kind, (kind, kind)), lang),
+            'is_current': active is not None and entry['id'] == active['id'],
+            'is_override': entry.get('is_override'),
+            'by': entry.get('performed_by_name'),
+            'at_s': at_local.strftime('%d.%m.%Y %H:%M') if at_local else '',
+            'comment': entry.get('comment'),
+            'auto_label': dji_decisions.pick(
+                dji_control.CLASS_LABELS[entry['auto_class']], lang)
+            if entry.get('auto_class') in dji_control.CLASS_LABELS else '',
+            'raw_ha': dji_control.ha(entry.get('raw_area_m2')),
+            'accepted_ha': dji_control.ha(entry.get('effective_accepted_m2')),
+        })
+    can_decide = bool(current_user.is_admin) and ready and item['decidable']
+    actions = []
+    if can_decide:
+        for code in dji_decisions.allowed_actions(
+                item['accounting_class'], item['raw_m2'], active):
+            actions.append({
+                'code': code,
+                'label': dji_decisions.pick(dji_decisions.DECISION_LABELS[
+                    code], lang),
+                'help': dji_decisions.pick(dji_decisions.DECISION_HELP[code],
+                                           lang),
+            })
+    back = _drone_safe_next(request.args.get('next')) \
+        or url_for('drones.area_control')
+    return render_template(
+        'drones/area_decision.html',
+        item=item,
+        active=item['decision'],
+        history=history_rows,
+        ready=ready,
+        can_decide=can_decide,
+        override=item['is_override_class'],
+        actions=actions,
+        active_id=active['id'] if active else '',
+        back=back,
+        ha=dji_control.ha,
+        bridge_note=dji_control.pick(dji_control.BRIDGE_NOTE, lang),
+        min_comment=dji_decisions.COMMENT_MIN_CHARS,
+    )
+
+
+@drones_bp.route('/area-control/flight/<int:flight_id>/decide',
+                 methods=['POST'])
+@module_required('drones')
+def area_control_decide(flight_id):
+    """Записать решение администратора. Только администратор, только POST.
+
+    [REASON]: идентичность автоматического расчёта и снимки площадей берёт
+    сервер из ТЕКУЩЕЙ строки расчёта, а не из формы; форма несёт только
+    действие, причину, подтверждения и id действующего решения, каким его
+    видел администратор (правка поверх чужой правки отвергается).
+    """
+    from dji_area import control_store
+    from dji_area import decisions as dji_decisions
+    from dji_area import store as dji_store
+
+    if not current_user.is_admin:
+        abort(403)
+    back = _drone_safe_next(request.form.get('next'))
+    target = url_for('drones.area_control_flight', flight_id=flight_id,
+                     next=back)
+    action = (request.form.get('action') or '').strip()
+    expected = request.form.get('expected_decision_id', type=int)
+    lang = _drone_lang()
+    try:
+        con = dji_store.connect(_drone_evidence_db_path())
+    except dji_store.StoreError:
+        flash(_drone_t('Маълумотлар базаси топилмади.',
+                       'База данных не найдена.'), 'danger')
+        return redirect(target)
+    try:
+        if not control_store.tables_present(con):
+            flash(_drone_t(
+                'Қарорлар жадвали йўқ: migrate_drone_area_control_v2_001.py '
+                'ишга туширилмаган.',
+                'Таблицы решений нет: миграция '
+                'migrate_drone_area_control_v2_001.py не применена.'),
+                'danger')
+            return redirect(target)
+        saved = control_store.record_decision(
+            con, flight_id, action,
+            comment=request.form.get('comment') or '',
+            confirmed=request.form.get('confirm') == '1',
+            override_confirmed=request.form.get('confirm_override') == '1',
+            expected_active_id=expected, user_id=current_user.id,
+            user_name=_drone_user_name())
+    except control_store.DecisionRefused as exc:
+        flash(dji_decisions.pick(dji_decisions.ERRORS.get(
+            exc.code, dji_decisions.ERRORS[dji_decisions.E_UNKNOWN_ACTION]),
+            lang), 'danger')
+        return redirect(target)
+    finally:
+        con.close()
+    flash(_drone_t('Қарор ёзилди: %s. Ҳисобот якунлари қайта ҳисобланди; '
+                   'автоматик ҳисоб ўзгармади.',
+                   'Решение записано: %s. Итоги отчёта пересчитаны; '
+                   'автоматический расчёт не изменён.')
+          % dji_decisions.pick(dji_decisions.DECISION_SHORT[
+              saved['decision_type']], lang), 'success')
+    return redirect(target)
+
+
+# ─── «Обновить данные DJI» ───────────────────────────────────────────────────
+# Блок D. Кнопка ставит ручной прогон ежедневного цикла в очередь
+# (`drone_area_cycle_runs`) и будит исполнителя; HTTP-запрос возвращается
+# сразу, Playwright в запросе не запускается никогда.
+#
+# [REASON]: исполнитель -- НЕ дочерний процесс веб-службы на production. Служба
+# `TransportReport` работает как LocalSystem, а Chromium сборщика и
+# сохранённая сессия DJI -- в профиле пользователя, под которым идёт
+# `DroneCollectorDaily`. Поэтому на production кнопка запускает задачу
+# планировщика Windows (`schtasks /Run /TN <имя>`), которая исполняется от
+# имени того пользователя и берёт прогон из очереди
+# (`tools/dji_area_daily.py --run-queued`). Режим `subprocess` (отсоединённый
+# процесс) -- для площадки и разработки, где пользователь один. Имя задачи,
+# интерпретатор и база -- настройки сервера; из запроса в команду не
+# попадает ни один аргумент.
+#
+# Два прогона одновременно невозможны трижды: частичный UNIQUE-индекс в
+# журнале (двойное нажатие), блокировка цикла (`dji_area_cycle.lock` рядом с
+# базой; её же берут прогон по расписанию и backfill) и блокировка сборщика
+# (`drone_collector/data/collector.lock`, её берёт и `DroneCollectorDaily`).
+
+DJI_REFRESH_LAUNCHERS = ('schtasks', 'subprocess')
+_DJI_REFRESH_TASK_RE = re.compile(r'^[A-Za-z0-9_.\- \\]{1,120}$')
+# Подмена для тестов: исполнители процессов (по умолчанию -- subprocess).
+_dji_refresh_popen = None
+_dji_refresh_run = None
+
+
+def _dji_refresh_setting(name):
+    value = current_app.config.get(name)
+    if value is None or value == '':
+        value = os.environ.get(name, '')
+    return str(value).strip()
+
+
+def _dji_refresh_config():
+    import sys
+
+    launcher = _dji_refresh_setting('DJI_REFRESH_LAUNCHER').lower()
+    task = _dji_refresh_setting('DJI_REFRESH_TASK_NAME')
+    enabled = ((launcher == 'schtasks' and bool(_DJI_REFRESH_TASK_RE.match(
+        task))) or launcher == 'subprocess')
+    return {
+        'launcher': launcher if launcher in DJI_REFRESH_LAUNCHERS else '',
+        'task': task,
+        'python': _dji_refresh_setting('DJI_REFRESH_PYTHON') or sys.executable,
+        'collector_python': _dji_refresh_setting('DJI_COLLECTOR_PYTHON'),
+        'db_path': os.path.abspath(_drone_evidence_db_path() or ''),
+        'enabled': enabled,
+    }
+
+
+def _dji_refresh_command(config):
+    """Команда запуска. Постоянна для сервера: ни одного аргумента из запроса."""
+    if config['launcher'] == 'schtasks':
+        return ['schtasks', '/Run', '/TN', config['task']]
+    root = os.path.dirname(os.path.abspath(__file__))
+    command = [config['python'], os.path.join(root, 'tools',
+                                              'dji_area_daily.py'),
+               '--db', config['db_path'], '--run-queued']
+    if config['collector_python']:
+        command += ['--collector-python', config['collector_python']]
+    return command
+
+
+def _dji_refresh_launch(config, run_id):
+    """(запущено?, короткое ASCII-сообщение). Возвращается сразу."""
+    import subprocess
+
+    from dji_area import control_store
+
+    command = _dji_refresh_command(config)
+    root = os.path.dirname(os.path.abspath(__file__))
+    windows = os.name == 'nt'
+    try:
+        if config['launcher'] == 'schtasks':
+            runner = _dji_refresh_run or subprocess.run
+            kwargs = {'capture_output': True, 'timeout': 20}
+            if windows:
+                kwargs['creationflags'] = getattr(subprocess,
+                                                  'CREATE_NO_WINDOW', 0)
+            proc = runner(command, **kwargs)
+            if proc.returncode != 0:
+                return False, 'schtasks /Run exited with %d' % proc.returncode
+            return True, ''
+        log_dir = os.path.join(os.path.dirname(config['db_path']),
+                               'dji_refresh_logs')
+        os.makedirs(log_dir, exist_ok=True)
+        popen = _dji_refresh_popen or subprocess.Popen
+        kwargs = {'cwd': root, 'stdin': subprocess.DEVNULL,
+                  'stderr': subprocess.STDOUT, 'close_fds': True}
+        if windows:
+            # [REASON]: отсоединённый процесс своей группы: HTTP-запрос не
+            # ждёт его, а Ctrl+C / закрытие консоли службы до него не доходят.
+            kwargs['creationflags'] = (
+                getattr(subprocess, 'DETACHED_PROCESS', 0x8)
+                | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0x200))
+        else:
+            kwargs['start_new_session'] = True
+        with open(os.path.join(log_dir, 'run_%d.log' % int(run_id)),
+                  'ab') as log:
+            kwargs['stdout'] = log
+            popen(command, **kwargs)
+        return True, ''
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        return False, control_store.redact('%s: %s'
+                                           % (type(exc).__name__, exc))
+
+
+def _dji_refresh_state():
+    """Состояние панели «Обновить данные DJI». Только чтение, ничего не пишет."""
+    from dji_area import control_store
+    from drone_collector import runlock
+
+    lang = _drone_lang()
+    config = _dji_refresh_config()
+    can_edit = bool(getattr(current_user, 'can_edit', False))
+    out = {'configured': config['enabled'], 'can_start': False,
+           'can_edit': can_edit, 'ready': False, 'lock_held': False,
+           'active': None, 'last': None, 'last_success': None, 'recent': []}
+    con = _drone_area_control_db()
+    if con is None:
+        return out
+    try:
+        if not control_store.tables_present(con):
+            return out
+        out['ready'] = True
+        lock_held = runlock.is_held(runlock.cycle_lock_path(
+            config['db_path']))
+        out['lock_held'] = lock_held
+        views = [control_store.run_view(run, lang, lock_held)
+                 for run in control_store.latest_runs(con, 10)]
+        out['recent'] = views
+        out['last'] = views[0] if views else None
+        out['active'] = next((v for v in views if v['is_active']), None)
+        out['last_success'] = control_store.run_view(
+            control_store.last_success(con), lang, lock_held)
+    finally:
+        con.close()
+    out['can_start'] = can_edit and out['configured'] and out['ready'] \
+        and out['active'] is None
+    return out
+
+
+@drones_bp.app_context_processor
+def _inject_dji_refresh_state():
+    # Ленивый вызов: база читается только там, где шаблон рисует панель.
+    return {'dji_refresh_state': _dji_refresh_state}
+
+
+def _dji_refresh_json_run(view):
+    if view is None:
+        return None
+    fmt = lambda dt: dt.strftime('%d.%m.%Y %H:%M') if dt else None  # noqa
+    result = view.get('result') or {}
+    return {
+        'id': view['id'],
+        'status': view['status'],
+        'status_label': view['status_label'],
+        'trigger_label': view['trigger_label'],
+        'requested_by': view['requested_by'],
+        'requested_at': fmt(view['requested_local']),
+        'started_at': fmt(view['started_local']),
+        'finished_at': fmt(view['finished_local']),
+        'step_label': view['step_label'],
+        'is_active': view['is_active'],
+        'flights': result.get('flights'),
+        'manifest': result.get('manifest'),
+        'evidence_misses': result.get('evidence_misses'),
+        'recalc': result.get('recalc'),
+        'outcome': result.get('outcome'),
+    }
+
+
+@drones_bp.route('/dji-refresh/status')
+@module_required('drones')
+def dji_refresh_status():
+    """Состояние обновления для опроса страницей. Только чтение."""
+    state = _dji_refresh_state()
+    return jsonify({
+        'configured': state['configured'],
+        'ready': state['ready'],
+        'lock_held': state['lock_held'],
+        'active': _dji_refresh_json_run(state['active']),
+        'last': _dji_refresh_json_run(state['last']),
+        'last_success': _dji_refresh_json_run(state['last_success']),
+    })
+
+
+@drones_bp.route('/dji-refresh', methods=['POST'])
+@module_required('drones')
+def dji_refresh_start():
+    """«Обновить данные DJI»: поставить ручной прогон в очередь и разбудить
+    исполнителя. Возвращается сразу; сбор идёт в отдельном процессе."""
+    from dji_area import control_store
+    from dji_area import store as dji_store
+    from drone_collector import runlock
+
+    if not current_user.can_edit:
+        abort(403)
+    back = _drone_safe_next(request.form.get('next')) \
+        or url_for('drones.area_control')
+    config = _dji_refresh_config()
+    if not config['enabled']:
+        flash(_drone_t(
+            'Бу серверда қўлда янгилаш созланмаган (DJI_REFRESH_LAUNCHER). '
+            'Маълумотлар жадвал бўйича янгиланади.',
+            'Ручное обновление на этом сервере не настроено '
+            '(DJI_REFRESH_LAUNCHER). Данные обновляются по расписанию.'),
+            'warning')
+        return redirect(back)
+    try:
+        con = dji_store.connect(config['db_path'])
+    except dji_store.StoreError:
+        flash(_drone_t('Маълумотлар базаси топилмади.',
+                       'База данных не найдена.'), 'danger')
+        return redirect(back)
+    try:
+        if not control_store.tables_present(con):
+            flash(_drone_t(
+                'Янгилаш журнали йўқ: migrate_drone_area_control_v2_001.py '
+                'ишга туширилмаган.',
+                'Журнала обновлений нет: миграция '
+                'migrate_drone_area_control_v2_001.py не применена.'),
+                'danger')
+            return redirect(back)
+        lock_held = runlock.is_held(runlock.cycle_lock_path(
+            config['db_path']))
+        control_store.reconcile(con, lock_held)
+        try:
+            run = control_store.enqueue_manual(con, current_user.id,
+                                               _drone_user_name())
+        except control_store.RunActive as exc:
+            view = control_store.run_view(exc.run, _drone_lang(), lock_held)
+            when = view['requested_local'].strftime('%H:%M') \
+                if view and view['requested_local'] else ''
+            flash(_drone_t(
+                'DJI маълумотлари йиғими аллақачон кетмоқда (%s, %s). Янги '
+                'маълумотлар у тугагач пайдо бўлади.',
+                'Сбор данных DJI уже идёт (%s, %s). Новые данные появятся '
+                'после его завершения.')
+                % (view['trigger_label'] if view else '', when), 'info')
+            return redirect(back)
+        started, message = _dji_refresh_launch(config, run['id'])
+        if not started:
+            control_store.finish(con, run['id'],
+                                 control_store.STATUS_LAUNCH_FAILED,
+                                 message=message)
+            flash(_drone_t('Янгилашни ишга тушириб бўлмади: %s',
+                           'Не удалось запустить обновление: %s') % message,
+                  'danger')
+            return redirect(back)
+    finally:
+        con.close()
+    note = ''
+    if lock_held:
+        note = _drone_t(' Ҳозир бошқа йиғим кетмоқда; янгилаш ундан кейин '
+                        'бошланади.',
+                        ' Сейчас идёт другой сбор; обновление начнётся после '
+                        'него.')
+    flash(_drone_t('DJI маълумотларини янгилаш бошланди. Саҳифа ҳолатни '
+                   'ўзи кўрсатади.',
+                   'Обновление данных DJI запущено. Страница покажет '
+                   'состояние сама.') + note, 'success')
+    return redirect(back)

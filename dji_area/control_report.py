@@ -34,7 +34,7 @@ A -> B -> C корректируется только C, и отчёт гово�
 """
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from dji_area import accounting as acc
 from dji_area import decisions as dec
@@ -204,8 +204,8 @@ OPEN_INSIDE = ('Спорная и ожидающая площадь (%s га) с
 OPEN_NONE = ('Спорной площади нет: принятое не содержит нерешённых записей.',
              'Баҳсли майдон йўқ: қабул қилинган ҳал қилинмаган ёзувларни '
              'ўз ичига олмайди.')
-REST_LABEL = ('Остальные вылеты дня — приняты по DJI',
-              'Куннинг қолган парвозлари — DJI бўйича қабул қилинган')
+REST_LABEL = ('Остальные вылеты дня, не показанные поимённо',
+              'Куннинг номма-ном кўрсатилмаган қолган парвозлари')
 
 
 def pick(pair, lang):
@@ -220,8 +220,29 @@ def dji_url(flight_id):
     return DJI_RECORD_URL % int(flight_id)
 
 
+def _as_datetime(value):
+    """datetime из datetime либо из строки sqlite (19 или 26 символов).
+
+    [REASON]: строки расчёта приходят двумя путями -- через ORM (datetime)
+    и сырым sqlite3 в инструментах (строка, записанная stdlib-писателем без
+    дробной части или SQLAlchemy с ней). Неразборчивое -- None, а не
+    исключение: время -- подсказка для человека, не величина отчёта.
+    """
+    if value is None or isinstance(value, datetime):
+        return value
+    text = str(value).replace('T', ' ')
+    for fmt in ('%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S',
+                '%Y-%m-%d %H:%M'):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
 def local_time(utc_dt):
-    """UTC -> UTC+5; None остаётся None."""
+    """UTC -> UTC+5; None (и неразборчивое) остаётся None."""
+    utc_dt = _as_datetime(utc_dt)
     return None if utc_dt is None else utc_dt + LOCAL_OFFSET
 
 
@@ -482,14 +503,25 @@ def _matches(item, view):
 
 
 def _rest(items):
-    rest = {'records': 0, 'raw_m2': 0.0, 'accepted_m2': 0.0,
-            'excluded_m2': 0.0}
+    rest = empty_rest()
     for item in items:
-        rest['records'] += 1
-        rest['raw_m2'] += item['raw_m2'] or 0.0
-        rest['accepted_m2'] += item['accepted_m2'] or 0.0
-        rest['excluded_m2'] += item['excluded_m2'] or 0.0
+        add_to_rest(rest, item)
     return rest if rest['records'] else None
+
+
+def empty_rest():
+    return {'records': 0, 'raw_m2': 0.0, 'auto_accepted_m2': 0.0,
+            'accepted_m2': 0.0, 'excluded_m2': 0.0}
+
+
+def add_to_rest(rest, item):
+    """Свернуть вылет в строку «остальные» своего дня."""
+    rest['records'] += 1
+    rest['raw_m2'] += item['raw_m2'] or 0.0
+    rest['auto_accepted_m2'] += item['auto_accepted_m2'] or 0.0
+    rest['accepted_m2'] += item['accepted_m2'] or 0.0
+    rest['excluded_m2'] += item['excluded_m2'] or 0.0
+    return rest
 
 
 def build(rows, lang='ru', view=VIEW_ALL, decisions=None, times=None,
@@ -504,8 +536,13 @@ def build(rows, lang='ru', view=VIEW_ALL, decisions=None, times=None,
     if view not in VIEWS:
         view = VIEW_ALL
     decisions = decisions or {}
+    # Время звеньев A/B: сначала из самой выборки (звено часто в ней же),
+    # затем переданное снаружи для звеньев вне периода.
+    known_times = {int(r['flight_id']): r.get('start_at_utc') for r in rows
+                   if r.get('start_at_utc') is not None}
+    known_times.update(times or {})
     items = [record_view(row, lang, decisions.get(int(row['flight_id'])),
-                         times) for row in rows]
+                         known_times) for row in rows]
 
     total = empty_totals()
     by_drone = {}

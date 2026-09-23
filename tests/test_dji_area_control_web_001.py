@@ -260,9 +260,12 @@ class Workbook(Base):
     def test_the_route_serves_the_four_sheets_with_the_period_in_the_name(self):
         self.seed()
         response, book = self.control_book()
+        # V2: прежние четыре листа первыми и в прежнем порядке, новые --
+        # после них (по дням, полный реестр, история решений).
         self.assertEqual(book.sheetnames, ['Сводка', 'По_дронам',
                                            'Корректировки',
-                                           'Требует_проверки'])
+                                           'Требует_проверки', 'По_дням',
+                                           'Реестр', 'История_решений'])
         self.assertIn('drone_area_control_2026-06-01_2026-06-30.xlsx',
                       response.headers['Content-Disposition'])
 

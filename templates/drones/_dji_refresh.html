@@ -1,0 +1,88 @@
+{# DRONE-AREA-CONTROL-V2-MEGA, блок D. Панель «Обновить данные DJI».
+
+   Состояние даёт `dji_refresh_state()` (drones.py) -- только чтение: GET
+   ничего не пишет. Кнопка -- POST с CSRF; из формы в команду запуска не
+   попадает ни одного аргумента, кроме пути возврата внутри модуля.
+   Пока прогон идёт, страница спрашивает состояние раз в 15 секунд и
+   перезагружается, когда он закончился: новые вылеты и пересчитанная
+   площадь видны без ручного обновления.
+
+   Сообщение прогона на экран выходит уже очищенным от секретов
+   (`control_store.redact` при записи). #}
+{% set rs = dji_refresh_state() %}
+{% set r_last = rs.last %}
+{% set r_ok = rs.last_success %}
+{% set r_active = rs.active %}
+{% set r_show = r_active or r_last %}
+<div class="vs-kpi-strip vs-mb{% if r_last and r_last.status in ('FAILED', 'INTERRUPTED', 'LAUNCH_FAILED') %} is-attention{% endif %}" data-dji-refresh data-active="{{ '1' if r_active else '0' }}" data-status-url="{{ url_for('drones.dji_refresh_status') }}">
+  <div class="vs-kpi-strip-head">
+    <span class="vs-kpi-strip-title">{{ 'Данные DJI' if is_ru else 'DJI маълумотлари' }}</span>
+    {% if rs.can_start %}
+    <form method="post" action="{{ url_for('drones.dji_refresh_start') }}" onsubmit='return confirm({{ ("Запустить сбор данных DJI за последние дни сейчас? Это займёт несколько минут; страницу можно не держать открытой." if is_ru else "DJI маълумотларини сўнгги кунлар учун ҳозир йиғишни бошлайликми? Бу бир неча дақиқа олади; саҳифани очиқ тутиш шарт эмас.")|tojson }})'>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="next" value="{{ request.full_path }}">
+      <button type="submit" class="vs-btn vs-btn-primary vs-btn-sm">{{ 'Обновить данные DJI' if is_ru else 'DJI маълумотларини янгилаш' }}</button>
+    </form>
+    {% elif rs.can_edit %}
+    <span class="vs-muted">
+      {%- if r_active -%}{{ 'Сбор уже идёт' if is_ru else 'Йиғим аллақачон кетмоқда' }}
+      {%- elif not rs.ready -%}{{ 'Журнал обновлений не создан (миграция не применена)' if is_ru else 'Янгилаш журнали яратилмаган (миграция қўлланмаган)' }}
+      {%- elif not rs.configured -%}{{ 'Ручное обновление на этом сервере не настроено; данные обновляются по расписанию' if is_ru else 'Бу серверда қўлда янгилаш созланмаган; маълумотлар жадвал бўйича янгиланади' }}
+      {%- endif -%}
+    </span>
+    {% endif %}
+  </div>
+  <div class="vs-kpi-strip-body">
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'Последнее успешное обновление' if is_ru else 'Сўнгги муваффақиятли янгилаш' }}</span>
+      <strong class="vs-kpi-strip-value is-text">{% if r_ok and r_ok.finished_local %}{{ r_ok.finished_local.strftime('%d.%m.%Y %H:%M') }}{% else %}{{ 'не было' if is_ru else 'бўлмаган' }}{% endif %}</strong>
+      {% if r_ok %}<span class="vs-muted">{{ r_ok.trigger_label }}{% if r_ok.requested_by %}, {{ r_ok.requested_by }}{% endif %}{% if r_ok.window_from %} · {{ 'окно' if is_ru else 'ойна' }} {{ r_ok.window_from }} … {{ r_ok.window_to }}{% endif %}</span>{% endif %}
+    </div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'Состояние' if is_ru else 'Ҳолат' }}</span>
+      <strong class="vs-kpi-strip-value is-text">{% if r_show %}<span class="vs-badge {{ r_show.status_badge }}">{{ r_show.status_label }}</span>{% else %}<span class="vs-badge">{{ 'Не запускалось' if is_ru else 'Ишга туширилмаган' }}</span>{% endif %}</strong>
+      {% if r_show %}<span class="vs-muted">{{ r_show.trigger_label }}{% if r_show.requested_by %}: {{ r_show.requested_by }}{% endif %}{% if r_show.requested_local %}, {{ r_show.requested_local.strftime('%d.%m %H:%M') }}{% endif %}{% if r_active and r_active.step_label %} · {{ 'сейчас' if is_ru else 'ҳозир' }}: {{ r_active.step_label }}{% endif %}{% if r_show.failed_step_label %} · {{ 'шаг' if is_ru else 'қадам' }}: {{ r_show.failed_step_label }}{% endif %}{% if rs.lock_held and r_show.status == 'QUEUED' %} · {{ 'ждёт окончания другого сбора' if is_ru else 'бошқа йиғим тугашини кутмоқда' }}{% endif %}</span>{% endif %}
+    </div>
+    {% set res = (r_last.result if r_last else {}) or {} %}
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'Результат последнего прогона' if is_ru else 'Сўнгги ишга тушириш натижаси' }}</span>
+      {% if res.flights %}
+      <span>{{ 'вылетов получено' if is_ru else 'олинган парвозлар' }}: {{ res.flights.seen }} · {{ 'новых' if is_ru else 'янги' }}: {{ res.flights.new }} · {{ 'повторов' if is_ru else 'такрорлар' }}: {{ res.flights.duplicates }} · {{ 'без машины' if is_ru else 'машинасиз' }}: {{ res.flights.unresolved }} · {{ 'ошибок' if is_ru else 'хатолар' }}: {{ res.flights.errors }}</span>
+      {% endif %}
+      {% if res.manifest %}
+      <span class="vs-muted">{{ 'на проверку V4: кандидатов' if is_ru else 'V4 текширувига: номзодлар' }} {{ res.manifest.candidates }}, {{ 'контрольных' if is_ru else 'назорат' }} {{ res.manifest.controls }}</span>
+      {% endif %}
+      {% if res.evidence_misses %}
+      <span class="vs-muted">{{ 'без доказательства: кандидатов' if is_ru else 'далилсиз: номзодлар' }} {{ (res.evidence_misses.candidates or [])|length }}, {{ 'контрольных' if is_ru else 'назорат' }} {{ (res.evidence_misses.controls or [])|length }}</span>
+      {% endif %}
+      {% if res.recalc %}
+      <span class="vs-muted">{{ 'пересчитано записей' if is_ru else 'қайта ҳисобланган ёзувлар' }}: {{ res.recalc.flights_in_period }}</span>
+      {% endif %}
+      {% if not res %}<span class="vs-muted">—</span>{% endif %}
+    </div>
+  </div>
+</div>
+{% if r_last and r_last.message and r_last.status in ('FAILED', 'INTERRUPTED', 'LAUNCH_FAILED', 'BUSY', 'SUCCESS_WITH_WARNINGS') %}
+<div class="vs-alert {{ 'is-warning' if r_last.status in ('SUCCESS_WITH_WARNINGS', 'BUSY') else 'is-danger' }} vs-mb" role="status">
+  <div>{{ 'Последний прогон' if is_ru else 'Сўнгги ишга тушириш' }} ({{ r_last.status_label }}): <span class="vs-mono">{{ r_last.message }}</span></div>
+</div>
+{% endif %}
+{% if r_active %}
+<script>
+(function () {
+  var panel = document.querySelector('[data-dji-refresh]');
+  if (!panel || panel.getAttribute('data-active') !== '1') { return; }
+  var url = panel.getAttribute('data-status-url');
+  function poll() {
+    fetch(url, {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
+      .then(function (response) { return response.ok ? response.json() : null; })
+      .then(function (state) {
+        if (state && !state.active) { window.location.reload(); return; }
+        window.setTimeout(poll, 15000);
+      })
+      .catch(function () { window.setTimeout(poll, 30000); });
+  }
+  window.setTimeout(poll, 15000);
+})();
+</script>
+{% endif %}

@@ -281,7 +281,9 @@ class WordsForPeople(unittest.TestCase):
         pairs += list(cr.EVIDENCE_LABELS.values()) + list(cr.TOOLTIPS.values())
         pairs += [cr.BRIDGE_NOTE, cr.STATUS_COMPLETE, cr.STATUS_OPEN,
                   cr.SHEET_SUMMARY, cr.SHEET_DRONES, cr.SHEET_CORRECTIONS,
-                  cr.SHEET_REVIEW]
+                  cr.SHEET_REVIEW, cr.SHEET_DAYS, cr.SHEET_REGISTER,
+                  cr.SHEET_HISTORY, cr.NORMAL_EXPLANATION, cr.OPEN_INSIDE,
+                  cr.OPEN_NONE, cr.REST_LABEL]
         for _ru, uz in pairs:
             words = set(self.LATIN.findall(uz)) - self.ALLOWED
             self.assertEqual(words, set(), uz)
@@ -322,9 +324,13 @@ class Workbook(unittest.TestCase):
         return [[c.value for c in row] for row in self.book[name].iter_rows()]
 
     def test_the_four_sheets(self):
+        # DRONE-AREA-CONTROL-V2-MEGA: прежние четыре листа стоят первыми и
+        # в прежнем порядке -- их читают бухгалтерия и сверочные скрипты;
+        # три новых листа только добавлены после них.
         self.assertEqual(self.book.sheetnames,
                          ['Сводка', 'По_дронам', 'Корректировки',
-                          'Требует_проверки'])
+                          'Требует_проверки', 'По_дням', 'Реестр',
+                          'История_решений'])
 
     def test_the_summary_carries_the_five_figures_and_the_versions(self):
         rows = {r[0]: r for r in self.sheet_rows('Сводка')}
@@ -387,7 +393,9 @@ class Workbook(unittest.TestCase):
         book = cr.build_workbook(cr.build(fixture(), 'uz'), 'uz')
         self.assertEqual(book.sheetnames,
                          [cr.SHEET_SUMMARY[1], cr.SHEET_DRONES[1],
-                          cr.SHEET_CORRECTIONS[1], cr.SHEET_REVIEW[1]])
+                          cr.SHEET_CORRECTIONS[1], cr.SHEET_REVIEW[1],
+                          cr.SHEET_DAYS[1], cr.SHEET_REGISTER[1],
+                          cr.SHEET_HISTORY[1]])
 
 
 if __name__ == '__main__':

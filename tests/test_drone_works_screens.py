@@ -879,7 +879,7 @@ class DroneReportsLauncherTests(unittest.TestCase):
         self.client = app.test_client()
         login(self.client, self.admin)
 
-    def test_the_launcher_opens_with_thirteen_tiles_in_order(self):
+    def test_the_launcher_opens_with_fourteen_tiles_in_order(self):
         import re
         response = self.client.get('/drones/reports')
         self.assertEqual(response.status_code, 200)
@@ -897,6 +897,12 @@ class DroneReportsLauncherTests(unittest.TestCase):
             ('is-warning', '/drones/works/debts'),
             ('is-success', '/drones/works/assignment-hints'),
             ('is-primary', '/drones/reports/calendar'),
+            # DJI-AREA-PRODUCTIONIZATION-001 added «Контроль площади DJI»
+            # beside the calendar (is-primary: the same flight data). The
+            # roster was not updated then, so this test stood red on main;
+            # DRONE-AREA-CONTROL-V2-MEGA brings it in line. The tile stays
+            # although the screen now also has a direct menu item.
+            ('is-primary', '/drones/area-control'),
             # DJI-AREA-REPORT-001 reuses is-primary, the accent the flight
             # summary and the calendar carry, and stands beside them: it is
             # the same flight data read through the evidence model.
@@ -998,8 +1004,11 @@ class DroneNavStripTests(unittest.TestCase):
         # Прежние семь не тронуты ни порядком, ни написанием.
         self.assertEqual(
             [label.strip() for _href, label in self._strip()],
+            # DRONE-AREA-CONTROL-V2-MEGA: «Контроль площади DJI» -- прямой
+            # пункт перед «Отчётами»; «Отчёты» по-прежнему последние.
             ['Сводка', 'Вылеты', 'Машины', 'Операторы', 'Работы',
-             'Полезная площадь', 'Заказчики', 'Отчёты'])
+             'Полезная площадь', 'Заказчики', 'Контроль площади DJI',
+             'Отчёты'])
 
     def test_istochniki_left_the_strip_but_not_the_application(self):
         hrefs = [href for href, _label in self._strip()]
@@ -1951,7 +1960,12 @@ class DroneNumberFormatTests(unittest.TestCase):
 class DroneNumberPlacementTests(unittest.TestCase):
     """WHERE the filter is applied -- the half a unit test usually misses."""
 
-    TEMPLATES = ('_drones_nav.html', '_money_cell.html', 'area_evidence.html',
+    # DRONE-AREA-CONTROL-V2-MEGA added area_control.html (it existed since
+    # DJI-AREA-PRODUCTIONIZATION-001 but was never listed -- the roster test
+    # stood red on main), area_decision.html and the two partials.
+    TEMPLATES = ('_dji_refresh.html', '_drones_nav.html', '_money_cell.html',
+                 '_period.html', 'area_control.html', 'area_decision.html',
+                 'area_evidence.html',
                  'coverage.html', 'customers.html',
                  'flight_calendar.html', 'health.html', 'list.html',
                  'operator_card.html', 'operator_cash.html',
@@ -2141,8 +2155,13 @@ class DroneNumberPlacementTests(unittest.TestCase):
         #   rows and the row counters beside the table titles. The «field
         #   confirmed %» column carries none (a percentage is never grouped)
         #   and neither does the DJI flight id (an identifier).
+        #   DRONE-AREA-CONTROL-V2-MEGA brought area_control.html 26: the
+        #   hectares and record counts of the formula and «not yet decided»
+        #   strips and of the drone and day rows of the tree. Flight ids,
+        #   times and the per-flight hectares (four decimals) carry none.
         expected = {
-            '_money_cell.html': 1, 'area_evidence.html': 28,
+            '_money_cell.html': 1, 'area_control.html': 26,
+            'area_evidence.html': 28,
             'coverage.html': 9,
             'customers.html': 2, 'flight_calendar.html': 9,
             'health.html': 11, 'list.html': 3,
@@ -2158,7 +2177,7 @@ class DroneNumberPlacementTests(unittest.TestCase):
                   for name in self.TEMPLATES
                   if '|vs_num' in self.source(name)}
         self.assertEqual(actual, expected)
-        self.assertEqual(sum(actual.values()), 303)
+        self.assertEqual(sum(actual.values()), 329)
 
 
 class DroneUiFixUzbekTests(unittest.TestCase):
@@ -2336,8 +2355,11 @@ class DroneExcelUntouchedTests(unittest.TestCase):
         # assertions in the loop above, and the roster is updated so a third
         # one cannot appear without passing through this check.
         # DJI-AREA-REPORT-001 added the eighth.
+        # DJI-AREA-PRODUCTIONIZATION-001 added the ninth, area_control_xlsx,
+        # without updating the roster (red on main); listed now.
         self.assertEqual(sorted(names),
-                         ['area_evidence_xlsx', 'flights_xlsx',
+                         ['area_control_xlsx', 'area_evidence_xlsx',
+                          'flights_xlsx',
                           'spray_usage_xlsx', 'summary_xlsx',
                           'works_debt_xlsx', 'works_debts_aging_xlsx',
                           'works_reports_xlsx', 'works_xlsx'])

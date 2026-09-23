@@ -1,0 +1,164 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ ('Дроны — площадь вылета ' if is_ru else 'Дронлар — парвоз майдони ') ~ item.flight_id }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+{% set t_no_data = 'Нет данных' if is_ru else 'Маълумот йўқ' %}
+
+{# DRONE-AREA-CONTROL-V2-MEGA, блок B. Карточка записи площади DJI:
+   автоматический результат, итог отчёта, цепочка A -> B -> C, история
+   решений и (только администратору) форма решения.
+   Автоматический расчёт здесь не меняется: решение -- новая строка
+   append-only истории `drone_area_decisions`. #}
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Вылет' if is_ru else 'Парвоз' }} {{ item.flight_id }}: {{ 'площадь и решение' if is_ru else 'майдон ва қарор' }}</div>
+    <div class="vs-hero-sub">{{ item.machine_label }} · {{ item.datetime_s }} (UTC+5)</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ back }}" class="vs-btn">{{ 'Назад к отчёту' if is_ru else 'Ҳисоботга қайтиш' }}</a>
+    <a href="{{ item.dji_url }}" target="_blank" rel="noopener" class="vs-btn">{{ 'Открыть в DJI' if is_ru else 'DJI да очиш' }}</a>
+  </div>
+</div>
+
+{% if active and active.stale %}
+<div class="vs-alert is-warning vs-mb" role="status">
+  <div>{{ active.stale_note }}</div>
+</div>
+{% endif %}
+{% if active and active.lapsed_note %}
+<div class="vs-alert is-info vs-mb" role="status">
+  <div>{{ active.lapsed_note }}</div>
+</div>
+{% endif %}
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Запись' if is_ru else 'Ёзув' }}</span>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table is-static">
+      <tbody>
+        <tr><th>{{ 'DJI RAW, га' if is_ru else 'DJI RAW, га' }}</th><td>{% if item.raw_m2 is not none %}{{ '%.4f'|format(ha(item.raw_m2)) }}{% else %}{{ t_no_data }}{% endif %}</td></tr>
+        <tr><th>{{ 'Автоматический результат' if is_ru else 'Автоматик натижа' }}</th><td><span class="vs-badge {{ item.class_badge }}">{{ item.class_label }}</span> {{ item.reason_text }}</td></tr>
+        <tr><th>{{ 'Доказательство' if is_ru else 'Далил' }}</th><td>{{ item.evidence_label }}</td></tr>
+        <tr><th>{{ 'Автоматически принято / исключено, га' if is_ru else 'Автоматик қабул қилинган / чиқарилган, га' }}</th><td>{% if item.auto_accepted_m2 is not none %}{{ '%.4f'|format(ha(item.auto_accepted_m2)) }}{% else %}{{ t_no_data }}{% endif %} / {% if item.auto_excluded_m2 is not none %}{{ '%.4f'|format(ha(item.auto_excluded_m2)) }}{% else %}{{ t_no_data }}{% endif %}</td></tr>
+        <tr><th>{{ 'Итог в отчёте' if is_ru else 'Ҳисоботдаги якун' }}</th><td><span class="vs-badge {{ item.state_badge }}">{{ item.state_label }}</span> {{ 'принято' if is_ru else 'қабул қилинган' }} <strong>{% if item.accepted_m2 is not none %}{{ '%.4f'|format(ha(item.accepted_m2)) }}{% else %}{{ t_no_data }}{% endif %}</strong> {{ 'га, исключено' if is_ru else 'га, чиқарилган' }} <strong>{% if item.excluded_m2 is not none %}{{ '%.4f'|format(ha(item.excluded_m2)) }}{% else %}{{ t_no_data }}{% endif %}</strong> {{ 'га' if is_ru else 'га' }}</td></tr>
+        <tr><th>{{ 'Цепочка A → B → C' if is_ru else 'A → B → C занжири' }}</th><td>
+          {% if item.chain %}
+          A <a href="{{ item.chain.a.url }}" target="_blank" rel="noopener">{{ item.chain.a.flight_id }}</a> <span class="vs-muted">{{ item.chain.a.datetime_s }}</span>
+          {% for b in item.chain.b %}
+          → B <a href="{{ b.url }}" target="_blank" rel="noopener" title="{{ bridge_note }}">{{ b.flight_id }}</a> <span class="vs-muted">{{ b.datetime_s }}</span>
+          {% endfor %}
+          → C <a href="{{ item.chain.c.url }}" target="_blank" rel="noopener">{{ item.chain.c.flight_id }}</a> <span class="vs-muted">{{ item.chain.c.datetime_s }}</span>
+          {% if item.chain.b %}<div class="vs-muted">{{ bridge_note }}</div>{% endif %}
+          {% else %}—{% endif %}
+        </td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'История решений администратора' if is_ru else 'Администратор қарорлари тарихи' }}</span>
+    <span class="vs-muted">{{ 'записи не удаляются и не изменяются; отмена — новая запись' if is_ru else 'ёзувлар ўчирилмайди ва ўзгармайди; бекор қилиш — янги ёзув' }}</span>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table is-static">
+      <thead>
+        <tr>
+          <th>№</th>
+          <th>{{ 'Действие' if is_ru else 'Амал' }}</th>
+          <th>{{ 'Действует' if is_ru else 'Амалда' }}</th>
+          <th>{{ 'Кто' if is_ru else 'Ким' }}</th>
+          <th>{{ 'Когда (UTC+5)' if is_ru else 'Қачон (UTC+5)' }}</th>
+          <th>{{ 'Причина' if is_ru else 'Сабаб' }}</th>
+          <th>{{ 'Автомат на момент решения' if is_ru else 'Қарор пайтидаги автомат' }}</th>
+          <th class="right">{{ 'Принято по решению, га' if is_ru else 'Қарор бўйича қабул қилинган, га' }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for h in history %}
+        <tr>
+          <td>{{ h.seq }}</td>
+          <td><strong>{{ h.label }}</strong>{% if h.is_override %} <span class="vs-badge vs-badge-warning">{{ 'переопределение' if is_ru else 'қайта белгилаш' }}</span>{% endif %}</td>
+          <td>{% if h.is_current %}<span class="vs-badge vs-badge-success">{{ 'да' if is_ru else 'ҳа' }}</span>{% else %}{{ 'нет' if is_ru else 'йўқ' }}{% endif %}</td>
+          <td>{{ h.by or '—' }}</td>
+          <td>{{ h.at_s }}</td>
+          <td>{{ h.comment }}</td>
+          <td>{{ h.auto_label }}</td>
+          <td class="right">{% if h.accepted_ha is not none %}{{ '%.4f'|format(h.accepted_ha) }}{% else %}—{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="vs-empty">{{ 'Решений по этой записи не было: действует автоматический результат.' if is_ru else 'Бу ёзув бўйича қарорлар бўлмаган: автоматик натижа амал қилмоқда.' }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if not ready %}
+<div class="vs-alert is-warning vs-mb" role="status">
+  <div>{{ 'Решения недоступны: миграция журнала решений (migrate_drone_area_control_v2_001.py) не применена.' if is_ru else 'Қарорлар мавжуд эмас: қарорлар журнали миграцияси (migrate_drone_area_control_v2_001.py) қўлланмаган.' }}</div>
+</div>
+{% endif %}
+
+{% if can_decide and actions %}
+{% macro decision_fields() %}
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="next" value="{{ back }}">
+  <input type="hidden" name="expected_decision_id" value="{{ active_id }}">
+  <div class="vs-field vs-mb">
+    <span class="vs-label">{{ 'Решение' if is_ru else 'Қарор' }}</span>
+    {% for a in actions %}
+    <label class="vs-check-card vs-mb-sm">
+      <input type="radio" name="action" value="{{ a.code }}" required>
+      <span><strong>{{ a.label }}</strong><span class="vs-help">{{ a.help }}</span></span>
+    </label>
+    {% endfor %}
+  </div>
+  <div class="vs-field vs-mb">
+    <label class="vs-label" for="decComment">{{ 'Причина решения (обязательно)' if is_ru else 'Қарор сабаби (мажбурий)' }}</label>
+    <textarea name="comment" id="decComment" class="vs-textarea" required minlength="{{ min_comment }}" maxlength="2000"></textarea>
+    <span class="vs-help">{{ 'Что именно проверено: например, визуально сверено в DJI — повтор площади A.' if is_ru else 'Нима текширилди: масалан, DJI да кўз билан солиштирилди — A майдонининг такрори.' }}</span>
+  </div>
+  <label class="vs-check-card vs-mb">
+    <input type="checkbox" name="confirm" value="1" required>
+    <span>{{ 'Подтверждаю решение. Автоматический расчёт не меняется; решение попадёт в историю с моим именем.' if is_ru else 'Қарорни тасдиқлайман. Автоматик ҳисоб ўзгармайди; қарор менинг номим билан тарихга ёзилади.' }}</span>
+  </label>
+{% endmacro %}
+
+{% if override %}
+<details class="vs-card vs-mb">
+  <summary class="vs-btn vs-btn-ghost">{{ 'Переопределить доказанный автоматический результат' if is_ru else 'Исботланган автоматик натижани қайта белгилаш' }}</summary>
+  <div class="vs-card-body">
+    <div class="vs-alert is-warning vs-mb" role="status">
+      <div>{{ 'Эта корректировка доказана автоматикой (счётчик V4). Переопределять её — только если ручная проверка нашла ошибку. Действие требует дополнительного подтверждения и причины.' if is_ru else 'Бу тузатиш автоматика томонидан исботланган (V4 ҳисоблагичи). Уни фақат қўлда текширувда хато топилса қайта белгиланг. Амал қўшимча тасдиқ ва сабабни талаб қилади.' }}</div>
+    </div>
+    <form method="post" action="{{ url_for('drones.area_control_decide', flight_id=item.flight_id) }}" onsubmit='return confirm({{ ("Переопределить доказанный автоматический результат? Итоги отчёта изменятся." if is_ru else "Исботланган автоматик натижа қайта белгилансинми? Ҳисобот якунлари ўзгаради.")|tojson }})'>
+      {{ decision_fields() }}
+      <label class="vs-check-card vs-mb">
+        <input type="checkbox" name="confirm_override" value="1" required>
+        <span>{{ 'Понимаю: это переопределение доказанного автоматического результата.' if is_ru else 'Тушунаман: бу исботланган автоматик натижани қайта белгилаш.' }}</span>
+      </label>
+      <button type="submit" class="vs-btn vs-btn-danger">{{ 'Записать переопределение' if is_ru else 'Қайта белгилашни ёзиш' }}</button>
+    </form>
+  </div>
+</details>
+{% else %}
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Решение администратора' if is_ru else 'Администратор қарори' }}</span>
+  </div>
+  <div class="vs-card-body">
+    <form method="post" action="{{ url_for('drones.area_control_decide', flight_id=item.flight_id) }}" onsubmit='return confirm({{ ("Записать решение? Итоги отчёта изменятся, автоматический расчёт останется прежним." if is_ru else "Қарор ёзилсинми? Ҳисобот якунлари ўзгаради, автоматик ҳисоб аввалгидек қолади.")|tojson }})'>
+      {{ decision_fields() }}
+      <button type="submit" class="vs-btn vs-btn-primary">{{ 'Записать решение' if is_ru else 'Қарорни ёзиш' }}</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}
