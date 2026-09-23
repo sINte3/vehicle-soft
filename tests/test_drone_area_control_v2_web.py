@@ -712,6 +712,15 @@ class Refresh(Base):
         html = self.control_page(user_id=viewer)
         self.assertNotIn('action="/drones/dji-refresh"', html)
 
+    def test_the_panel_is_on_the_flights_and_sources_screens(self):
+        client = self.client_as()
+        for url in ('/drones/', '/drones/sources'):
+            html = client.get(url).get_data(as_text=True)
+            self.assertIn('data-dji-refresh', html, url)
+            self.assertIn('action="/drones/dji-refresh"', html, url)
+            # Возврат -- на тот же экран.
+            self.assertIn('name="next" value="%s' % url, html, url)
+
     def test_the_panel_shows_the_last_flight_intake(self):
         from models import DroneSyncLog
         html = self.control_page()

@@ -12,6 +12,10 @@
   </div>
 </div>
 
+{# DRONE-AREA-CONTROL-V2-MEGA: «Обновить данные DJI» -- та же панель,
+   что на экране контроля площади. #}
+{% include 'drones/_dji_refresh.html' %}
+
 <div class="vs-card vs-mb">
   <div class="vs-card-body">
     <form method="get" action="{{ url_for('drones.sources') }}" class="vs-form-row">
