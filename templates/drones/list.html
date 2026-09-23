@@ -1,5 +1,6 @@
 {% extends g.base_template %}
 {% from '_icons.html' import icon %}
+{% from 'drones/_period.html' import time_field, period_notes %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Дроны — вылеты' if is_ru else 'Дронлар — парвозлар' }}{% endblock %}
 {% block content %}
@@ -20,12 +21,16 @@
     <form method="get" action="{{ url_for('drones.index') }}" class="vs-form-row">
       <div class="vs-field" style="width:160px;">
         <label class="vs-label" for="droneDateFrom">{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
-        <input type="date" name="date_from" id="droneDateFrom" class="vs-input" value="{{ filters.date_from }}">
+        <input type="date" name="date_from" id="droneDateFrom" class="vs-input" value="{{ filters.date_from_s }}">
       </div>
+      {# DRONE-AREA-CONTROL-V2-MEGA, блок C: время суток UTC+5 рядом с датой,
+         00:00 и 23:59 по умолчанию. Семантику держит drone_period.py. #}
+      {{ time_field('time_from', filters.time_from_s, 'Время с' if is_ru else 'Вақт дан', 'droneTimeFrom') }}
       <div class="vs-field" style="width:160px;">
         <label class="vs-label" for="droneDateTo">{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
-        <input type="date" name="date_to" id="droneDateTo" class="vs-input" value="{{ filters.date_to }}">
+        <input type="date" name="date_to" id="droneDateTo" class="vs-input" value="{{ filters.date_to_s }}">
       </div>
+      {{ time_field('time_to', filters.time_to_s, 'Время по' if is_ru else 'Вақт гача', 'droneTimeTo') }}
       <div class="vs-field" style="min-width:180px;">
         <label class="vs-label" for="droneUnitFilter">{{ 'Машина' if is_ru else 'Машина' }}</label>
         <select name="unit_id" id="droneUnitFilter" class="vs-select">
@@ -53,6 +58,8 @@
     </form>
   </div>
 </div>
+
+{{ period_notes(period_messages) }}
 
 <div class="vs-table-wrap vs-mb">
   <div class="vs-card-header">
