@@ -417,6 +417,46 @@ class Resume(Base):
                           '\n'.join(self.lines))
         self.assertEqual(sha256(self.checkpoint), before)
 
+    def test_a_checkpoint_of_another_database_is_refused_untouched(self):
+        # Окна, законченные на копии, не должны молча считаться
+        # законченными на другой базе при том же пути контрольной точки.
+        self.main(WindowRunner(), *self.RANGE)
+        self.assertEqual(self.load()['database'], tool.database_key(self.db))
+        before = sha256(self.checkpoint)
+        other = os.path.join(self.tmp, 'copy', 'transport.db')
+        os.makedirs(os.path.dirname(other))
+        shutil.copyfile(self.db, other)
+        runner = WindowRunner()
+        del self.lines[:]
+        code = tool.main(['--db', other, '--checkpoint', self.checkpoint]
+                         + list(self.RANGE), runner=runner,
+                         out=self.lines.append, today=TODAY)
+        self.assertEqual(code, tool.EXIT_USAGE)
+        self.assertEqual(runner.commands, [])
+        self.assertIn('belongs to the database', '\n'.join(self.lines))
+        self.assertEqual(sha256(self.checkpoint), before)
+        # Отрицательный контроль: та же база другим написанием пути --
+        # это продолжение, а не отказ.
+        same = WindowRunner()
+        spelled = os.path.join(os.path.dirname(self.db), '.',
+                               os.path.basename(self.db))
+        self.assertEqual(tool.main(['--db', spelled, '--checkpoint',
+                                    self.checkpoint] + list(self.RANGE),
+                                   runner=same, out=self.lines.append,
+                                   today=TODAY), tool.EXIT_OK)
+        self.assertEqual(same.commands, [])
+
+    def test_a_checkpoint_without_a_database_is_bound_on_resume(self):
+        self.main(WindowRunner(), *self.RANGE + ('--max-windows', '1'))
+        document = self.load()
+        del document['database']
+        with io.open(self.checkpoint, 'w', encoding='utf-8') as fh:
+            fh.write(json.dumps(document))
+        runner = WindowRunner()
+        self.assertEqual(self.main(runner, *self.RANGE), tool.EXIT_OK)
+        self.assertEqual(len(runner.windows()), 4)
+        self.assertEqual(self.load()['database'], tool.database_key(self.db))
+
     def test_an_unreadable_checkpoint_is_refused_untouched(self):
         os.makedirs(os.path.dirname(self.checkpoint))
         with open(self.checkpoint, 'w') as fh:

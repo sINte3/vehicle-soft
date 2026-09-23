@@ -170,12 +170,20 @@ def month_of(key):
 
 # ─── Контрольная точка ───────────────────────────────────────────────────────
 
-def new_checkpoint(date_from, date_to, window_days):
-    return {'version': CHECKPOINT_VERSION,
-            'range': {'from': date_from.isoformat(),
-                      'to': date_to.isoformat()},
-            'window_days': window_days,
-            'windows': {}}
+def database_key(db_path):
+    """Сравнимое имя базы: один файл -- одна строка при любом написании."""
+    return os.path.normcase(os.path.abspath(db_path))
+
+
+def new_checkpoint(date_from, date_to, window_days, db_path=None):
+    checkpoint = {'version': CHECKPOINT_VERSION,
+                  'range': {'from': date_from.isoformat(),
+                            'to': date_to.isoformat()},
+                  'window_days': window_days,
+                  'windows': {}}
+    if db_path:
+        checkpoint['database'] = database_key(db_path)
+    return checkpoint
 
 
 def load_checkpoint(path):
@@ -198,10 +206,20 @@ def load_checkpoint(path):
     return document
 
 
-def check_matches(checkpoint, date_from, date_to, window_days, path):
+def check_matches(checkpoint, date_from, date_to, window_days, path,
+                  db_path=None):
     """[REASON]: чужой диапазон -- отказ, а не молчаливое смешение. Окна
     другой длины или другого конца не совпадают ключами, и «продолжение»
-    тихо прошло бы весь период заново либо пропустило бы его часть."""
+    тихо прошло бы весь период заново либо пропустило бы его часть.
+
+    То же для базы: окно, отмеченное «готово» на staging-копии, иначе было
+    бы молча пропущено на боевой базе при том же пути контрольной точки."""
+    have_db = checkpoint.get('database')
+    if db_path and have_db and have_db != database_key(db_path):
+        raise Refusal(EXIT_USAGE,
+                      'the checkpoint %s belongs to the database %s, not to '
+                      '%s. Give another --checkpoint to backfill this '
+                      'database.' % (path, have_db, database_key(db_path)))
     wanted = {'from': date_from.isoformat(), 'to': date_to.isoformat()}
     if checkpoint.get('range') == wanted \
             and checkpoint.get('window_days') == window_days:
@@ -522,7 +540,7 @@ def main(argv=None, runner=daily.run_command, out=say, today=None):
         checkpoint = load_checkpoint(checkpoint_path)
         if checkpoint is not None:
             check_matches(checkpoint, date_from, date_to, args.window_days,
-                          checkpoint_path)
+                          checkpoint_path, args.db_path)
         if args.plan:
             return print_plan(windows, checkpoint, args, version, out)
         if not args.db_path:
@@ -558,7 +576,11 @@ def _run(args, windows, checkpoint, checkpoint_path, version, runner, out,
          today):
     if checkpoint is None:
         checkpoint = new_checkpoint(windows[0][0], windows[-1][1],
-                                    args.window_days)
+                                    args.window_days, args.db_path)
+    elif not checkpoint.get('database'):
+        # Точка, начатая до привязки к базе: привязывается к первой базе,
+        # с которой её продолжили.
+        checkpoint['database'] = database_key(args.db_path)
     work_dir = os.path.join(os.path.dirname(checkpoint_path), WORK_DIR_NAME)
     lock_path = runlock.cycle_lock_path(args.db_path)
     executed = 0
