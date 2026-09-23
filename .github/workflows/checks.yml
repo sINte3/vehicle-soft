@@ -330,6 +330,23 @@ jobs:
           python tools/test_dji_area_control_acceptance.py
           python tools/test_dji_area_raw_guard.py
 
+      # DRONE-AREA-CONTROL-V2-MEGA, wired in the same PR (see the [REASON]
+      # above). Stdlib + openpyxl; the ORM-parity test inside the store suite
+      # skips here (no SQLAlchemy) and runs locally.
+      #   * one DJI activity at a time: the OS lock dies with its process;
+      #   * admin decisions are append-only (triggers), linear per flight,
+      #     never touch the automatic calculation; the migration walks its
+      #     four paths; the report's effective totals and tree add up;
+      #   * the date+time period: UTC+5, minute precision, half-open end;
+      #   * the backfill resumes, skips finished windows, never mixes a
+      #     checkpoint of another range and never rewrites RAW.
+      - name: DRONE-AREA-CONTROL-V2 (lock, decisions, period, backfill)
+        run: |
+          python -m unittest drone_collector.tests.test_runlock
+          python -m unittest tests.test_drone_area_control_v2_store
+          python -m unittest tests.test_drone_period
+          python tools/test_dji_area_backfill.py
+
       # The owner pastes these blocks VERBATIM into a server console: one stops
       # the staging service and switches its revision, another contacts DJI.
       # What is held: no placeholder and no production name, the revision pin
