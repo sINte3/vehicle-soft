@@ -109,6 +109,28 @@ class InOneProcess(Base):
         self.assertFalse(runlock.is_held(self.path))
         self.assertTrue(self.lock().acquire())
 
+    def test_without_a_hint_the_question_never_touches_the_lock(self):
+        # The web panel asks on every render; while nothing runs it must not
+        # take the lock even for an instant, or a scheduled cycle starting in
+        # that instant with --lock-wait 0 would see it busy.
+        os.makedirs(os.path.dirname(self.path))
+        open(self.path, 'wb').close()
+        calls = []
+        original = runlock._try_lock
+
+        def counting(handle):
+            calls.append(handle)
+            return original(handle)
+        runlock._try_lock = counting
+        self.addCleanup(setattr, runlock, '_try_lock', original)
+        self.assertFalse(runlock.is_held(self.path))
+        self.assertEqual(calls, [])
+        # Negative control: with a holder (and so a hint) it does probe.
+        holder = self.lock('holder')
+        self.assertTrue(holder.acquire())
+        self.assertTrue(runlock.is_held(self.path))
+        self.assertTrue(calls)
+
     def test_the_context_manager_raises_busy_instead_of_running(self):
         self.assertTrue(self.lock('holder').acquire())
         with self.assertRaises(runlock.LockBusy):

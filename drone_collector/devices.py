@@ -100,6 +100,10 @@ EXIT_PERIOD = 3
 EXIT_PAGINATION = 4
 EXIT_NO_DEVICES = 8
 EXIT_MISMATCH = 9
+# DRONE-AREA-CONTROL-V2-MEGA: тот же код и тот же смысл, что у
+# `drone_collector.main`: другой прогон сборщика держит блокировку сборщика,
+# ожидание истекло, к DJI не обращались.
+EXIT_COLLECTOR_BUSY = 24
 
 # ─── Селекторы панели фильтра (правятся ЗДЕСЬ и больше нигде) ───────────────
 #
@@ -938,6 +942,21 @@ def main(argv=None):
     log.info('Device sweep %s .. %s -> %s',
              format_date(parse_date(args.date_from)),
              format_date(parse_date(args.date_to)), args.out)
+    # [REASON]: обход по бортам открывает тот же кабинет DJI на той же
+    # сохранённой сессии, что и ночной сбор, и кнопка «Обновить данные DJI».
+    # Два браузера на одной сессии -- ровно то, от чего стоит блокировка
+    # сборщика; второй вход пакета обязан уважать её так же, как первый.
+    from drone_collector import main as collector_main
+    from drone_collector import runlock
+    try:
+        wait_s = collector_main.collector_lock_wait()
+    except ConfigError as exc:
+        log.error('Configuration error: %s', exc)
+        return EXIT_CONFIG
+    lock = runlock.RunLock(collector_main.collector_lock_path(),
+                           purpose='devices')
+    if not collector_main.take_collector_lock(lock, wait_s, log):
+        return EXIT_COLLECTOR_BUSY
     try:
         return run(args, cfg, log)
     except SessionMissing as exc:
@@ -955,6 +974,8 @@ def main(argv=None):
     except BrowserError as exc:
         log.error('%s', exc)
         return EXIT_PAGINATION
+    finally:
+        lock.release()
 
 
 if __name__ == '__main__':

@@ -41,6 +41,7 @@ from drone_collector.tests.support import make_flight
 from drone_collector.sender import SendResult
 from drone_collector.tests.test_sender import config
 
+import shutil
 import sys
 import tempfile
 import types
@@ -312,8 +313,12 @@ class ExitCodeConstantsTests(unittest.TestCase):
         self.assertEqual({value: names for value, names in by_value.items()
                           if len(names) > 1}, {})
         mine = set(codes(main_module).values())
+        # 24 -- общий код с общим смыслом: обход по бортам тоже ждёт
+        # блокировку сборщика и называет её тем же именем.
         self.assertLessEqual(mine & set(codes(devices_module).values()),
-                             {0, 1, 2, 3, 4})
+                             {0, 1, 2, 3, 4, 24})
+        self.assertEqual(devices_module.EXIT_COLLECTOR_BUSY,
+                         main_module.EXIT_COLLECTOR_BUSY)
         self.assertLessEqual(mine & set(codes(area_manifest).values()),
                              {0, 1})
 
@@ -2043,6 +2048,30 @@ class CollectorLockTests(CliTestCase):
         self.assertIn('test-holder', text)
         self.assertIn('pid=%d' % os.getpid(), text)
         self.assertNotIn(self.SECRET, text)
+
+    def test_the_device_sweep_waits_for_the_same_lock(self):
+        from drone_collector import devices as devices_module
+        out_dir = tempfile.mkdtemp(prefix='devices_out_')
+        self.addCleanup(shutil.rmtree, out_dir, True)
+        argv = ['--from', '2026-07-01', '--to', '2026-07-07', '--out',
+                out_dir]
+        ran = []
+
+        def recording_run(args, cfg, log):
+            ran.append(((runlock.owner(self.lock_path) or {})
+                        .get('purpose')))
+            return devices_module.EXIT_OK
+
+        self._patch(devices_module, 'run', recording_run)
+        holder = self.hold('nightly-walk')
+        self.assertEqual(devices_module.main(list(argv)),
+                         devices_module.EXIT_COLLECTOR_BUSY)
+        self.assertEqual(ran, [], 'the sweep ran without the lock')
+        holder.release()
+        self.assertEqual(devices_module.main(list(argv)),
+                         devices_module.EXIT_OK)
+        self.assertEqual(ran, ['devices'])
+        self.assertFalse(runlock.is_held(self.lock_path))
 
     def test_the_lock_is_held_for_the_run_and_released_after_it(self):
         self.assertEqual(main(list(self.DRY_FLIGHTS)), EXIT_SESSION)

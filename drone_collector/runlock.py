@@ -150,11 +150,18 @@ class RunLock(object):
 def is_held(path):
     """Is the lock held by SOMEONE right now? Never blocks.
 
-    Taking and immediately releasing the lock is the only honest answer; a
-    process that races us for the lock in that instant loses one attempt and
-    retries (every acquirer here polls).
+    Taking and immediately releasing the lock is the only honest answer, but
+    it is taken ONLY when the owner hint exists.
+
+    [REASON]: the web page asks this question on every render of the refresh
+    panel. A probe that took the lock while nothing runs could, in that very
+    instant, make a scheduled cycle starting with `--lock-wait 0` see a busy
+    lock and skip the day. Every holder here writes the hint right after
+    taking the lock and removes it before releasing, so "no hint" means
+    "nobody holds it" without touching the lock at all; a hint left by a
+    killed process is still checked against the lock itself.
     """
-    if not os.path.exists(path):
+    if not os.path.exists(path) or not os.path.exists(path + '.owner'):
         return False
     probe = RunLock(path, purpose='probe')
     try:

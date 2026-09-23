@@ -215,6 +215,7 @@ command line.
 | 15 | `--route-ui-collect`: the run is **not confirmed**. | Nothing was queued and nothing was sent. The log names every reason separately — the operator never confirmed, traffic had not settled, a request failed, an observation errored. One reason per line, because each is a different thing to fix. |
 | 16 | `--route-ui-collect`: traffic arrived but the set is **incomplete**. | Nothing was queued. Either a response body did not decode, or the requested and returned id sets differ. A partially collected day stored in the database is indistinguishable from a complete one: the work would get fewer routes than existed and compute its useful area as if the input were whole. |
 | 17 | `--send-routes`: the endpoint answered, but did **not accept the whole batch**. | The queue is intact — every envelope stayed in `pending/` and the next run sends them again. The message names which of the four conditions failed: a rejected route, a route naming a flight Vehicle Soft does not have, counters that do not add up, or a `seen` below the number sent. For `unlinked`, sync the flights first and run `--send-routes` again. |
+| 24 | Another collector run holds the **collector lock** and the wait ran out. | Nothing was collected and nothing was sent. The log names the holder (pid, host, mode, start). Wait for it to finish; the wait is `DJI_COLLECTOR_LOCK_WAIT_S` seconds (default 1800, `0` = do not wait). |
 
 Codes **8** and **9** are deliberately absent from this table: they belong to
 the other entry point of this package, `python -m drone_collector.devices`
@@ -237,6 +238,25 @@ hour of slack on each edge. On a mismatch it logs both values, fails, and sends
 nothing. A collector that silently harvests the wrong period is worse than one
 that fails: the flights it brings back are real, they land in the database, and
 nothing downstream can tell that the window was not the one that was asked for.
+
+### One collector run at a time (DRONE-AREA-CONTROL-V2-MEGA)
+
+Every run that gets past the command line and the configuration -- the
+nightly walk, `--sources`, `--lands`, `--land-snapshot`, the route modes,
+`--area-48h`, `--save-session`, dry runs, and the device sweep
+(`python -m drone_collector.devices`) -- holds the collector lock
+`drone_collector/data/collector.lock` for its whole duration
+(`DJI_COLLECTOR_LOCK_PATH` overrides the path). A second run waits up to
+`DJI_COLLECTOR_LOCK_WAIT_S` seconds (default 1800) and then exits 24 without
+touching the cabinet or the outbox. The lock is an OS lock on an open file, so
+a process killed by the service manager or a reboot releases it by dying;
+`collector.lock` and `collector.lock.owner` never need deleting by hand. The
+owner file is only a hint (pid, host, mode, start) for the log.
+
+The area cycle (`tools/dji_area_daily.py`) additionally holds its own cycle
+lock next to the database for the whole FLIGHTS -> MANIFEST -> SOURCES ->
+RECALC run, so the "refresh DJI data" button, a scheduled cycle and the
+backfill tool never interleave either.
 
 ---
 
