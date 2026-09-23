@@ -954,12 +954,19 @@ def run_plain(args, con, lock_path, wait_s, window, runner, today, out):
                     % type(exc).__name__)
         return EXIT_BUSY
     try:
-        if con is None:
+        run = None
+        if con is not None:
+            from dji_area import control_store as cs
+            try:
+                run = cs.start_scheduled(con, from_to[0], from_to[1])
+            except sqlite3.Error as exc:
+                # Журнал -- для экрана; суточный цикл из-за него не пропадает.
+                out('WARNING: the run ledger row was not opened (%s); the '
+                    'cycle runs without it' % type(exc).__name__)
+        if run is None:
             code, _result = run_cycle(args, runner=runner, today=today,
                                       out=out)
             return code
-        from dji_area import control_store as cs
-        run = cs.start_scheduled(con, from_to[0], from_to[1])
         close_dead_runs(con, run['id'], out)
         return run_with_ledger(args, con, run['id'], runner, today, out)
     finally:

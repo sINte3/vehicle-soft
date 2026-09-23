@@ -1106,6 +1106,27 @@ class ScheduledRuns(LedgerBase):
         self.assertEqual(self.cs.get_run(self.con, queued['id'])['status'],
                          self.cs.STATUS_QUEUED)
 
+    def test_a_ledger_that_cannot_be_written_never_stops_the_cycle(self):
+        def locked(*_args, **_kwargs):
+            raise sqlite3.OperationalError('database is locked')
+
+        for name in ('start_scheduled', 'set_step'):
+            saved = getattr(self.cs, name)
+            setattr(self.cs, name, locked)
+            try:
+                runner = FakeRunner()
+                self.assertEqual(self.main(runner), tool.EXIT_OK, name)
+                self.assertEqual(len(runner.commands), 4, name)
+            finally:
+                setattr(self.cs, name, saved)
+        self.assertTrue(any('ledger row was not opened' in line
+                            for line in self.lines))
+        self.assertTrue(any('run ledger was not updated' in line
+                            for line in self.lines))
+        # Строка, открытая до сбоя шага, всё равно закрыта итогом.
+        (row,) = self.rows()
+        self.assertEqual(row['status'], self.cs.STATUS_SUCCESS)
+
     def test_without_the_tables_the_cycle_runs_and_says_so(self):
         bare = os.path.join(self.tmp, 'bare.db')
         con = sqlite3.connect(bare)
