@@ -1,0 +1,28 @@
+{# DRONE-AREA-CONTROL-V2-MEGA, блок C. Поля времени общего фильтра
+   «дата+время» модуля Дроны и предупреждения периода.
+
+   [REASON]: время -- отдельное поле рядом с датой, а не datetime-local.
+   Поля дат (`date_from`/`date_to`, их id, классы и значения) остаются
+   байт в байт прежними: на них опираются ссылки других страниц, книги и
+   тесты. Время меняется независимо от даты, поэтому смена даты никогда не
+   сбрасывает выбранные минуты. Семантику (UTC+5, полуоткрытый конец,
+   значения по умолчанию 00:00 и 23:59) держит `drone_period.py`.
+
+   Подписи передаёт страница: у макроса нет `is_ru` своего контекста. #}
+
+{% macro time_field(name, value, label, input_id, width='120px') -%}
+<div class="vs-field" style="width:{{ width }};">
+  <label class="vs-label" for="{{ input_id }}">{{ label }}</label>
+  <input type="time" step="60" name="{{ name }}" id="{{ input_id }}" class="vs-input" value="{{ value }}">
+</div>
+{%- endmacro %}
+
+{# Предупреждения периода: неверное время, начало позже конца. Каждое --
+   отдельный .vs-alert ровно с одним дочерним div (flex-контейнер). #}
+{% macro period_notes(messages) -%}
+{% for message in messages %}
+<div class="vs-alert is-warning vs-mb" role="status">
+  <div>{{ message }}</div>
+</div>
+{% endfor %}
+{%- endmacro %}

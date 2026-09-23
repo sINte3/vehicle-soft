@@ -3305,6 +3305,107 @@ class DjiLandGeometry(db.Model):
     )
 
 
+# ─── DRONE-AREA-CONTROL-V2-MEGA: решения администратора и журнал циклов ──────
+
+class DroneAreaDecision(db.Model):
+    """Решение администратора по записи площади DJI (вылет C). Append-only.
+
+    [REASON]: отдельная таблица, а не колонка `dji_area_calculations`.
+    Автоматический расчёт остаётся ровно тем, что записал резолвер; решение
+    живёт своим слоем. Отмена и исправление -- НОВАЯ строка с
+    `chain_seq + 1` и ссылкой `supersedes_decision_id`; UPDATE и DELETE
+    отвергают триггеры миграции. Действующее решение вылета -- строка с
+    наибольшим `chain_seq`, если она не REVOKE.
+
+    Идентичность автоматического расчёта, против которого принято решение, --
+    `calculation_id` + `area_algorithm_version` + `calculation_input_hash`
+    (id строки расчёта может вернуться при реактивации, пара версия+отпечаток
+    -- нет). Снимки класса и площадей -- для аудита: что видел администратор.
+
+    Писатель -- только `dji_area/control_store.py` (stdlib sqlite3); модель
+    служит `db.create_all()` на свежей установке. Создана
+    migrate_drone_area_control_v2_001.py.
+    """
+    __tablename__ = 'drone_area_decisions'
+    id                     = db.Column(db.Integer, primary_key=True)
+    flight_id              = db.Column(db.BigInteger, nullable=False)
+    chain_seq              = db.Column(db.Integer, nullable=False)
+    supersedes_decision_id = db.Column(
+        db.Integer, db.ForeignKey('drone_area_decisions.id'), nullable=True)
+    decision_type          = db.Column(db.String(40), nullable=False)
+    calculation_id         = db.Column(db.Integer, nullable=True)
+    area_algorithm_version = db.Column(db.String(80), nullable=True)
+    calculation_input_hash = db.Column(db.String(64), nullable=True)
+    auto_class             = db.Column(db.String(30), nullable=True)
+    auto_reason            = db.Column(db.String(60), nullable=True)
+    raw_area_m2            = db.Column(db.Float, nullable=True)
+    auto_accepted_m2       = db.Column(db.Float, nullable=True)
+    auto_excluded_m2       = db.Column(db.Float, nullable=True)
+    effective_accepted_m2  = db.Column(db.Float, nullable=True)
+    effective_excluded_m2  = db.Column(db.Float, nullable=True)
+    is_override            = db.Column(db.Boolean, nullable=False)
+    comment                = db.Column(db.Text, nullable=False)
+    performed_by_user_id   = db.Column(db.Integer, db.ForeignKey('users.id'),
+                                       nullable=True)
+    performed_by_name      = db.Column(db.String(150), nullable=True)
+    performed_at           = db.Column(db.DateTime, nullable=False)
+    decisions_version      = db.Column(db.String(40), nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint('flight_id', 'chain_seq',
+                            name='uq_drone_area_decisions_chain'),
+        db.Index('ix_drone_area_decisions_flight', 'flight_id'),
+    )
+
+
+class DroneAreaCycleRun(db.Model):
+    """Один прогон цикла площади DJI: FLIGHTS -> MANIFEST -> SOURCES -> RECALC.
+
+    По расписанию (SCHEDULED) или по кнопке «Обновить данные DJI» (MANUAL).
+    Состояние: QUEUED -> RUNNING -> SUCCESS / SUCCESS_WITH_WARNINGS / FAILED;
+    BUSY (другой цикл держал блокировку), INTERRUPTED (процесс умер, не
+    дописав строку), LAUNCH_FAILED (запуск не состоялся).
+
+    [REASON]: `active_slot` = 1 у ручного прогона, пока он QUEUED или
+    RUNNING, и NULL иначе; частичный UNIQUE-индекс по нему -- защита от
+    двойного нажатия в самой базе: второй одновременный запрос получает
+    «уже выполняется», а не второй сбор DJI.
+
+    Не строка `drone_sync_logs`: у того журнала свой инвариант
+    seen = new + duplicates + errors, и цикл в него не вписывается.
+    Писатель -- `dji_area/control_store.py`. Создана
+    migrate_drone_area_control_v2_001.py.
+    """
+    __tablename__ = 'drone_area_cycle_runs'
+    id                   = db.Column(db.Integer, primary_key=True)
+    trigger_kind         = db.Column(db.String(20), nullable=False)
+    status               = db.Column(db.String(30), nullable=False)
+    active_slot          = db.Column(db.Integer, nullable=True)
+    requested_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'),
+                                     nullable=True)
+    requested_by_name    = db.Column(db.String(150), nullable=True)
+    requested_at         = db.Column(db.DateTime, nullable=False)
+    started_at           = db.Column(db.DateTime, nullable=True)
+    finished_at          = db.Column(db.DateTime, nullable=True)
+    heartbeat_at         = db.Column(db.DateTime, nullable=True)
+    current_step         = db.Column(db.String(20), nullable=True)
+    window_from          = db.Column(db.Date, nullable=True)
+    window_to            = db.Column(db.Date, nullable=True)
+    pid                  = db.Column(db.Integer, nullable=True)
+    host                 = db.Column(db.String(100), nullable=True)
+    exit_code            = db.Column(db.Integer, nullable=True)
+    failed_step          = db.Column(db.String(20), nullable=True)
+    message              = db.Column(db.Text, nullable=True)
+    result_json          = db.Column(db.Text, nullable=True)
+
+    __table_args__ = (
+        db.Index('ix_drone_area_cycle_runs_requested', 'requested_at'),
+        db.Index('ux_drone_area_cycle_runs_active', 'active_slot',
+                 unique=True,
+                 sqlite_where=db.text('active_slot IS NOT NULL')),
+    )
+
+
 # ─── Migration Registry ───────────────────────────────────────────────────────
 
 class SchemaMigration(db.Model):
