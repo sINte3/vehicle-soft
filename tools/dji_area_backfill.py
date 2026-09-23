@@ -657,6 +657,11 @@ def _run(args, windows, checkpoint, checkpoint_path, version, runner, out,
             area_algorithm_version=version,
             manifest=result.get('manifest'),
             evidence_misses=result.get('evidence_misses'),
+            # Что сказал цикл («DJI не хранит V4» по манифесту) рядом с тем,
+            # что лежит в расчётах (`unresolved.no_v4_at_source`): одно и то
+            # же доказательство, два места чтения.
+            candidates_no_v4_at_source=result.get(
+                'candidates_no_v4_at_source') or [],
             unresolved=read_unresolved(args.db_path, start, end, version))
         checkpoint['windows'][key] = entry
         save_checkpoint(checkpoint_path, checkpoint)

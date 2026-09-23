@@ -147,6 +147,8 @@ FAILURE_NOT_IDEMPOTENT = 'NOT_IDEMPOTENT'
 FAILURE_CYCLE_BUSY = 'CYCLE_BUSY'
 FAILURE_UNEXPECTED = 'UNEXPECTED_ERROR'
 WARNING_CONTROL_EVIDENCE = 'CONTROL_EVIDENCE_MISSING'
+WARNING_CANDIDATE_NO_V4 = 'CANDIDATE_NO_V4_AT_SOURCE'
+WARNING_NO_V4_CHECK_UNAVAILABLE = 'NO_V4_CHECK_UNAVAILABLE'
 
 # Причина записи манифеста -- `dji_area.capture_manifest.REASON_CONTROL`.
 # Записана числом-строкой, а не импортом: цикл не тянет конвейер площади ради
@@ -395,6 +397,30 @@ def evidence_misses(before, after):
     return {'candidates': candidates, 'controls': controls}
 
 
+def no_v4_ids(document):
+    """Кандидаты окна, для которых DJI сам не хранит V4 (`no_v4_at_source`
+    манифеста), по порядку и без повторов; None -- списка в документе нет."""
+    if not isinstance(document, dict):
+        return None
+    entries = document.get('no_v4_at_source')
+    if not isinstance(entries, list):
+        return None
+    out = []
+    for entry in entries:
+        flight_id = _flight_id(entry if isinstance(entry, dict)
+                               else {'flight_id': entry})
+        if flight_id not in out:
+            out.append(flight_id)
+    return out
+
+
+def asked_for_candidates(before):
+    """Назвал ли манифест шага 2 хотя бы одного кандидата на захват V4.
+    Запись без причины -- кандидат, как и в `evidence_misses`."""
+    return any(entry.get('reason') != MANIFEST_REASON_CONTROL
+               for entry in before or ())
+
+
 def flight_stats(db_path, started, finished, kind=None):
     """Сумма строк `drone_sync_logs`, открытых за время шага FLIGHTS.
 
@@ -454,6 +480,9 @@ def new_result(date_from=None, date_to=None):
         'flights': None,
         'manifest': None,
         'evidence_misses': {'candidates': [], 'controls': []},
+        # Кандидаты окна, для которых DJI сам не хранит V4 -- по последнему
+        # прочитанному манифесту (после сбора, если его перечитали).
+        'candidates_no_v4_at_source': [],
         'recalc': None,
         'warnings': [],
         'failure': None,
@@ -537,6 +566,15 @@ def run_cycle(args, runner=run_command, today=None, out=say, ledger=None,
         return FAILURE_STEP, ''
 
     def done():
+        # [REASON]: кандидат, для которого DJI V4 не хранит, -- не сбой сбора:
+        # сборщик честно получил ответ «V4 нет», повтор ничего не даст. Но и
+        # не чистый успех: корректировка по нему невозможна, запись остаётся
+        # по RAW как «недостаточно доказательств» (та же семантика, что у
+        # backfill), и об этом должен узнать человек, а не только журнал.
+        if (result['candidates_no_v4_at_source']
+                or (result.get('manifest') or {}).get('no_v4_at_source')) \
+                and WARNING_CANDIDATE_NO_V4 not in result['warnings']:
+            result['warnings'].append(WARNING_CANDIDATE_NO_V4)
         result['exit_code'] = verdict['code']
         result['failure'] = verdict['failure']
         result['failed_step'] = verdict['step']
@@ -582,6 +620,7 @@ def run_cycle(args, runner=run_command, today=None, out=say, ledger=None,
             counts = manifest_counts(document)
             result['manifest'] = counts
             before = capture_entries(document)
+            result['candidates_no_v4_at_source'] = no_v4_ids(document) or []
             ids = counts['ids']
             out('  manifest  ids=%s candidates=%s controls=%s '
                 'no_v4_at_source=%s'
@@ -603,6 +642,15 @@ def run_cycle(args, runner=run_command, today=None, out=say, ledger=None,
                 out('  sources are incomplete; asking the manifest again which '
                     'flights still lack V4')
                 _verify(paths, before, result, run_step, note, out)
+            elif code == 0 and asked_for_candidates(before):
+                # [REASON]: «сбор полный» значит, что по каждому кандидату
+                # получен ответ -- V4 либо «у DJI V4 нет». Которых из них
+                # постигло второе, знает только база: сборщик списка не
+                # пишет. Тот же повторный манифест, только чтение, к DJI не
+                # ходит; потери здесь не судятся -- сбор их не имел.
+                out('  sources are complete; asking the manifest again which '
+                    'candidates DJI holds no V4 for')
+                _recheck_no_v4(paths, result, run_step, out)
             elif code != 0:
                 # [REASON]: блок E -- пересчёт идёт по уже сохранённым
                 # доказательствам. Упавший сбор ничего не испортил в базе, а
@@ -642,15 +690,48 @@ def run_cycle(args, runner=run_command, today=None, out=say, ledger=None,
     return done()
 
 
-def _verify(paths, before, result, run_step, note, out):
-    """VERIFY: повторный манифест и разбор потерь (см. evidence_misses)."""
+def _remanifest(paths, run_step):
+    """Шаг VERIFY: тот же манифест в другие файлы. (код, документ либо
+    None, если его нет или он нечитаем)."""
     _remove(paths['verify_ids'])
     _remove(paths['verify_json'])
     code, _started, _finished = run_step(STEP_VERIFY, paths['verify_command'])
     # 22 -- «идентификаторов больше порога»: файл при этом записан, а в DJI
     # VERIFY не ходит, так что порог здесь ничего не охраняет.
-    after = capture_entries(_read_json(paths['verify_json'])) \
+    document = _read_json(paths['verify_json']) \
         if code in (0, COLLECTOR_MANIFEST_TOO_LARGE) else None
+    if capture_entries(document) is None:
+        document = None
+    return code, document
+
+
+def _take_no_v4(result, document, out):
+    """Список «DJI не хранит V4» после сбора: прежние плюс новые."""
+    after = no_v4_ids(document) or []
+    merged = list(result['candidates_no_v4_at_source'])
+    merged.extend(i for i in after if i not in merged)
+    result['candidates_no_v4_at_source'] = merged
+    out('  verify    candidates_no_v4_at_source=%d' % len(merged))
+
+
+def _recheck_no_v4(paths, result, run_step, out):
+    """VERIFY после полного сбора: только список «DJI не хранит V4»."""
+    code, document = _remanifest(paths, run_step)
+    if document is None:
+        # Не узнали -- так и говорим: сбор полный, пересчёт идёт, но есть
+        # ли кандидаты без V4 у DJI, неизвестно. Не провал: ни одно
+        # доказательство не потеряно.
+        out('  verify    unavailable (exit %d): whether DJI holds V4 for '
+            'every candidate is unknown' % code)
+        result['warnings'].append(WARNING_NO_V4_CHECK_UNAVAILABLE)
+        return
+    _take_no_v4(result, document, out)
+
+
+def _verify(paths, before, result, run_step, note, out):
+    """VERIFY: повторный манифест и разбор потерь (см. evidence_misses)."""
+    code, document = _remanifest(paths, run_step)
+    after = capture_entries(document)
     if after is None:
         # [REASON]: не проверили -- значит не знаем, дошли ли кандидаты. Код
         # 5, а не 0: «успех», объявленный без проверки, и есть ложный PASS.
@@ -663,6 +744,7 @@ def _verify(paths, before, result, run_step, note, out):
     result['evidence_misses'] = misses
     out('  verify    candidates_missing=%d controls_missing=%d'
         % (len(misses['candidates']), len(misses['controls'])))
+    _take_no_v4(result, document, out)
     if misses['controls']:
         result['warnings'].append(WARNING_CONTROL_EVIDENCE)
     if misses['candidates']:
@@ -800,6 +882,9 @@ def summary_message(code, result):
         parts.append('candidates_missing=%d controls_missing=%d'
                      % (len(misses.get('candidates') or []),
                         len(misses.get('controls') or [])))
+    no_v4 = result.get('candidates_no_v4_at_source') or []
+    if no_v4:
+        parts.append('candidates_no_v4_at_source=%d' % len(no_v4))
     if result.get('warnings'):
         parts.append('warnings ' + ','.join(result['warnings']))
     return '; '.join(parts)

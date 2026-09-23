@@ -689,6 +689,22 @@ class CycleLedger(StoreBase):
             '', 'ru')
         self.assertTrue(warned)
         self.assertNotIn('CONTROL_EVIDENCE', warned)
+        # «DJI не хранит V4» у кандидатов -- предупреждение словами, с числом.
+        no_v4 = {'warnings': [cs.WARNING_CANDIDATE_NO_V4],
+                 'candidates_no_v4_at_source': [705, 701]}
+        ru = cs.run_explanation(cs.STATUS_WARNINGS, no_v4, '', 'ru')
+        self.assertIn('DJI не хранит V4 для кандидатов: 2', ru)
+        self.assertIn('автоматически не обнуляются', ru)
+        self.assertIn('DJI номзодлар учун V4 ни сақламайди: 2',
+                      cs.run_explanation(cs.STATUS_WARNINGS, no_v4, '', 'uz'))
+        # Только число манифеста, без списка -- число всё равно названо.
+        self.assertIn(': 3', cs.run_explanation(
+            cs.STATUS_WARNINGS, {'warnings': [cs.WARNING_CANDIDATE_NO_V4],
+                                 'manifest': {'no_v4_at_source': 3}},
+            '', 'ru'))
+        self.assertIn('Не удалось проверить, хранит ли DJI V4', cs.run_explanation(
+            cs.STATUS_WARNINGS, {'warnings': [cs.WARNING_NO_V4_CHECK]}, '',
+            'ru'))
         # Незнакомый код -- общая фраза, а не сам код.
         unknown = cs.run_explanation(cs.STATUS_FAILED,
                                      {'failure': 'SOMETHING_NEW'}, '', 'ru')
@@ -703,7 +719,8 @@ class CycleLedger(StoreBase):
             self.assertTrue(pair[0] and pair[1], pair)
             # Подстановки %(имя)d -- не текст для пользователя.
             uz_text = re.sub(r'%\(\w+\)[ds]', '', pair[1])
-            for word in ('V4', 'DJI'):
+            # Те же названия, что разрешены веб-тестом `Bilingual`.
+            for word in ('V4', 'DJI', 'RAW'):
                 uz_text = uz_text.replace(word, '')
             self.assertEqual(re.findall(r'[A-Za-z]{2,}', uz_text), [],
                              pair[1])

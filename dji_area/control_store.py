@@ -109,6 +109,8 @@ STEP_LABELS = {
 # Итог цикла (result_json.outcome) -- то же, что статус завершённой строки.
 FAILURE_CANDIDATE_EVIDENCE = 'CANDIDATE_EVIDENCE_MISSING'
 WARNING_CONTROL_EVIDENCE = 'CONTROL_EVIDENCE_MISSING'
+WARNING_CANDIDATE_NO_V4 = 'CANDIDATE_NO_V4_AT_SOURCE'
+WARNING_NO_V4_CHECK = 'NO_V4_CHECK_UNAVAILABLE'
 FAILURE_LAUNCH = 'LAUNCH_FAILED'
 
 # Итог прогона словами: код итога (`result_json.failure` / `warnings`) ->
@@ -170,6 +172,22 @@ WARNING_TEXTS = {
         '%(controls)d. На итоги площади это не влияет.',
         'V4 далиллари фақат назорат парвозлари учун олинмади: %(controls)d. '
         'Бу майдон якунларига таъсир қилмайди.'),
+    WARNING_CANDIDATE_NO_V4: (
+        'DJI не хранит V4 для кандидатов: %(no_v4)d. Это не сбой сбора, и '
+        'повтор не поможет: такие записи остаются по площади DJI RAW как '
+        '«недостаточно доказательств» и автоматически не обнуляются; решение '
+        'по ним может принять администратор.',
+        'DJI номзодлар учун V4 ни сақламайди: %(no_v4)d. Бу йиғим хатоси '
+        'эмас ва такрорлаш ёрдам бермайди: бундай ёзувлар DJI RAW майдони '
+        'бўйича «далиллар етарли эмас» ҳолатида қолади ва автоматик нолга '
+        'туширилмайди; улар бўйича қарорни администратор қабул қилиши '
+        'мумкин.'),
+    WARNING_NO_V4_CHECK: (
+        'Не удалось проверить, хранит ли DJI V4 для всех кандидатов: '
+        'повторный список не получен. Сбор источников полный, пересчёт '
+        'выполнен.',
+        'DJI барча номзодлар учун V4 ни сақлашини текшириб бўлмади: қайта '
+        'рўйхат олинмади. Манбалар йиғими тўлиқ, қайта ҳисоб бажарилди.'),
 }
 STATUS_TEXTS = {
     'INTERRUPTED': (
@@ -708,8 +726,11 @@ def run_explanation(status, result, failed_step_label, lang):
     pick = dec.pick
     result = result or {}
     misses = result.get('evidence_misses') or {}
+    no_v4 = len(result.get('candidates_no_v4_at_source') or []) or int(
+        (result.get('manifest') or {}).get('no_v4_at_source') or 0)
     counts = {'candidates': len(misses.get('candidates') or []),
               'controls': len(misses.get('controls') or []),
+              'no_v4': no_v4,
               'step': failed_step_label or '—'}
     parts = []
     if status in STATUS_TEXTS and status not in (STATUS_FAILED,):

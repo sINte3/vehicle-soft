@@ -64,10 +64,12 @@ class WindowRunner(object):
     {начало окна: записи манифеста до/после сбора}.
     """
 
-    def __init__(self, codes=None, capture=None, after=None):
+    def __init__(self, codes=None, capture=None, after=None, no_v4=None):
         self.codes = codes or {}
         self.capture = capture or {}
         self.after = after or {}
+        # {начало окна: кандидаты, для которых DJI V4 не хранит}.
+        self.no_v4 = no_v4 or {}
         self.commands = []
         self.window = None
 
@@ -99,6 +101,7 @@ class WindowRunner(object):
             entries = self.capture.get(self.window, [])
             if step == daily.STEP_VERIFY:
                 entries = self.after.get(self.window, entries)
+            no_v4 = self.no_v4.get(self.window, [])
             with io.open(command[command.index('--summary') + 1], 'w',
                          encoding='utf-8') as fh:
                 json.dump({'capture': entries, 'over_cap': False,
@@ -106,7 +109,12 @@ class WindowRunner(object):
                                1 for e in entries
                                if e.get('reason') != 'CONTROL'),
                                'capture_total': len(entries),
-                               'candidates_no_v4_at_source': 0}}, fh)
+                               'candidates_no_v4_at_source': len(no_v4)},
+                           'no_v4_at_source': [
+                               {'flight_id': i,
+                                'reason': 'STRUCTURAL_CANDIDATE',
+                                'v4_state': 'NO_V4_AT_SOURCE'}
+                               for i in no_v4]}, fh)
             with io.open(command[command.index('--out') + 1], 'w',
                          encoding='utf-8') as fh:
                 fh.write('\n'.join(str(e['flight_id']) for e in entries))
@@ -277,8 +285,11 @@ class TheSameCycle(Base):
         self.assertEqual(self.main(runner, '--from', '2026-03-31', '--to',
                                    '2026-04-01'), tool.EXIT_OK)
         steps = [s for w, s, _c in runner.commands if w == '2026-03-31']
+        # VERIFY после полного сбора с кандидатом -- как в суточном цикле:
+        # узнать, для кого DJI V4 не хранит.
         self.assertEqual(steps, [daily.STEP_FLIGHTS, daily.STEP_MANIFEST,
-                                 daily.STEP_SOURCES, daily.STEP_RECALC])
+                                 daily.STEP_SOURCES, daily.STEP_VERIFY,
+                                 daily.STEP_RECALC])
         # Пустой манифест второго окна -- SOURCES пропущен, как и в
         # ежедневном цикле.
         steps = [s for w, s, _c in runner.commands if w == '2026-04-01']
@@ -621,6 +632,34 @@ class RawAndSummary(Base):
         for flight_id in ('1004', '1005', '1006', '1007'):
             self.assertNotIn(flight_id, named)
         self.assertEqual(len(body), 6)
+
+    def test_a_no_v4_window_is_done_with_the_cycles_warning(self):
+        # Та же семантика, что у суточного цикла: окно, где DJI V4 для
+        # кандидата не хранит, -- DONE (повтор ничего не даст), с
+        # предупреждением цикла; запись -- «недостаточно доказательств» по
+        # RAW в списке ручного разбора, расчёт не тронут.
+        self.add_calc(1003, '2026-03-01', 'insufficient')
+        before = self.dump()
+        runner = WindowRunner(no_v4={'2026-03-01': [1003]})
+        self.assertEqual(self.main(runner, '--from', '2026-03-01', '--to',
+                                   '2026-03-02'), tool.EXIT_OK)
+        entry = self.load()['windows']['2026-03-01..2026-03-01']
+        self.assertEqual(entry['status'], tool.STATUS_DONE)
+        self.assertEqual(entry['outcome'], daily.OUTCOME_WARNINGS)
+        self.assertEqual(entry['warnings'], [daily.WARNING_CANDIDATE_NO_V4])
+        self.assertEqual(entry['candidates_no_v4_at_source'], [1003])
+        self.assertEqual(entry['unresolved']['no_v4_at_source'], 1)
+        self.assertEqual(entry['unresolved']['records'],
+                         [{'flight_id': 1003,
+                           'class': tool.CLASS_INSUFFICIENT,
+                           'reason': 'NO_V4_AT_SOURCE'}])
+        self.assertEqual(self.dump(), before)
+        # Отрицательный контроль: соседнее окно без таких записей -- чистый
+        # успех без предупреждения.
+        other = self.load()['windows']['2026-03-02..2026-03-02']
+        self.assertEqual((other['status'], other['outcome'],
+                          other['warnings']),
+                         (tool.STATUS_DONE, daily.OUTCOME_SUCCESS, []))
 
     def test_console_output_is_ascii_only(self):
         self.seed()

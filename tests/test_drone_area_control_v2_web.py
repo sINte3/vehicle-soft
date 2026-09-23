@@ -858,6 +858,27 @@ class Refresh(Base):
         self.assertIn('Техническая строка журнала', admin)
         self.assertIn('STOP: candidate evidence missing', admin)
 
+    def test_candidates_dji_holds_no_v4_for_are_a_warning_in_words(self):
+        self.post()
+        con = self.store()
+        run = control_store.claim_queued(con)
+        control_store.finish(
+            con, run['id'], control_store.STATUS_WARNINGS, exit_code=0,
+            message='exit 0 SUCCESS_WITH_WARNINGS; '
+                    'candidates_no_v4_at_source=2; '
+                    'warnings CANDIDATE_NO_V4_AT_SOURCE',
+            result={'outcome': 'SUCCESS_WITH_WARNINGS',
+                    'warnings': [control_store.WARNING_CANDIDATE_NO_V4],
+                    'candidates_no_v4_at_source': [705, 701],
+                    'evidence_misses': {'candidates': [], 'controls': []}})
+        operator = self.make_user('area-editor-v', ROLE_OPERATOR)
+        html = self.control_page(user_id=operator)
+        self.assertIn('Успешно, с предупреждениями', html)
+        self.assertIn('DJI не хранит V4 для кандидатов: 2', html)
+        self.assertNotIn('CANDIDATE_NO_V4_AT_SOURCE', html)
+        uz = self.control_page(user_id=operator, language='uz')
+        self.assertIn('DJI номзодлар учун V4 ни сақламайди: 2', uz)
+
     def test_the_scheduler_launcher_runs_only_the_named_task(self):
         calls = []
 

@@ -76,10 +76,16 @@ class FakeRunner(object):
     """
 
     def __init__(self, ids=(701, 702, 703), codes=None, writes=None,
-                 capture=None, after=None, hooks=None):
+                 capture=None, after=None, hooks=None, no_v4=(),
+                 no_v4_after=None):
         self.ids = list(ids)
         self.capture = capture
         self.after = after
+        # Кандидаты окна, для которых DJI V4 не хранит: в манифесте шага 2 и
+        # в повторном (по умолчанию -- те же).
+        self.no_v4 = list(no_v4)
+        self.no_v4_after = (list(no_v4_after) if no_v4_after is not None
+                            else self.no_v4)
         self.codes = codes or {}
         self.writes = writes or {'new': 12}
         self.hooks = hooks or {}
@@ -125,11 +131,17 @@ class FakeRunner(object):
                 else:
                     candidates = (1 if self.capture is None else sum(
                         1 for e in entries if e.get('reason') != 'CONTROL'))
+                    no_v4 = (self.no_v4_after if step == tool.STEP_VERIFY
+                             else self.no_v4)
                     json.dump({'capture': entries, 'over_cap': False,
                                'counts': {'candidates_need_capture':
                                           candidates,
                                           'capture_total': len(entries),
-                                          'candidates_no_v4_at_source': 0}},
+                                          'candidates_no_v4_at_source':
+                                          len(no_v4)},
+                               'no_v4_at_source': [
+                                   dict(cand(i), v4_state='NO_V4_AT_SOURCE')
+                                   for i in no_v4]},
                               fh)
             with io.open(out, 'w', encoding='utf-8') as fh:
                 fh.write('\n'.join(str(e['flight_id']) for e in entries)
@@ -178,8 +190,19 @@ class Base(unittest.TestCase):
 
 class TheOrder(Base):
 
-    def test_the_four_steps_run_in_dependency_order(self):
+    def test_the_steps_run_in_dependency_order(self):
+        # Прежнее имя: test_the_four_steps_run_in_dependency_order. Когда
+        # манифест назвал кандидатов, после полного сбора идёт VERIFY --
+        # узнать, для кого из них DJI V4 не хранит; без кандидатов шагов
+        # по-прежнему четыре.
         runner = FakeRunner()
+        self.assertEqual(self.run_cycle(runner), tool.EXIT_OK)
+        self.assertEqual(runner.steps(), [tool.STEP_FLIGHTS,
+                                          tool.STEP_MANIFEST,
+                                          tool.STEP_SOURCES,
+                                          tool.STEP_VERIFY,
+                                          tool.STEP_RECALC])
+        runner = FakeRunner(capture=[ctrl(702), ctrl(703)])
         self.assertEqual(self.run_cycle(runner), tool.EXIT_OK)
         self.assertEqual(runner.steps(), [tool.STEP_FLIGHTS,
                                           tool.STEP_MANIFEST,
@@ -405,11 +428,23 @@ class EvidenceSemantics(Base):
         self.assertEqual(code, tool.EXIT_OK)
         self.assertEqual(result['outcome'], tool.OUTCOME_WARNINGS)
 
-    def test_a_complete_sources_run_needs_no_verify(self):
+    def test_a_complete_sources_run_rereads_but_judges_no_miss(self):
+        # Прежнее имя: test_a_complete_sources_run_needs_no_verify. Полный
+        # сбор теперь перечитывает манифест -- только ради списка «DJI не
+        # хранит V4». Потери после полного сбора не судятся: повторный
+        # манифест здесь нарочно тот же, что до сбора, и это всё равно успех.
         runner = FakeRunner(capture=[cand(701), ctrl(702)])
         code, result = self.cycle_result(runner)
         self.assertEqual(code, tool.EXIT_OK)
         self.assertEqual(result['outcome'], tool.OUTCOME_SUCCESS)
+        self.assertEqual(result['warnings'], [])
+        self.assertEqual(result['evidence_misses'],
+                         {'candidates': [], 'controls': []})
+        self.assertIn(tool.STEP_VERIFY, runner.steps())
+        # Без кандидатов в захвате перечитывать нечего.
+        runner = FakeRunner(capture=[ctrl(702)])
+        code, result = self.cycle_result(runner)
+        self.assertEqual(code, tool.EXIT_OK)
         self.assertNotIn(tool.STEP_VERIFY, runner.steps())
 
     def test_verify_is_the_same_manifest_into_other_files_and_never_dji(self):
@@ -425,6 +460,13 @@ class EvidenceSemantics(Base):
         for flag in ('--out', '--summary'):
             self.assertNotEqual(manifest[manifest.index(flag) + 1],
                                 verify[verify.index(flag) + 1])
+
+    def test_the_words_of_no_v4_are_the_ledgers_own(self):
+        from dji_area import control_store as cs
+        self.assertEqual(tool.WARNING_CANDIDATE_NO_V4,
+                         cs.WARNING_CANDIDATE_NO_V4)
+        self.assertEqual(tool.WARNING_NO_V4_CHECK_UNAVAILABLE,
+                         cs.WARNING_NO_V4_CHECK)
 
     def test_the_worst_problem_names_the_exit_code(self):
         # Кандидат не доехал (5), а затем упал пересчёт (3): код -- 3, шаг --
@@ -443,8 +485,8 @@ class EvidenceSemantics(Base):
 class ResultDocument(Base):
 
     KEYS = {'window', 'outcome', 'exit_code', 'steps', 'failed_step',
-            'flights', 'manifest', 'evidence_misses', 'recalc', 'warnings',
-            'failure'}
+            'flights', 'manifest', 'evidence_misses',
+            'candidates_no_v4_at_source', 'recalc', 'warnings', 'failure'}
 
     def test_the_result_is_written_as_json_with_the_schema(self):
         runner = FakeRunner(capture=[cand(701), ctrl(702)], after=[ctrl(702)],
@@ -549,6 +591,113 @@ class FlightStatistics(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.tmp, 'absent.db')))
 
 
+class NoV4AtSource(Base):
+    """Кандидат, для которого DJI V4 не хранит: успех с предупреждением.
+
+    Не провал -- сборщик получил честный ответ «V4 нет», повтор ничего не
+    даст. Не чистый успех -- корректировка невозможна, запись остаётся по
+    RAW как «недостаточно доказательств» (как в backfill).
+    """
+
+    def test_a_known_no_v4_candidate_is_a_warning_not_a_failure(self):
+        runner = FakeRunner(capture=[cand(701)], after=[], no_v4=[705])
+        code, result = self.cycle_result(runner)
+        self.assertEqual(code, tool.EXIT_OK)
+        self.assertEqual(result['outcome'], tool.OUTCOME_WARNINGS)
+        self.assertEqual(result['warnings'], [tool.WARNING_CANDIDATE_NO_V4])
+        self.assertIsNone(result['failure'])
+        self.assertEqual(result['candidates_no_v4_at_source'], [705])
+        self.assertEqual(result['manifest']['no_v4_at_source'], 1)
+        self.assertIn(tool.STEP_RECALC, runner.steps())
+
+    def test_a_candidate_that_turned_no_v4_during_sources_is_caught(self):
+        # До сбора список пуст; сбор полный (код 0), а по кандидату 701 DJI
+        # ответил «V4 нет» -- это видно только в повторном манифесте.
+        runner = FakeRunner(capture=[cand(701), ctrl(702)], after=[],
+                            no_v4=[], no_v4_after=[701])
+        code, result = self.cycle_result(runner)
+        self.assertEqual(code, tool.EXIT_OK)
+        self.assertEqual(result['outcome'], tool.OUTCOME_WARNINGS)
+        self.assertEqual(result['warnings'], [tool.WARNING_CANDIDATE_NO_V4])
+        self.assertEqual(result['candidates_no_v4_at_source'], [701])
+        self.assertIn('  verify    candidates_no_v4_at_source=1', self.lines)
+        # Отрицательный контроль: тот же прогон, V4 пришёл -- чистый успех.
+        runner = FakeRunner(capture=[cand(701), ctrl(702)], after=[],
+                            no_v4=[], no_v4_after=[])
+        code, result = self.cycle_result(runner)
+        self.assertEqual((code, result['outcome'], result['warnings']),
+                         (tool.EXIT_OK, tool.OUTCOME_SUCCESS, []))
+        self.assertEqual(result['candidates_no_v4_at_source'], [])
+
+    def test_no_v4_joins_the_verdicts_of_an_incomplete_capture(self):
+        runner = FakeRunner(capture=[cand(701), ctrl(702)], after=[ctrl(702)],
+                            no_v4=[], no_v4_after=[701],
+                            codes={tool.STEP_SOURCES: 18})
+        code, result = self.cycle_result(runner)
+        self.assertEqual(code, tool.EXIT_OK)
+        self.assertEqual(result['warnings'], [tool.WARNING_CONTROL_EVIDENCE,
+                                              tool.WARNING_CANDIDATE_NO_V4])
+        self.assertEqual(result['evidence_misses'],
+                         {'candidates': [], 'controls': [702]})
+        # Кандидат, оставшийся без V4 из-за сбоя сбора, -- по-прежнему
+        # провал; предупреждение о «V4 нет» у другого стоит рядом.
+        runner = FakeRunner(capture=[cand(701), cand(703)], after=[cand(703)],
+                            no_v4=[], no_v4_after=[701],
+                            codes={tool.STEP_SOURCES: 18})
+        code, result = self.cycle_result(runner)
+        self.assertEqual(code, tool.EXIT_CANDIDATE_EVIDENCE_MISSING)
+        self.assertEqual(result['outcome'], tool.OUTCOME_FAILED)
+        self.assertIn(tool.WARNING_CANDIDATE_NO_V4, result['warnings'])
+        self.assertEqual(result['evidence_misses']['candidates'], [703])
+
+    def test_an_unavailable_recheck_after_a_complete_capture_is_a_warning(
+            self):
+        runner = FakeRunner(capture=[cand(701)],
+                            codes={tool.STEP_VERIFY: 23})
+        code, result = self.cycle_result(runner)
+        self.assertEqual(code, tool.EXIT_OK)
+        self.assertEqual(result['outcome'], tool.OUTCOME_WARNINGS)
+        self.assertEqual(result['warnings'],
+                         [tool.WARNING_NO_V4_CHECK_UNAVAILABLE])
+        self.assertIsNone(result['failure'])
+        self.assertIn(tool.STEP_RECALC, runner.steps())
+        # Отрицательный контроль: после НЕПОЛНОГО сбора недоступный VERIFY
+        # остаётся провалом, как и был.
+        runner = FakeRunner(capture=[cand(701)], after=[],
+                            codes={tool.STEP_SOURCES: 18,
+                                   tool.STEP_VERIFY: 23})
+        code, result = self.cycle_result(runner)
+        self.assertEqual(code, tool.EXIT_CANDIDATE_EVIDENCE_MISSING)
+
+    def test_without_sources_the_manifest_list_still_warns(self):
+        # --no-dji: сбора нет, список шага 2 -- последний известный.
+        runner = FakeRunner(no_v4=[705])
+        code, result = self.cycle_result(runner, '--no-dji')
+        self.assertEqual((code, result['outcome']),
+                         (tool.EXIT_OK, tool.OUTCOME_WARNINGS))
+        self.assertEqual(result['candidates_no_v4_at_source'], [705])
+        # Пустой захват: SOURCES пропущен, предупреждение то же.
+        runner = FakeRunner(ids=(), no_v4=[705])
+        code, result = self.cycle_result(runner)
+        self.assertEqual((code, result['outcome']),
+                         (tool.EXIT_OK, tool.OUTCOME_WARNINGS))
+        self.assertNotIn(tool.STEP_SOURCES, runner.steps())
+
+    def test_the_ledger_line_and_last_cycle_name_them(self):
+        runner = FakeRunner(capture=[cand(701)], after=[], no_v4=[705],
+                            no_v4_after=[705, 701])
+        code, result = self.cycle_result(runner)
+        self.assertEqual(result['candidates_no_v4_at_source'], [705, 701])
+        message = tool.summary_message(code, result)
+        self.assertIn('candidates_no_v4_at_source=2', message)
+        self.assertIn('warnings CANDIDATE_NO_V4_AT_SOURCE', message)
+        with io.open(os.path.join(self.work, 'last_cycle.json'),
+                     encoding='ascii') as fh:
+            written = json.load(fh)
+        self.assertEqual(written['candidates_no_v4_at_source'], [705, 701])
+        self.assertEqual(written['outcome'], 'SUCCESS_WITH_WARNINGS')
+
+
 class NoDji(Base):
 
     def test_no_dji_runs_only_the_steps_that_stay_at_home(self):
@@ -567,13 +716,17 @@ class CollectorHostWithoutTheDatabase(Base):
         return tool.execute(args, runner=runner, today=TODAY,
                             out=self.lines.append)
 
-    def test_skip_recalc_runs_the_three_collector_steps_and_needs_no_db(self):
+    def test_skip_recalc_runs_the_collector_steps_and_needs_no_db(self):
+        # Прежнее имя: test_skip_recalc_runs_the_three_collector_steps_and_
+        # needs_no_db. К трём шагам сборщика добавился VERIFY после полного
+        # сбора с кандидатами -- он тоже только читает манифест.
         runner = FakeRunner()
         self.assertEqual(self.run_without_db(runner, '--skip-recalc'),
                          tool.EXIT_OK)
         self.assertEqual(runner.steps(), [tool.STEP_FLIGHTS,
                                           tool.STEP_MANIFEST,
-                                          tool.STEP_SOURCES])
+                                          tool.STEP_SOURCES,
+                                          tool.STEP_VERIFY])
 
     def test_skip_recalc_still_verifies_an_incomplete_capture(self):
         runner = FakeRunner(capture=[cand(701), ctrl(702)], after=[ctrl(702)],
@@ -917,8 +1070,10 @@ class QueuedRuns(LedgerBase):
         self.assertIsNotNone(row['finished_at'])
         self.assertEqual(row['pid'], os.getpid())
         self.assertEqual(row['result']['outcome'], 'SUCCESS')
+        # VERIFY -- повторный манифест после полного сбора с кандидатами.
         self.assertEqual(row['result']['steps'], {
-            'FLIGHTS': 0, 'MANIFEST': 0, 'SOURCES': 0, 'RECALC': 0})
+            'FLIGHTS': 0, 'MANIFEST': 0, 'SOURCES': 0, 'VERIFY': 0,
+            'RECALC': 0})
         self.assertEqual(row['result']['recalc']['calc_writes'], {'new': 12})
         self.assertTrue(all(ord(ch) < 128 for ch in row['message']))
         self.assertFalse(runlock.is_held(self.lock_path()))
@@ -1116,7 +1271,8 @@ class ScheduledRuns(LedgerBase):
             try:
                 runner = FakeRunner()
                 self.assertEqual(self.main(runner), tool.EXIT_OK, name)
-                self.assertEqual(len(runner.commands), 4, name)
+                # Пять: с VERIFY после полного сбора с кандидатами.
+                self.assertEqual(len(runner.commands), 5, name)
             finally:
                 setattr(self.cs, name, saved)
         self.assertTrue(any('ledger row was not opened' in line
@@ -1137,7 +1293,7 @@ class ScheduledRuns(LedgerBase):
         code = tool.main(['--db', bare, '--work-dir', self.work],
                          runner=runner, today=TODAY, out=self.lines.append)
         self.assertEqual(code, tool.EXIT_OK)
-        self.assertEqual(len(runner.commands), 4)
+        self.assertEqual(len(runner.commands), 5)
         self.assertEqual(sum('ledger    not recorded' in line
                              for line in self.lines), 1)
 
