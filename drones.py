@@ -3,7 +3,8 @@
 
 Route map:
   GET  /drones/                 -- flight list: server-side pagination
-                                   (50/page), filters by date range, machine
+                                   (50/page), filters by date + time-of-day
+                                   range (UTC+5, drone_period.py), machine
                                    and region. Correct on an empty table.
   GET  /drones/units            -- the 15 machines with their nickname
                                    aliases grouped.
@@ -38,10 +39,11 @@ from datetime import datetime, timedelta, timezone
 from flask import (Blueprint, abort, current_app, flash, jsonify, redirect,
                    render_template, request, send_file, url_for, g)
 from flask_login import current_user
-from sqlalchemy import and_, case, func, or_
+from sqlalchemy import String, and_, case, func, literal, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased, joinedload
 
+import drone_period
 import drone_useful_area as ua
 import drone_works_upload as works_upload
 from ingest_common import verify_api_token, extract_token
@@ -243,31 +245,19 @@ def index():
     page = request.args.get('page', 1, type=int) or 1
     if page < 1:
         page = 1
-    date_from_s = (request.args.get('date_from') or '').strip()
-    date_to_s = (request.args.get('date_to') or '').strip()
-    unit_id = request.args.get('unit_id', type=int)
-    region = (request.args.get('region') or '').strip()
+    # [REASON]: DRONE-AREA-CONTROL-V2-MEGA, block C. The list used to carry
+    # its own inline copy of the date parser and of the UTC+5 shift. It now
+    # goes through the same parser and the same conditions as the summary and
+    # both exports -- one period semantics (date + minute, UTC+5, half-open
+    # end), so the Excel button on this page cannot describe a different set
+    # of flights than the table above it. No date keys -> all time, exactly
+    # as before.
+    filters = _drone_filters_from_args(request.args,
+                                       default_current_month=False)
+    unit_id = filters['unit_id']
+    region = filters['region']
 
-    date_from = _drone_parse_date(date_from_s)
-    date_to = _drone_parse_date(date_to_s)
-
-    q = DroneFlight.query
-    # [REASON]: the operator picks dates in local time (UTC+5) while
-    # started_at is stored in UTC, so the day boundaries are shifted by the
-    # display offset -- a flight at 02:00 local on the 20th (21:00 UTC on
-    # the 19th) belongs to the 20th for the person filtering.
-    if date_from:
-        q = q.filter(DroneFlight.started_at >=
-                     datetime.combine(date_from, datetime.min.time())
-                     - DRONE_DISPLAY_UTC_OFFSET)
-    if date_to:
-        q = q.filter(DroneFlight.started_at <=
-                     datetime.combine(date_to, datetime.max.time())
-                     - DRONE_DISPLAY_UTC_OFFSET)
-    if unit_id:
-        q = q.filter(DroneFlight.drone_unit_id == unit_id)
-    if region:
-        q = q.filter(DroneFlight.region == region)
+    q = DroneFlight.query.filter(*_drone_flight_conditions(filters))
 
     total = q.count()
     pages = max(1, (total + DRONE_PAGE_SIZE - 1) // DRONE_PAGE_SIZE)
@@ -286,15 +276,21 @@ def index():
                .distinct().order_by(DroneFlight.region).all()]
 
     # Filter args echoed into pagination links, only the ones actually set.
+    # [REASON]: the list keeps its own «only what is set» rule rather than
+    # _drone_link_args: its default is all time, so a cleared date and an
+    # absent one mean the same thing here and the links stay as they were.
+    # The time of day is added on top only when it is not 00:00/23:59 --
+    # page two of a 20:00..06:00 list must still be 20:00..06:00.
     filter_args = {}
-    if date_from_s:
-        filter_args['date_from'] = date_from_s
-    if date_to_s:
-        filter_args['date_to'] = date_to_s
+    if filters['date_from_s']:
+        filter_args['date_from'] = filters['date_from_s']
+    if filters['date_to_s']:
+        filter_args['date_to'] = filters['date_to_s']
     if unit_id:
         filter_args['unit_id'] = unit_id
     if region:
         filter_args['region'] = region
+    filter_args.update(drone_period.link_args(filters))
 
     return render_template(
         'drones/list.html',
@@ -309,10 +305,10 @@ def index():
         # DroneFlight.region == filters['region'] keeps working unchanged and
         # links already in circulation keep resolving.
         region_labels=_drone_region_label_map(regions),
-        filters={'date_from': date_from_s, 'date_to': date_to_s,
-                 'unit_id': unit_id, 'region': region},
+        filters=filters,
         filter_args=filter_args,
         fmt_dt=_drone_fmt_dt,
+        **_drone_period_view(filters),
         usage_labels=_drone_usage_labels(),
     )
 
@@ -2940,60 +2936,92 @@ def operator_assignment_update(assign_id):
 DRONE_FLIGHTS_XLSX_CAP = 50000
 
 
+def _drone_current_month_window():
+    """(first day, last day) of the current calendar month in UTC+5."""
+    today_local = (datetime.utcnow() + DRONE_DISPLAY_UTC_OFFSET).date()
+    date_from = today_local.replace(day=1)
+    if today_local.month == 12:
+        date_to = today_local.replace(day=31)
+    else:
+        date_to = (today_local.replace(month=today_local.month + 1, day=1)
+                   - timedelta(days=1))
+    return date_from, date_to
+
+
 def _drone_filters_from_args(args, default_current_month):
-    """Parse the shared filter set (dates, machine, region) from a query
-    string, mirroring index(): the same _drone_parse_date and the same UTC+5
-    day-boundary shift -- one convention, not two.
+    """Parse the shared filter set (dates, time of day, machine, region) from
+    a query string. Every flight screen of the module -- the list, the
+    summary, both exports, the sources page and the spray report -- goes
+    through here: one convention, not two.
+
+    The period itself is parsed by drone_period.parse (DRONE-AREA-CONTROL-V2-
+    MEGA, block C): dates keep their old semantics, the time of day is new.
 
     When default_current_month is true and NEITHER date parameter is present
     in the query string at all, the current calendar month (in UTC+5) is
     preselected. Parameters that are present but empty mean "no bound" --
-    that is how the operator asks for all time by clearing the inputs.
+    that is how the operator asks for all time by clearing the inputs. A
+    malformed date is "no bound" too. time_from/time_to are HH:MM in UTC+5,
+    default 00:00 and 23:59; a malformed time falls back to the default and
+    leaves a warning in period_warnings for the page to show.
+
+    [REASON]: the returned dict keeps every key the callers already read --
+    date_from, date_to, date_from_s, date_to_s, has_date_args, unit_id,
+    region -- and ADDS the period keys (time_from, time_to, time_from_s,
+    time_to_s, time_is_default, utc_start, utc_end_excl, period_inverted,
+    period_warnings, with_time). has_date_args travels with the filters so a
+    caller can tell "no date filter was ever specified" from "the date
+    filter was explicitly cleared": both look like an empty date_from_s, but
+    only the second one must survive into an export link -- see
+    _drone_link_args.
     """
-    has_date_args = ('date_from' in args) or ('date_to' in args)
-    date_from_s = (args.get('date_from') or '').strip()
-    date_to_s = (args.get('date_to') or '').strip()
-    date_from = _drone_parse_date(date_from_s)
-    date_to = _drone_parse_date(date_to_s)
-    if default_current_month and not has_date_args:
-        today_local = (datetime.utcnow() + DRONE_DISPLAY_UTC_OFFSET).date()
-        date_from = today_local.replace(day=1)
-        if today_local.month == 12:
-            date_to = today_local.replace(day=31)
-        else:
-            date_to = (today_local.replace(month=today_local.month + 1, day=1)
-                       - timedelta(days=1))
-        date_from_s = date_from.isoformat()
-        date_to_s = date_to.isoformat()
-    return {
-        'date_from': date_from,
-        'date_to': date_to,
-        'date_from_s': date_from_s,
-        'date_to_s': date_to_s,
-        # [REASON]: the flag travels with the parsed filters so a caller can
-        # tell "no date filter was ever specified" from "the date filter was
-        # explicitly cleared". Both look like an empty date_from_s, but only
-        # the second one must survive into an export link -- see
-        # _drone_link_args.
-        'has_date_args': has_date_args,
-        'unit_id': args.get('unit_id', type=int),
-        'region': (args.get('region') or '').strip(),
-    }
+    window = _drone_current_month_window() if default_current_month else None
+    filters = drone_period.parse(args, default_window=window, with_time=True)
+    filters['unit_id'] = args.get('unit_id', type=int)
+    filters['region'] = (args.get('region') or '').strip()
+    return filters
+
+
+def _drone_sql_bound(dt):
+    """A UTC bound for a comparison with drone_flights.started_at.
+
+    [REASON]: bound as a 19-character TEXT literal, never as a datetime.
+    started_at is a TEXT column in SQLite and holds two spellings side by
+    side: 'YYYY-MM-DD HH:MM:SS.ffffff' (26 characters, written by the ORM)
+    and 'YYYY-MM-DD HH:MM:SS' (19 characters, written by stdlib writers and
+    by hand). SQLAlchemy renders a bound datetime as the 26-character form,
+    and at the exact second the comparison lies: '... 19:00:00' >=
+    '... 19:00:00.000000' is FALSE, so a flight at exactly 00:00:00 local on
+    the first day silently fell out of the period. The 19-character bound
+    compares correctly with both spellings -- a 26-character row whose first
+    19 characters equal the bound sorts after it, which is its true order in
+    time. drone_period.sql_text is the one place the string is made.
+    """
+    return literal(drone_period.sql_text(dt), String)
 
 
 def _drone_flight_conditions(filters):
-    """Filter conditions over DroneFlight for the parsed filter set."""
+    """Filter conditions over DroneFlight for the parsed filter set.
+
+    Accepts the dict from _drone_filters_from_args AND a plain dict with only
+    date_from / date_to / unit_id / region (reports and tests build those by
+    hand): drone_period.utc_bounds reads a dict without time keys as whole
+    days.
+
+    [REASON]: the end is HALF-OPEN -- started_at < (local end minute + 1
+    minute - 5 h). «По 23:59» therefore keeps a flight at 23:59:41; a closed
+    «<= 23:59:00» would drop it silently. For whole days this is the same set
+    the old «<= 23:59:59.999999» produced; for a minute-precise end it is
+    the only bound that keeps the seconds of the last minute. A start later
+    than the end yields two conditions nothing satisfies -- an empty result,
+    not an error; the page says why through drone_period.messages.
+    """
     conds = []
-    if filters['date_from']:
-        conds.append(DroneFlight.started_at >=
-                     datetime.combine(filters['date_from'],
-                                      datetime.min.time())
-                     - DRONE_DISPLAY_UTC_OFFSET)
-    if filters['date_to']:
-        conds.append(DroneFlight.started_at <=
-                     datetime.combine(filters['date_to'],
-                                      datetime.max.time())
-                     - DRONE_DISPLAY_UTC_OFFSET)
+    utc_start, utc_end_excl = drone_period.utc_bounds(filters)
+    if utc_start is not None:
+        conds.append(DroneFlight.started_at >= _drone_sql_bound(utc_start))
+    if utc_end_excl is not None:
+        conds.append(DroneFlight.started_at < _drone_sql_bound(utc_end_excl))
     if filters['unit_id']:
         conds.append(DroneFlight.drone_unit_id == filters['unit_id'])
     if filters['region']:
@@ -3009,6 +3037,10 @@ def _drone_link_args(filters):
     decides whether to apply its current-month default by the PRESENCE of the
     key, so dropping a cleared date makes the target silently fall back to the
     current month while the page that produced the link shows all time.
+
+    The time of day is added only when it differs from 00:00/23:59
+    (drone_period.link_args), so a whole-day link stays byte for byte what it
+    was and a minute-precise one reaches the export with the same minutes.
     """
     link = {}
     if filters['date_from_s']:
@@ -3023,7 +3055,43 @@ def _drone_link_args(filters):
         link['unit_id'] = filters['unit_id']
     if filters['region']:
         link['region'] = filters['region']
+    link.update(drone_period.link_args(filters))
     return link
+
+
+def _drone_period_view(filters):
+    """Template context shared by the flight screens' period filter.
+
+    time_args: the time keys for links that set their own dates («За всё
+    время»); period_messages: the warnings the page shows above its numbers
+    (malformed time, start after end), in the viewer's language.
+    """
+    return {
+        'time_args': drone_period.link_args(filters),
+        'period_messages': drone_period.messages(filters, _drone_lang()),
+    }
+
+
+def _drone_period_cells(filters, unbounded):
+    """(from, to) for the «Период: с / по» rows of a workbook.
+
+    [REASON]: whole days keep the value the workbook always carried -- the
+    ISO date, or «не ограничен» -- because the file goes to operators and to
+    accounting and a cell that changes shape for the same period is a
+    question nobody needs. Only a period with a time of day that is not
+    00:00/23:59 shows 'YYYY-MM-DD HH:MM': without the minutes the file would
+    claim a whole day while holding a part of it.
+
+    [REASON]: the whole-day value is the query string as typed (a malformed
+    date is echoed, not dropped -- that is how the file admits it applied no
+    bound), so it goes through _drone_xlsx_safe: a date_from of '=...' is
+    text from outside the system and must not reach Excel as a formula.
+    """
+    if filters.get('time_is_default', True):
+        return (_drone_xlsx_safe(filters['date_from_s'] or unbounded),
+                _drone_xlsx_safe(filters['date_to_s'] or unbounded))
+    start, end = drone_period.echo(filters)
+    return (start or unbounded, end or unbounded)
 
 
 def _drone_share(area, total_area):
@@ -3445,6 +3513,7 @@ def summary():
         units=units,
         regions=regions,
         region_labels=_drone_region_label_map(regions),
+        **_drone_period_view(filters),
     )
 
 
@@ -3506,31 +3575,42 @@ DRONE_COVERAGE_REASON_LABELS = {
 
 
 def _drone_coverage_filters(args):
-    """Период, машина и статус качества. Период ограничен по умолчанию."""
+    """Период, машина и статус качества. Период ограничен по умолчанию.
+
+    Период разбирает общий `drone_period.parse` (DRONE-AREA-CONTROL-V2-MEGA,
+    блок C) -- тот же разбор дат, что у вылетов, а не третья копия.
+    """
     today = _drone_today_local()
-    raw_from = args.get('date_from')
-    raw_to = args.get('date_to')
     # [REASON]: отсутствие параметра и ПУСТОЙ параметр -- разные вещи. Нет
     # параметра вовсе -- показываем окно по умолчанию; пустая строка --
-    # оператор осознанно снял границу ссылкой «за всё время».
-    if raw_from is None and raw_to is None:
-        date_from = today - timedelta(days=DRONE_COVERAGE_DEFAULT_DAYS)
-        date_to = today
-    else:
-        date_from = _drone_parse_date((raw_from or '').strip())
-        date_to = _drone_parse_date((raw_to or '').strip())
+    # оператор осознанно снял границу ссылкой «за всё время». Это правило
+    # держит `drone_period.parse` через `default_window`.
+    #
+    # [REASON]: `with_time=False`. Строка этой страницы -- работа за ЦЕЛЫЙ
+    # местный день (`drone_coverage_works.work_date`, дата без времени):
+    # минут, по которым можно было бы резать, у неё нет. Поле времени,
+    # которое ничего не меняет, обещало бы точность, которой в данных нет,
+    # поэтому время здесь не читается и не показывается.
+    period = drone_period.parse(
+        args,
+        default_window=(today - timedelta(days=DRONE_COVERAGE_DEFAULT_DAYS),
+                        today),
+        with_time=False)
+    date_from = period['date_from']
+    date_to = period['date_to']
 
     status = (args.get('status') or '').strip()
     if status not in ua.QUALITY_STATUSES:
         status = ''
-    return {
-        'date_from': date_from,
-        'date_to': date_to,
+    period.update({
+        # Поля формы получают нормализованную дату, как и раньше:
+        # неразборчивое значение -- пустое поле, «2026-6-1» -- «2026-06-01».
         'date_from_s': date_from.isoformat() if date_from else '',
         'date_to_s': date_to.isoformat() if date_to else '',
         'unit_id': args.get('unit_id', type=int),
         'status': status,
-    }
+    })
+    return period
 
 
 @drones_bp.route('/coverage')
@@ -3632,6 +3712,9 @@ def coverage():
             'dji_ha': dji_ha,
         },
         algorithm_version=ua.ALGORITHM_VERSION,
+        # Только «начало позже конца»: времени у этой страницы нет, и
+        # предупреждений о неверном времени быть не может.
+        period_messages=drone_period.messages(filters, _drone_lang()),
     )
 
 @drones_bp.route('/sources')
@@ -3655,8 +3738,9 @@ def sources():
     """
     filters = _drone_filters_from_args(request.args,
                                        default_current_month=True)
-    # Only the date bounds apply here: a per-machine silence table filtered to
-    # one machine would answer a question nobody asks and hide the rest.
+    # Only the period bounds (dates and time of day) apply here: a
+    # per-machine silence table filtered to one machine would answer a
+    # question nobody asks and hide the rest.
     period_conds = _drone_flight_conditions(dict(filters, unit_id=None,
                                                  region=''))
 
@@ -3735,6 +3819,7 @@ def sources():
         link_args=_drone_link_args(dict(filters, unit_id=None, region='')),
         status_labels=_drone_status_labels(),
         today=today,
+        **_drone_period_view(filters),
     )
 
 
@@ -3882,10 +3967,19 @@ def _drone_xlsx_response(wb, base_name, filters):
     wb.save(buffer)
     buffer.seek(0)
     if filters['date_from_s'] or filters['date_to_s']:
-        fname = '%s_%s_%s.xlsx' % (base_name,
-                                   filters['date_from_s'] or 'all',
-                                   filters['date_to_s'] or 'all')
+        # [REASON]: '_HHMM-HHMM' only when the time of day is not
+        # 00:00/23:59 (drone_period.filename_part). Two exports of the same
+        # dates but different minutes must not arrive under one name, and a
+        # whole-day file keeps exactly the name it always had. A filter dict
+        # without time keys (the area reports) reads as whole days.
+        fname = '%s_%s_%s%s.xlsx' % (base_name,
+                                     filters['date_from_s'] or 'all',
+                                     filters['date_to_s'] or 'all',
+                                     drone_period.filename_part(filters))
     else:
+        # No date bound at all: the time of day bounds nothing
+        # (drone_period.derive needs a date to anchor it), so the name does
+        # not claim it.
         fname = '%s_all.xlsx' % base_name
     return send_file(
         buffer,
@@ -3924,11 +4018,10 @@ def summary_xlsx():
     ws.title = _drone_t('Жамланма', 'Сводка')
     ws.append([_drone_t('Кўрсаткич', 'Показатель'),
                _drone_t('Қиймат', 'Значение')])
+    period_from, period_to = _drone_period_cells(filters, unbounded)
     summary_rows = [
-        (_drone_t('Давр: бошланиши', 'Период: с'),
-         filters['date_from_s'] or unbounded, None),
-        (_drone_t('Давр: охири', 'Период: по'),
-         filters['date_to_s'] or unbounded, None),
+        (_drone_t('Давр: бошланиши', 'Период: с'), period_from, None),
+        (_drone_t('Давр: охири', 'Период: по'), period_to, None),
         (_drone_t('Парвозлар', 'Вылетов'), data['totals']['flights'], None),
         (_drone_t('Гектар', 'Гектаров'), data['totals']['area_ha'], '0.00'),
         (_drone_t('Ҳавода соат', 'Часов в воздухе'),
@@ -6705,6 +6798,10 @@ def spray_usage():
     # conditions and the machine/region (display) conditions are built apart
     # here and passed separately -- the median uses only period_conds, the
     # displayed rows and the reconciliation use period_conds + view_conds.
+    # The time of day is PART OF THE PERIOD (DRONE-AREA-CONTROL-V2-MEGA): it
+    # narrows the fleet median exactly as the dates do. view_conds carries no
+    # time bound, because drone_period anchors the minutes to a date and the
+    # view dict has none.
     period_conds = _drone_flight_conditions(dict(filters, unit_id=None,
                                                  region=''))
     view_conds = _drone_flight_conditions(dict(filters, date_from=None,
@@ -6723,6 +6820,7 @@ def spray_usage():
         filters=filters,
         link_args=link_args,
         units=DroneUnit.query.order_by(DroneUnit.number).all(),
+        **_drone_period_view(filters),
     )
 
 
@@ -6753,16 +6851,16 @@ def spray_usage_xlsx():
     label_unattr = _drone_t('Аниқланмаган', 'Не распознано')
     label_total = _drone_t('Жами', 'Итого')
 
+    period_from, period_to = _drone_period_cells(filters, unbounded)
+
     wb = Workbook()
     ws = wb.active
     ws.title = _drone_t('Жамланма', 'Сводка')
     ws.append([_drone_t('Кўрсаткич', 'Показатель'),
                _drone_t('Қиймат', 'Значение')])
     for label, value in (
-        (_drone_t('Давр: бошланиши', 'Период: с'),
-         filters['date_from_s'] or unbounded),
-        (_drone_t('Давр: тугаши', 'Период: по'),
-         filters['date_to_s'] or unbounded),
+        (_drone_t('Давр: бошланиши', 'Период: с'), period_from),
+        (_drone_t('Давр: тугаши', 'Период: по'), period_to),
         (_drone_t('Йўлак, %', 'Коридор, %'), band),
         (_drone_t('Баҳолаш чегараси, га', 'Порог оценки, га'), min_area),
         (_drone_t('Медиана, л/га', 'Медиана, л/га'),

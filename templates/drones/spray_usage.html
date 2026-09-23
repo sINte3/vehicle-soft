@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from 'drones/_period.html' import time_field, period_notes %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Дроны — расход рабочего раствора' if is_ru else 'Дронлар — иш эритмаси сарфи' }}{% endblock %}
 {% block content %}
@@ -46,10 +47,15 @@
         <label class="vs-label" for="sFrom">{{ 'Период с' if is_ru else 'Давр дан' }}</label>
         <input type="date" name="date_from" id="sFrom" class="vs-input" value="{{ filters.date_from_s }}">
       </div>
+      {# DRONE-AREA-CONTROL-V2-MEGA, блок C: время суток UTC+5 рядом с датой,
+         00:00 и 23:59 по умолчанию. Время -- часть периода: оно сужает и
+         строки, и медиану парка, как даты. #}
+      {{ time_field('time_from', filters.time_from_s, 'Время с' if is_ru else 'Вақт дан', 'sTimeFrom') }}
       <div class="vs-field" style="width:160px;">
         <label class="vs-label" for="sTo">{{ 'Период по' if is_ru else 'Давр гача' }}</label>
         <input type="date" name="date_to" id="sTo" class="vs-input" value="{{ filters.date_to_s }}">
       </div>
+      {{ time_field('time_to', filters.time_to_s, 'Время по' if is_ru else 'Вақт гача', 'sTimeTo') }}
       <div class="vs-field" style="min-width:170px;">
         <label class="vs-label" for="sUnit">{{ 'Машина' if is_ru else 'Машина' }}</label>
         <select name="unit_id" id="sUnit" class="vs-select">
@@ -71,11 +77,15 @@
       <div class="vs-field" style="flex:none;">
         <label class="vs-label">&nbsp;</label>
         <button type="submit" class="vs-btn">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
-        <a class="vs-btn vs-btn-ghost" href="{{ url_for('drones.spray_usage') }}">{{ 'За всё время' if is_ru else 'Барча вақт' }}</a>
+        {# Время суток, отличное от 00:00/23:59, ссылка сохраняет: снятие дат
+           не должно молча сбрасывать минуты. #}
+        <a class="vs-btn vs-btn-ghost" href="{{ url_for('drones.spray_usage', **time_args) }}">{{ 'За всё время' if is_ru else 'Барча вақт' }}</a>
       </div>
     </form>
   </div>
 </div>
+
+{{ period_notes(period_messages) }}
 
 <div class="vs-stat-grid vs-mb">
   <div class="vs-stat">

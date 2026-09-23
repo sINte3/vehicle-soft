@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from 'drones/_period.html' import time_field, period_notes %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Дроны — сводка' if is_ru else 'Дронлар — жамланма' }}{% endblock %}
 {% block content %}
@@ -21,10 +22,14 @@
         <label class="vs-label" for="sumDateFrom">{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
         <input type="date" name="date_from" id="sumDateFrom" class="vs-input" value="{{ filters.date_from_s }}">
       </div>
+      {# DRONE-AREA-CONTROL-V2-MEGA, блок C: время суток UTC+5 рядом с датой,
+         00:00 и 23:59 по умолчанию. Семантику держит drone_period.py. #}
+      {{ time_field('time_from', filters.time_from_s, 'Время с' if is_ru else 'Вақт дан', 'sumTimeFrom') }}
       <div class="vs-field" style="width:160px;">
         <label class="vs-label" for="sumDateTo">{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
         <input type="date" name="date_to" id="sumDateTo" class="vs-input" value="{{ filters.date_to_s }}">
       </div>
+      {{ time_field('time_to', filters.time_to_s, 'Время по' if is_ru else 'Вақт гача', 'sumTimeTo') }}
       <div class="vs-field" style="min-width:180px;">
         <label class="vs-label" for="sumUnitFilter">{{ 'Машина' if is_ru else 'Машина' }}</label>
         <select name="unit_id" id="sumUnitFilter" class="vs-select">
@@ -54,12 +59,16 @@
            посегментным удалением. Ссылка с пустыми датами делает «за всё
            время» достижимым и не может быть сломана разбором атрибута.
            Машина и область берутся ПРИМЕНЁННЫЕ, а не выбранные в списках и
-           ещё не отправленные — обычное поведение ссылки, сознательно. #}
-        <a class="vs-btn vs-btn-ghost" href="{{ url_for('drones.summary', date_from='', date_to='', unit_id=filters.unit_id or None, region=filters.region or None) }}">{{ 'За всё время' if is_ru else 'Барча вақт' }}</a>
+           ещё не отправленные — обычное поведение ссылки, сознательно.
+           Время суток ссылка тоже сохраняет (time_args, только отличное от
+           00:00/23:59): снятие дат не должно молча сбрасывать минуты. #}
+        <a class="vs-btn vs-btn-ghost" href="{{ url_for('drones.summary', date_from='', date_to='', unit_id=filters.unit_id or None, region=filters.region or None, **time_args) }}">{{ 'За всё время' if is_ru else 'Барча вақт' }}</a>
       </div>
     </form>
   </div>
 </div>
+
+{{ period_notes(period_messages) }}
 
 <div class="vs-stat-grid is-money vs-mb">
   <div class="vs-stat">
