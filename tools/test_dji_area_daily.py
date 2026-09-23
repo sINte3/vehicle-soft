@@ -717,9 +717,10 @@ class CollectorHostWithoutTheDatabase(Base):
                             out=self.lines.append)
 
     def test_skip_recalc_runs_the_collector_steps_and_needs_no_db(self):
-        # Прежнее имя: test_skip_recalc_runs_the_three_collector_steps_and_
-        # needs_no_db. К трём шагам сборщика добавился VERIFY после полного
-        # сбора с кандидатами -- он тоже только читает манифест.
+        # Прежнее имя:
+        # test_skip_recalc_runs_the_three_collector_steps_and_needs_no_db.
+        # К трём шагам сборщика добавился VERIFY после полного сбора с
+        # кандидатами -- он тоже только читает манифест.
         runner = FakeRunner()
         self.assertEqual(self.run_without_db(runner, '--skip-recalc'),
                          tool.EXIT_OK)

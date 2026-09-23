@@ -168,7 +168,7 @@ sqlite3). Он отдельно от `dji_area/store.py` намеренно: т�
 | `/drones/area-control` | даты по `report_start_date` | дата+время по моменту начала записи (UTC+5) | `area-control.xlsx` — тот же фильтр, те же эффективные итоги |
 | `/drones/area-evidence` | даты | дата+время | `area-evidence.xlsx` — тот же фильтр |
 | `/drones/coverage` | даты | общий парсер дат; **время неприменимо**: строка — целый местный день работы | выгрузки нет |
-| Работы (`/drones/works`, отчёты, долги, возраст долга, подотчёт) | месяц `ГГГГ-ММ` | **без изменений**: даты ведомостей без времени суток; перевод месяца в диапазон дат потребовал бы бизнес-правила «какая дата работы считается» — его не придумываем | как было |
+| Работы (`/drones/works`, отчёты, долги, возраст долга, подотчёт) | месяц `ГГГГ-ММ` | **без изменений до `DRONE-WORK-TIMESTAMP-001`**: у `DroneWork` нет времени суток (`period_month`, `work_date_from`/`work_date_to` — даты, `date_raw` — текст), и оно не выдумывается. После внедрения отметок Mission/Job (`started_at`/`finished_at`) отчёты работ обязаны перейти на этот фильтр — отложенная зависимость, не отменённое требование | как было |
 | Календарь, подсказки назначений, закрытие, сверка, контроль данных | месяц / окно в месяцах / всё время | без изменений — это не поток вылетов за период | — |
 | Справочники (машины, операторы, заказчики, батареи) | — | фильтра нет и не нужно | — |
 
@@ -272,17 +272,35 @@ Chromium сборщика установлен в профиле пользов�
 | только контрольная выборка | Успешно, с предупреждениями | 0 |
 | хотя бы один кандидат | Ошибка: доказательства кандидата не получены | 5 |
 | переспросить не удалось | Ошибка (консервативно) | 5 |
+| кандидат, для которого DJI V4 не хранит (известно до сбора или стало известно в этом сборе) | Успешно, с предупреждением `CANDIDATE_NO_V4_AT_SOURCE` | 0 |
+| после ПОЛНОГО сбора не удалось перечитать манифест | Успешно, с предупреждением `NO_V4_CHECK_UNAVAILABLE` | 0 |
 
 Пересчёт выполняется во всех этих случаях — по уже полученным
 доказательствам. Сбой источников с другим кодом (19, 2, 4, 24) — ошибка
 (код 3), но пересчёт тоже выполняется. Сбой обхода вылетов или манифеста
 по-прежнему останавливает цикл. Кандидат, V4 которого не получен из-за
-сбоя сбора, никогда не даёт «успешно». Кандидат, для которого DJI V4 не
-хранит (`NO_V4_AT_SOURCE`), — не промах, а полный сбор (как и до этой
-задачи): запись остаётся по RAW в видимом состоянии «DJI не хранит V4» —
-честное «недостаточно доказательств», и попадает в список ручного разбора
-backfill. Поднимать ли на её первое появление предупреждение цикла — решение
-владельца (§11 п. 5).
+сбоя сбора, никогда не даёт «успешно».
+
+**«DJI не хранит V4» у кандидата** (решение владельца по итогам ревью) — не
+ошибка цикла и не чистый успех: `SUCCESS_WITH_WARNINGS`, отдельное
+предупреждение `CANDIDATE_NO_V4_AT_SOURCE`, в итоге — список
+`candidates_no_v4_at_source`, на панели — фраза RU/UZ с числом. Не ошибка —
+DJI объективно не хранит V4, повтор ничего не даст. Не чистый успех —
+корректировка невозможна. Сама запись остаётся по RAW как «недостаточно
+доказательств» и автоматически не обнуляется; решить по ней может
+администратор. Число берётся из манифеста (`no_v4_at_source`): до сбора — из
+шага MANIFEST; тех, кто стал таким в ЭТОМ сборе, видно только в базе, поэтому
+после полного сбора (код 0), если манифест называл кандидатов, цикл тоже
+перечитывает манифест (VERIFY — только чтение, к DJI не ходит, потери после
+полного сбора не судит). Не удалось перечитать — `NO_V4_CHECK_UNAVAILABLE`,
+тоже успех с предупреждением: ни одно доказательство не потеряно, неизвестно
+только число.
+
+Семантика совпадает с backfill: окно с таким кандидатом — `DONE` с тем же
+предупреждением, в контрольной точке — `candidates_no_v4_at_source`, в
+`backfill_unresolved.csv` запись — `INSUFFICIENT_EVIDENCE` (по расчётам:
+флаг `NO_V4_AT_SOURCE` конвейер ставит по тому же `NO_V4_URL_AT_SOURCE`, по
+которому манифест называет кандидата).
 Коды — `docs/DJI_AREA_PRODUCTION_RUNBOOK.md`, «Коды возврата цикла».
 
 ## 7. Исторический backfill (блок F)
@@ -331,14 +349,14 @@ production. «Не проверено» названо прямо.
 | 6 | Кейс типа 714484527 → полный фантом | `test_uat_case_review_confirmed_as_full_phantom` (web), `test_the_uat_case_becomes_a_full_phantom_without_touching_the_calc` (store) | да, синтетикой |
 | 7 | A/B/C кликабельны, время UTC+5 | `test_a_b_c_are_all_links_with_local_times` (в т. ч. A/B вне выборки — из `drone_flights`), `test_chain_links_and_times_are_utc_plus_5`, `test_string_timestamps_from_raw_sqlite_are_understood`, звено другого дня — с датой: `test_a_chain_link_from_the_previous_day_shows_its_date` | да |
 | 8 | HTML и XLSX совпадают | `Parity` (с решениями и с минутным фильтром), `test_drone_period_filters` (вылеты/сводка/распыление, 7 периодов); книга не превращает свободный текст в формулу — `ExportSafety`, `test_the_workbook_never_writes_a_formula_from_free_text` (отрицательный контроль: та же строка без защиты — формула); «Действует» в истории — `test_history_says_not_in_force_for_a_lapsed_decision` | да |
-| 9 | Отчёты дронов с периодом — общий фильтр | матрица §4; `test_drone_period` (36), `test_drone_period_filters` (40), `MinuteBoundaries`, `test_dates_from_the_address_are_normalized`, `test_a_time_without_its_date_is_not_applied_and_said` | **частично, сознательно**: да — все отчёты вылетов и площади с их Excel; покрытие — даты без времени (строка — целый день); работы (ведомости) — месяц без времени до решения владельца (§11 п. 4) |
+| 9 | Отчёты дронов с периодом — общий фильтр | матрица §4; `test_drone_period` (36), `test_drone_period_filters` (40), `MinuteBoundaries`, `test_dates_from_the_address_are_normalized`, `test_a_time_without_its_date_is_not_applied_and_said` | **частично — отложенная зависимость, не отменённое требование**: да — все отчёты вылетов и площади с их Excel; покрытие — даты без времени (строка — целый день); работы (ведомости) — на месяце, пока у самой работы нет времени: обязательный последующий пункт `DRONE-WORK-TIMESTAMP-001` (`docs/tracks/drones.md`; §11 п. 4) |
 | 10 | По умолчанию 00:00–23:59 | `test_drone_period`: умолчание; `test_default_times_equal_no_time_at_all`; поля формы | да |
 | 11 | Ручное обновление асинхронно | `test_the_request_returns_at_once_and_queues_one_run` (< 5 с, подставной Popen), `test_the_child_gets_its_own_group_and_a_hidden_console` | да; **живой запуск не выполнялся** |
 | 12 | Параллельный сбор невозможен | `test_one_active_manual_run_at_the_database_level`, `test_a_second_click_attaches_to_the_running_run`, `test_runlock` (в т. ч. в другом процессе и после kill), `CollectorLockTests` (код 24, `devices`), цикл: код 7, `test_the_lock_probe_runs_inside_the_writer_transaction` | да |
 | 13 | Статус последней синхронизации виден | `test_status_transitions_and_the_panel_after_success`, `test_the_panel_shows_the_last_flight_intake`, `test_a_dead_running_run_shows_interrupted_without_a_get_write`, `test_the_outcome_is_words_and_the_log_line_is_for_admins`, `test_run_explanations_are_words_in_both_languages` | да |
 | 14 | Ручное обновление освежает и вылеты, и Area Control | исполнитель `--run-queued` выполняет FLIGHTS → MANIFEST → SOURCES → VERIFY → RECALC (`tools/test_dji_area_daily.py`, сценарии журнала); панель перезагружает страницу | логика — да; **сквозь живой DJI не проверено** |
-| 15 | Промах контроля — предупреждение, кандидата — сбой | `tools/test_dji_area_daily.py`: control-only → 0 + SUCCESS_WITH_WARNINGS; candidate → 5 + FAILED; VERIFY недоступен → 5; срезанный лимитом контроль — не промах | да |
-| 16 | Backfill с продолжением | `tools/test_dji_area_backfill.py` (24): план, граница месяца, чекпойнт/продолжение, пропуск готового, повтор упавшего, GAVE_UP, BUSY, смена алгоритма, чужой диапазон, чужая база (`test_a_checkpoint_of_another_database_is_refused_untouched`), RAW байт в байт | да; **на живой базе не запускался** |
+| 15 | Промах контроля — предупреждение, кандидата — сбой | `tools/test_dji_area_daily.py`: control-only → 0 + SUCCESS_WITH_WARNINGS; candidate → 5 + FAILED; VERIFY недоступен → 5; срезанный лимитом контроль — не промах; «DJI не хранит V4» у кандидата → 0 + SUCCESS_WITH_WARNINGS + `CANDIDATE_NO_V4_AT_SOURCE` (`NoV4AtSource`, 6 тестов: известный до сбора, ставший таким в этом сборе — с отрицательным контролем «V4 пришёл → чистый успех», рядом с потерями неполного сбора, недоступная перепроверка после полного сбора — предупреждение, после неполного — по-прежнему 5, без SOURCES; на прежнем коде цикла 6 из 6 падают); backfill: окно `DONE` с тем же предупреждением, запись `INSUFFICIENT_EVIDENCE`, расчёт не тронут — `test_a_no_v4_window_is_done_with_the_cycles_warning`; фраза панели RU/UZ — `test_candidates_dji_holds_no_v4_for_are_a_warning_in_words`, `test_run_explanations_are_words_in_both_languages` | да |
+| 16 | Backfill с продолжением | `tools/test_dji_area_backfill.py` (25): план, граница месяца, чекпойнт/продолжение, пропуск готового, повтор упавшего, GAVE_UP, BUSY, смена алгоритма, чужой диапазон, чужая база (`test_a_checkpoint_of_another_database_is_refused_untouched`), RAW байт в байт | да; **на живой базе не запускался** |
 | 17 | RU/UZ кириллица | `Bilingual` (узбекские половины трёх новых шаблонов, слова решений и журнала), `test_uzbek_is_cyrillic` (расширен), `test_the_uzbek_panel_is_cyrillic`, `test_run_explanations_are_words_in_both_languages` | да |
 | 18 | Миграции повторно безопасны | `MigrationPaths`: чистая, повтор, нет базы (код 2, файл не создан), предусловие (код 1, откат, реестр пуст), сбой реестра, ORM-паритет по форме индексов (уникальность, частичное условие, столбцы) с отрицательным контролем | да; **на площадке не запускалась** |
 | 19 | Релевантные тесты зелёные | см. ниже | да: CI-набор 55/55 на чистом Linux-клоне; локально новых падений нет (подробно ниже) |
@@ -347,7 +365,9 @@ production. «Не проверено» названо прямо.
 
 ### Итог прогонов
 
-Ревизия кода — `d893004` (последний коммит кода; дальше только документы).
+Полный прогон — на ревизии кода `d893004`. Финальная правка по сводному
+ревью (`522a10e`: «DJI не хранит V4» у кандидата — предупреждение цикла)
+прогнана по затронутым наборам и всему CI — таблица «Финальная правка» ниже.
 
 | Прогон | Где | Результат |
 |---|---|---|
@@ -357,11 +377,28 @@ production. «Не проверено» названо прямо.
 | `python -m unittest discover -s drone_collector/tests -t .` | Windows | 1431, OK (на `main` — 1404) |
 | `python -m compileall -q .`, `tools/check_templates.py`, `tools/test_check_templates.py`, `tools/check_design_system.py` | Windows | чисто |
 
+#### Финальная правка (`522a10e`)
+
+| Прогон | Результат |
+|---|---|
+| Все 55 команд job `checks`, чистый `git clone` ветки в WSL Ubuntu (Python 3.14.4, без Flask) | `fail=0` |
+| `tools/test_dji_area_daily.py` | 84, OK (было 77: +6 `NoV4AtSource`, +1 сверка слов с журналом) |
+| `tools/test_dji_area_backfill.py` | 25, OK (+1: окно с «DJI не хранит V4» — `DONE` с предупреждением) |
+| `tests.test_drone_area_control_v2_web` (Flask) | 48, OK (+1: фраза панели RU/UZ) |
+| `tests.test_drone_area_control_v2_store` | 52, OK (расширен тест фраз журнала) |
+| `tools/test_dji_area_production_runbook.py`, `tools/test_dji_area_control_acceptance.py`, `tests.test_dji_area_control_web_001`, `tests.test_drone_period`, `drone_collector.tests.test_runlock` | 43, 24, 23, 36, 17 — OK |
+| `compileall`, `check_templates`, `test_check_templates`, `check_design_system`, `test_check_design_system` | чисто |
+| Отрицательный контроль | `NoV4AtSource` на прежнем коде цикла (`tools/dji_area_daily.py` из `418099e`): 6 из 6 падают (4 провала, 2 ошибки); на новом — 6 из 6 проходят |
+
+Полный `discover -s tests` на `522a10e` не перезапускался: правка не трогает
+ни шаблонов, ни моделей, ни экранов — только цикл, backfill и фразы журнала
+(их веб-тесты прогнаны).
+
 Наборы этой задачи: `tests.test_drone_area_control_v2_store` — 52,
-`tests.test_drone_area_control_v2_web` — 47 (Flask, локально),
+`tests.test_drone_area_control_v2_web` — 48 (Flask, локально),
 `tests.test_drone_period` — 36, `tests.test_drone_period_filters` — 40
 (Flask), `drone_collector.tests.test_runlock` — 17,
-`tools/test_dji_area_daily.py` — 77, `tools/test_dji_area_backfill.py` — 24.
+`tools/test_dji_area_daily.py` — 84, `tools/test_dji_area_backfill.py` — 25.
 Ни один существующий тест не удалён без замены. Закреплённые ожидания
 изменены там, где их меняет задание, с объяснением в коде: плитки отчётов
 13 → 14 (`test_the_launcher_opens_with_fourteen_tiles_in_order`; прежний
@@ -370,7 +407,15 @@ production. «Не проверено» названо прямо.
 `test_another_sources_failure_does_stop` →
 `test_another_sources_failure_fails_but_still_recalculates` (блок E: сбой
 SOURCES по-прежнему код 3 и FAILED, но пересчёт идёт по уже сохранённым
-доказательствам).
+доказательствам). Финальная правка добавила VERIFY после полного сбора с
+кандидатами — это меняет закреплённые последовательности шагов в пяти тестах
+цикла и одном тесте backfill; переименованные хранят прежнее имя в
+комментарии: `test_the_four_steps_run_in_dependency_order` →
+`test_the_steps_run_in_dependency_order`,
+`test_a_complete_sources_run_needs_no_verify` →
+`test_a_complete_sources_run_rereads_but_judges_no_miss`,
+`test_skip_recalc_runs_the_three_collector_steps_and_needs_no_db` →
+`test_skip_recalc_runs_the_collector_steps_and_needs_no_db`.
 
 ## 10. Сознательно не сделано (следующие макроэтапы)
 
@@ -379,7 +424,8 @@ GIS Map Core и карта; Field Management UI; KML/GeoJSON; группиров
 `GIS-FIELDS-EVIDENCE-MEGA`); real-time мониторинг DJI; Wialon/GPS на карте;
 политика биллинга; MRO; KPI операторов; зимняя стратегия; организации
 30 → 100. Решения по обычным (NORMAL) записям. Автоматический ноль для
-«малого положительного V4». Фильтр времени для работ (ведомостей).
+«малого положительного V4». Фильтр времени для работ (ведомостей) — не
+отменён, а отложен до времени у самих работ: `DRONE-WORK-TIMESTAMP-001`.
 
 ## 11. Решения за владельцем
 
@@ -392,18 +438,14 @@ GIS Map Core и карта; Field Management UI; KML/GeoJSON; группиров
    по-прежнему этого не делает).
 3. Запуск исторического backfill март → сентябрь и разбор списка
    нерешённых записей.
-4. **Критерий приёмки 9 выполнен частично — сознательно.** Общий фильтр
-   «дата+время» стоит на всех отчётах, где у строки есть момент времени:
-   вылеты, сводка, распыление, источники, площадь, контроль площади,
-   доказательства, и в их Excel. Покрытие (`/drones/coverage`) — общий
-   парсер дат без времени: его строка — целый местный день. Отчёты работ (`/drones/works`, отчёты,
-   долги, возраст долга, подотчёт) остались на месяце `ГГГГ-ММ`: у строки
-   ведомости есть только дата, без времени суток, а перевод месяца в диапазон
-   требует бизнес-правила «какой датой считается работа» (дата ведомости,
-   выполнения, оплаты?). Правило не придумано; нужно решение владельца. До
-   него пункт 9 закрыт для отчётов вылетов и площади и открыт для работ —
-   так же сказано в строке гейта и в PR.
-5. Поднимать ли предупреждение цикла (успешно, с предупреждениями), когда у
-   кандидата впервые оказывается «DJI не хранит V4». Сейчас — по прежнему
-   контракту сборщика — это полный сбор без предупреждения; запись видна на
-   экране и в списке backfill.
+4. **`DRONE-WORK-TIMESTAMP-001` — обязательный последующий пункт.** Критерий
+   приёмки 9 закрыт для всех отчётов, где у строки есть момент времени
+   (вылеты, сводка, распыление, источники, площадь, контроль площади,
+   доказательства и их Excel); покрытие — общий парсер дат без времени (его
+   строка — целый местный день). Отчёты работ остались на месяце `ГГГГ-ММ`:
+   у `DroneWork` времени суток нет, и оно не выдумывается. После внедрения
+   отметок Mission/Job (`started_at`/`finished_at`) все отчёты работ обязаны
+   перейти на общий фильтр «дата+время» — это отложенная зависимость, а не
+   отменённое требование (`docs/tracks/drones.md`, пункт
+   `00-WORK-TIMESTAMP`). Какую из двух отметок считать моментом работы,
+   решает владелец при постановке той задачи.
