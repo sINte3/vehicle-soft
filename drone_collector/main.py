@@ -35,9 +35,18 @@ Exit codes (see drone_collector/README.md):
        route POST (wrong host, method, status, payload or id sets)
    14  --area-48h could not write a shareable report because it would have
        carried something private; nothing was written
+   24  another collector run holds the collector lock and the wait
+       (DJI_COLLECTOR_LOCK_WAIT_S, default 1800 s) ran out; nothing was
+       collected
 
     8 and 9 are deliberately skipped: they belong to the other entry point of
     this package, `python -m drone_collector.devices`.
+
+One run at a time (DRONE-AREA-CONTROL-V2-MEGA, block D): every run that gets
+past the command line and the configuration holds the collector lock
+(drone_collector/data/collector.lock, DJI_COLLECTOR_LOCK_PATH overrides it)
+for its whole duration -- dry runs and --save-session included. The lock is
+an OS lock on an open file: a killed process releases it by dying.
 
 --routes and --lands --with-geometry belong to DRONE-COVERAGE-001 stage B.
 They collect into the on-disk outbox (drone_collector/outbox.py) and send
@@ -54,9 +63,11 @@ that is what it is for, and nothing about it changed.
 """
 
 import argparse
+import os
 import sys
 
 from drone_collector import config as config_module
+from drone_collector import runlock
 from drone_collector.config import ConfigError, load_config
 from drone_collector.logging_setup import format_run_summary, setup_logging
 from drone_collector.sender import (IngestRejected, send, send_lands,
@@ -159,6 +170,28 @@ EXIT_SNAPSHOT_NOT_ACCEPTED = 20
 # TIER1_EXACT, сохраняя HIGH-уверенность. Тревога, не меняющая код возврата,
 # для планировщика не существует.
 EXIT_SNAPSHOT_GEOMETRY_ABSENT = 21
+# 24: другой прогон сборщика держит блокировку сборщика, и ожидание истекло.
+# Ничего не собрано и не отправлено.
+#
+# [REASON]: 22 и 23 заняты вторым входом пакета, `drone_collector.
+# area_manifest`, -- тем же правилом, по которому 8 и 9 оставлены
+# `drone_collector.devices`. Свой код, а не EXIT_CONFIG: «исправь
+# конфигурацию» и «подожди, пока закончится соседний сбор» -- противоположные
+# действия, а цикл площади (`tools/dji_area_daily.py`) и журнал прогонов
+# обязаны показать оператору второе, а не первое.
+EXIT_COLLECTOR_BUSY = 24
+
+# Сколько ждать чужой прогон, прежде чем сдаться (переопределяется
+# DJI_COLLECTOR_LOCK_WAIT_S; 0 -- не ждать вовсе).
+#
+# [REASON]: полчаса, а не ноль. Ежедневный цикл запускает сборщик дважды
+# (FLIGHTS, затем SOURCES), и ручной сбор, начатый минутой раньше, не должен
+# срывать суточный прогон: обычный прогон короче получаса, и второй просто
+# дождётся первого. Больше получаса ждать -- значит скрыть зависший процесс.
+COLLECTOR_LOCK_WAIT_DEFAULT_S = 1800
+COLLECTOR_LOCK_POLL_S = 5.0
+COLLECTOR_LOCK_PATH_ENV = 'DJI_COLLECTOR_LOCK_PATH'
+COLLECTOR_LOCK_WAIT_ENV = 'DJI_COLLECTOR_LOCK_WAIT_S'
 
 KINDS = ('backfill', 'incremental', 'replay')
 
@@ -170,6 +203,8 @@ MODE_AREA_48H = 'area-48h'
 MODE_ROUTE_COLLECT = 'route-ui-collect'
 MODE_SOURCES = 'sources'
 MODE_LAND_SNAPSHOT = 'land-snapshot'
+# Только имя владельца блокировки: у сохранения сессии нет сводки своего вида.
+MODE_SAVE_SESSION = 'save-session'
 
 FLIGHT_SUMMARY_KEYS = (
     'mode', 'kind', 'dry_run', 'period_from', 'period_to',
@@ -662,6 +697,111 @@ def _run(argv, log, state):
     state['dry_run'] = bool(args.dry_run)
     log.info('Configuration: %s', cfg.describe())
 
+    try:
+        wait_s = collector_lock_wait()
+    except ConfigError as exc:
+        log.error('Configuration error: %s', exc)
+        return EXIT_CONFIG
+
+    # [REASON]: the lock is taken AFTER the command line and the configuration
+    # are known to be good and BEFORE the first mode touches the cabinet or
+    # the outbox. A malformed command must fail at once, not queue behind a
+    # neighbour for half an hour; and two runs on one saved DJI session, or
+    # two drains racing on `mark_sent` and `sweep_stale_temp()`, are exactly
+    # what the lock exists to prevent -- a dry run opens the same browser on
+    # the same session, so it is no exception.
+    mode = run_mode(args)
+    lock = runlock.RunLock(collector_lock_path(), purpose=mode)
+    if not take_collector_lock(lock, wait_s, log):
+        state['mode'] = mode
+        return EXIT_COLLECTOR_BUSY
+    try:
+        return _dispatch(args, cfg, log, state)
+    finally:
+        lock.release()
+
+
+def run_mode(args):
+    """The mode a parsed command line runs, in the order _dispatch() tests it."""
+    for on, mode in ((args.save_session, MODE_SAVE_SESSION),
+                     (args.lands, MODE_LANDS),
+                     (args.area_48h, MODE_AREA_48H),
+                     (args.sources, MODE_SOURCES),
+                     (args.land_snapshot, MODE_LAND_SNAPSHOT),
+                     (args.route_ui_collect, MODE_ROUTE_COLLECT),
+                     (args.route_ui_probe, MODE_ROUTE_PROBE),
+                     (args.routes, MODE_ROUTES)):
+        if on:
+            return mode
+    return MODE_FLIGHTS
+
+
+def collector_lock_path():
+    """drone_collector/data/collector.lock unless DJI_COLLECTOR_LOCK_PATH says.
+
+    [REASON]: next to the saved DJI session (`data/`), because what the lock
+    protects is that session and the outbox beside it, and `data/` is
+    already ignored by git. The override exists for tests and for a machine
+    that keeps two collector checkouts on one session.
+    """
+    override = (os.environ.get(COLLECTOR_LOCK_PATH_ENV) or '').strip()
+    if override:
+        return override
+    return str(config_module.PACKAGE_ROOT / 'data'
+               / runlock.COLLECTOR_LOCK_NAME)
+
+
+def collector_lock_wait():
+    """Seconds to wait for another run; ConfigError on an unusable value."""
+    text = (os.environ.get(COLLECTOR_LOCK_WAIT_ENV) or '').strip()
+    if not text:
+        return float(COLLECTOR_LOCK_WAIT_DEFAULT_S)
+    try:
+        value = float(text)
+    except ValueError:
+        raise ConfigError('%s must be a number of seconds, got %r'
+                          % (COLLECTOR_LOCK_WAIT_ENV, text))
+    # NaN fails both comparisons, so it is refused together with -1 and inf.
+    if not 0 <= value < float('inf'):
+        raise ConfigError('%s must be a finite number of seconds, not '
+                          'negative' % COLLECTOR_LOCK_WAIT_ENV)
+    return value
+
+
+def describe_lock_owner(path):
+    """The owner hint as one line. Pid, host, purpose, start -- nothing else.
+
+    [REASON]: the hint file is written by `runlock` with exactly these four
+    fields; naming them one by one (rather than printing the dict) is what
+    keeps any future field out of the log without a review.
+    """
+    info = runlock.owner(path) or {}
+    if not info:
+        return 'owner unknown'
+    return 'pid=%s host=%s purpose=%s since=%s UTC' % (
+        info.get('pid', '-'), info.get('host', '-'), info.get('purpose', '-'),
+        info.get('since_utc', '-'))
+
+
+def take_collector_lock(lock, wait_s, log):
+    """Take the collector lock, waiting up to ``wait_s``. False when busy."""
+    if lock.acquire(wait_s=0):
+        return True
+    if wait_s > 0:
+        log.info('Another collector run holds %s (%s); waiting up to %d s.',
+                 lock.path, describe_lock_owner(lock.path), wait_s)
+        if lock.acquire(wait_s=wait_s,
+                        poll_s=min(COLLECTOR_LOCK_POLL_S, wait_s)):
+            log.info('The collector lock is free again; continuing.')
+            return True
+    log.error('Another collector run holds %s (%s). Waited %d s; nothing was '
+              'collected and nothing was sent. Exit %d.', lock.path,
+              describe_lock_owner(lock.path), wait_s, EXIT_COLLECTOR_BUSY)
+    return False
+
+
+def _dispatch(args, cfg, log, state):
+    """Run the one mode the command line names. Called with the lock held."""
     if args.save_session:
         return _save_session(cfg, log)
 

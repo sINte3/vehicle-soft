@@ -25,6 +25,8 @@ from pathlib import Path
 
 from drone_collector import config as config_module
 from drone_collector import main as main_module
+from drone_collector import runlock
+from drone_collector.session import SessionMissing
 from drone_collector.main import (
     EXIT_CONFIG,
     EXIT_SESSION,
@@ -61,7 +63,8 @@ COLLECTOR_VARS = ('DJI_RECORDS_URL', 'DJI_STORAGE_STATE', 'DJI_HEADLESS',
                   'DJI_ROUTE_PROBE_POLL_MS', 'DJI_ROUTE_PROBE_WAIT_MS',
                   'DJI_ROUTE_PROBE_DRAIN_MS', 'DJI_ROUTE_PROBE_QUIET_MS',
                   'DJI_RECORD_URL_TEMPLATE', 'DJI_SOURCE_WAIT_MS',
-                  'DJI_SOURCE_PAUSE_MS', 'DJI_SOURCE_BATCH_SIZE')
+                  'DJI_SOURCE_PAUSE_MS', 'DJI_SOURCE_BATCH_SIZE',
+                  'DJI_COLLECTOR_LOCK_PATH', 'DJI_COLLECTOR_LOCK_WAIT_S')
 
 
 class CliTestCase(unittest.TestCase):
@@ -74,6 +77,16 @@ class CliTestCase(unittest.TestCase):
             os.environ.pop(name, None)
         self._saved_dotenv = config_module.DOTENV_PATH
         config_module.DOTENV_PATH = Path(MISSING_STATE)
+        # [REASON]: every main() here now takes the collector lock. Without a
+        # private lock file the suite would take the REAL one under
+        # drone_collector/data/ -- and on the workstation where the collector
+        # lives, a scheduled run holding it would hang the suite for the
+        # default half-hour wait instead of failing.
+        self._lock_dir = tempfile.TemporaryDirectory(
+            prefix='collector_lock_', ignore_cleanup_errors=True)
+        self.lock_path = os.path.join(self._lock_dir.name, 'collector.lock')
+        os.environ['DJI_COLLECTOR_LOCK_PATH'] = self.lock_path
+        os.environ['DJI_COLLECTOR_LOCK_WAIT_S'] = '0'
 
     def tearDown(self):
         config_module.DOTENV_PATH = self._saved_dotenv
@@ -87,6 +100,7 @@ class CliTestCase(unittest.TestCase):
         root = logging.getLogger()
         for handler in list(root.handlers):
             root.removeHandler(handler)
+        self._lock_dir.cleanup()
 
 
 class ResolvePeriodTests(CliTestCase):
@@ -273,6 +287,35 @@ class ExitCodeConstantsTests(unittest.TestCase):
         taken = {devices_module.EXIT_NO_DEVICES,
                  devices_module.EXIT_MISMATCH}
         self.assertNotIn(main_module.EXIT_ROUTE_REFUSED, taken)
+
+    def test_no_exit_code_of_the_package_carries_two_meanings(self):
+        """24 -- «сборщик занят» -- и ни одно число не названо дважды.
+
+        [REASON]: внутри `main` у каждого числа одно имя; между входами пакета
+        совпадать могут только общие коды с общим смыслом (успех, конфигурация
+        и у `devices` -- сессия, период, обход). Новый код, взятый наугад,
+        однажды совпал бы с 22/23 манифеста, и цикл площади прочёл бы «занят»
+        как «манифест велик».
+        """
+        from drone_collector import area_manifest
+        from drone_collector import devices as devices_module
+
+        def codes(module):
+            return {name: value for name, value in vars(module).items()
+                    if name.startswith('EXIT_') and isinstance(value, int)
+                    and not isinstance(value, bool)}
+
+        self.assertEqual(main_module.EXIT_COLLECTOR_BUSY, 24)
+        by_value = {}
+        for name, value in codes(main_module).items():
+            by_value.setdefault(value, []).append(name)
+        self.assertEqual({value: names for value, names in by_value.items()
+                          if len(names) > 1}, {})
+        mine = set(codes(main_module).values())
+        self.assertLessEqual(mine & set(codes(devices_module).values()),
+                             {0, 1, 2, 3, 4})
+        self.assertLessEqual(mine & set(codes(area_manifest).values()),
+                             {0, 1})
 
 
 class StageBUsageTests(CliTestCase):
@@ -1920,6 +1963,165 @@ def collect_result(flights, complete=True):
         flights_captured=len(flights), self_duplicates=0, unidentified=0,
         rejected={}, ignored_detail=0, clicks=0, complete=complete,
         page_size=100, date_from=date(2026, 7, 1), date_to=date(2026, 7, 31))
+
+
+class _ListHandler(logging.Handler):
+
+    def __init__(self):
+        logging.Handler.__init__(self)
+        self.messages = []
+
+    def emit(self, record):
+        self.messages.append(record.getMessage())
+
+
+class CollectorLockTests(CliTestCase):
+    """DRONE-AREA-CONTROL-V2-MEGA, блок D: один прогон сборщика за раз.
+
+    [REASON]: кнопка «Обновить данные DJI» и суточный цикл запускают тот же
+    сборщик, что и ночная задача. Два браузера на одной сохранённой сессии DJI
+    и два опустошения одной файловой очереди -- ровно то, что блокировка
+    запрещает. Здесь держится: чужая блокировка даёт код 24 быстро и без
+    единого шага; своя держится весь прогон под именем режима и отпускается
+    после него; командная строка и конфигурация проверяются ДО блокировки.
+    """
+
+    DRY_FLIGHTS = ['--dry-run', '--from', '2026-07-01', '--to', '2026-07-07']
+    SECRET = 'sekret-token-value-4711'
+
+    def setUp(self):
+        CliTestCase.setUp(self)
+        self.handler = _ListHandler()
+        logging.getLogger('collector').addHandler(self.handler)
+        self.addCleanup(logging.getLogger('collector').removeHandler,
+                        self.handler)
+        self.summaries = []
+        real_summary = main_module.format_run_summary
+
+        def recording_summary(pairs):
+            self.summaries.append(dict(pairs))
+            return real_summary(pairs)
+
+        self._patch(main_module, 'format_run_summary', recording_summary)
+        self.seen = []
+
+        def recording_require_session(path):
+            # Первое, что делает каждый режим, -- проверка сессии. Здесь
+            # видно, держит ли прогон блокировку в этот момент и под каким
+            # именем.
+            self.seen.append((runlock.is_held(self.lock_path),
+                              (runlock.owner(self.lock_path) or {})
+                              .get('purpose')))
+            raise SessionMissing('no session in this test')
+
+        self._patch(main_module, 'require_session', recording_require_session)
+        os.environ['DJI_STORAGE_STATE'] = MISSING_STATE
+
+    def _patch(self, owner, name, value):
+        saved = getattr(owner, name)
+        setattr(owner, name, value)
+        self.addCleanup(setattr, owner, name, saved)
+
+    def hold(self, purpose='test-holder'):
+        holder = runlock.RunLock(self.lock_path, purpose=purpose)
+        self.assertTrue(holder.acquire())
+        self.addCleanup(holder.release)
+        return holder
+
+    def test_a_held_lock_returns_24_quickly_and_runs_nothing(self):
+        os.environ['DRONE_API_TOKEN'] = self.SECRET
+        self.hold()
+        started = time.monotonic()
+        code = main(list(self.DRY_FLIGHTS))
+        self.assertEqual(code, main_module.EXIT_COLLECTOR_BUSY)
+        self.assertLess(time.monotonic() - started, 5.0)
+        self.assertEqual(self.seen, [], 'a mode ran without the lock')
+        # Сводная строка печатается и при отказе -- с кодом 24.
+        self.assertEqual(len(self.summaries), 1)
+        self.assertEqual(self.summaries[0].get('exit'), 24)
+        text = '\n'.join(self.handler.messages)
+        self.assertIn('test-holder', text)
+        self.assertIn('pid=%d' % os.getpid(), text)
+        self.assertNotIn(self.SECRET, text)
+
+    def test_the_lock_is_held_for_the_run_and_released_after_it(self):
+        self.assertEqual(main(list(self.DRY_FLIGHTS)), EXIT_SESSION)
+        # Отрицательный контроль встроен: без блокировки здесь было бы False.
+        self.assertEqual(self.seen, [(True, main_module.MODE_FLIGHTS)])
+        self.assertFalse(runlock.is_held(self.lock_path))
+        again = runlock.RunLock(self.lock_path)
+        self.assertTrue(again.acquire())
+        again.release()
+        self.assertEqual(self.summaries[0].get('exit'), EXIT_SESSION)
+
+    def test_every_mode_holds_the_lock_under_its_own_name(self):
+        cases = [
+            (['--lands', '--dry-run'], main_module.MODE_LANDS),
+            (['--sources', '--ids-file', MISSING_STATE],
+             main_module.MODE_SOURCES),
+            (['--land-snapshot'], main_module.MODE_LAND_SNAPSHOT),
+            (['--route-ui-probe'], main_module.MODE_ROUTE_PROBE),
+            (['--route-ui-collect'], main_module.MODE_ROUTE_COLLECT),
+            (['--area-48h'], main_module.MODE_AREA_48H),
+        ]
+        for argv, purpose in cases:
+            del self.seen[:]
+            self.assertEqual(main(argv), EXIT_SESSION, argv)
+            self.assertEqual(self.seen, [(True, purpose)], argv)
+            self.assertFalse(runlock.is_held(self.lock_path), argv)
+
+    def test_run_mode_names_what_dispatch_runs(self):
+        parse = build_parser().parse_args
+        self.assertEqual(main_module.run_mode(parse(['--save-session'])),
+                         main_module.MODE_SAVE_SESSION)
+        self.assertEqual(main_module.run_mode(parse(['--routes', '--ids-file',
+                                                     'x'])),
+                         main_module.MODE_ROUTES)
+        self.assertEqual(main_module.run_mode(parse(['--dry-run'])),
+                         main_module.MODE_FLIGHTS)
+
+    def test_usage_and_configuration_errors_never_wait_for_the_lock(self):
+        self.hold()
+        os.environ['DJI_COLLECTOR_LOCK_WAIT_S'] = '60'
+        started = time.monotonic()
+        self.assertEqual(main(['--lands', '--from', '2026-07-01', '--to',
+                               '2026-07-31']), EXIT_CONFIG)
+        # Отправляющий прогон без токена -- ошибка конфигурации, не «занято».
+        self.assertEqual(main(['--from', '2026-07-01', '--to', '2026-07-07']),
+                         EXIT_CONFIG)
+        self.assertLess(time.monotonic() - started, 5.0)
+        self.assertEqual(self.seen, [])
+
+    def test_an_unusable_wait_setting_is_a_configuration_error(self):
+        for value in ('soon', '-1', 'nan', 'inf'):
+            os.environ['DJI_COLLECTOR_LOCK_WAIT_S'] = value
+            self.assertEqual(main(list(self.DRY_FLIGHTS)), EXIT_CONFIG, value)
+        self.assertEqual(self.seen, [])
+        self.assertFalse(runlock.is_held(self.lock_path))
+
+    def test_a_run_waits_for_the_holder_and_then_proceeds(self):
+        holder = self.hold()
+        os.environ['DJI_COLLECTOR_LOCK_WAIT_S'] = '20'
+        self._patch(main_module, 'COLLECTOR_LOCK_POLL_S', 0.05)
+        timer = threading.Timer(0.3, holder.release)
+        timer.start()
+        self.addCleanup(timer.cancel)
+        started = time.monotonic()
+        self.assertEqual(main(list(self.DRY_FLIGHTS)), EXIT_SESSION)
+        elapsed = time.monotonic() - started
+        self.assertGreaterEqual(elapsed, 0.25)
+        self.assertLess(elapsed, 10.0)
+        self.assertEqual(self.seen, [(True, main_module.MODE_FLIGHTS)])
+        self.assertTrue(any('waiting up to' in m
+                            for m in self.handler.messages))
+
+    def test_the_defaults_are_the_data_directory_and_half_an_hour(self):
+        os.environ.pop('DJI_COLLECTOR_LOCK_PATH', None)
+        os.environ.pop('DJI_COLLECTOR_LOCK_WAIT_S', None)
+        self.assertEqual(
+            main_module.collector_lock_path(),
+            str(config_module.PACKAGE_ROOT / 'data' / 'collector.lock'))
+        self.assertEqual(main_module.collector_lock_wait(), 1800.0)
 
 
 if __name__ == '__main__':
