@@ -292,6 +292,22 @@ class LinkEchoFilenameTest(unittest.TestCase):
         self.assertEqual(dp.link_args(f), {'time_to': '18:00'})
         self.assertEqual(dp.filename_part(f), '_0000-1800')
 
+    def test_a_time_without_its_date_is_not_applied_and_said(self):
+        f = period(date_from='', date_to='', time_to='10:00')
+        self.assertIn(dp.WARN_TIME_TO_UNANCHORED, f['period_warnings'])
+        self.assertEqual(dp.filename_part(f), '')
+        self.assertIn('у конца периода нет даты', ' '.join(
+            dp.messages(f, 'ru')))
+        g = period(date_from='', date_to='2026-06-15', time_from='08:00')
+        self.assertEqual(g['period_warnings'],
+                         [dp.WARN_TIME_FROM_UNANCHORED])
+        self.assertEqual(dp.filename_part(g), '')
+        # Отрицательный контроль: с датой время применяется молча.
+        h = period(date_from='2026-06-15', date_to='2026-06-15',
+                   time_to='10:00')
+        self.assertEqual(h['period_warnings'], [])
+        self.assertEqual(dp.filename_part(h), '_0000-1000')
+
     def test_no_date_echoes_empty(self):
         self.assertEqual(dp.echo(period()), ('', ''))
 

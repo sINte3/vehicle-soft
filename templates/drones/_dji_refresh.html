@@ -64,9 +64,13 @@
     </div>
   </div>
 </div>
-{% if r_last and r_last.message and r_last.status in ('FAILED', 'INTERRUPTED', 'LAUNCH_FAILED', 'BUSY', 'SUCCESS_WITH_WARNINGS') %}
+{# Итог прогона -- фразой на языке пользователя. Техническая ASCII-строка
+   журнала (может нести путь блокировки, pid, хост) -- только администратору
+   и только свёрнутой. #}
+{% if r_last and r_last.explanation and r_last.status in ('FAILED', 'INTERRUPTED', 'LAUNCH_FAILED', 'BUSY', 'SUCCESS_WITH_WARNINGS') %}
 <div class="vs-alert {{ 'is-warning' if r_last.status in ('SUCCESS_WITH_WARNINGS', 'BUSY') else 'is-danger' }} vs-mb" role="status">
-  <div>{{ 'Последний прогон' if is_ru else 'Сўнгги ишга тушириш' }} ({{ r_last.status_label }}): <span class="vs-mono">{{ r_last.message }}</span></div>
+  <div>{{ 'Последний прогон' if is_ru else 'Сўнгги ишга тушириш' }} ({{ r_last.status_label }}): {{ r_last.explanation }}{% if r_last.message and current_user.is_authenticated and current_user.is_admin %}
+    <details><summary>{{ 'Техническая строка журнала' if is_ru else 'Журналнинг техник қатори' }}</summary><span class="vs-mono">{{ r_last.message }}</span></details>{% endif %}</div>
 </div>
 {% endif %}
 {% if r_active %}

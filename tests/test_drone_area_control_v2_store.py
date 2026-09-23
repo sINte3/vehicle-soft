@@ -25,6 +25,7 @@
 import io
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -51,6 +52,31 @@ from dji_area import store  # noqa: E402
 from drone_collector import runlock  # noqa: E402
 
 UAT_C = 900714
+
+
+def _index_shape(path, table):
+    """Индексы таблицы как сравнимые описания, без имён автоиндексов.
+
+    Для каждого индекса: (имя или '<auto>', уникален, частичный, столбцы,
+    текст условия WHERE). Имя автоиндекса SQLite (sqlite_autoindex_*)
+    зависит от порядка ограничений и не несёт смысла -- сравнивается его
+    форма, а не имя."""
+    shapes = set()
+    for _seq, name, unique, _origin, partial in _query(
+            path, 'PRAGMA index_list(%s)' % table):
+        columns = tuple(r[2] for r in _query(path, 'PRAGMA index_info(%s)'
+                                             % name))
+        sql = _query(path, "SELECT sql FROM sqlite_master WHERE type='index' "
+                           "AND name=?", (name,))
+        where = ''
+        if sql and sql[0][0] and ' WHERE ' in sql[0][0].upper():
+            text = sql[0][0]
+            where = ' '.join(text[text.upper().index(' WHERE ') + 7:]
+                             .replace('(', ' ').replace(')', ' ')
+                             .split()).lower()
+        label = '<auto>' if name.startswith('sqlite_autoindex_') else name
+        shapes.add((label, bool(unique), bool(partial), columns, where))
+    return shapes
 
 
 def _query(path, sql, params=()):
@@ -240,13 +266,23 @@ class MigrationPaths(MigrationBase):
             fresh = {r[1]: (r[2].upper(), r[3]) for r in _query(
                 orm_db, 'PRAGMA table_info(%s)' % table)}
             self.assertEqual(migrated, fresh, table)
-            for kind in ('ix_', 'ux_', 'uq_'):
-                self.assertEqual(
-                    {r[1] for r in _query(self.db, 'PRAGMA index_list(%s)'
-                                          % table) if r[1].startswith(kind)},
-                    {r[1] for r in _query(orm_db, 'PRAGMA index_list(%s)'
-                                          % table) if r[1].startswith(kind)},
-                    '%s %s' % (table, kind))
+            # Индексы сверяются по форме: уникальность, частичность, столбцы
+            # и условие -- не только по префиксу имени. Иначе ORM-база с
+            # неуникальным ux_... или без WHERE прошла бы проверку.
+            self.assertEqual(_index_shape(self.db, table),
+                             _index_shape(orm_db, table), table)
+        # Отрицательный контроль: индекс той же таблицы и того же имени, но
+        # без частичного условия, различается сравнением.
+        broken = os.path.join(self.tmp, 'broken.db')
+        shutil.copyfile(self.db, broken)
+        con = sqlite3.connect(broken)
+        con.execute('DROP INDEX ux_drone_area_cycle_runs_active')
+        con.execute('CREATE UNIQUE INDEX ux_drone_area_cycle_runs_active '
+                    'ON drone_area_cycle_runs (active_slot)')
+        con.commit()
+        con.close()
+        self.assertNotEqual(_index_shape(broken, 'drone_area_cycle_runs'),
+                            _index_shape(orm_db, 'drone_area_cycle_runs'))
 
 
 # ─── Правило решений (чистое) ─────────────────────────────────────────────
@@ -316,6 +352,32 @@ class DecisionRules(unittest.TestCase):
                              {'decision_type': dec.NEEDS_MORE_EVIDENCE}),
                          (dec.S_ADMIN_NEEDS_EVIDENCE, 8000.0, 0.0, True))
         self.assertIn(dec.S_ADMIN_NEEDS_EVIDENCE, dec.OPEN_STATES)
+
+    def test_a_record_that_turned_normal_can_only_be_revoked(self):
+        # Пересчёт перевёл запись в обычные (V4 пришёл и опроверг кандидата):
+        # действующее решение снимается, новое не принимается.
+        active = {'id': 7, 'decision_type': dec.CONFIRM_FULL_PHANTOM}
+        self.assertEqual(dec.allowed_actions(dec.AUTO_NORMAL, 5000.0, active),
+                         (dec.REVOKE,))
+        self.assertEqual(dec.allowed_actions(dec.AUTO_NORMAL, 5000.0, None),
+                         ())
+        self.assertIsNone(self.check(dec.REVOKE, cls=dec.AUTO_NORMAL,
+                                     active=active, expected=7))
+        for action in dec.DECISION_TYPES:
+            self.assertEqual(self.check(action, cls=dec.AUTO_NORMAL,
+                                        active=active, expected=7),
+                             dec.E_NOT_DECIDABLE, action)
+        # Без действующего решения отменять нечего и у обычной записи.
+        self.assertEqual(self.check(dec.REVOKE, cls=dec.AUTO_NORMAL),
+                         dec.E_NOT_DECIDABLE)
+
+    def test_the_same_decision_is_confirmed_again_only_after_a_recalc(self):
+        active = {'id': 7, 'decision_type': dec.ACCEPT_AUTO_RESULT}
+        self.assertEqual(self.check(dec.ACCEPT_AUTO_RESULT, active=active,
+                                    expected=7), dec.E_SAME_AS_ACTIVE)
+        self.assertIsNone(dec.validate(
+            dec.ACCEPT_AUTO_RESULT, dec.AUTO_REVIEW, 5000.0, active,
+            'проверено вручную', True, False, 7, active_stale=True))
 
     def test_accept_auto_lapses_when_the_calculation_changes(self):
         self.assertEqual(dec.effective(
@@ -437,6 +499,69 @@ class DecisionWriter(StoreBase):
                                'синтетическая причина', True, False, None, 1,
                                'x')
 
+    def recalc(self, status=rs.COUNTER_FLAT_RAW_OVERSTATED,
+               eligibility=rs.AGG_UNRESOLVED, corrected=0.0, candidate=True,
+               input_hash='H2', flags=('APPLICATION_WITH_FLAT_COUNTER',)):
+        self.add_calc(calc_row(UAT_C, status, eligibility, 60000.0,
+                               corrected=corrected, candidate=candidate,
+                               input_hash=input_hash, flags=flags))
+        return cs.current_calculation(self.con, UAT_C)
+
+    def view(self):
+        active = cs.active_decisions(self.con, [UAT_C]).get(UAT_C)
+        return cr.record_view(dict(cs.current_calculation(self.con, UAT_C),
+                                   machine_key='M', machine_label='M'),
+                              'ru', decision=active)
+
+    def count(self):
+        return self.con.execute(
+            'SELECT COUNT(*) FROM drone_area_decisions').fetchone()[0]
+
+    def test_a_decision_is_revocable_after_the_record_turned_normal(self):
+        saved = self.record(dec.CONFIRM_FULL_PHANTOM)
+        self.recalc(rs.RAW_CORROBORATED, rs.AGG_CERTIFIED, corrected=60000.0,
+                    candidate=False, input_hash='H3', flags=())
+        self.assertEqual(self.view()['accounting_class'], dec.AUTO_NORMAL)
+        with self.assertRaises(cs.DecisionRefused) as ctx:
+            self.record(dec.KEEP_DJI_RAW, expected=saved['id'])
+        self.assertEqual(ctx.exception.code, dec.E_NOT_DECIDABLE)
+        self.assertEqual(self.count(), 1)
+        revoked = self.record(dec.REVOKE, expected=saved['id'])
+        self.assertEqual((revoked['decision_type'], revoked['chain_seq']),
+                         (dec.REVOKE, 2))
+        self.assertEqual(cs.active_decisions(self.con, [UAT_C]), {})
+
+    def test_a_form_opened_before_a_recalculation_is_refused(self):
+        seen = cs.current_calculation(self.con, UAT_C)['id']
+        now = self.recalc()
+        self.assertNotEqual(seen, now['id'])
+        with self.assertRaises(cs.DecisionRefused) as ctx:
+            cs.record_decision(self.con, UAT_C, dec.CONFIRM_FULL_PHANTOM,
+                               'визуально проверено в DJI', True, False, None,
+                               1, 'SYNTHETIC admin', expected_calc_id=seen)
+        self.assertEqual(ctx.exception.code, dec.E_STALE_CALC)
+        self.assertEqual(self.count(), 0)
+        # Отрицательный контроль: форма, открытая на нынешнем расчёте.
+        saved = cs.record_decision(self.con, UAT_C, dec.CONFIRM_FULL_PHANTOM,
+                                   'визуально проверено в DJI', True, False,
+                                   None, 1, 'SYNTHETIC admin',
+                                   expected_calc_id=now['id'])
+        self.assertEqual(saved['calculation_input_hash'], 'H2')
+
+    def test_a_lapsed_accept_is_confirmed_against_the_new_calculation(self):
+        first = self.record(dec.ACCEPT_AUTO_RESULT)
+        with self.assertRaises(cs.DecisionRefused) as ctx:
+            self.record(dec.ACCEPT_AUTO_RESULT, expected=first['id'])
+        self.assertEqual(ctx.exception.code, dec.E_SAME_AS_ACTIVE)
+        self.recalc()
+        self.assertFalse(self.view()['decision']['applied'])
+        second = self.record(dec.ACCEPT_AUTO_RESULT, expected=first['id'])
+        self.assertEqual((second['chain_seq'],
+                          second['calculation_input_hash']), (2, 'H2'))
+        item = self.view()
+        self.assertTrue(item['decision']['applied'])
+        self.assertFalse(item['decision']['stale'])
+
     def test_the_decision_follows_a_recalculation_as_stale(self):
         saved = self.record(dec.ACCEPT_AUTO_RESULT)
         # Новый вход -> новая строка расчёта: решение «принять автомат»
@@ -530,6 +655,58 @@ class CycleLedger(StoreBase):
         self.assertNotIn(secret, env_clean)
         # Отрицательный контроль: без знания секрета голое значение осталось бы.
         self.assertIn(secret, 'x ' + secret)
+
+    def test_the_lock_probe_runs_inside_the_writer_transaction(self):
+        cs.enqueue_manual(self.con, 1, 'SYNTHETIC admin')
+        run = cs.claim_queued(self.con)
+        seen = []
+
+        def held():
+            seen.append(self.con.in_transaction)
+            return True
+
+        def free():
+            seen.append(self.con.in_transaction)
+            return False
+        self.assertEqual(cs.reconcile(self.con, held), [])
+        self.assertEqual(cs.reconcile(self.con, free), [run['id']])
+        # Проба -- под транзакцией писателя, не до неё.
+        self.assertEqual(seen, [True, True])
+        self.assertFalse(self.con.in_transaction)
+
+    def test_run_explanations_are_words_in_both_languages(self):
+        result = {'failure': cs.FAILURE_CANDIDATE_EVIDENCE,
+                  'evidence_misses': {'candidates': [11, 12],
+                                      'controls': [13]}}
+        self.assertIn('кандидатов: 2', cs.run_explanation(
+            cs.STATUS_FAILED, result, '', 'ru'))
+        uz = cs.run_explanation(cs.STATUS_FAILED, result, '', 'uz')
+        self.assertIn(': 2', uz)
+        self.assertNotIn('CANDIDATE', uz)
+        warned = cs.run_explanation(
+            cs.STATUS_WARNINGS, {'warnings': [cs.WARNING_CONTROL_EVIDENCE],
+                                 'evidence_misses': {'controls': [13]}},
+            '', 'ru')
+        self.assertTrue(warned)
+        self.assertNotIn('CONTROL_EVIDENCE', warned)
+        # Незнакомый код -- общая фраза, а не сам код.
+        unknown = cs.run_explanation(cs.STATUS_FAILED,
+                                     {'failure': 'SOMETHING_NEW'}, '', 'ru')
+        self.assertTrue(unknown)
+        self.assertNotIn('SOMETHING_NEW', unknown)
+        # Успех без предупреждений -- сказать нечего сверх статуса.
+        self.assertEqual(cs.run_explanation(cs.STATUS_SUCCESS, {}, '', 'ru'),
+                         '')
+        for pair in (list(cs.FAILURE_TEXTS.values())
+                     + list(cs.WARNING_TEXTS.values())
+                     + list(cs.STATUS_TEXTS.values())):
+            self.assertTrue(pair[0] and pair[1], pair)
+            # Подстановки %(имя)d -- не текст для пользователя.
+            uz_text = re.sub(r'%\(\w+\)[ds]', '', pair[1])
+            for word in ('V4', 'DJI'):
+                uz_text = uz_text.replace(word, '')
+            self.assertEqual(re.findall(r'[A-Za-z]{2,}', uz_text), [],
+                             pair[1])
 
     def test_the_run_view_speaks_words(self):
         run = cs.enqueue_manual(self.con, 1, 'SYNTHETIC admin')
@@ -711,6 +888,102 @@ class ReportLayer(unittest.TestCase):
         for point in [chain['a'], chain['c']] + chain['b']:
             self.assertEqual(point['url'], cr.DJI_RECORD_URL
                              % point['flight_id'])
+
+    def test_a_chain_link_from_the_previous_day_shows_its_date(self):
+        rows = report_rows()
+        # A начался 20.09 в 23:55 по UTC+5, C -- 21.09 в 08:10.
+        rows[0]['start_at_utc'] = datetime(2026, 9, 20, 18, 55)
+        chain = {i['flight_id']: i for i in cr.build(rows, 'ru')['items']}[
+            3]['chain']
+        self.assertEqual(chain['a']['label_s'], '20.09 23:55')
+        self.assertEqual(chain['a']['time_s'], '23:55')
+        # Звенья того же дня -- только время, как прежде.
+        self.assertEqual(chain['b'][0]['label_s'], '08:05')
+        self.assertEqual(chain['c']['label_s'], '08:10')
+
+    def test_the_decided_tab_lists_only_decisions_in_force(self):
+        lapsed = {4: {'id': 1, 'decision_type': dec.ACCEPT_AUTO_RESULT,
+                      'area_algorithm_version':
+                          dji_area.AREA_ALGORITHM_VERSION,
+                      'calculation_input_hash': 'OLD'}}
+        report = cr.build(report_rows(), 'ru', cr.VIEW_DECIDED,
+                          decisions=lapsed)
+        self.assertEqual(report['register'], [])
+        self.assertEqual(report['total']['stale_decision_records'], 1)
+        # Отрицательный контроль: то же решение против нынешнего расчёта.
+        in_force = {4: dict(lapsed[4], calculation_input_hash='H1')}
+        report = cr.build(report_rows(), 'ru', cr.VIEW_DECIDED,
+                          decisions=in_force)
+        self.assertEqual({r['flight_id'] for r in report['register']}, {4})
+        self.assertEqual(report['total']['stale_decision_records'], 0)
+
+    def workbook(self, report, **kwargs):
+        from openpyxl import load_workbook
+        buffer = io.BytesIO()
+        cr.build_workbook(report, 'ru', **kwargs).save(buffer)
+        buffer.seek(0)
+        return load_workbook(buffer)
+
+    def test_the_workbook_never_writes_a_formula_from_free_text(self):
+        from openpyxl import Workbook
+        evil = '=HYPERLINK("http://example.invalid","x")'
+        rows = report_rows()
+        for row in rows:
+            if row['flight_id'] == 4:
+                row['machine_label'] = '@D1'
+        decisions = {4: {'id': 1, 'decision_type': dec.CONFIRM_FULL_PHANTOM,
+                         'area_algorithm_version':
+                             dji_area.AREA_ALGORITHM_VERSION,
+                         'calculation_input_hash': 'H1',
+                         'performed_by_name': '+SYNTHETIC',
+                         'performed_at': datetime(2026, 9, 22, 5, 0),
+                         'comment': evil}}
+        report = cr.build(rows, 'ru', decisions=decisions)
+        history = [dict(decisions[4], flight_id=4, chain_seq=1,
+                        is_current=True, auto_class=acc.REVIEW,
+                        raw_area_m2=500.0, auto_accepted_m2=500.0)]
+        book = self.workbook(report, period=('=1+1', '-2'),
+                             filters_text=[('Машина', '=cmd')],
+                             history=history)
+        formulas = [(s.title, c.coordinate) for s in book.worksheets
+                    for r in s.iter_rows() for c in r
+                    if c.data_type == 'f'
+                    or (isinstance(c.value, str) and c.value[:1] in '=+@')]
+        self.assertEqual(formulas, [])
+        sheet = book['Реестр']
+        header = [c.value for c in sheet[1]]
+        row = {r[header.index('C Flight ID')]: r
+               for r in sheet.iter_rows(min_row=2, values_only=True)}[4]
+        self.assertEqual(row[header.index('Комментарий решения')],
+                         "'" + evil)
+        self.assertEqual(row[header.index('Кто решил')], "'+SYNTHETIC")
+        # Числа и обычный текст не трогаются.
+        self.assertEqual(cr.xlsx_safe(-5.0), -5.0)
+        self.assertEqual(cr.xlsx_safe('обычный текст'),
+                         'обычный текст')
+        # Отрицательный контроль: без защиты та же строка -- формула.
+        raw = Workbook()
+        raw.active.append([evil])
+        self.assertEqual(raw.active['A1'].data_type, 'f')
+
+    def test_history_says_not_in_force_for_a_lapsed_decision(self):
+        def history_flag(input_hash):
+            decisions = {4: {'id': 1, 'decision_type': dec.ACCEPT_AUTO_RESULT,
+                             'area_algorithm_version':
+                                 dji_area.AREA_ALGORITHM_VERSION,
+                             'calculation_input_hash': input_hash,
+                             'performed_by_name': 'SYNTHETIC admin',
+                             'performed_at': datetime(2026, 9, 22, 5, 0),
+                             'comment': 'визуально'}}
+            report = cr.build(report_rows(), 'ru', decisions=decisions)
+            history = [dict(decisions[4], flight_id=4, chain_seq=1,
+                            is_current=True, auto_class=acc.REVIEW,
+                            raw_area_m2=500.0, auto_accepted_m2=500.0)]
+            book = self.workbook(report, history=history)
+            return list(book['История_решений'].iter_rows(
+                min_row=2, values_only=True))[0][3]
+        self.assertEqual(history_flag('OLD'), 'Нет')
+        self.assertEqual(history_flag('H1'), 'Да')
 
     def test_string_timestamps_from_raw_sqlite_are_understood(self):
         rows = report_rows()

@@ -112,7 +112,8 @@ DESCRIPTION = ('DRONE-AREA-CONTROL-V2-MEGA: create drone_area_decisions '
 # [REASON]: column types are spelled exactly as SQLAlchemy renders the models
 # (INTEGER, BIGINT, VARCHAR(n), TEXT, FLOAT, BOOLEAN, DATETIME, DATE) so that
 # a migrated database and a fresh db.create_all() database agree column for
-# column; tests/test_drone_area_control_v2_migration.py compares the two.
+# column; tests/test_drone_area_control_v2_store.py
+# (test_migration_ddl_matches_the_orm_models) compares the two.
 TABLES = (
     ('drone_area_decisions', """
 CREATE TABLE IF NOT EXISTS drone_area_decisions (

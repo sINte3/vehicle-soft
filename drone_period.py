@@ -50,6 +50,8 @@ _TIME_RE = re.compile(r'^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$')
 
 WARN_TIME_FROM = 'time_from'
 WARN_TIME_TO = 'time_to'
+WARN_TIME_FROM_UNANCHORED = 'time_from_unanchored'
+WARN_TIME_TO_UNANCHORED = 'time_to_unanchored'
 
 MESSAGES = {
     'inverted': ('Начало периода позже его конца — за такой период записей '
@@ -60,6 +62,12 @@ MESSAGES = {
                      '«дан» вақти нотўғри; 00:00 ишлатилди.'),
     WARN_TIME_TO: ('Время «по» указано неверно; использовано 23:59.',
                    '«гача» вақти нотўғри; 23:59 ишлатилди.'),
+    WARN_TIME_FROM_UNANCHORED: (
+        'Время «с» не применено: у начала периода нет даты.',
+        '«дан» вақти қўлланмади: давр бошида сана йўқ.'),
+    WARN_TIME_TO_UNANCHORED: (
+        'Время «по» не применено: у конца периода нет даты.',
+        '«гача» вақти қўлланмади: давр охирида сана йўқ.'),
 }
 
 
@@ -146,6 +154,13 @@ def parse(args, default_window=None, with_time=True):
             warnings.append(WARN_TIME_TO)
     else:
         time_from, time_to = DEFAULT_TIME_FROM, DEFAULT_TIME_TO
+    # [REASON]: время привязано к дате своей стороны. Без даты оно ничего не
+    # ограничивает -- и говорится об этом прямо, а не молча: иначе поле
+    # «по 10:00» стояло бы в форме, а в отчёт попадали бы вылеты 15:00.
+    if with_time and time_from != DEFAULT_TIME_FROM and date_from is None:
+        warnings.append(WARN_TIME_FROM_UNANCHORED)
+    if with_time and time_to != DEFAULT_TIME_TO and date_to is None:
+        warnings.append(WARN_TIME_TO_UNANCHORED)
 
     out = {
         'date_from': date_from,
@@ -258,11 +273,16 @@ def filename_part(filters):
     """
     if not filters.get('with_time', True):
         return ''
-    bounds = derive(filters)
-    if bounds['time_is_default']:
-        return ''
+    # Только время, которое действительно ограничивает: у стороны без даты
+    # его нет, и имя файла не должно его заявлять.
     time_from = filters.get('time_from') or DEFAULT_TIME_FROM
     time_to = filters.get('time_to') or DEFAULT_TIME_TO
+    if not isinstance(filters.get('date_from'), date):
+        time_from = DEFAULT_TIME_FROM
+    if not isinstance(filters.get('date_to'), date):
+        time_to = DEFAULT_TIME_TO
+    if time_from == DEFAULT_TIME_FROM and time_to == DEFAULT_TIME_TO:
+        return ''
     return '_%s-%s' % (time_from.strftime('%H%M'), time_to.strftime('%H%M'))
 
 

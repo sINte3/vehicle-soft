@@ -8472,6 +8472,14 @@ def _drone_area_filters(args):
     filters = drone_period.parse(
         args, default_window=(today - timedelta(days=DRONE_AREA_DEFAULT_DAYS),
                               today))
+    # [REASON]: строки дат -- нормализованные, как было до общего парсера:
+    # «2026-6-1» -> «2026-06-01», мусор -> пусто. Иначе поле type=date
+    # показало бы пустоту при ограниченных данных, а сырой текст из адреса
+    # ушёл бы в ячейку «Период» книги и в имя файла.
+    filters['date_from_s'] = (filters['date_from'].isoformat()
+                              if filters['date_from'] else '')
+    filters['date_to_s'] = (filters['date_to'].isoformat()
+                            if filters['date_to'] else '')
 
     status = (args.get('status') or '').strip()
     if status not in dji_resolver.AREA_STATUSES:
@@ -9096,6 +9104,19 @@ def _drone_area_chain_times(rows):
     return times
 
 
+def _drone_area_decisions_guarded():
+    """Применена ли миграция журнала решений (триггеры append-only)."""
+    from dji_area import control_store
+
+    con = _drone_area_control_db()
+    if con is None:
+        return False
+    try:
+        return control_store.append_only_guarded(con)
+    finally:
+        con.close()
+
+
 def _drone_area_control_report(filters, view=None):
     from dji_area import control_report as dji_control
 
@@ -9208,6 +9229,9 @@ def area_control():
         expand_all=listed <= DRONE_AREA_CONTROL_EXPAND_MAX,
         decisions_ready=report['decisions_ready'],
         can_decide=bool(current_user.is_admin) and report['decisions_ready'],
+        decisions_unguarded=(bool(current_user.is_admin)
+                             and report['decisions_ready']
+                             and not _drone_area_decisions_guarded()),
         back_url=back_url,
         units=DroneUnit.query.order_by(DroneUnit.number).all(),
         tips={key: dji_control.pick(pair, lang)
@@ -9311,6 +9335,9 @@ def _drone_area_flight_row(flight_id):
     row = {col: getattr(c, col) for col in _DRONE_AREA_CONTROL_COLUMNS}
     row['machine_key'], row['machine_label'] = _drone_area_machine(
         unit, c.hardware_id)
+    # Id строки расчёта уходит в форму решения: сервер откажет, если
+    # расчёт сменился, пока форма была открыта (E_STALE_CALC).
+    row['calc_id'] = c.id
     return row
 
 
@@ -9348,7 +9375,10 @@ def area_control_flight(flight_id):
             'seq': entry['chain_seq'],
             'label': dji_decisions.pick(dji_decisions.DECISION_SHORT.get(
                 kind, (kind, kind)), lang),
-            'is_current': active is not None and entry['id'] == active['id'],
+            # Действует -- последняя строка цепочки, и решение применено к
+            # нынешнему расчёту (не потеряло силу).
+            'is_current': (active is not None and entry['id'] == active['id']
+                           and bool((item['decision'] or {}).get('applied'))),
             'is_override': entry.get('is_override'),
             'by': entry.get('performed_by_name'),
             'at_s': at_local.strftime('%d.%m.%Y %H:%M') if at_local else '',
@@ -9359,7 +9389,11 @@ def area_control_flight(flight_id):
             'raw_ha': dji_control.ha(entry.get('raw_area_m2')),
             'accepted_ha': dji_control.ha(entry.get('effective_accepted_m2')),
         })
-    can_decide = bool(current_user.is_admin) and ready and item['decidable']
+    # [REASON]: действующее решение можно снять всегда, даже если пересчёт
+    # сделал запись обычной (V4 пришёл и опроверг кандидата) -- иначе оно
+    # осталось бы в силе навсегда.
+    can_decide = bool(current_user.is_admin) and ready and (
+        item['decidable'] or active is not None)
     actions = []
     if can_decide:
         for code in dji_decisions.allowed_actions(
@@ -9383,6 +9417,7 @@ def area_control_flight(flight_id):
         override=item['is_override_class'],
         actions=actions,
         active_id=active['id'] if active else '',
+        calc_id=row['calc_id'],
         back=back,
         ha=dji_control.ha,
         bridge_note=dji_control.pick(dji_control.BRIDGE_NOTE, lang),
@@ -9434,7 +9469,8 @@ def area_control_decide(flight_id):
             confirmed=request.form.get('confirm') == '1',
             override_confirmed=request.form.get('confirm_override') == '1',
             expected_active_id=expected, user_id=current_user.id,
-            user_name=_drone_user_name())
+            user_name=_drone_user_name(),
+            expected_calc_id=request.form.get('expected_calc_id', type=int))
     except control_store.DecisionRefused as exc:
         flash(dji_decisions.pick(dji_decisions.ERRORS.get(
             exc.code, dji_decisions.ERRORS[dji_decisions.E_UNKNOWN_ACTION]),
@@ -9543,10 +9579,14 @@ def _dji_refresh_launch(config, run_id):
         kwargs = {'cwd': root, 'stdin': subprocess.DEVNULL,
                   'stderr': subprocess.STDOUT, 'close_fds': True}
         if windows:
-            # [REASON]: отсоединённый процесс своей группы: HTTP-запрос не
-            # ждёт его, а Ctrl+C / закрытие консоли службы до него не доходят.
+            # [REASON]: процесс своей группы и без окна: HTTP-запрос его не
+            # ждёт, Ctrl+C консоли службы до него не доходит. Не
+            # DETACHED_PROCESS: у отсоединённого процесса нет консоли, и
+            # каждый шаг цикла (subprocess.call без своих потоков) получал бы
+            # НОВУЮ консоль -- вывод FLIGHTS/SOURCES/RECALC уходил бы мимо
+            # run_<id>.log. Со скрытой консолью шаги наследуют файл лога.
             kwargs['creationflags'] = (
-                getattr(subprocess, 'DETACHED_PROCESS', 0x8)
+                getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
                 | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0x200))
         else:
             kwargs['start_new_session'] = True
@@ -9694,9 +9734,15 @@ def dji_refresh_start():
                 'migrate_drone_area_control_v2_001.py не применена.'),
                 'danger')
             return redirect(back)
-        lock_held = runlock.is_held(runlock.cycle_lock_path(
-            config['db_path']))
-        control_store.reconcile(con, lock_held)
+        lock_path = runlock.cycle_lock_path(config['db_path'])
+        probes = []
+
+        def probe():
+            probes.append(runlock.is_held(lock_path))
+            return probes[-1]
+        # Проба -- внутри транзакции reconcile (см. его [REASON]).
+        control_store.reconcile(con, probe)
+        lock_held = bool(probes and probes[-1])
         try:
             run = control_store.enqueue_manual(con, current_user.id,
                                                _drone_user_name())
@@ -9713,12 +9759,20 @@ def dji_refresh_start():
             return redirect(back)
         started, message = _dji_refresh_launch(config, run['id'])
         if not started:
-            control_store.finish(con, run['id'],
-                                 control_store.STATUS_LAUNCH_FAILED,
-                                 message=message)
-            flash(_drone_t('Янгилашни ишга тушириб бўлмади: %s',
-                           'Не удалось запустить обновление: %s') % message,
-                  'danger')
+            control_store.finish(
+                con, run['id'], control_store.STATUS_LAUNCH_FAILED,
+                message=message,
+                result={'failure': control_store.FAILURE_LAUNCH})
+            # [REASON]: текст исключения -- в журнал, для администратора; на
+            # экран -- фраза на языке пользователя: сообщение ОС английское
+            # и может нести пути сервера.
+            flash(_drone_t(
+                'Янгилашни ишга тушириб бўлмади: жадвалдаги вазифа ёки '
+                'жараён бошланмади. Сабаби прогонлар журналида '
+                '(администраторга кўринади).',
+                'Не удалось запустить обновление: задача планировщика или '
+                'процесс не стартовали. Причина — в журнале прогонов (видна '
+                'администратору).'), 'danger')
             return redirect(back)
     finally:
         con.close()

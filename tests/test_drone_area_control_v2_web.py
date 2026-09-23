@@ -88,6 +88,47 @@ class Base(ControlBase):
         from tests.test_dji_area_report_001 import HW7
         return HW7
 
+    def recalc_uat(self, normal=False):
+        """Новая строка расчёта UAT_C поверх прежней; id новой строки.
+
+        ``normal`` -- пересчёт опроверг кандидата: V4 подтвердил RAW."""
+        with app.app_context():
+            for old in DjiAreaCalculation.query.filter_by(
+                    flight_id=UAT_C, superseded_at=None):
+                old.superseded_at = datetime(2026, 9, 9, 0, 0)
+            if normal:
+                obj = self.calc_object(
+                    UAT_C, dji_resolver.RAW_CORROBORATED,
+                    dji_resolver.AGG_CERTIFIED, raw_m2=UAT_RAW,
+                    corrected_m2=UAT_RAW, hardware_id=self.hw7(), minute=40)
+            else:
+                obj = self.calc_object(
+                    UAT_C, dji_resolver.COUNTER_FLAT_RAW_OVERSTATED,
+                    dji_resolver.AGG_UNRESOLVED, raw_m2=UAT_RAW,
+                    corrected_m2=0.0, hardware_id=self.hw7(), minute=40,
+                    flags=['APPLICATION_WITH_FLAT_COUNTER'], delta_m2=0.0)
+                obj.structural_candidate = True
+                obj.scalar_source_check = True
+                obj.candidate_base_flight_id = UAT_A
+                obj.bridge_flight_ids_json = json.dumps([UAT_B])
+                obj.structural_rule_version = \
+                    'structural-retained-screen-frozen-1'
+            obj.v4_revision_id = 1
+            db.session.add(obj)
+            db.session.commit()
+            return obj.id
+
+    def card(self, flight_id=UAT_C, user_id=None):
+        response = self.client_as(user_id=user_id).get(
+            '/drones/area-control/flight/%d' % flight_id)
+        self.assertEqual(response.status_code, 200)
+        return response.get_data(as_text=True)
+
+    @staticmethod
+    def calc_id_in(html):
+        return int(re.search(r'name="expected_calc_id" value="(\d+)"',
+                             html).group(1))
+
     def make_user(self, username, role, has_drones=True, language='ru'):
         with app.app_context():
             user = User(username=username, role=role,
@@ -377,6 +418,55 @@ class Decisions(Base):
         self.assertNotIn('UPDATE drone_area_decisions', source)
         self.assertNotIn('DELETE FROM drone_area_decisions', source)
 
+    def test_a_form_opened_before_a_recalculation_writes_nothing(self):
+        seen = self.calc_id_in(self.card())
+        self.recalc_uat()
+        self.decide(UAT_C, dec.CONFIRM_FULL_PHANTOM,
+                    extra={'expected_calc_id': str(seen)})
+        self.assertEqual(self.decisions(), [])
+        # Отрицательный контроль: форма, открытая заново, проходит.
+        fresh = self.calc_id_in(self.card())
+        self.assertNotEqual(fresh, seen)
+        self.decide(UAT_C, dec.CONFIRM_FULL_PHANTOM,
+                    extra={'expected_calc_id': str(fresh)})
+        self.assertEqual(len(self.decisions()), 1)
+
+    def test_a_record_that_turned_normal_offers_only_revoke(self):
+        self.decide(UAT_C, dec.CONFIRM_FULL_PHANTOM)
+        first = self.raw('SELECT id FROM drone_area_decisions')[0][0]
+        self.recalc_uat(normal=True)
+        html = self.card()
+        self.assertIn('value="%s"' % dec.REVOKE, html)
+        for action in dec.DECISION_TYPES:
+            self.assertNotIn('name="action" value="%s"' % action, html)
+        self.decide(UAT_C, dec.KEEP_DJI_RAW, expected=first)
+        self.assertEqual(len(self.decisions()), 1)
+        self.decide(UAT_C, dec.REVOKE, expected=first)
+        self.assertEqual([r[2] for r in self.decisions()],
+                         [dec.CONFIRM_FULL_PHANTOM, dec.REVOKE])
+        # Отменять больше нечего -- формы нет вовсе.
+        self.assertNotIn('value="%s"' % dec.REVOKE, self.card())
+
+    def test_an_admin_is_told_when_the_triggers_are_missing(self):
+        # База тестов создана create_all: таблицы есть, триггеров нет --
+        # ровно состояние production после деплоя кода до миграции.
+        import sqlite3
+        import migrate_drone_area_control_v2_001 as mig
+        warning = 'запрет правки истории (триггеры) не установлен'
+        self.assertIn(warning, self.control_page())
+        # Не администратору это не показывается.
+        viewer = self.make_user('area_viewer_g', ROLE_VIEWER)
+        self.assertNotIn(warning, self.control_page(user_id=viewer))
+        # Отрицательный контроль: после триггеров миграции -- тишина.
+        con = sqlite3.connect(TEST_DB_PATH)
+        try:
+            for _name, ddl in mig.TRIGGERS:
+                con.execute(ddl)
+            con.commit()
+        finally:
+            con.close()
+        self.assertNotIn(warning, self.control_page())
+
     def test_the_next_parameter_cannot_leave_the_module(self):
         response = self.decide(UAT_C, dec.CONFIRM_FULL_PHANTOM,
                                extra={'next': 'https://evil.example/'})
@@ -463,6 +553,57 @@ class Parity(Base):
         self.assertAlmostEqual(summary['DJI RAW, га'],
                                (6000 + 90000 + 80000 + 70000 + 50000
                                 + 58400) / 1e4)
+
+
+class ExportSafety(Base):
+
+    def setUp(self):
+        super(ExportSafety, self).setUp()
+        self.seed()
+
+    EVIL = '=HYPERLINK("http://example.invalid","x") проверено в DJI'
+
+    @staticmethod
+    def summary(book):
+        return {row[0].value: row[1].value
+                for row in book['Сводка'].iter_rows() if row[0].value}
+
+    def test_free_text_never_becomes_a_formula_in_the_book(self):
+        self.decide(UAT_C, dec.CONFIRM_FULL_PHANTOM, comment=self.EVIL)
+        self.assertEqual(self.decisions()[0][9], self.EVIL)   # как введено
+        _response, book = self.control_book()
+        formulas = [(s.title, c.coordinate) for s in book.worksheets
+                    for r in s.iter_rows() for c in r
+                    if c.data_type == 'f'
+                    or (isinstance(c.value, str) and c.value[:1] in '=+@')]
+        self.assertEqual(formulas, [])
+        sheet = book['Реестр']
+        header = [c.value for c in sheet[1]]
+        row = {r[header.index('C Flight ID')]: r
+               for r in sheet.iter_rows(min_row=2, values_only=True)}[UAT_C]
+        self.assertEqual(row[header.index('Комментарий решения')],
+                         "'" + self.EVIL)
+        history = list(book['История_решений'].iter_rows(
+            min_row=2, values_only=True))
+        self.assertEqual(history[0][10], "'" + self.EVIL)
+
+    def test_dates_from_the_address_are_normalized(self):
+        response, book = self.control_book(
+            '?date_from=2026-6-5&date_to=2026-06-05')
+        summary = self.summary(book)
+        self.assertEqual(summary['Период: с'], '2026-06-05')
+        self.assertEqual(summary['Период: по'], '2026-06-05')
+        self.assertIn('2026-06-05', response.headers['Content-Disposition'])
+        self.assertNotIn('2026-6-5', response.headers['Content-Disposition'])
+        html = self.control_page('?date_from=2026-6-5&date_to=2026-06-05')
+        self.assertIn('value="2026-06-05"', html)
+        self.assertNotIn('value="2026-6-5"', html)
+        # Мусор вместо даты -- без границы, и в книгу он не попадает.
+        _response, book = self.control_book(
+            '?date_from==1%2B1&date_to=2026-06-05')
+        self.assertIsNone(self.summary(book)['Период: с'])
+        self.assertNotIn('=1+1', self.control_page(
+            '?date_from==1%2B1&date_to=2026-06-05'))
 
 
 # ─── 4. Время в фильтре площади ────────────────────────────────────────────
@@ -676,6 +817,46 @@ class Refresh(Base):
         runs = self.runs()
         self.assertEqual(runs[0][2:4], ('LAUNCH_FAILED', None))
         self.assertIn('Запуск не состоялся', self.control_page())
+
+    def test_the_child_gets_its_own_group_and_a_hidden_console(self):
+        import subprocess
+        self.post()
+        _command, kwargs = self.popen.calls[0]
+        if os.name == 'nt':
+            flags = kwargs['creationflags']
+            self.assertTrue(flags & subprocess.CREATE_NO_WINDOW)
+            self.assertTrue(flags & subprocess.CREATE_NEW_PROCESS_GROUP)
+            # Не DETACHED_PROCESS: шаги цикла иначе получали бы по новой
+            # консоли, и их вывод уходил бы мимо файла лога.
+            self.assertFalse(flags & 0x00000008)
+        else:
+            self.assertTrue(kwargs['start_new_session'])
+        self.assertTrue(kwargs['stdout'].name.endswith('run_1.log'))
+
+    def test_the_outcome_is_words_and_the_log_line_is_for_admins(self):
+        self.post()
+        con = self.store()
+        run = control_store.claim_queued(con)
+        control_store.finish(
+            con, run['id'], control_store.STATUS_FAILED, exit_code=5,
+            failed_step='VERIFY',
+            message='STOP: candidate evidence missing for 2 flight(s)',
+            result={'outcome': 'FAILED',
+                    'failure': control_store.FAILURE_CANDIDATE_EVIDENCE,
+                    'evidence_misses': {'candidates': [1, 2],
+                                        'controls': []}})
+        operator = self.make_user('area-editor-w', ROLE_OPERATOR)
+        html = self.control_page(user_id=operator)
+        self.assertIn('Доказательства V4 не получены для кандидатов: 2',
+                      html)
+        self.assertNotIn('STOP: candidate evidence', html)
+        self.assertNotIn('Техническая строка журнала', html)
+        uz = self.control_page(user_id=operator, language='uz')
+        self.assertIn('Номзодлар учун V4 далиллари олинмади: 2', uz)
+        self.assertNotIn('STOP:', uz)
+        admin = self.control_page()
+        self.assertIn('Техническая строка журнала', admin)
+        self.assertIn('STOP: candidate evidence missing', admin)
 
     def test_the_scheduler_launcher_runs_only_the_named_task(self):
         calls = []

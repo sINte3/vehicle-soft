@@ -110,6 +110,7 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <input type="hidden" name="next" value="{{ back }}">
   <input type="hidden" name="expected_decision_id" value="{{ active_id }}">
+  <input type="hidden" name="expected_calc_id" value="{{ calc_id }}">
   <div class="vs-field vs-mb">
     <span class="vs-label">{{ 'Решение' if is_ru else 'Қарор' }}</span>
     {% for a in actions %}

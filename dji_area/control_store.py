@@ -109,6 +109,84 @@ STEP_LABELS = {
 # Итог цикла (result_json.outcome) -- то же, что статус завершённой строки.
 FAILURE_CANDIDATE_EVIDENCE = 'CANDIDATE_EVIDENCE_MISSING'
 WARNING_CONTROL_EVIDENCE = 'CONTROL_EVIDENCE_MISSING'
+FAILURE_LAUNCH = 'LAUNCH_FAILED'
+
+# Итог прогона словами: код итога (`result_json.failure` / `warnings`) ->
+# (ru, uz). Узбекский -- кириллицей.
+#
+# [REASON]: на экран идут ЭТИ фразы, а не колонка `message`. Та -- ASCII по
+# построению (её пишет исполнитель в журнал планировщика и прогоняет через
+# `redact`), может нести путь файла блокировки, pid и имя хоста и остаётся
+# технической строкой для администратора. Пользователь RU/UZ должен понять,
+# что произошло и что делать, не читая английский журнал.
+FAILURE_TEXTS = {
+    FAILURE_CANDIDATE_EVIDENCE: (
+        'Доказательства V4 не получены для кандидатов: %(candidates)d. '
+        'Пересчёт выполнен по уже полученным; следующий прогон доберёт '
+        'недостающее.',
+        'Номзодлар учун V4 далиллари олинмади: %(candidates)d. Қайта ҳисоб '
+        'олинганлари бўйича бажарилди; кейинги ишга тушириш етишмаганини '
+        'йиғиб олади.'),
+    'VERIFY_UNAVAILABLE': (
+        'Не удалось проверить полноту доказательств: повторный список для '
+        'проверки V4 не получен. Пересчёт выполнен.',
+        'Далиллар тўлиқлигини текшириб бўлмади: V4 текшируви учун қайта '
+        'рўйхат олинмади. Қайта ҳисоб бажарилди.'),
+    'COLLECTOR_BUSY': (
+        'Сборщик DJI был занят другим прогоном (например, ночным сбором '
+        'вылетов). Повторите позже.',
+        'DJI йиғувчиси бошқа ишга тушириш билан банд эди (масалан, тунги '
+        'парвозлар йиғими). Кейинроқ такрорланг.'),
+    'STEP_FAILED': (
+        'Шаг «%(step)s» завершился ошибкой.',
+        '«%(step)s» қадами хато билан тугади.'),
+    'MANIFEST_TOO_LARGE': (
+        'Список для проверки V4 больше допустимого; к DJI за доказательствами '
+        'не обращались. Нужна проверка администратором.',
+        'V4 текшируви рўйхати рухсат этилгандан катта; далиллар учун DJI га '
+        'мурожаат қилинмади. Администратор текшируви керак.'),
+    'NOT_IDEMPOTENT': (
+        'Повторный пересчёт изменил записи; нужна проверка администратором.',
+        'Такрорий қайта ҳисоб ёзувларни ўзгартирди; администратор текшируви '
+        'керак.'),
+    'CYCLE_BUSY': (
+        'Шёл другой цикл площади; этот прогон не запускался. Повторите '
+        'позже.',
+        'Бошқа майдон цикли кетаётган эди; бу ишга тушириш бошланмади. '
+        'Кейинроқ такрорланг.'),
+    'UNEXPECTED_ERROR': (
+        'Непредвиденная ошибка исполнителя; подробности — в журнале.',
+        'Бажарувчининг кутилмаган хатоси; тафсилотлар — журналда.'),
+    'NO_DATABASE': ('База данных не найдена.', 'Маълумотлар базаси топилмади.'),
+    'USAGE': ('Ошибка параметров запуска исполнителя.',
+              'Бажарувчини ишга тушириш параметрлари хато.'),
+    FAILURE_LAUNCH: (
+        'Задача планировщика или процесс исполнителя не стартовали.',
+        'Жадвалдаги вазифа ёки бажарувчи жараён бошланмади.'),
+}
+WARNING_TEXTS = {
+    WARNING_CONTROL_EVIDENCE: (
+        'Доказательства V4 не получены только для контрольных вылетов: '
+        '%(controls)d. На итоги площади это не влияет.',
+        'V4 далиллари фақат назорат парвозлари учун олинмади: %(controls)d. '
+        'Бу майдон якунларига таъсир қилмайди.'),
+}
+STATUS_TEXTS = {
+    'INTERRUPTED': (
+        'Процесс завершился, не закрыв прогон (перезапуск службы или сбой). '
+        'Запустите обновление ещё раз — повтор безопасен.',
+        'Жараён ишга туширишни ёпмай тугади (хизмат қайта ишга туширилган '
+        'ёки носозлик). Янгилашни яна ишга туширинг — такрорлаш хавфсиз.'),
+    'LAUNCH_FAILED': (
+        'Прогон никто не взял из очереди: проверьте задачу планировщика и '
+        'настройки службы.',
+        'Ишга туширишни навбатдан ҳеч ким олмади: жадвалдаги вазифа ва '
+        'хизмат созламаларини текширинг.'),
+    'BUSY': (
+        'Исполнитель не дождался окончания другого сбора. Повторите позже.',
+        'Бажарувчи бошқа йиғим тугашини кутиб ўтирмади. Кейинроқ '
+        'такрорланг.'),
+}
 
 
 class ControlStoreError(RuntimeError):
@@ -153,6 +231,23 @@ def tables_present(con):
     names = {r[0] for r in con.execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}
     return DECISIONS_TABLE in names and RUNS_TABLE in names
+
+
+# Триггеры миграции DRONE_AREA_CONTROL_V2_001, запрещающие UPDATE/DELETE.
+APPEND_ONLY_TRIGGERS = ('trg_drone_area_decisions_no_update',
+                        'trg_drone_area_decisions_no_delete')
+
+
+def append_only_guarded(con):
+    """Стоят ли оба триггера append-only на истории решений.
+
+    [REASON]: `db.create_all()` при старте приложения создаёт обе таблицы по
+    моделям -- решения пишутся и без миграции, но без триггеров история
+    защищена только тем, что единственный писатель делает INSERT. Экран
+    говорит администратору об этом, а не делает вид, что миграция не нужна."""
+    names = {r[0] for r in con.execute(
+        "SELECT name FROM sqlite_master WHERE type='trigger'")}
+    return all(name in names for name in APPEND_ONLY_TRIGGERS)
 
 
 def require_tables(con):
@@ -250,12 +345,21 @@ def current_calculation(con, flight_id):
 
 def record_decision(con, flight_id, action, comment, confirmed,
                     override_confirmed, expected_active_id, user_id,
-                    user_name, now=None):
+                    user_name, now=None, expected_calc_id=None):
     """Записать решение (или отмену) одной строкой. Возвращает новую строку.
 
     Идентичность автоматического расчёта берётся ЗДЕСЬ, из текущей строки
     `dji_area_calculations` под действующей версией алгоритма, а не из
     формы: браузер не может подсунуть чужой отпечаток.
+
+    ``expected_calc_id`` -- id строки расчёта, которую видел администратор.
+
+    [REASON]: сверка обоих «что видел человек» -- и действующего решения, и
+    автоматического расчёта. Без второй «принять автоматический результат»,
+    нажатое по корректировке 0.1 га, записалось бы против пересчёта,
+    случившегося, пока форма была открыта, -- и приняло бы уже весь RAW.
+    Id строки расчёта устойчив: при том же входе строка реактивируется с
+    тем же id, при новом входе появляется новая.
 
     Отказ -- `DecisionRefused(code)` с кодом из `dji_area.decisions.ERRORS`;
     база при отказе не меняется.
@@ -267,11 +371,16 @@ def record_decision(con, flight_id, action, comment, confirmed,
         calc = current_calculation(con, flight_id)
         if calc is None:
             raise DecisionRefused(dec.E_NOT_DECIDABLE)
+        if expected_calc_id is not None \
+                and int(expected_calc_id) != int(calc['id']):
+            raise DecisionRefused(dec.E_STALE_CALC)
         cls, reason, raw, auto_accepted, auto_excluded = _auto_figures(calc)
         chain = decision_chains(con, [flight_id]).get(flight_id, [])
         active = active_from_chain(chain)
         refusal = dec.validate(action, cls, raw, active, comment, confirmed,
-                               override_confirmed, expected_active_id)
+                               override_confirmed, expected_active_id,
+                               active_stale=dec.decision_is_stale(active,
+                                                                  calc))
         if refusal:
             raise DecisionRefused(refusal)
         if action == dec.REVOKE:
@@ -388,12 +497,22 @@ def reconcile(con, lock_held, now=None, keep_run_id=None):
 
     Вызывается только из пишущих путей. ``keep_run_id`` -- строка, которую
     исполнитель как раз ведёт (её не трогать, даже если блокировку взял он).
+    ``lock_held`` -- bool либо вызываемое без аргументов (проба блокировки).
     Возвращает id закрытых строк.
+
+    [REASON]: пробу блокировки веб-путь передаёт ВЫЗЫВАЕМЫМ, и она
+    выполняется уже ПОД транзакцией писателя. Исполнитель переводит строку в
+    RUNNING, держа блокировку файла, и отпускает её только после того, как
+    закрыл строку своей транзакцией. Под нашей транзакцией закрыть строку он
+    не может; значит, RUNNING при свободной блокировке здесь -- мёртвый
+    процесс, а не прогон, взявший блокировку за миг до нашей пробы.
     """
     now = now or utcnow()
     closed = []
     store.begin_immediate(con)
     try:
+        if callable(lock_held):
+            lock_held = bool(lock_held())
         for run in active_runs(con):
             if run['id'] == keep_run_id:
                 continue
@@ -583,6 +702,33 @@ def redact(text, secrets=None):
     return out[:MESSAGE_MAX_CHARS]
 
 
+def run_explanation(status, result, failed_step_label, lang):
+    """Итог прогона одной-двумя фразами на языке пользователя; '' -- если
+    сказать нечего сверх статуса (успех без предупреждений, идущий прогон)."""
+    pick = dec.pick
+    result = result or {}
+    misses = result.get('evidence_misses') or {}
+    counts = {'candidates': len(misses.get('candidates') or []),
+              'controls': len(misses.get('controls') or []),
+              'step': failed_step_label or '—'}
+    parts = []
+    if status in STATUS_TEXTS and status not in (STATUS_FAILED,):
+        parts.append(pick(STATUS_TEXTS[status], lang))
+    failure = result.get('failure')
+    if failure and status not in (STATUS_INTERRUPTED,):
+        pair = FAILURE_TEXTS.get(failure) or FAILURE_TEXTS['UNEXPECTED_ERROR']
+        text = pick(pair, lang) % counts
+        if text not in parts:
+            parts.append(text)
+    for warning in result.get('warnings') or ():
+        pair = WARNING_TEXTS.get(warning)
+        if pair:
+            parts.append(pick(pair, lang) % counts)
+    if not parts and status == STATUS_FAILED:
+        parts.append(pick(FAILURE_TEXTS['UNEXPECTED_ERROR'], lang))
+    return ' '.join(parts)
+
+
 def run_view(run, lang, lock_held, now=None):
     """Строка журнала для экрана: подписи, время UTC+5, итог словами."""
     if run is None:
@@ -591,6 +737,8 @@ def run_view(run, lang, lock_held, now=None):
     status = effective_status(run, lock_held, now)
     local = lambda dt: dt + timedelta(hours=5) if dt else None  # noqa: E731
     result = run.get('result') or {}
+    failed_step_label = pick(STEP_LABELS[run['failed_step']], lang) \
+        if run.get('failed_step') in STEP_LABELS else ''
     return {
         'id': run['id'],
         'trigger': run.get('trigger_kind'),
@@ -613,6 +761,9 @@ def run_view(run, lang, lock_held, now=None):
         'window_from': run.get('window_from'),
         'window_to': run.get('window_to'),
         'exit_code': run.get('exit_code'),
+        # Техническая ASCII-строка журнала -- только администратору.
         'message': run.get('message'),
+        'explanation': run_explanation(status, result, failed_step_label,
+                                       lang),
         'result': result,
     }

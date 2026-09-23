@@ -179,6 +179,7 @@ E_NOT_CONFIRMED = 'NOT_CONFIRMED'
 E_NOTHING_TO_REVOKE = 'NOTHING_TO_REVOKE'
 E_RAW_MISSING = 'RAW_MISSING'
 E_STALE_FORM = 'STALE_FORM'
+E_STALE_CALC = 'STALE_CALC'
 E_SAME_AS_ACTIVE = 'SAME_AS_ACTIVE'
 ERRORS = {
     E_UNKNOWN_ACTION: ('Неизвестное решение.', 'Номаълум қарор.'),
@@ -210,6 +211,11 @@ ERRORS = {
                    'изменилось. Обновите страницу и проверьте историю.',
                    'Шакл очиқ турганда бу ёзув бўйича қарор ўзгарди. '
                    'Саҳифани янгиланг ва тарихни текширинг.'),
+    E_STALE_CALC: ('Пока форма была открыта, автоматический расчёт этой '
+                   'записи изменился. Обновите страницу и проверьте новый '
+                   'результат.',
+                   'Шакл очиқ турганда бу ёзувнинг автоматик ҳисоби '
+                   'ўзгарди. Саҳифани янгиланг ва янги натижани текширинг.'),
     E_SAME_AS_ACTIVE: ('Такое решение уже действует.',
                        'Бундай қарор аллақачон амал қилмоқда.'),
 }
@@ -228,9 +234,14 @@ def allowed_actions(auto_class, raw_m2, active):
 
     ``active`` -- действующее решение (словарь) либо None. Отмена доступна
     только при действующем решении.
+
+    [REASON]: отмена доступна ВСЕГДА, когда решение действует, -- даже если
+    пересчёт перевёл запись в обычные (например, V4 пришёл и опроверг
+    кандидата). Иначе решение, принятое по ожидающей записи, оставалось бы в
+    силе навсегда без способа его снять.
     """
     if auto_class not in DECIDABLE_CLASSES:
-        return ()
+        return (REVOKE,) if active is not None else ()
     out = []
     for action in DECISION_TYPES:
         if raw_m2 is None and action in (CONFIRM_FULL_PHANTOM, KEEP_DJI_RAW):
@@ -242,15 +253,18 @@ def allowed_actions(auto_class, raw_m2, active):
 
 
 def validate(action, auto_class, raw_m2, active, comment, confirmed,
-             override_confirmed, expected_active_id):
+             override_confirmed, expected_active_id, active_stale=False):
     """Код отказа либо None. Чистая функция: её держат тесты.
 
     ``expected_active_id`` -- id действующего решения, каким его видела
     форма (None, если решения не было). Расхождение -- правка поверх чужой.
+    ``active_stale`` -- действующее решение принято против прежнего расчёта:
+    тогда то же решение можно подтвердить заново, против нынешнего.
     """
     if action not in ACTIONS:
         return E_UNKNOWN_ACTION
-    if auto_class not in DECIDABLE_CLASSES:
+    if auto_class not in DECIDABLE_CLASSES and not (
+            action == REVOKE and active is not None):
         return E_NOT_DECIDABLE
     current_id = active['id'] if active is not None else None
     if (expected_active_id or None) != (current_id or None):
@@ -259,7 +273,8 @@ def validate(action, auto_class, raw_m2, active, comment, confirmed,
         return E_NOTHING_TO_REVOKE
     if raw_m2 is None and action in (CONFIRM_FULL_PHANTOM, KEEP_DJI_RAW):
         return E_RAW_MISSING
-    if active is not None and action == active.get('decision_type'):
+    if active is not None and action == active.get('decision_type') \
+            and not active_stale:
         return E_SAME_AS_ACTIVE
     text = (comment or '').strip()
     if len(text) < COMMENT_MIN_CHARS:

@@ -212,6 +212,21 @@ def pick(pair, lang):
     return pair[0] if lang == 'ru' else pair[1]
 
 
+def xlsx_safe(value):
+    """Строка для ячейки книги, которая не станет формулой.
+
+    [REASON]: книга уходит в бухгалтерию и открывается в Excel. Свободный
+    текст -- причина решения администратора, имя из профиля, подпись машины,
+    строка периода из адреса -- начинающийся с = + - @ Excel прочитал бы как
+    формулу (#NAME? в лучшем случае, HYPERLINK наружу -- в худшем). Тот же
+    приём, что `drones._drone_xlsx_safe`; модуль Flask не импортирует,
+    поэтому своя копия.
+    """
+    if isinstance(value, str) and value.lstrip()[:1] in ('=', '+', '-', '@'):
+        return "'" + value
+    return value
+
+
 def ha(value_m2):
     return None if value_m2 is None else float(value_m2) / M2_PER_HA
 
@@ -301,12 +316,22 @@ def explanation(decision, row, lang):
     return code, pick(pair, lang)
 
 
-def _point(flight_id, times):
-    """Звено цепочки: id, ссылка DJI и местное время начала (UTC+5)."""
+def _point(flight_id, times, day=None):
+    """Звено цепочки: id, ссылка DJI и местное время начала (UTC+5).
+
+    ``label_s`` -- то, что стоит в строке дерева: время, а если звено
+    началось в другой местный день, чем строка (цепочка пересекла
+    полночь), -- дата и время. Иначе «A 23:55» под днём 05.06 читалось бы
+    как 05.06 23:55, после C, и искалось бы в DJI не в тот день.
+    """
     start = local_time((times or {}).get(int(flight_id)))
+    time_s = start.strftime('%H:%M') if start else ''
+    other_day = bool(start and hasattr(day, 'year')
+                     and start.date() != day)
     return {'flight_id': int(flight_id), 'url': dji_url(flight_id),
             'start_local': start,
-            'time_s': start.strftime('%H:%M') if start else '',
+            'time_s': time_s,
+            'label_s': start.strftime('%d.%m %H:%M') if other_day else time_s,
             'datetime_s': start.strftime('%d.%m.%Y %H:%M') if start else ''}
 
 
@@ -406,9 +431,10 @@ def record_view(row, lang='ru', decision=None, times=None):
         'evidence_label': pick(EVIDENCE_LABELS[ev_state], lang),
         'base_flight_id': base_id,
         'bridge_flight_ids': bridges,
-        'chain': ({'a': _point(base_id, lookup),
-                   'b': [_point(b, lookup) for b in bridges],
-                   'c': _point(flight_id, lookup)} if chain else None),
+        'chain': ({'a': _point(base_id, lookup, report_day),
+                   'b': [_point(b, lookup, report_day) for b in bridges],
+                   'c': _point(flight_id, lookup, report_day)}
+                  if chain else None),
         'dji_url': dji_url(flight_id),
         'structural_rule_version': row.get('structural_rule_version'),
         'area_algorithm_version': row.get('area_algorithm_version'),
@@ -432,6 +458,7 @@ def empty_totals():
         'review_records': 0,
         'decided_records': 0,
         'override_records': 0,
+        'stale_decision_records': 0,
         'state_records': {state: 0 for state in dec.STATES},
         'state_raw_m2': {state: 0.0 for state in dec.STATES},
     }
@@ -466,6 +493,10 @@ def add_view(totals, item):
         totals['decided_records'] += 1
         if decision.get('is_override'):
             totals['override_records'] += 1
+    if decision is not None and decision.get('stale'):
+        # Решение принято против прежнего расчёта: применено оно или
+        # потеряло силу -- администратору стоит посмотреть ещё раз.
+        totals['stale_decision_records'] += 1
     return totals
 
 
@@ -498,7 +529,7 @@ def _matches(item, view):
     if view == VIEW_ALL:
         return True
     if view == VIEW_DECIDED:
-        return item['decision'] is not None
+        return bool(item['decision'] and item['decision'].get('applied'))
     return item['state'] in _VIEW_STATES.get(view, ())
 
 
@@ -660,10 +691,12 @@ def build_workbook(report, lang='ru', period=('', ''), versions=None,
     sheet.title = pick(SHEET_SUMMARY, lang)
     header(sheet, [tr('Показатель', 'Кўрсаткич'), tr('Значение', 'Қиймат'),
                    tr('Записей', 'Ёзувлар'), tr('Пояснение', 'Изоҳ')])
-    sheet.append([tr('Период: с', 'Давр: бошланиши'), period[0] or None])
-    sheet.append([tr('Период: по', 'Давр: тугаши'), period[1] or None])
+    sheet.append([tr('Период: с', 'Давр: бошланиши'),
+                  xlsx_safe(period[0]) or None])
+    sheet.append([tr('Период: по', 'Давр: тугаши'),
+                  xlsx_safe(period[1]) or None])
     for label, value in (filters_text or ()):
-        sheet.append([label, value])
+        sheet.append([label, xlsx_safe(value)])
     sheet.append([tr('DJI RAW, га', 'DJI RAW, га'), ha(total['raw_m2']),
                   total['records'], pick(TOOLTIPS['raw'], lang)])
     sheet.append([tr('Подтверждённо исключено, га',
@@ -716,7 +749,7 @@ def build_workbook(report, lang='ru', period=('', ''), versions=None,
                    tr('Требует проверки, га', 'Текшириш керак, га'),
                    tr('Решений администратора', 'Администратор қарорлари')])
     for drone in report['drones']:
-        sheet.append([drone['machine_label'], drone['records'],
+        sheet.append([xlsx_safe(drone['machine_label']), drone['records'],
                       ha(drone['raw_m2']), ha(drone['excluded_m2']),
                       ha(drone['after_m2']), ha(drone['pending_m2']),
                       ha(drone['review_m2']), drone['decided_records']])
@@ -744,6 +777,8 @@ def build_workbook(report, lang='ru', period=('', ''), versions=None,
         tr('Когда решил (UTC+5)', 'Қачон ҳал қилди (UTC+5)'),
         tr('Комментарий решения', 'Қарор изоҳи'),
         tr('Итоговый статус', 'Якуний ҳолат'),
+        tr('Решение действует', 'Қарор амалда'),
+        tr('Пометка к решению', 'Қарорга изоҳ'),
     ]
     c_link_col = register_titles.index(tr('Ссылка DJI', 'DJI ҳаволаси')) + 1
     a_link_col = register_titles.index(tr('A ссылка', 'A ҳаволаси')) + 1
@@ -760,7 +795,7 @@ def build_workbook(report, lang='ru', period=('', ''), versions=None,
             decision = item['decision'] or {}
             sheet.append([
                 day.isoformat() if hasattr(day, 'isoformat') else day,
-                item['machine_label'], item['flight_id'],
+                xlsx_safe(item['machine_label']), item['flight_id'],
                 item['base_flight_id'],
                 '; '.join(str(b) for b in item['bridge_flight_ids']) or None,
                 ha(item['raw_m2']), ha(item['accepted_m2']),
@@ -774,9 +809,13 @@ def build_workbook(report, lang='ru', period=('', ''), versions=None,
                           if b['datetime_s']) or None,
                 '; '.join(b['url'] for b in bees) or None,
                 ha(item['auto_accepted_m2']), ha(item['auto_excluded_m2']),
-                decision.get('label'), decision.get('performed_by'),
+                decision.get('label'), xlsx_safe(decision.get('performed_by')),
                 decision.get('performed_at_s') or None,
-                decision.get('comment'), item['state_label'],
+                xlsx_safe(decision.get('comment')), item['state_label'],
+                pick(YES_NO[bool(decision.get('applied'))], lang)
+                if decision else None,
+                decision.get('lapsed_note') or decision.get('stale_note')
+                or None,
             ])
             link(sheet, c_link_col, item['dji_url'])
             link(sheet, a_link_col, a.get('url'))
@@ -805,7 +844,7 @@ def build_workbook(report, lang='ru', period=('', ''), versions=None,
         for day in node['days']:
             totals = day['totals']
             day_value = day['date']
-            sheet.append([node['machine_label'],
+            sheet.append([xlsx_safe(node['machine_label']),
                           day_value.isoformat()
                           if hasattr(day_value, 'isoformat') else day_value,
                           totals['records'], ha(totals['raw_m2']),
@@ -827,21 +866,28 @@ def build_workbook(report, lang='ru', period=('', ''), versions=None,
                       'Қарор пайтида автоматик қабул қилинган, га'),
                    tr('Кто', 'Ким'), tr('Когда (UTC+5)', 'Қачон (UTC+5)'),
                    tr('Комментарий', 'Изоҳ'), tr('Ссылка DJI', 'DJI ҳаволаси')])
+    # «Действует» -- последняя строка цепочки И решение применено к
+    # нынешнему расчёту (отменённое «принять автомат» -- не действует).
+    applied_by_flight = {
+        i['flight_id']: bool((i['decision'] or {}).get('applied'))
+        for i in report.get('items', ())}
     for entry in history or ():
         kind = entry.get('decision_type')
         at_local = local_time(entry.get('performed_at'))
         auto_class = entry.get('auto_class')
+        in_force = bool(entry.get('is_current')) and applied_by_flight.get(
+            entry.get('flight_id'), True)
         sheet.append([
             entry.get('flight_id'), entry.get('chain_seq'),
             pick(dec.DECISION_SHORT.get(kind, (kind, kind)), lang),
-            pick(YES_NO[bool(entry.get('is_current'))], lang),
+            pick(YES_NO[in_force], lang),
             pick(YES_NO[bool(entry.get('is_override'))], lang),
             pick(CLASS_LABELS[auto_class], lang)
             if auto_class in CLASS_LABELS else auto_class,
             ha(entry.get('raw_area_m2')), ha(entry.get('auto_accepted_m2')),
-            entry.get('performed_by_name'),
+            xlsx_safe(entry.get('performed_by_name')),
             at_local.strftime('%d.%m.%Y %H:%M') if at_local else None,
-            entry.get('comment'),
+            xlsx_safe(entry.get('comment')),
             dji_url(entry['flight_id']) if entry.get('flight_id') else None])
         link(sheet, 12, dji_url(entry['flight_id'])
              if entry.get('flight_id') else None)

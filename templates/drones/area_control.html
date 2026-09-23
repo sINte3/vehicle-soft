@@ -112,7 +112,7 @@
     <div class="vs-kpi-strip-item">
       <span class="vs-kpi-strip-label">{{ 'Решения администратора' if is_ru else 'Администратор қарорлари' }}</span>
       <strong class="vs-kpi-strip-value">{{ total.decided_records|vs_num }}</strong>
-      <span class="vs-muted">{{ 'действующих решений в периоде' if is_ru else 'даврдаги амалдаги қарорлар' }}{% if total.override_records %} · {{ 'переопределений доказанного' if is_ru else 'исботланганни қайта белгилаш' }}: {{ total.override_records }}{% endif %}</span>
+      <span class="vs-muted">{{ 'действующих решений в периоде' if is_ru else 'даврдаги амалдаги қарорлар' }}{% if total.override_records %} · {{ 'переопределений доказанного' if is_ru else 'исботланганни қайта белгилаш' }}: {{ total.override_records }}{% endif %}{% if total.stale_decision_records %} · {{ 'расчёт изменился после решения, проверить' if is_ru else 'қарордан кейин ҳисоб ўзгарган, текшириш керак' }}: {{ total.stale_decision_records }}{% endif %}</span>
     </div>
     <div class="vs-kpi-strip-item">
       <span class="vs-kpi-strip-label">{{ 'Полнота отчёта' if is_ru else 'Ҳисобот тўлиқлиги' }}</span>
@@ -127,7 +127,7 @@
    `.vs-alert` -- flex-контейнер. #}
 {% if total.records %}
 <div class="vs-alert {{ 'is-success' if total.complete else 'is-warning' }} vs-mb">
-  <div><strong>{{ total.status_text }}</strong> {{ total.open_text }}{% if total.raw_missing_records %} {{ 'Записей без площади DJI: ' if is_ru else 'DJI майдони йўқ ёзувлар: ' }}{{ total.raw_missing_records|vs_num }}.{% endif %}{% if not decisions_ready %} {{ 'Решения администратора недоступны: не применена миграция журнала решений.' if is_ru else 'Администратор қарорлари мавжуд эмас: қарорлар журнали миграцияси қўлланмаган.' }}{% endif %}</div>
+  <div><strong>{{ total.status_text }}</strong> {{ total.open_text }}{% if total.raw_missing_records %} {{ 'Записей без площади DJI: ' if is_ru else 'DJI майдони йўқ ёзувлар: ' }}{{ total.raw_missing_records|vs_num }}.{% endif %}{% if not decisions_ready %} {{ 'Решения администратора недоступны: не применена миграция журнала решений.' if is_ru else 'Администратор қарорлари мавжуд эмас: қарорлар журнали миграцияси қўлланмаган.' }}{% elif decisions_unguarded %} {{ 'Миграция журнала решений не применена: таблицы созданы при запуске приложения, но запрет правки истории (триггеры) не установлен. Запустите migrate_drone_area_control_v2_001.py.' if is_ru else 'Қарорлар журнали миграцияси қўлланмаган: жадваллар илова ишга тушганда яратилган, лекин тарихни ўзгартириш тақиқи (триггерлар) ўрнатилмаган. migrate_drone_area_control_v2_001.py ни ишга туширинг.' }}{% endif %}</div>
 </div>
 {% endif %}
 
@@ -225,11 +225,11 @@
           <td>{{ r.reason_text }} <span class="vs-muted">({{ r.evidence_label }})</span></td>
           <td>
             {% if r.chain %}
-            A <a href="{{ r.chain.a.url }}" target="_blank" rel="noopener">{{ r.chain.a.flight_id }}</a>{% if r.chain.a.time_s %} <span class="vs-muted">{{ r.chain.a.time_s }}</span>{% endif %}
+            A <a href="{{ r.chain.a.url }}" target="_blank" rel="noopener">{{ r.chain.a.flight_id }}</a>{% if r.chain.a.label_s %} <span class="vs-muted">{{ r.chain.a.label_s }}</span>{% endif %}
             {% for b in r.chain.b %}
-            → B <a href="{{ b.url }}" target="_blank" rel="noopener" title="{{ bridge_note }}">{{ b.flight_id }}</a>{% if b.time_s %} <span class="vs-muted">{{ b.time_s }}</span>{% endif %}
+            → B <a href="{{ b.url }}" target="_blank" rel="noopener" title="{{ bridge_note }}">{{ b.flight_id }}</a>{% if b.label_s %} <span class="vs-muted">{{ b.label_s }}</span>{% endif %}
             {% endfor %}
-            → C <a href="{{ r.chain.c.url }}" target="_blank" rel="noopener">{{ r.chain.c.flight_id }}</a>{% if r.chain.c.time_s %} <span class="vs-muted">{{ r.chain.c.time_s }}</span>{% endif %}
+            → C <a href="{{ r.chain.c.url }}" target="_blank" rel="noopener">{{ r.chain.c.flight_id }}</a>{% if r.chain.c.label_s %} <span class="vs-muted">{{ r.chain.c.label_s }}</span>{% endif %}
             {% if r.chain.b %}<div class="vs-muted">{{ 'Bridge — не корректируется' if is_ru else 'Bridge — тузатилмайди' }}</div>{% endif %}
             {% else %}—{% endif %}
           </td>
