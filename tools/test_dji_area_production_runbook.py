@@ -470,15 +470,28 @@ class TheTextAgreesWithTheCode(unittest.TestCase):
                                float(hectares.replace(',', '.')), places=4)
 
     def test_the_exit_code_table_is_the_tools_own(self):
+        # [REASON]: таблица ищется в СВОЁМ разделе, а не во всём файле.
+        # DRONE-AREA-CONTROL-V2-MEGA добавил циклу код 7 и рядом появляется
+        # инструмент backfill со своими кодами; строка «| 8 |» чужой таблицы
+        # иначе смешалась бы с этой, и тест падал бы на правильном тексте
+        # (или, хуже, прятал бы пропуск кода цикла за чужой строкой).
         text = read()
+        head = '### Коды возврата цикла'
+        self.assertIn(head, text)
+        section = text.split(head, 1)[1].split('\n#', 1)[0]
         table = dict((int(code), meaning) for code, meaning in re.findall(
-            r'^\| (\d) \| ([^|]+) \|', text, re.M))
+            r'^\| (\d) \| ([^|]+) \|', section, re.M))
         self.assertEqual(sorted(table), [
             daily.EXIT_OK, daily.EXIT_USAGE, daily.EXIT_NO_DATABASE,
             daily.EXIT_STEP_FAILED, daily.EXIT_MANIFEST_TOO_LARGE,
-            daily.EXIT_SOURCES_INCOMPLETE, daily.EXIT_NOT_IDEMPOTENT])
+            daily.EXIT_SOURCES_INCOMPLETE, daily.EXIT_NOT_IDEMPOTENT,
+            daily.EXIT_BUSY])
         self.assertIn('--stop-above', table[daily.EXIT_MANIFEST_TOO_LARGE])
         self.assertIn('--expect-unchanged', table[daily.EXIT_NOT_IDEMPOTENT])
+        # Блок E: пятый -- потеря КАНДИДАТА, а потеря контроля -- код 0.
+        self.assertIn('кандидат', table[daily.EXIT_CANDIDATE_EVIDENCE_MISSING])
+        self.assertIn(daily.OUTCOME_WARNINGS, table[daily.EXIT_OK])
+        self.assertIn('блокировк', table[daily.EXIT_BUSY])
         self.assertEqual((acceptance.EXIT_PASS, acceptance.EXIT_FAIL), (0, 3))
         self.assertEqual((raw_guard.EXIT_OK, raw_guard.EXIT_VIOLATED), (0, 3))
 
