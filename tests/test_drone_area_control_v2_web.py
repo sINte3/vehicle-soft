@@ -35,6 +35,9 @@ import unittest
 from datetime import date, datetime, timedelta
 
 from tests.harness import app, login, CSRF, TEST_DB_PATH
+from tests.test_drone_area_control_ui import (COMMANDS, column_heads,
+                                              parse_html, tree_rows,
+                                              tree_table)
 from tests.test_dji_area_control_web_001 import (Base as ControlBase, A, B, C,
                                                  PARTIAL_C, PENDING_C,
                                                  REVIEW_C, RULE_MISS, WINDOW)
@@ -219,31 +222,81 @@ class Screen(Base):
 
     def test_the_formula_line_explains_the_result(self):
         html = self.control_page()
+        formula = parse_html(html).find('section', cls='vs-formula')
+        # Одна формула: слагаемое, знак, слагаемое, знак, итог.
+        row = formula.find(cls='vs-formula-row')
+        kinds = ['op' if 'vs-formula-op' in c.classes() else 'term'
+                 for c in row.children if not isinstance(c, str)]
+        self.assertEqual(kinds, ['term', 'op', 'term', 'op', 'term'])
+        self.assertEqual([o.text() for o in row.find_all(cls='vs-formula-op')],
+                         ['−', '='])
+        self.assertEqual([t.find(cls='vs-formula-label').text()
+                          for t in row.find_all(cls='vs-formula-term')],
+                         ['Площадь по данным DJI', 'Доказанное завышение',
+                          'Площадь, принятая программой'])
         # RAW 44.44 + UAT 6.00 = 50.44; исключено 22.34; принято 28.10.
-        self.assertIn('Площадь по данным DJI', html)
-        self.assertIn('Доказанное завышение', html)
-        self.assertIn('Площадь, принятая программой', html)
-        self.assertRegex(html, r'DJI: 50\.44 га</strong> − подтверждённо '
-                               r'исключено: <strong>22\.34 га</strong> = '
-                               r'принято: <strong>28\.10 га</strong>')
+        values = [n.text() for n in row.walk()
+                  if n.attrs.get('data-figure') in ('raw', 'excluded',
+                                                    'after')]
+        self.assertEqual(values, ['50.44', '22.34', '28.10'])
         # Спорная площадь сейчас ВНУТРИ принятого -- сказано словами.
         self.assertIn('сейчас ВХОДИТ в принятую по DJI RAW', html)
-        self.assertIn('Требует проверки, га', html)
-        self.assertIn('нужно решение человека', html)
+        # Вторичные показатели -- компактные плашки; подписи книги Excel --
+        # в их подсказках.
+        facts = formula.find_all(cls='vs-fact')
+        self.assertEqual(len(facts), 4)
+        self.assertIn('Ожидает V4', facts[0].text())
+        self.assertTrue(facts[0].attrs['title'].startswith(
+            'Ожидает доказательства / V4, га'))
+        self.assertIn('Требует решения', facts[1].text())
+        self.assertTrue(facts[1].attrs['title'].startswith(
+            'Требует проверки, га'))
+        self.assertIn('нужно решение человека', facts[1].attrs['title'])
+        self.assertIn('Решения администратора', facts[2].text())
 
-    def test_the_tree_has_three_levels_and_expand_collapse_buttons(self):
+    def test_the_tree_is_drone_day_flight_detail(self):
+        # Прежнее имя: test_the_tree_has_three_levels_and_expand_collapse_
+        # buttons. Уровней теперь четыре: детали вылета -- своей строкой.
         html = self.control_page()
         self.assertIn('data-tree-expand="all"', html)
         self.assertIn('>Развернуть всё<', html)
         self.assertIn('>Свернуть всё<', html)
-        self.assertEqual(len(re.findall(r'<tr data-level="1"', html)), 2)
-        self.assertEqual(len(re.findall(r'<tr class="vs-accord-l2" '
-                                        r'data-level="2"', html)), 2)
-        # Каждый день ссылается на свой дрон, каждый вылет -- на свой день.
-        for node, parent in re.findall(
-                r'data-level="2" data-node="([^"]+)" data-parent="([^"]+)"',
-                html):
-            self.assertTrue(node.startswith(parent + '-'), node)
+        rows = tree_rows(tree_table(parse_html(html)))
+        level = {n: [r for r in rows if r.attrs['data-level'] == n]
+                 for n in '1234'}
+        self.assertEqual((len(level['1']), len(level['2'])), (2, 2))
+        for name, css in (('1', 'vs-tree-l1'), ('2', 'vs-tree-l2'),
+                          ('3', 'vs-tree-l3'), ('4', 'vs-tree-detail')):
+            self.assertTrue(level[name])
+            for row in level[name]:
+                self.assertIn(css, row.classes(), name)
+        drones = {r.attrs['data-node'] for r in level['1']}
+        for row in level['2']:
+            self.assertIn(row.attrs['data-parent'], drones)
+            self.assertTrue(row.attrs['data-node'].startswith(
+                row.attrs['data-parent'] + '-'))
+        days = {r.attrs['data-node'] for r in level['2']}
+        flights = [r for r in level['3'] if 'data-flight' in r.attrs]
+        rest = [r for r in level['3'] if 'data-flight' not in r.attrs]
+        for row in level['3']:
+            self.assertIn(row.attrs['data-parent'], days)
+        # Поимённо -- записи реестра; A и B дня машины 6 -- в «остальных».
+        self.assertEqual({int(r.attrs['data-flight']) for r in flights},
+                         {C, PARTIAL_C, PENDING_C, REVIEW_C, RULE_MISS,
+                          UAT_C})
+        self.assertEqual(len(rest), 1)
+        # Деталь -- у каждого вылета, сразу под ним, одна ячейка на всю
+        # ширину реестра.
+        self.assertEqual(len(level['4']), len(flights))
+        for index, row in enumerate(rows):
+            if row.attrs['data-level'] != '4':
+                continue
+            above = rows[index - 1]
+            self.assertEqual(above.attrs.get('data-flight'),
+                             row.attrs['data-detail-for'])
+            self.assertEqual(row.attrs['data-parent'], above.attrs['data-node'])
+            (cell,) = row.find_all('td')
+            self.assertEqual(cell.attrs.get('colspan'), '6')
 
     def test_a_b_c_are_all_links_with_local_times(self):
         html = self.control_page()
@@ -271,9 +324,158 @@ class Screen(Base):
         html = self.control_page()
         # A и B -- обычные записи дня машины 6: не поимённо, а в строке.
         self.assertIn('Остальные вылеты дня, не показанные поимённо: 2', html)
-        html_all = self.control_page(WINDOW + '&flights=all')
-        self.assertRegex(html_all, r'<td><a href="https://www\.djiag\.com/'
-                                   r'record/%d"[^>]*>%d</a></td>' % (A, A))
+        # Со всеми вылетами A -- своя строка L3; ссылка в DJI -- первое в
+        # её первой ячейке.
+        rows = tree_rows(tree_table(parse_html(
+            self.control_page(WINDOW + '&flights=all'))))
+        (row,) = [r for r in rows if r.attrs.get('data-flight') == str(A)]
+        self.assertEqual(row.attrs['data-level'], '3')
+        link = row.find_all('td')[0].find('a')
+        self.assertEqual((link.attrs['href'], link.text()),
+                         ('https://www.djiag.com/record/%d' % A, str(A)))
+        # Отрицательный контроль: без flights=all строки A нет -- она в
+        # «остальных».
+        self.assertNotIn('data-flight="%d"' % A, self.control_page())
+
+
+# ─── 1a. Реестр-дерево: колонки, уровни, команды, детали (UX площадки) ──────
+
+class TreeLayout(Base):
+    """DOM отрисованной страницы. Поведение скрипта и ширину проверяет
+    tools/ux/check_area_control.mjs в браузере."""
+
+    RU_HEADS = ['Дрон / дата / вылет', 'DJI RAW', 'Исключено', 'Принято',
+                'Статус', 'Действие']
+    UZ_HEADS = ['Дрон / сана / парвоз', 'DJI RAW', 'Чиқарилган',
+                'Қабул қилинган', 'Ҳолат', 'Амал']
+    RU_COMMANDS = ['Только дроны', 'Развернуть проблемные', 'Развернуть всё',
+                   'Свернуть всё']
+    UZ_COMMANDS = ['Фақат дронлар', 'Муаммолиларни очиш', 'Барчасини очиш',
+                   'Барчасини ёпиш']
+
+    def setUp(self):
+        super(TreeLayout, self).setUp()
+        self.seed()
+
+    def table(self, query=WINDOW, language='ru'):
+        return tree_table(parse_html(self.control_page(query,
+                                                       language=language)))
+
+    def test_six_columns_and_none_of_the_old_eleven(self):
+        table = self.table()
+        self.assertEqual(column_heads(table), self.RU_HEADS)
+        head_text = table.find('thead').text()
+        for old in ('Принято автоматически', 'Причина', 'Цепочка',
+                    'Решение администратора', 'Время (UTC+5)', '+/−'):
+            self.assertNotIn(old, head_text, old)
+        for row in tree_rows(table):
+            cells = row.find_all('td')
+            self.assertEqual(sum(int(c.attrs.get('colspan', 1))
+                                 for c in cells), 6, row.attrs)
+
+    def test_the_tree_opens_collapsed_to_drones(self):
+        table = self.table()
+        self.assertEqual(table.attrs.get('data-tree-default'), 'drones')
+        rows = tree_rows(table)
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertEqual('hidden' in row.attrs,
+                             row.attrs['data-level'] != '1', row.attrs)
+        toggles = [b for b in table.find('tbody').find_all('button')
+                   if 'data-toggle' in b.attrs]
+        levels = [r.attrs['data-level'] for r in rows]
+        self.assertEqual(len(toggles), levels.count('1') + levels.count('2')
+                         + levels.count('4'))
+        self.assertTrue(all(b.attrs['aria-expanded'] == 'false'
+                            for b in toggles))
+
+    def test_the_four_commands_are_in_the_head_in_both_languages(self):
+        for language, labels in (('ru', self.RU_COMMANDS),
+                                 ('uz', self.UZ_COMMANDS)):
+            thead = self.table(language=language).find('thead')
+            buttons = [b for b in thead.find_all('button')
+                       if 'data-tree-expand' in b.attrs]
+            self.assertEqual([b.attrs['data-tree-expand'] for b in buttons],
+                             list(COMMANDS))
+            self.assertEqual([b.text() for b in buttons], labels)
+            group = thead.find(cls='vs-tree-toolbar')
+            self.assertEqual(group.attrs.get('role'), 'group')
+        uz = self.control_page(language='uz')
+        for word in self.RU_COMMANDS + ['Детали', 'Причина', 'Действие']:
+            self.assertNotIn(word, uz)
+        self.assertEqual(column_heads(self.table(language='uz')),
+                         self.UZ_HEADS)
+
+    def problem_marks(self, query=WINDOW):
+        rows = tree_rows(self.table(query))
+        return ({r.attrs.get('data-flight') or r.attrs.get('data-node')
+                 for r in rows if 'data-problem' in r.attrs}, rows)
+
+    def test_problem_marks_follow_open_records(self):
+        marked, rows = self.problem_marks()
+        flights = {m for m in marked if m.isdigit()}
+        # Ожидает доказательства (PENDING) и требуют решения (REVIEW, UAT).
+        self.assertEqual(flights, {str(PENDING_C), str(REVIEW_C),
+                                   str(UAT_C)})
+        for row in rows:
+            if row.attrs['data-level'] in ('1', '2'):
+                self.assertIn('data-problem', row.attrs, row.attrs)
+        # Решение администратора закрывает запись -- метка уходит.
+        self.decide(UAT_C, dec.CONFIRM_FULL_PHANTOM)
+        marked, _rows = self.problem_marks()
+        self.assertNotIn(str(UAT_C), marked)
+        self.assertIn(str(REVIEW_C), marked)
+        # Отрицательный контроль: до 08:09 -- только обычные A и B.
+        marked, rows = self.problem_marks(
+            '?date_from=2026-06-05&date_to=2026-06-05&time_to=08:09')
+        self.assertTrue(rows)
+        self.assertEqual(marked, set())
+
+    def detail(self, flight_id, query=WINDOW):
+        rows = tree_rows(self.table(query))
+        (row,) = [r for r in rows
+                  if r.attrs.get('data-detail-for') == str(flight_id)]
+        (flight,) = [r for r in rows
+                     if r.attrs.get('data-flight') == str(flight_id)]
+        return row, flight
+
+    def test_the_detail_row_holds_the_long_texts(self):
+        detail, flight = self.detail(C)
+        text = detail.text()
+        for piece in ('Причина', 'Повтор площади предыдущей Auto-работы',
+                      'Доказательство', 'Автоматический результат',
+                      'исключено автоматически: 9.0000 га',
+                      'Цепочка A → B → C', 'Bridge — не корректируется',
+                      'Промежуточный ручной участок; не исключается '
+                      'автоматически.', 'Решение администратора',
+                      'Решения нет'):
+            self.assertIn(piece, text, piece)
+        links = [a.text() for a in detail.find_all('a')]
+        self.assertEqual(links, [str(A), str(B), str(C)])
+        # В строке вылета длинного нет: только номер, время, числа, статус
+        # и действия.
+        row_text = flight.text()
+        for piece in ('Повтор площади', 'Цепочка', 'Bridge'):
+            self.assertNotIn(piece, row_text)
+        self.assertIn('08:10', row_text)
+        # Решение администратора -- в деталях: что, кто, когда, причина.
+        self.decide(UAT_C, dec.CONFIRM_FULL_PHANTOM)
+        detail, flight = self.detail(UAT_C)
+        text = detail.text()
+        for piece in ('Полный фантом', 'Test Admin',
+                      'Проверено визуально в DJI'):
+            self.assertIn(piece, text, piece)
+        self.assertIn('Изменить', flight.text())
+
+    def test_versions_are_tucked_into_a_closed_block(self):
+        html = self.control_page()
+        details = parse_html(html).find('details', cls='vs-tech-details')
+        self.assertIsNotNone(details)
+        self.assertNotIn('open', details.attrs)
+        import dji_area
+        self.assertIn(dji_area.AREA_ALGORITHM_VERSION, details.text())
+        self.assertEqual(html.count(dji_area.AREA_ALGORITHM_VERSION), 1)
+        self.assertEqual(html.count(dji_area.STRUCTURAL_RULE_VERSION), 1)
 
 
 # ─── 2. Решения администратора ─────────────────────────────────────────────
@@ -483,12 +685,19 @@ class Parity(Base):
         self.decide(UAT_C, dec.CONFIRM_FULL_PHANTOM)
         self.decide(PARTIAL_C, dec.KEEP_DJI_RAW, override=True)
 
-    STRIP_RE = re.compile(r'<strong class="vs-kpi-strip-value[^"]*">'
-                          r'([0-9 .\u00a0]+)</strong>')
+    FIGURES = ('raw', 'excluded', 'after', 'pending', 'review')
+    FIGURE_RE = re.compile(r'data-figure="(%s)">([^<]*)<'
+                           % '|'.join(FIGURES))
 
     def html_figures(self, html):
+        # [REASON]: числа берутся по атрибуту data-figure, и их обязано быть
+        # ровно пять. Прежняя выборка по классу плитки после перевёрстки
+        # не нашла бы ничего -- и сравнение молча прошло бы пустым.
+        found = self.FIGURE_RE.findall(html)
+        self.assertEqual([name for name, _value in found],
+                         list(self.FIGURES))
         return [float(v.replace('\u00a0', '').replace(' ', ''))
-                for v in self.STRIP_RE.findall(html)]
+                for _name, v in found]
 
     def check_parity(self, query):
         html = self.control_page(query)
@@ -503,7 +712,8 @@ class Parity(Base):
                                'га'][1].value,
                        summary['Ожидает доказательства / V4, га'][1].value,
                        summary['Требует проверки, га'][1].value]
-        for screen, sheet in zip(figures[:5], book_values):
+        self.assertEqual(len(figures), len(book_values))
+        for screen, sheet in zip(figures, book_values):
             self.assertAlmostEqual(screen, round(sheet, 2), places=2,
                                    msg=query)
         # По дронам и по дням: суммы книги равны итогу книги.
@@ -544,7 +754,8 @@ class Parity(Base):
         query = ('?date_from=2026-06-05&date_to=2026-06-05&time_from=08:03'
                  '&time_to=08:37')
         html, book = self.check_parity(query)
-        self.assertNotIn('>%d</a></td>' % A, html)
+        self.assertNotIn('data-flight="%d"' % A, html)
+        self.assertIn('data-flight="%d"' % C, html)  # 08:10 -- внутри
         summary = {row[0].value: row[1].value
                    for row in book['Сводка'].iter_rows() if row[0].value}
         self.assertEqual(summary['Период: с'], '2026-06-05 08:03')

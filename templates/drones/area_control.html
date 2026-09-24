@@ -8,13 +8,16 @@
 {% set t_no_data = 'Нет данных' if is_ru else 'Маълумот йўқ' %}
 {% set t_records = 'записей' if is_ru else 'ёзув' %}
 {% set t_flights = 'вылетов' if is_ru else 'парвоз' %}
+{% set t_ha = 'га' if is_ru else 'га' %}
 
 {# DRONE-AREA-CONTROL-V2-MEGA. Экран для диспетчера и руководителя:
      Площадь по данным DJI  -  доказанное завышение  =  площадь, принятая программой.
    Страница ТОЛЬКО читает: dji_area_calculations (автомат) и
    drone_area_decisions (решения администратора). RAW не переписывается,
    мостик B не исключается, нерешённые записи остаются внутри по RAW.
-   Технические слова (V4, версии алгоритма) -- в подсказках и в подвале. #}
+   UX-правка площадки: реестр в шесть колонок, всё длинное (причина,
+   доказательство, автомат, цепочка, решение) -- в строке деталей под
+   вылетом на всю ширину; технические версии -- свёрнуты внизу. #}
 <div class="vs-hero vs-mb">
   <div>
     <div class="vs-hero-title">{{ 'Контроль площади DJI' if is_ru else 'DJI майдони назорати' }}</div>
@@ -63,64 +66,57 @@
 
 {{ period_notes(period_messages) }}
 
-{# Главная строка: формула итога. Пять прежних подписей стоят под
-   человеческими названиями -- их читают выгрузки и сверочные скрипты. #}
-<div class="vs-kpi-strip vs-mb">
-  <div class="vs-kpi-strip-head">
-    <span class="vs-kpi-strip-title">{{ 'Итог за период' if is_ru else 'Давр якуни' }}: {{ period_label }}</span>
-    {% if total.records %}
-    <span><strong>DJI: {{ '%.2f'|format(ha(total.raw_m2)) }} {{ 'га' if is_ru else 'га' }}</strong> − {{ 'подтверждённо исключено' if is_ru else 'тасдиқланган ҳолда чиқарилган' }}: <strong>{{ '%.2f'|format(ha(total.excluded_m2)) }} {{ 'га' if is_ru else 'га' }}</strong> = {{ 'принято' if is_ru else 'қабул қилинган' }}: <strong>{{ '%.2f'|format(ha(total.after_m2)) }} {{ 'га' if is_ru else 'га' }}</strong></span>
-    {% endif %}
-  </div>
-  <div class="vs-kpi-strip-body">
-    <div class="vs-kpi-strip-item" title="{{ tips.raw }}">
-      <span class="vs-kpi-strip-label">{{ 'Площадь по данным DJI' if is_ru else 'DJI маълумотлари бўйича майдон' }} · {{ 'DJI RAW, га' if is_ru else 'DJI RAW, га' }}</span>
-      <strong class="vs-kpi-strip-value">{% if total.records %}{{ '%.2f'|format(ha(total.raw_m2))|vs_num }}{% else %}{{ t_no_data }}{% endif %}</strong>
-      <span class="vs-muted">{{ total.records|vs_num }} {{ t_records }}</span>
+{# Главный акцент -- одна формула. Прежние подписи («Подтверждённо
+   исключено, га» и т. д.) -- вторыми строками и подсказками: ими названы
+   показатели в книге Excel и в сверочных скриптах. Числа помечены
+   data-figure: тест паритета с книгой берёт их по атрибуту, а не по месту. #}
+<section class="vs-formula vs-mb" aria-label="{{ 'Итог за период' if is_ru else 'Давр якуни' }}">
+  <div class="vs-formula-title">{{ 'Итог за период' if is_ru else 'Давр якуни' }}: {{ period_label }}</div>
+  <div class="vs-formula-row">
+    <div class="vs-formula-term" title="{{ tips.raw }}">
+      <span class="vs-formula-label">{{ 'Площадь по данным DJI' if is_ru else 'DJI маълумотлари бўйича майдон' }}</span>
+      <span><strong class="vs-formula-value" data-figure="raw">{% if total.records %}{{ '%.2f'|format(ha(total.raw_m2))|vs_num }}{% else %}{{ t_no_data }}{% endif %}</strong>{% if total.records %}<span class="vs-formula-unit">{{ t_ha }}</span>{% endif %}</span>
+      <span class="vs-formula-sub">{{ 'DJI RAW, га' if is_ru else 'DJI RAW, га' }} · {{ total.records|vs_num }} {{ t_records }}</span>
     </div>
-    <div class="vs-kpi-strip-item" title="{{ tips.excluded }}">
-      <span class="vs-kpi-strip-label">− {{ 'Доказанное завышение' if is_ru else 'Исботланган ошириб кўрсатиш' }} · {{ 'Подтверждённо исключено, га' if is_ru else 'Тасдиқланган ҳолда чиқарилган, га' }}</span>
-      <strong class="vs-kpi-strip-value">{% if total.records %}{{ '%.2f'|format(ha(total.excluded_m2))|vs_num }}{% else %}{{ t_no_data }}{% endif %}</strong>
-      <span class="vs-muted">{{ total.excluded_records|vs_num }} {{ t_records }}
-        {%- if total.decided_records %} · {{ 'решениями администратора изменено' if is_ru else 'администратор қарорлари билан ўзгартирилган' }}
-        {{ '%+.2f'|format(ha(total.decision_delta_m2)) }} {{ 'га' if is_ru else 'га' }}{% endif %}</span>
+    <span class="vs-formula-op" aria-hidden="true">−</span>
+    <div class="vs-formula-term" title="{{ tips.excluded }}">
+      <span class="vs-formula-label">{{ 'Доказанное завышение' if is_ru else 'Исботланган ошириб кўрсатиш' }}</span>
+      <span><strong class="vs-formula-value" data-figure="excluded">{% if total.records %}{{ '%.2f'|format(ha(total.excluded_m2))|vs_num }}{% else %}{{ t_no_data }}{% endif %}</strong>{% if total.records %}<span class="vs-formula-unit">{{ t_ha }}</span>{% endif %}</span>
+      <span class="vs-formula-sub">{{ 'Подтверждённо исключено, га' if is_ru else 'Тасдиқланган ҳолда чиқарилган, га' }} · {{ total.excluded_records|vs_num }} {{ t_records }}</span>
     </div>
-    <div class="vs-kpi-strip-item" title="{{ tips.after }}">
-      <span class="vs-kpi-strip-label">= {{ 'Площадь, принятая программой' if is_ru else 'Дастур қабул қилган майдон' }} · {{ 'Площадь после подтверждённых корректировок, га' if is_ru else 'Тасдиқланган тузатишлардан кейинги майдон, га' }}</span>
-      <strong class="vs-kpi-strip-value is-success">{% if total.records %}{{ '%.2f'|format(ha(total.after_m2))|vs_num }}{% else %}{{ t_no_data }}{% endif %}</strong>
-      <span class="vs-muted">{{ 'DJI RAW минус только доказанное' if is_ru else 'DJI RAW дан фақат исботлангани айирилган' }}</span>
+    <span class="vs-formula-op" aria-hidden="true">=</span>
+    <div class="vs-formula-term is-result" title="{{ tips.after }}">
+      <span class="vs-formula-label">{{ 'Площадь, принятая программой' if is_ru else 'Дастур қабул қилган майдон' }}</span>
+      <span><strong class="vs-formula-value" data-figure="after">{% if total.records %}{{ '%.2f'|format(ha(total.after_m2))|vs_num }}{% else %}{{ t_no_data }}{% endif %}</strong>{% if total.records %}<span class="vs-formula-unit">{{ t_ha }}</span>{% endif %}</span>
+      <span class="vs-formula-sub">{{ 'Площадь после подтверждённых корректировок, га' if is_ru else 'Тасдиқланган тузатишлардан кейинги майдон, га' }}</span>
     </div>
   </div>
-</div>
-
-<div class="vs-kpi-strip vs-mb{% if not total.complete %} is-attention{% endif %}">
-  <div class="vs-kpi-strip-head">
-    <span class="vs-kpi-strip-title">{{ 'Что ещё не решено' if is_ru else 'Ҳали ҳал қилинмагани' }}</span>
-    <span class="vs-muted">{{ 'пока входит в принятое по DJI RAW' if is_ru else 'ҳозирча DJI RAW бўйича қабул қилинганга киради' }}</span>
+  <div class="vs-formula-facts">
+    <span class="vs-fact{% if total.pending_records %} is-warning{% endif %}" title="{{ 'Ожидает доказательства / V4, га' if is_ru else 'Далил / V4 кутилмоқда, га' }} — {{ tips.pending }}">
+      {{ 'Ожидает V4' if is_ru else 'V4 кутилмоқда' }}:
+      <strong class="vs-fact-value" data-figure="pending">{% if total.records %}{{ '%.2f'|format(ha(total.pending_m2))|vs_num }}{% else %}{{ t_no_data }}{% endif %}</strong>
+      {{ t_ha }} · {{ total.pending_records|vs_num }} {{ t_records }}
+    </span>
+    <span class="vs-fact{% if total.review_records %} is-danger{% endif %}" title="{{ 'Требует проверки, га' if is_ru else 'Текшириш талаб қилинади, га' }} — {{ tips.review }}">
+      {{ 'Требует решения' if is_ru else 'Қарор талаб қилинади' }}:
+      <strong class="vs-fact-value" data-figure="review">{% if total.records %}{{ '%.2f'|format(ha(total.review_m2))|vs_num }}{% else %}{{ t_no_data }}{% endif %}</strong>
+      {{ t_ha }} · {{ total.review_records|vs_num }} {{ t_records }}
+    </span>
+    <span class="vs-fact{% if total.decided_records %} is-success{% endif %}">
+      {{ 'Решения администратора' if is_ru else 'Администратор қарорлари' }}:
+      <strong class="vs-fact-value">{{ total.decided_records|vs_num }}</strong>
+      {%- if total.decided_records %} · {{ 'изменили исключённое на' if is_ru else 'чиқарилганни ўзгартирди' }}
+        {{ '%+.2f'|format(ha(total.decision_delta_m2)) }} {{ t_ha }}{% endif %}
+      {%- if total.override_records %} · {{ 'переопределений доказанного' if is_ru else 'исботланганни қайта белгилаш' }}: {{ total.override_records }}{% endif %}
+      {%- if total.stale_decision_records %} · {{ 'расчёт изменился после решения, проверить' if is_ru else 'қарордан кейин ҳисоб ўзгарган, текшириш керак' }}: {{ total.stale_decision_records }}{% endif %}
+    </span>
+    <span class="vs-fact{% if total.records and not total.complete %} is-warning{% elif total.records %} is-success{% endif %}">
+      {{ 'Полнота' if is_ru else 'Тўлиқлик' }}:
+      <strong class="vs-fact-value">{% if total.records %}{{ ('все записи разрешены' if is_ru else 'барча ёзувлар ҳал қилинган') if total.complete else ('есть нерешённые' if is_ru else 'ҳал қилинмаганлари бор') }}{% else %}{{ t_no_data }}{% endif %}</strong>
+      · {{ 'открытых' if is_ru else 'очиқ' }}: {{ total.open_records|vs_num }}
+    </span>
   </div>
-  <div class="vs-kpi-strip-body">
-    <div class="vs-kpi-strip-item" title="{{ tips.pending }}">
-      <span class="vs-kpi-strip-label">{{ 'Ожидает доказательства / V4, га' if is_ru else 'Далил / V4 кутилмоқда, га' }}</span>
-      <strong class="vs-kpi-strip-value{% if total.pending_records %} is-warning{% endif %}">{% if total.records %}{{ '%.2f'|format(ha(total.pending_m2))|vs_num }}{% else %}{{ t_no_data }}{% endif %}</strong>
-      <span class="vs-muted">{{ total.pending_records|vs_num }} {{ t_records }} · {{ 'программа ждёт доказательства' if is_ru else 'дастур далил кутмоқда' }}</span>
-    </div>
-    <div class="vs-kpi-strip-item" title="{{ tips.review }}">
-      <span class="vs-kpi-strip-label">{{ 'Требует проверки, га' if is_ru else 'Текшириш талаб қилинади, га' }}</span>
-      <strong class="vs-kpi-strip-value{% if total.review_records %} is-danger{% endif %}">{% if total.records %}{{ '%.2f'|format(ha(total.review_m2))|vs_num }}{% else %}{{ t_no_data }}{% endif %}</strong>
-      <span class="vs-muted">{{ total.review_records|vs_num }} {{ t_records }} · {{ 'нужно решение человека' if is_ru else 'инсон қарори керак' }}</span>
-    </div>
-    <div class="vs-kpi-strip-item">
-      <span class="vs-kpi-strip-label">{{ 'Решения администратора' if is_ru else 'Администратор қарорлари' }}</span>
-      <strong class="vs-kpi-strip-value">{{ total.decided_records|vs_num }}</strong>
-      <span class="vs-muted">{{ 'действующих решений в периоде' if is_ru else 'даврдаги амалдаги қарорлар' }}{% if total.override_records %} · {{ 'переопределений доказанного' if is_ru else 'исботланганни қайта белгилаш' }}: {{ total.override_records }}{% endif %}{% if total.stale_decision_records %} · {{ 'расчёт изменился после решения, проверить' if is_ru else 'қарордан кейин ҳисоб ўзгарган, текшириш керак' }}: {{ total.stale_decision_records }}{% endif %}</span>
-    </div>
-    <div class="vs-kpi-strip-item">
-      <span class="vs-kpi-strip-label">{{ 'Полнота отчёта' if is_ru else 'Ҳисобот тўлиқлиги' }}</span>
-      <strong class="vs-kpi-strip-value is-text{% if total.records and not total.complete %} is-warning{% elif total.records %} is-success{% endif %}">{% if total.records %}{{ ('Все записи разрешены' if is_ru else 'Барча ёзувлар ҳал қилинган') if total.complete else ('Есть нерешённые' if is_ru else 'Ҳал қилинмаганлари бор') }}{% else %}{{ t_no_data }}{% endif %}</strong>
-      <span class="vs-muted">{{ 'открытых записей' if is_ru else 'очиқ ёзувлар' }}: {{ total.open_records|vs_num }}</span>
-    </div>
-  </div>
-</div>
+</section>
 
 {# Статус полноты стоит рядом с числами: «принятая» -- не «точная»
    площадь, пока есть нерешённые записи. Всё содержимое -- в ОДНОМ <div>:
@@ -131,20 +127,23 @@
 </div>
 {% endif %}
 
-<div class="vs-table-wrap vs-mb">
+{# Реестр: Дрон (L1) -> День (L2) -> Вылет (L3) -> детали вылета. Шесть
+   колонок; длинные тексты -- только в строке деталей на всю ширину.
+   По умолчанию видны только дроны: строки ниже отданы сервером с hidden,
+   поэтому первое отображение компактно и без скрипта. Проблемная строка
+   (data-problem) -- та, где запись ждёт доказательства или решения
+   человека; у дрона и дня -- по итогам (open_records), а не по видимым
+   вылетам: вкладка или лимит могут спрятать открытую запись в «остальные». #}
+<section class="vs-tree-panel vs-mb" aria-labelledby="areaTreeTitle">
   <div class="vs-card-header">
-    <span class="vs-card-title">{{ 'По дронам, дням и вылетам' if is_ru else 'Дронлар, кунлар ва парвозлар бўйича' }}</span>
-    <div class="vs-row-end">
-      <button type="button" class="vs-btn vs-btn-sm" data-tree-expand="all">{{ 'Развернуть всё' if is_ru else 'Барчасини очиш' }}</button>
-      <button type="button" class="vs-btn vs-btn-sm" data-tree-expand="none">{{ 'Свернуть всё' if is_ru else 'Барчасини ёпиш' }}</button>
-    </div>
-  </div>
-  <div class="vs-card-body">
+    <span class="vs-card-title" id="areaTreeTitle">{{ 'По дронам, дням и вылетам' if is_ru else 'Дронлар, кунлар ва парвозлар бўйича' }}</span>
     <div class="vs-pills">
       {% for code, label, args in view_links %}
       <a class="vs-pill{% if filters.view == code %} is-active{% endif %}" href="{{ url_for('drones.area_control', **args) }}">{{ label }}</a>
       {% endfor %}
     </div>
+  </div>
+  <div class="vs-card-body">
     <div class="vs-muted">
       {% if list_all %}
       {{ 'Показаны все вылеты периода.' if is_ru else 'Даврнинг барча парвозлари кўрсатилган.' }}
@@ -154,122 +153,170 @@
       {% if list_all_possible %}<a href="{{ url_for('drones.area_control', **flights_all_args) }}">{{ 'Показать все вылеты' if is_ru else 'Барча парвозларни кўрсатиш' }}</a>{% else %}{{ 'Список всех вылетов доступен для периода до' if is_ru else 'Барча парвозлар рўйхати қуйидагигача бўлган давр учун мавжуд:' }} {{ list_all_max|vs_num }} {{ t_records }}.{% endif %}
       {% endif %}
     </div>
+    <noscript><div class="vs-hint">{{ 'Чтобы раскрывать строки, в браузере должны быть включены скрипты; полный реестр — в Excel.' if is_ru else 'Қаторларни очиш учун браузерда скриптлар ёқилган бўлиши керак; тўлиқ реестр — Excel да.' }}</div></noscript>
   </div>
-  <div class="vs-table-scroll">
-    <table class="vs-table is-static" data-area-tree data-expand="{{ '1' if expand_all else '0' }}">
+  <div class="vs-tree-scroll">
+    <table class="vs-table is-tree vs-num" data-area-tree data-tree-default="drones">
+      <colgroup>
+        <col>
+        <col class="vs-tree-col-num">
+        <col class="vs-tree-col-num">
+        <col class="vs-tree-col-num">
+        <col class="vs-tree-col-status">
+        <col class="vs-tree-col-action">
+      </colgroup>
       <thead>
         <tr>
-          <th><span class="vs-muted">+/−</span></th>
-          <th>{{ 'Дрон / день / вылет' if is_ru else 'Дрон / кун / парвоз' }}</th>
-          <th>{{ 'Время (UTC+5)' if is_ru else 'Вақт (UTC+5)' }}</th>
-          <th class="right">{{ 'DJI RAW, га' if is_ru else 'DJI RAW, га' }}</th>
-          <th class="right" title="{{ 'Что принял бы автомат без решения администратора' if is_ru else 'Администратор қарорисиз автомат қабул қиладигани' }}">{{ 'Принято автоматически, га' if is_ru else 'Автоматик қабул қилинган, га' }}</th>
-          <th class="right">{{ 'Принято, га' if is_ru else 'Қабул қилинган, га' }}</th>
-          <th class="right">{{ 'Исключено, га' if is_ru else 'Чиқарилган, га' }}</th>
-          <th>{{ 'Статус' if is_ru else 'Ҳолат' }}</th>
-          <th>{{ 'Причина' if is_ru else 'Сабаб' }}</th>
-          <th>{{ 'Цепочка A → B → C' if is_ru else 'A → B → C занжири' }}</th>
-          <th>{{ 'Решение администратора' if is_ru else 'Администратор қарори' }}</th>
+          <td colspan="6" class="vs-tree-toolbar-cell">
+            <div class="vs-tree-toolbar" role="group" aria-label="{{ 'Управление деревом' if is_ru else 'Дарахтни бошқариш' }}">
+              <button type="button" class="vs-btn vs-btn-sm" data-tree-expand="drones">{{ 'Только дроны' if is_ru else 'Фақат дронлар' }}</button>
+              <button type="button" class="vs-btn vs-btn-sm" data-tree-expand="problems">{{ 'Развернуть проблемные' if is_ru else 'Муаммолиларни очиш' }}</button>
+              <button type="button" class="vs-btn vs-btn-sm" data-tree-expand="all">{{ 'Развернуть всё' if is_ru else 'Барчасини очиш' }}</button>
+              <button type="button" class="vs-btn vs-btn-sm" data-tree-expand="none">{{ 'Свернуть всё' if is_ru else 'Барчасини ёпиш' }}</button>
+              <span class="vs-muted vs-ml-auto">{{ 'Проблемные — ждут доказательства или решения' if is_ru else 'Муаммолилар — далил ёки қарор кутаётганлар' }}: {{ total.open_records|vs_num }} · {{ 'площади — в гектарах' if is_ru else 'майдонлар — гектарда' }}</span>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <th scope="col">{{ 'Дрон / дата / вылет' if is_ru else 'Дрон / сана / парвоз' }}</th>
+          <th scope="col" class="right">{{ 'DJI RAW' if is_ru else 'DJI RAW' }}</th>
+          <th scope="col" class="right">{{ 'Исключено' if is_ru else 'Чиқарилган' }}</th>
+          <th scope="col" class="right">{{ 'Принято' if is_ru else 'Қабул қилинган' }}</th>
+          <th scope="col">{{ 'Статус' if is_ru else 'Ҳолат' }}</th>
+          <th scope="col">{{ 'Действие' if is_ru else 'Амал' }}</th>
         </tr>
       </thead>
       <tbody>
         {% for node in tree %}
         {% set nid = 'd' ~ loop.index %}
         {% set nt = node.totals %}
-        <tr data-level="1" data-node="{{ nid }}">
-          <td><button type="button" class="vs-btn-icon" data-toggle="{{ nid }}" aria-expanded="true" aria-label="{{ ('Раскрыть или свернуть: ' if is_ru else 'Очиш ёки ёпиш: ') ~ node.machine_label }}">−</button></td>
-          <td><strong>{{ node.machine_label }}</strong> <span class="vs-muted">· {{ nt.records|vs_num }} {{ t_flights }}</span></td>
-          <td></td>
-          <td class="right"><strong>{{ '%.2f'|format(ha(nt.raw_m2))|vs_num }}</strong></td>
-          <td class="right">{{ '%.2f'|format(ha(nt.raw_m2 - nt.auto_excluded_m2))|vs_num }}</td>
-          <td class="right"><strong>{{ '%.2f'|format(ha(nt.after_m2))|vs_num }}</strong></td>
+        <tr class="vs-tree-l1" data-level="1" data-node="{{ nid }}"{% if nt.open_records %} data-problem="1"{% endif %}>
+          <td class="vs-tree-label"><button type="button" class="vs-tree-toggle" data-toggle="{{ nid }}" aria-expanded="false" aria-label="{{ ('Раскрыть или свернуть: ' if is_ru else 'Очиш ёки ёпиш: ') ~ node.machine_label }}">▸</button>{{ node.machine_label }} <span class="vs-muted">· {{ nt.records|vs_num }} {{ t_flights }}</span></td>
+          <td class="right">{{ '%.2f'|format(ha(nt.raw_m2))|vs_num }}</td>
           <td class="right">{{ '%.2f'|format(ha(nt.excluded_m2))|vs_num }}</td>
+          <td class="right">{{ '%.2f'|format(ha(nt.after_m2))|vs_num }}</td>
           <td>
-            {% if nt.pending_records %}<span class="vs-badge vs-badge-warning">{{ 'ожидает' if is_ru else 'кутмоқда' }}: {{ nt.pending_records }}</span>{% endif %}
-            {% if nt.review_records %}<span class="vs-badge vs-badge-danger">{{ 'требует решения' if is_ru else 'қарор керак' }}: {{ nt.review_records }}</span>{% endif %}
-            {% if nt.decided_records %}<span class="vs-badge vs-badge-success">{{ 'решений' if is_ru else 'қарорлар' }}: {{ nt.decided_records }}</span>{% endif %}
+            <div class="vs-tree-badges">
+              {% if nt.pending_records %}<span class="vs-badge vs-badge-warning">{{ 'ожидает' if is_ru else 'кутмоқда' }}: {{ nt.pending_records }}</span>{% endif %}
+              {% if nt.review_records %}<span class="vs-badge vs-badge-danger">{{ 'требует решения' if is_ru else 'қарор керак' }}: {{ nt.review_records }}</span>{% endif %}
+              {% if nt.decided_records %}<span class="vs-badge vs-badge-success">{{ 'решений' if is_ru else 'қарорлар' }}: {{ nt.decided_records }}</span>{% endif %}
+            </div>
           </td>
-          <td></td><td></td><td></td>
+          <td></td>
         </tr>
         {% for day in node.days %}
         {% set did = nid ~ '-' ~ loop.index %}
         {% set dt = day.totals %}
-        <tr class="vs-accord-l2" data-level="2" data-node="{{ did }}" data-parent="{{ nid }}">
-          <td><button type="button" class="vs-btn-icon" data-toggle="{{ did }}" aria-expanded="true" aria-label="{{ ('Раскрыть или свернуть день ' if is_ru else 'Кунни очиш ёки ёпиш ') ~ (day.date.strftime('%d.%m.%Y') if day.date else '') }}">−</button></td>
-          <td>{% if day.date %}{{ day.date.strftime('%d.%m.%Y') }}{% else %}—{% endif %} <span class="vs-muted">· {{ dt.records|vs_num }} {{ t_flights }}</span></td>
-          <td></td>
+        {% set day_s = day.date.strftime('%d.%m.%Y') if day.date else '—' %}
+        <tr class="vs-tree-l2" data-level="2" data-node="{{ did }}" data-parent="{{ nid }}"{% if dt.open_records %} data-problem="1"{% endif %} hidden>
+          <td class="vs-tree-label"><button type="button" class="vs-tree-toggle" data-toggle="{{ did }}" aria-expanded="false" aria-label="{{ ('Раскрыть или свернуть день ' if is_ru else 'Кунни очиш ёки ёпиш ') ~ day_s }}">▸</button>{{ day_s }} <span class="vs-muted">· {{ dt.records|vs_num }} {{ t_flights }}</span></td>
           <td class="right">{{ '%.2f'|format(ha(dt.raw_m2))|vs_num }}</td>
-          <td class="right">{{ '%.2f'|format(ha(dt.raw_m2 - dt.auto_excluded_m2))|vs_num }}</td>
-          <td class="right">{{ '%.2f'|format(ha(dt.after_m2))|vs_num }}</td>
           <td class="right">{{ '%.2f'|format(ha(dt.excluded_m2))|vs_num }}</td>
+          <td class="right">{{ '%.2f'|format(ha(dt.after_m2))|vs_num }}</td>
           <td>
-            {% if dt.pending_records %}<span class="vs-badge vs-badge-warning">{{ 'ожидает' if is_ru else 'кутмоқда' }}: {{ dt.pending_records }}</span>{% endif %}
-            {% if dt.review_records %}<span class="vs-badge vs-badge-danger">{{ 'требует решения' if is_ru else 'қарор керак' }}: {{ dt.review_records }}</span>{% endif %}
+            <div class="vs-tree-badges">
+              {% if dt.pending_records %}<span class="vs-badge vs-badge-warning">{{ 'ожидает' if is_ru else 'кутмоқда' }}: {{ dt.pending_records }}</span>{% endif %}
+              {% if dt.review_records %}<span class="vs-badge vs-badge-danger">{{ 'требует решения' if is_ru else 'қарор керак' }}: {{ dt.review_records }}</span>{% endif %}
+            </div>
           </td>
-          <td></td><td></td><td></td>
+          <td></td>
         </tr>
         {% for r in day.flights %}
-        <tr class="vs-accord-l3" data-level="3" data-parent="{{ did }}">
-          <td></td>
+        {% set fid = 'f' ~ r.flight_id %}
+        <tr class="vs-tree-l3" data-level="3" data-node="{{ fid }}" data-parent="{{ did }}" data-flight="{{ r.flight_id }}"{% if r.is_open %} data-problem="1"{% endif %} hidden>
           {# Идентификатор вылета -- ключ аудита и ссылка в DJI; разрядами не группируется. #}
-          <td><a href="{{ r.dji_url }}" target="_blank" rel="noopener" title="{{ 'Открыть запись в DJI' if is_ru else 'Ёзувни DJI да очиш' }}">{{ r.flight_id }}</a></td>
-          <td>{{ r.time_s or '—' }}</td>
+          <td class="vs-tree-label"><a href="{{ r.dji_url }}" target="_blank" rel="noopener" title="{{ 'Открыть запись в DJI' if is_ru else 'Ёзувни DJI да очиш' }}">{{ r.flight_id }}</a>{% if r.time_s %} <span class="vs-muted">{{ r.time_s }}</span>{% endif %}</td>
           <td class="right">{% if r.raw_m2 is not none %}{{ '%.4f'|format(ha(r.raw_m2)) }}{% else %}{{ t_no_data }}{% endif %}</td>
-          <td class="right">{% if r.auto_accepted_m2 is not none %}{{ '%.4f'|format(ha(r.auto_accepted_m2)) }}{% else %}{{ t_no_data }}{% endif %}</td>
-          <td class="right"><strong>{% if r.accepted_m2 is not none %}{{ '%.4f'|format(ha(r.accepted_m2)) }}{% else %}{{ t_no_data }}{% endif %}</strong></td>
           <td class="right">{% if r.excluded_m2 is not none %}{{ '%.4f'|format(ha(r.excluded_m2)) }}{% else %}{{ t_no_data }}{% endif %}</td>
+          <td class="right"><strong>{% if r.accepted_m2 is not none %}{{ '%.4f'|format(ha(r.accepted_m2)) }}{% else %}{{ t_no_data }}{% endif %}</strong></td>
           <td>
-            <span class="vs-badge {{ r.state_badge }}">{{ r.state_label }}</span>
-            {% if r.decision %}<div class="vs-muted">{{ 'Автомат' if is_ru else 'Автомат' }}: {{ r.class_label }}</div>{% endif %}
-          </td>
-          <td>{{ r.reason_text }} <span class="vs-muted">({{ r.evidence_label }})</span></td>
-          <td>
-            {% if r.chain %}
-            A <a href="{{ r.chain.a.url }}" target="_blank" rel="noopener">{{ r.chain.a.flight_id }}</a>{% if r.chain.a.label_s %} <span class="vs-muted">{{ r.chain.a.label_s }}</span>{% endif %}
-            {% for b in r.chain.b %}
-            → B <a href="{{ b.url }}" target="_blank" rel="noopener" title="{{ bridge_note }}">{{ b.flight_id }}</a>{% if b.label_s %} <span class="vs-muted">{{ b.label_s }}</span>{% endif %}
-            {% endfor %}
-            → C <a href="{{ r.chain.c.url }}" target="_blank" rel="noopener">{{ r.chain.c.flight_id }}</a>{% if r.chain.c.label_s %} <span class="vs-muted">{{ r.chain.c.label_s }}</span>{% endif %}
-            {% if r.chain.b %}<div class="vs-muted">{{ 'Bridge — не корректируется' if is_ru else 'Bridge — тузатилмайди' }}</div>{% endif %}
-            {% else %}—{% endif %}
+            <div class="vs-tree-badges">
+              <span class="vs-badge {{ r.state_badge }}">{{ r.state_label }}</span>
+              {% if r.decision and (r.decision.stale or r.decision.lapsed_note) %}<span class="vs-badge vs-badge-warning">{{ 'проверить решение' if is_ru else 'қарорни текшириш' }}</span>{% endif %}
+            </div>
           </td>
           <td>
-            {% if r.decision %}
-            <strong>{{ r.decision.label }}</strong>
-            <div class="vs-muted">{{ r.decision.performed_by or '—' }}, {{ r.decision.performed_at_s }}</div>
-            {% if r.decision.stale %}<div class="vs-muted">{{ r.decision.stale_note }}</div>{% endif %}
-            {% if r.decision.lapsed_note %}<div class="vs-muted">{{ r.decision.lapsed_note }}</div>{% endif %}
-            {% endif %}
-            {% if r.decidable or r.decision %}
-            <a href="{{ url_for('drones.area_control_flight', flight_id=r.flight_id, next=back_url) }}">
-              {%- if can_decide and r.is_open and not r.decision -%}{{ 'Решить' if is_ru else 'Ҳал қилиш' }}
-              {%- elif can_decide and r.decision -%}{{ 'Изменить или отменить' if is_ru else 'Ўзгартириш ёки бекор қилиш' }}
-              {%- else -%}{{ 'Подробнее и история' if is_ru else 'Батафсил ва тарих' }}{%- endif -%}
-            </a>
-            {% endif %}
+            <div class="vs-tree-actions">
+              <button type="button" class="vs-btn vs-btn-sm" data-toggle="{{ fid }}" aria-expanded="false" aria-label="{{ ('Детали вылета ' if is_ru else 'Парвоз тафсилоти ') ~ r.flight_id }}">{{ 'Детали' if is_ru else 'Тафсилот' }}</button>
+              {% if r.decidable or r.decision %}
+              <a href="{{ url_for('drones.area_control_flight', flight_id=r.flight_id, next=back_url) }}">
+                {%- if can_decide and r.is_open and not r.decision -%}{{ 'Решить' if is_ru else 'Ҳал қилиш' }}
+                {%- elif can_decide and r.decision -%}{{ 'Изменить' if is_ru else 'Ўзгартириш' }}
+                {%- else -%}{{ 'История' if is_ru else 'Тарих' }}{%- endif -%}
+              </a>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        <tr class="vs-tree-detail" data-level="4" data-parent="{{ fid }}" data-detail-for="{{ r.flight_id }}" hidden>
+          <td colspan="6">
+            <div class="vs-tree-detail-body">
+              <div class="vs-def-grid">
+                <div class="vs-def-item is-full">
+                  <div class="vs-def-label">{{ 'Причина' if is_ru else 'Сабаб' }}</div>
+                  <div>{{ r.reason_text }}</div>
+                </div>
+                <div class="vs-def-item">
+                  <div class="vs-def-label">{{ 'Доказательство' if is_ru else 'Далил' }}</div>
+                  <div>{{ r.evidence_label }}</div>
+                </div>
+                <div class="vs-def-item">
+                  <div class="vs-def-label">{{ 'Автоматический результат' if is_ru else 'Автоматик натижа' }}</div>
+                  <div>{{ r.class_label }}</div>
+                  <div class="vs-muted">{{ 'принято автоматически' if is_ru else 'автоматик қабул қилинган' }}: {% if r.auto_accepted_m2 is not none %}{{ '%.4f'|format(ha(r.auto_accepted_m2)) }} {{ t_ha }}{% else %}{{ t_no_data }}{% endif %}
+                    · {{ 'исключено автоматически' if is_ru else 'автоматик чиқарилган' }}: {% if r.auto_excluded_m2 is not none %}{{ '%.4f'|format(ha(r.auto_excluded_m2)) }} {{ t_ha }}{% else %}{{ t_no_data }}{% endif %}</div>
+                </div>
+                <div class="vs-def-item">
+                  <div class="vs-def-label">{{ 'Начало вылета (UTC+5)' if is_ru else 'Парвоз бошланиши (UTC+5)' }}</div>
+                  <div>{{ r.datetime_s or '—' }}</div>
+                </div>
+                {% if r.chain %}
+                <div class="vs-def-item is-full">
+                  <div class="vs-def-label">{{ 'Цепочка A → B → C' if is_ru else 'A → B → C занжири' }}</div>
+                  <div>
+                    A <a href="{{ r.chain.a.url }}" target="_blank" rel="noopener">{{ r.chain.a.flight_id }}</a>{% if r.chain.a.label_s %} <span class="vs-muted">{{ r.chain.a.label_s }}</span>{% endif %}
+                    {% for b in r.chain.b %}
+                    → B <a href="{{ b.url }}" target="_blank" rel="noopener" title="{{ bridge_note }}">{{ b.flight_id }}</a>{% if b.label_s %} <span class="vs-muted">{{ b.label_s }}</span>{% endif %}
+                    {% endfor %}
+                    → C <a href="{{ r.chain.c.url }}" target="_blank" rel="noopener">{{ r.chain.c.flight_id }}</a>{% if r.chain.c.label_s %} <span class="vs-muted">{{ r.chain.c.label_s }}</span>{% endif %}
+                  </div>
+                  {% if r.chain.b %}<div class="vs-muted">{{ 'Bridge — не корректируется' if is_ru else 'Bridge — тузатилмайди' }}. {{ bridge_note }}</div>{% endif %}
+                </div>
+                {% endif %}
+                <div class="vs-def-item is-full">
+                  <div class="vs-def-label">{{ 'Решение администратора' if is_ru else 'Администратор қарори' }}</div>
+                  {% if r.decision %}
+                  <div><strong>{{ r.decision.label }}</strong> <span class="vs-muted">· {{ r.decision.performed_by or '—' }}, {{ r.decision.performed_at_s }}</span></div>
+                  {% if r.decision.comment %}<div>{{ r.decision.comment }}</div>{% endif %}
+                  {% if r.decision.stale %}<div class="vs-muted">{{ r.decision.stale_note }}</div>{% endif %}
+                  {% if r.decision.lapsed_note %}<div class="vs-muted">{{ r.decision.lapsed_note }}</div>{% endif %}
+                  {% else %}
+                  <div class="vs-muted">{{ 'Решения нет — действует автоматический результат.' if is_ru else 'Қарор йўқ — автоматик натижа амал қилади.' }}</div>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
           </td>
         </tr>
         {% endfor %}
         {% if day.rest %}
-        <tr class="vs-accord-l3 vs-row-muted" data-level="3" data-parent="{{ did }}">
-          <td></td>
-          <td>{{ rest_label }}: {{ day.rest.records|vs_num }}</td>
-          <td></td>
+        <tr class="vs-tree-l3 vs-row-muted" data-level="3" data-parent="{{ did }}" hidden>
+          <td class="vs-tree-label">{{ rest_label }}: {{ day.rest.records|vs_num }}</td>
           <td class="right">{{ '%.4f'|format(ha(day.rest.raw_m2)) }}</td>
-          <td class="right">{{ '%.4f'|format(ha(day.rest.auto_accepted_m2)) }}</td>
-          <td class="right">{{ '%.4f'|format(ha(day.rest.accepted_m2)) }}</td>
           <td class="right">{{ '%.4f'|format(ha(day.rest.excluded_m2)) }}</td>
-          <td colspan="4"></td>
+          <td class="right">{{ '%.4f'|format(ha(day.rest.accepted_m2)) }}</td>
+          <td></td>
+          <td></td>
         </tr>
         {% endif %}
         {% endfor %}
         {% else %}
-        <tr><td colspan="11" class="vs-empty">{{ 'За период расчётов нет.' if is_ru else 'Давр учун ҳисоблар йўқ.' }}</td></tr>
+        <tr><td colspan="6" class="vs-empty">{{ 'За период расчётов нет.' if is_ru else 'Давр учун ҳисоблар йўқ.' }}</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
-</div>
+</section>
 
 {% if hidden %}
 <div class="vs-alert is-info vs-mb">
@@ -277,50 +324,87 @@
 </div>
 {% endif %}
 
-<div class="vs-muted vs-mb">{{ 'Правило' if is_ru else 'Қоида' }} <code>{{ rule_version }}</code> · {{ 'алгоритм' if is_ru else 'алгоритм' }} <code>{{ algorithm_version }}</code> · {{ 'классы' if is_ru else 'синфлар' }} <code>{{ classes_version }}</code> · {{ 'решения' if is_ru else 'қарорлар' }} <code>{{ decisions_version }}</code></div>
+{# Версии правил и алгоритмов нужны аудиту, а не рабочему экрану: внизу и
+   свёрнуто. В книге Excel они есть всегда. #}
+<details class="vs-tech-details vs-mb">
+  <summary>{{ 'Техническая информация для аудита' if is_ru else 'Аудит учун техник маълумот' }}</summary>
+  <ul class="vs-tech-list">
+    <li>{{ 'Структурное правило' if is_ru else 'Структуравий қоида' }}: <span class="vs-mono">{{ rule_version }}</span></li>
+    <li>{{ 'Алгоритм площади' if is_ru else 'Майдон алгоритми' }}: <span class="vs-mono">{{ algorithm_version }}</span></li>
+    <li>{{ 'Учётные классы' if is_ru else 'Ҳисоб синфлари' }}: <span class="vs-mono">{{ classes_version }}</span></li>
+    <li>{{ 'Решения администратора' if is_ru else 'Администратор қарорлари' }}: <span class="vs-mono">{{ decisions_version }}</span></li>
+  </ul>
+</details>
 
-{# Раскрытие дерева без фреймворков. Без скрипта видны все строки --
-   ничего не спрятано навсегда. Хуки -- data-атрибуты, не классы. #}
+{# Дерево без фреймворков. Хуки -- data-атрибуты, не классы. Состояние
+   узла -- aria-expanded его кнопки; строка видна, если открыты все её
+   предки. «Только дроны» сворачивает дроны и помнит, что было раскрыто
+   внутри; «Свернуть всё» сбрасывает всё. «Развернуть проблемные» открывает
+   дроны, дни и детали записей, которые ждут доказательства или решения. #}
 <script>
 (function () {
   var table = document.querySelector('[data-area-tree]');
   if (!table) { return; }
-  function children(node) {
-    return table.querySelectorAll('tr[data-parent="' + node + '"]');
+  var rows = Array.prototype.slice.call(table.querySelectorAll('tbody tr[data-level]'));
+  var toggles = {};
+  Array.prototype.forEach.call(table.querySelectorAll('button[data-toggle]'), function (button) {
+    toggles[button.getAttribute('data-toggle')] = button;
+  });
+  function isOpen(node) {
+    var button = toggles[node];
+    return !!button && button.getAttribute('aria-expanded') === 'true';
   }
   function setOpen(node, open) {
-    var button = table.querySelector('button[data-toggle="' + node + '"]');
-    if (button) {
-      button.setAttribute('aria-expanded', open ? 'true' : 'false');
-      button.textContent = open ? '−' : '+';
-    }
-    Array.prototype.forEach.call(children(node), function (row) {
-      row.hidden = !open;
-      var child = row.getAttribute('data-node');
-      if (child && !open) { setOpen(child, false); }
+    var button = toggles[node];
+    if (button) { button.setAttribute('aria-expanded', open ? 'true' : 'false'); }
+  }
+  function refresh() {
+    var shown = {};
+    rows.forEach(function (row) {
+      var parent = row.getAttribute('data-parent');
+      var visible = !parent || (shown[parent] === true && isOpen(parent));
+      row.hidden = !visible;
+      var node = row.getAttribute('data-node');
+      if (node) { shown[node] = visible; }
     });
   }
-  function expandAll(open) {
-    Array.prototype.forEach.call(table.querySelectorAll('tr[data-level="1"]'), function (row) {
-      setOpen(row.getAttribute('data-node'), open);
-    });
-    if (open) {
-      Array.prototype.forEach.call(table.querySelectorAll('tr[data-level="2"]'), function (row) {
-        setOpen(row.getAttribute('data-node'), true);
+  function everyNode(open) {
+    Object.keys(toggles).forEach(function (node) { setOpen(node, open); });
+  }
+  var commands = {
+    drones: function () {
+      rows.forEach(function (row) {
+        if (row.getAttribute('data-level') === '1') { setOpen(row.getAttribute('data-node'), false); }
       });
-    }
-  }
+    },
+    problems: function () {
+      everyNode(false);
+      rows.forEach(function (row) {
+        if (row.hasAttribute('data-problem') && row.hasAttribute('data-node')) {
+          setOpen(row.getAttribute('data-node'), true);
+        }
+      });
+    },
+    all: function () { everyNode(true); },
+    none: function () { everyNode(false); }
+  };
   table.addEventListener('click', function (event) {
-    var button = event.target.closest('button[data-toggle]');
-    if (!button) { return; }
-    setOpen(button.getAttribute('data-toggle'), button.getAttribute('aria-expanded') !== 'true');
+    var toggle = event.target.closest('button[data-toggle]');
+    if (toggle) {
+      var node = toggle.getAttribute('data-toggle');
+      setOpen(node, !isOpen(node));
+      refresh();
+      return;
+    }
+    var command = event.target.closest('button[data-tree-expand]');
+    if (command && commands[command.getAttribute('data-tree-expand')]) {
+      commands[command.getAttribute('data-tree-expand')]();
+      refresh();
+      // Свёрнутое дерево короче страницы, прокрученной вниз: вернуть к шапке.
+      if (table.getBoundingClientRect().top < 0) { table.scrollIntoView({ block: 'start' }); }
+    }
   });
-  Array.prototype.forEach.call(document.querySelectorAll('[data-tree-expand]'), function (button) {
-    button.addEventListener('click', function () {
-      expandAll(button.getAttribute('data-tree-expand') === 'all');
-    });
-  });
-  expandAll(table.getAttribute('data-expand') === '1');
+  refresh();
 })();
 </script>
 {% endblock %}

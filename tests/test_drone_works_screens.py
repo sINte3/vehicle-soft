@@ -2159,8 +2159,11 @@ class DroneNumberPlacementTests(unittest.TestCase):
         #   hectares and record counts of the formula and «not yet decided»
         #   strips and of the drone and day rows of the tree. Flight ids,
         #   times and the per-flight hectares (four decimals) carry none.
+        #   Its staging UX pass made it 25: the drone and day rows lost the
+        #   «accepted automatically» column (it lives in the flight detail
+        #   now) and the problem counter above the tree gained one.
         expected = {
-            '_money_cell.html': 1, 'area_control.html': 26,
+            '_money_cell.html': 1, 'area_control.html': 25,
             'area_evidence.html': 28,
             'coverage.html': 9,
             'customers.html': 2, 'flight_calendar.html': 9,
@@ -2177,7 +2180,7 @@ class DroneNumberPlacementTests(unittest.TestCase):
                   for name in self.TEMPLATES
                   if '|vs_num' in self.source(name)}
         self.assertEqual(actual, expected)
-        self.assertEqual(sum(actual.values()), 329)
+        self.assertEqual(sum(actual.values()), 328)
 
 
 class DroneUiFixUzbekTests(unittest.TestCase):

@@ -2411,3 +2411,186 @@ p a:not(.vs-btn):not(.btn):not(.vs-pill):not(.vs-tab),
   .vs-stat-grid,
   .vs-stat-grid-4 { grid-template-columns: 1fr; }
 }
+
+/* DRONE-AREA-CONTROL-V2 · UX · Дерево реестра, формула итога, компактные
+   показатели, свёрнутая техническая информация.
+   [REASON]: «Контроль площади DJI» был таблицей в 11 колонок: причины,
+   цепочки A → B → C и решения сжимались в узкие ячейки по нескольку слов в
+   строке, уровни дерева почти не отличались, а команды раскрытия уезжали
+   при прокрутке. Примитивы общие и без экранных имён: любое дерево
+   «группа → подгруппа → запись → детали» собирается из них же. Только
+   токены: храповик цветов design-system.css не растёт. */
+
+/* Панель реестра. [REASON]: overflow: clip, а не hidden. hidden делает
+   панель контейнером прокрутки, и липкая шапка прилипала бы к панели, а не
+   к окну, то есть уезжала бы вместе со строками. clip обрезает скругления,
+   но контейнером прокрутки не является. */
+.vs-tree-panel {
+  background: var(--vs-surface);
+  border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r-lg);
+  box-shadow: var(--vs-shadow-sm);
+  overflow: clip;
+}
+.vs-tree-panel > .vs-card-header { border-bottom: 1px solid var(--vs-border-3); }
+
+/* Таблица-дерево. Ширины колонок -- через <colgroup>: первая строка шапки
+   занята командами на всю ширину, и при table-layout: fixed ширины иначе
+   делились бы поровну. Первая колонка забирает остаток. */
+/* [REASON]: border-collapse: separate -- у схлопнутых границ липкая ячейка
+   оставляет полоску, сквозь которую при прокрутке видны строки под шапкой. */
+.vs-table.is-tree {
+  table-layout: fixed; border-collapse: separate; border-spacing: 0;
+  scroll-margin-top: var(--vs-top-h);
+}
+.vs-table.is-tree col.vs-tree-col-num    { width: 112px; }
+.vs-table.is-tree col.vs-tree-col-status { width: 234px; }
+.vs-table.is-tree col.vs-tree-col-action { width: 200px; }
+
+/* Липкая шапка: команды дерева и названия колонок -- один thead, поэтому
+   едут вместе и не требуют расчёта высоты. Под верхней панелью окна. */
+.vs-table.is-tree thead { position: sticky; top: var(--vs-top-h); z-index: 20; }
+.vs-table.is-tree thead th,
+.vs-table.is-tree thead td {
+  background: var(--vs-surface-3);
+  box-shadow: inset 0 -1px 0 var(--vs-border-2);
+}
+.vs-table.is-tree thead th { white-space: normal; }
+.vs-table.is-tree thead td.vs-tree-toolbar-cell {
+  background: var(--vs-surface);
+  padding: 8px 14px;
+}
+.vs-tree-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* Ячейки: текст переносится словами, числа -- никогда. Длинное состояние
+   записи переносится внутри своей плашки, а не раздвигает колонку. */
+.vs-table.is-tree td { vertical-align: top; overflow-wrap: anywhere; }
+.vs-table.is-tree td.right { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.vs-table.is-tree .vs-badge { white-space: normal; text-align: left; }
+.vs-tree-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.vs-tree-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+
+/* Уровни. L1 -- самая сильная строка, L2 -- вложенная, L3 -- обычная,
+   детали -- отдельный блок. [REASON]: --vs-surface-2 и --vs-surface-3 на
+   экране неразличимы, поэтому уровни различаются заливкой L1, весом шрифта
+   и отступом первой колонки, а не оттенками серого. */
+.vs-table.is-tree tr.vs-tree-l1 td {
+  background: var(--vs-primary-soft);
+  border-top: 1px solid var(--vs-border-2);
+  font-size: var(--vs-fs-md); font-weight: 700;
+}
+.vs-table.is-tree tr.vs-tree-l2 td { background: var(--vs-surface); font-weight: 600; }
+.vs-table.is-tree tr.vs-tree-l2 td.vs-tree-label { padding-left: 34px; }
+.vs-table.is-tree tr.vs-tree-l3 td.vs-tree-label { padding-left: 58px; }
+.vs-table.is-tree tr.vs-tree-detail > td {
+  background: var(--vs-surface);
+  padding: 0 14px 14px 58px;
+}
+.vs-table.is-tree tr.vs-tree-detail:hover { background: none; }
+/* Проблемная строка (ожидает доказательства или требует решения человека)
+   -- полоса у первой колонки, на любом уровне. */
+.vs-table.is-tree tr[data-problem] td.vs-tree-label {
+  box-shadow: inset 3px 0 0 var(--vs-warning);
+}
+
+.vs-tree-detail-body {
+  border-left: 3px solid var(--vs-primary);
+  border-radius: var(--vs-r-sm);
+  background: var(--vs-surface-2);
+  padding: 12px 14px;
+}
+.vs-tree-detail-body .vs-def-grid { margin-bottom: 0; }
+.vs-tree-detail-body .vs-def-item { box-shadow: none; }
+
+/* Кнопка раскрытия строки: треугольник поворачивается по aria-expanded --
+   состояние читает и скрипт, и экранный диктор, отдельного класса нет. */
+.vs-tree-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; margin-right: 6px; padding: 0;
+  border: 1px solid var(--vs-border-2); border-radius: var(--vs-r-sm);
+  background: var(--vs-surface); color: var(--vs-text-muted);
+  font-size: var(--vs-fs-sm); line-height: 1; cursor: pointer;
+  vertical-align: middle; transition: transform .12s ease;
+}
+.vs-tree-toggle:hover { color: var(--vs-primary); border-color: var(--vs-primary); }
+.vs-tree-toggle:focus-visible { outline: 2px solid var(--vs-primary); outline-offset: 1px; }
+.vs-tree-toggle[aria-expanded="true"] { transform: rotate(90deg); color: var(--vs-primary); }
+.vs-table.is-tree .vs-btn[aria-expanded="true"] {
+  background: var(--vs-primary-soft); border-color: var(--vs-primary); color: var(--vs-primary);
+}
+
+/* Ширина. [REASON]: на 1366/1440/1920 реестр обязан помещаться без
+   горизонтальной прокрутки; на ≤1280 колонки уже, на ≤1024 (боковая
+   панель сворачивается) остаётся прокрутка самой таблицы -- запасной
+   режим, липкая шапка там не нужна. */
+@media (max-width: 1280px) {
+  .vs-table.is-tree col.vs-tree-col-num    { width: 104px; }
+  .vs-table.is-tree col.vs-tree-col-status { width: 236px; }
+  .vs-table.is-tree col.vs-tree-col-action { width: 196px; }
+}
+@media (max-width: 1024px) {
+  .vs-tree-scroll { overflow-x: auto; }
+  .vs-table.is-tree { min-width: 860px; }
+  .vs-table.is-tree thead { position: static; }
+}
+
+/* Формула итога: одна строка «DJI RAW − исключено = принято» крупно,
+   вторичные показатели -- компактными плашками под ней. */
+.vs-formula {
+  background: var(--vs-surface);
+  border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r-lg);
+  box-shadow: var(--vs-shadow-sm);
+  padding: 14px 18px;
+}
+.vs-formula-title {
+  margin-bottom: 10px;
+  color: var(--vs-text-muted); font-size: var(--vs-fs-xs); font-weight: 700;
+  letter-spacing: .4px; text-transform: uppercase;
+}
+/* Слагаемые выровнены по верху: подпись к подписи, число к числу, даже
+   когда под одним из них вторая строка пояснения. */
+.vs-formula-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 22px; }
+.vs-formula-term { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.vs-formula-label { color: var(--vs-text); font-size: var(--vs-fs-sm); font-weight: 700; }
+.vs-formula-value {
+  font-size: var(--vs-fs-2xl); font-weight: 800; line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+.vs-formula-unit { margin-left: 4px; color: var(--vs-text-muted); font-size: var(--vs-fs-md); font-weight: 600; }
+.vs-formula-sub { color: var(--vs-text-muted); font-size: var(--vs-fs-xs); overflow-wrap: anywhere; }
+.vs-formula-op {
+  padding-top: 16px;
+  color: var(--vs-text-muted); font-size: var(--vs-fs-2xl); font-weight: 700;
+}
+.vs-formula-term.is-result .vs-formula-value { color: var(--vs-success); }
+.vs-formula-facts {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-top: 12px; padding-top: 12px;
+  border-top: 1px solid var(--vs-border-3);
+}
+.vs-fact {
+  display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: 4px 6px;
+  max-width: 100%; padding: 4px 10px;
+  border: 1px solid var(--vs-border-2); border-radius: var(--vs-r-pill);
+  background: var(--vs-surface-2);
+  color: var(--vs-text-muted); font-size: var(--vs-fs-sm);
+}
+.vs-fact-value { color: var(--vs-text); font-weight: 800; font-variant-numeric: tabular-nums; }
+.vs-fact.is-warning { background: var(--vs-warning-bg); border-color: var(--vs-warning); }
+.vs-fact.is-warning .vs-fact-value { color: var(--vs-warning); }
+.vs-fact.is-danger  { background: var(--vs-danger-bg); border-color: var(--vs-danger); }
+.vs-fact.is-danger  .vs-fact-value { color: var(--vs-danger); }
+.vs-fact.is-success { background: var(--vs-success-bg); border-color: var(--vs-success); }
+.vs-fact.is-success .vs-fact-value { color: var(--vs-success); }
+
+/* Техническая информация для аудита: версии алгоритмов и правил -- внизу и
+   свёрнуто. Рабочему экрану они не нужны, аудиту -- нужны. */
+.vs-tech-details {
+  padding: 10px 14px;
+  border: 1px dashed var(--vs-border-2); border-radius: var(--vs-r);
+  color: var(--vs-text-muted); font-size: var(--vs-fs-sm);
+}
+.vs-tech-details > summary { cursor: pointer; font-weight: 600; }
+.vs-tech-details[open] > summary { margin-bottom: 8px; }
+.vs-tech-list { margin: 0; padding-left: 18px; }

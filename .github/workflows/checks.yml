@@ -339,13 +339,19 @@ jobs:
       #     four paths; the report's effective totals and tree add up;
       #   * the date+time period: UTC+5, minute precision, half-open end;
       #   * the backfill resumes, skips finished windows, never mixes a
-      #     checkpoint of another range and never rewrites RAW.
-      - name: DRONE-AREA-CONTROL-V2 (lock, decisions, period, backfill)
+      #     checkpoint of another range and never rewrites RAW;
+      #   * the screen contract (template + design-system primitives, no
+      #     Flask): six columns, drone/day/flight/detail levels, collapsed to
+      #     drones by default, the four tree commands in a sticky head, long
+      #     texts only in the full-width detail row. The page itself and the
+      #     widths run locally (Flask tests, tools/ux/check_area_control.mjs).
+      - name: DRONE-AREA-CONTROL-V2 (lock, decisions, period, backfill, screen)
         run: |
           python -m unittest drone_collector.tests.test_runlock
           python -m unittest tests.test_drone_area_control_v2_store
           python -m unittest tests.test_drone_period
           python tools/test_dji_area_backfill.py
+          python -m unittest tests.test_drone_area_control_ui
 
       # The owner pastes these blocks VERBATIM into a server console: one stops
       # the staging service and switches its revision, another contacts DJI.
