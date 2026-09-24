@@ -929,6 +929,40 @@ listening — `route.fetch()` continues **the page's own** request with its URL,
 headers and signature untouched, and `route.fulfill()` hands the page exactly
 what the storage sent. What changed is who holds the buffer, not who asked.
 
+### When the page never asks for the descriptor
+
+The page does not always ask for the airlines descriptor. Live case
+715984635 (September 2026): card and route came, 70 s passed, and there was no
+airlines request at all — no listener error, no handler error. A longer wait
+proves nothing, and a timeout is never read as "no V4". So after the wait, and
+only for a flight whose card names it and whose route decoded as it, the
+collector makes **one direct GET** of that flight's descriptor path in the
+page's own signed-in context (`page.request`: the context's cookies, invisible
+to the page's listeners, no redirect followed). It is the only request the
+collector makes of its own in this mode. The URL, the signed link and the body
+are never logged — the flight id and the HTTP status only.
+
+| Answer | What it means |
+|---|---|
+| 200 with a descriptor | Kept like the page's own. No V4 link — `NO_V4_URL`. A link — the V4 is fetched by it once; it must be **this** flight's object, then the usual V4 checks apply. |
+| 404 | "DJI holds no descriptor, so no V4" — **only** after one control request per run: the same direct GET for a flight whose descriptor exists (the page got it in this run, or its V4 is already queued) must answer 200 with a descriptor. The 404 is then kept as a derived airlines record, schema `airlines-descriptor-absent-1`: the path, the status, the answer's bytes (verbatim up to 1 KB) with their sha256 and size, and `file_v4_url_path: null`. Without a working control the 404 means nothing and the flight stays incomplete. |
+| anything else | 3xx, 401, 403, 5xx, a network failure, a 2xx that is not a descriptor: **not** absence. The flight stays incomplete, the run ends in 18. |
+
+The control is what makes a 404 evidence. If DJI demanded its WASM signature
+for this endpoint too (see "The constraint that is not negotiable"), the
+control would fail, every 404 would stay unconfirmed, and the run would end in
+18 exactly as it did before the direct request existed — nothing is ever
+concluded from a request that is not known to reach the descriptor. The
+receiver checks the record again: a 404 of the flight's own path, a working
+control of another flight, bytes that match their sha256, a card of the same
+flight, no V4 kept and no earlier descriptor naming one. Anything short of that
+is refused.
+
+RUN SUMMARY names it: `sources_descriptor_requests` (both kinds of request),
+`sources_descriptor_absent`, `sources_descriptor_unconfirmed`,
+`sources_descriptor_refused`, `sources_descriptor_control` (`OK`, `FAILED`, or
+`None` when no 404 needed one).
+
 ### What never enters the queue
 
 No signed link, no query string of a storage URL, no cookie, no header value.
@@ -1000,7 +1034,7 @@ md5 would be a confident wrong area later.
 
 | Code | Meaning | What to do |
 |---|---|---|
-| 18 | `--sources`: some flights did **not** yield a full set. | What *was* captured is already queued. The page did not open, or the V4 did not arrive within `DJI_SOURCE_WAIT_MS`. Re-run the same period: only the missing flights are visited. |
+| 18 | `--sources`: some flights did **not** yield a full set. | What *was* captured is already queued. The page did not open, the V4 did not arrive within `DJI_SOURCE_WAIT_MS`, or the page never asked for the descriptor and the direct request did not settle it (`sources_descriptor_unconfirmed` / `sources_descriptor_refused`). Re-run the same period: only the missing flights are visited. |
 | 19 | `--send-sources`: the endpoint answered, but did **not accept the whole batch**. | The queue is intact — the chunk and everything after it stayed in `pending/`. The log names which of the four conditions failed. Fix the cause and run again; re-sending is idempotent. |
 | 20 | `--send-snapshot`: a snapshot chunk was **not accepted in full**. | The chunks stay in `pending/` whole. Half a snapshot read as a whole one would make an absent contour look like a deleted one. |
 
