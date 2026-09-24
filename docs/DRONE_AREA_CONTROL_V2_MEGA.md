@@ -424,6 +424,8 @@ README сборщика записано, что DJI отвергает запр
 Если прямой запрос к дескриптору требует подписи, контроль не пройдёт, и
 поведение останется прежним (код 18, «ожидает доказательства»).
 
+**Живой результат площадки, 24.09.2026 (`7e6d00d`).** Одно ручное обновление за 23.09.2026. У 715984635 страница снова запросила только карточку и маршрут; прямой GET дескриптора исполнился один раз и получил **HTTP 200, 135 байт — не дескриптор**: не UTF-8 JSON-объект с целым `code` 0 и объектом `data.airline`. Отказ дал `descriptor_airline` (`drone_collector/sources.py:1195-1199`); теоретически и `_accept_airlines` (`:1206-1209`) — если `code` там нецелый ноль (`false`, `0.0`); различает их `sources_rejected` того же RUN SUMMARY (0 — первое). Счётчики: `sources_descriptor_requests=1`, `refused=1`, `absent=0`, `unconfirmed=0`, `control=-` — 404 не было, поэтому контрольный запрос не понадобился (прогноз «404 + проваленный контроль» выше не сбылся: пошла другая безопасная ветка). Сборщик — 18, цикл — код 5 `FAILED` / `CANDIDATE_EVIDENCE_MISSING`, RAW 0,2080 га не тронут, запись «Ожидает доказательства / V4»: это утверждённая семантика «кандидат без V4» (таблица выше), дефекта нет. Тело не сохранялось: ни текст, ни sha256, ни content-type, ни `code` не известны. С задокументированными отказами DJI запросам, которые не выпустила сама страница, ответ согласуется (31.07.2026 — `code 101` без `Signature`; 27.08.2026 — `code 408` и те же 135 байт у нативного `fetch`; оба — HTTP 200), но не доказан ими: длина не отличает один код от другого. `page.request` несёт только cookies контекста — ни подписи, ни отметки времени, ни заголовков клиента DJI. Вывод: живьём подтверждена только безопасность прямого запроса, не его работоспособность; ветки «200 с дескриптором» и «404 + контроль» ни разу не достигнуты и, по документированным отказам, без подписи клиента DJI, по-видимому, недостижимы — а имитировать подпись запрещено. Механизм остаётся безопасным: ничего не заключает и стоит одного запроса на такой вылет.
+
 ## 7. Исторический backfill (блок F)
 
 `tools/dji_area_backfill.py` — тот же суточный цикл по окнам с 2026-03-01 до
@@ -515,12 +517,13 @@ production. «Не проверено» названо прямо.
 |---|---|---|---|
 | 1 | Пассивный V4 — как раньше | `test_a_passive_v4_visit_asks_nothing_directly` (прямых запросов 0, запись `airlines-paths-only`); весь прежний `test_sources` без изменений | да |
 | 2 | Пассивный airlines без V4 — как раньше | `test_a_passive_descriptor_without_a_link_asks_nothing_directly` | да |
-| 3 | Таймаут card+route → 404 → terminal «V4 нет у источника» | `test_the_live_case_ends_in_absence_after_a_confirmed_404`, `test_the_absence_record_carries_the_answer_not_a_dji_body`, `test_a_descriptor_the_page_got_in_this_run_is_the_control`, `test_a_direct_descriptor_answered_200_is_the_control`; полный `--sources`: `test_the_live_case_ends_in_zero_and_is_not_visited_again` (код 0, `sources_descriptor_absent=1`); приёмник: `test_the_collectors_items_make_the_flight_no_v4_at_source`, `test_the_kept_revision_is_the_evidence_of_the_404`; хранилище и манифест без Flask (CI): `test_a_confirmed_descriptor_404_stops_the_daily_visit` | да |
+| 3 | Таймаут card+route → 404 → terminal «V4 нет у источника» | `test_the_live_case_ends_in_absence_after_a_confirmed_404`, `test_the_absence_record_carries_the_answer_not_a_dji_body`, `test_a_descriptor_the_page_got_in_this_run_is_the_control`, `test_a_direct_descriptor_answered_200_is_the_control`; полный `--sources`: `test_the_live_case_ends_in_zero_and_is_not_visited_again` (код 0, `sources_descriptor_absent=1`); приёмник: `test_the_collectors_items_make_the_flight_no_v4_at_source`, `test_the_kept_revision_is_the_evidence_of_the_404`; хранилище и манифест без Flask (CI): `test_a_confirmed_descriptor_404_stops_the_daily_visit` | да, **синтетика**: живьём 24.09 эта ветка не достигнута (§6) |
 | 4 | Прямой 200 без ссылки → `NO_V4_URL` | `test_a_direct_descriptor_without_a_link_is_no_v4_url` | да |
 | 5 | Прямой 200 со ссылкой → V4 | `test_a_direct_descriptor_with_a_link_brings_the_v4` (подписанная ссылка запрошена один раз и целиком, в записях и журнале её нет); ссылка на чужой V4 не запрашивается; 403/пусто/сбой V4 — `V4_FAILED`, не отсутствие | да |
 | 6 | 401/403/5xx/сеть/не-дескриптор → НЕ отсутствие | `test_an_answer_other_than_404_or_a_descriptor_is_not_absence` (11 ответов: 401, 403, 302, 500, 502, 503, сбой, нечитаемое тело, HTML 200, конверт ошибки 200, успех другой формы); `test_a_failed_control_leaves_every_404_unconfirmed` (8 провальных контролей); `test_a_404_without_any_control_is_not_absence`; полный `--sources`: `test_an_unconfirmed_404_ends_in_eighteen_and_is_visited_again`, `test_a_refused_descriptor_ends_in_eighteen` | да |
 | 7 | После отсутствия повторный прогон не посещает вылет | `test_the_live_case_ends_in_zero_and_is_not_visited_again` (второй прогон: `sources_skipped_known=2`, 0 переходов, 0 запросов); `DescriptorResumeTests`; манифест: вылет не в `capture`, а в `no_v4_at_source` | да |
-| 8 | Суточный цикл: такой единственный кандидат → `SUCCESS_WITH_WARNINGS` | `test_the_live_case_715984635_is_a_warning_not_a_failure` (и следующий день — без визита в DJI); отрицательный контроль в том же тесте — инцидент как был: код 5, `FAILED` | да |
+| 8 | Суточный цикл: такой единственный кандидат → `SUCCESS_WITH_WARNINGS` | `test_a_confirmed_descriptor_absence_is_a_warning_not_a_failure` (прежнее имя `test_the_live_case_715984635_is_a_warning_not_a_failure`; и следующий день — без визита в DJI); отрицательный контроль в том же тесте: код 5, `FAILED` | да, **синтетика** при доказанном отсутствии; живьём 24.09 получен отрицательный контроль этого теста — код 5 (§6) |
+| — | Живой исход 24.09 закреплён | `test_the_staging_run_of_24_09_is_reproduced_counter_for_counter`: ответ 200 в 135 байт, не дескриптор (два выдуманных тела — настоящее неизвестно) → те же счётчики, что в RUN SUMMARY площадки, код 18, следующий прогон снова посещает вылет. Порча «любой 2xx — нет V4» — 2 падения | да |
 | 9 | RAW/эффективная площадь не меняются | `test_the_absence_changes_the_flags_and_nothing_else` (сухой пересчёт до и после: статус, метод, RAW 8980 м², исправленная NULL, агрегация — те же, добавился только флаг `NO_V4_AT_SOURCE`); `test_a_written_calculation_is_not_rewritten_by_the_absence`; `drone_flights.area_ha` = 0,898 | да |
 | — | Период после «Обновить данные DJI» | `test_the_refresh_returns_to_the_same_period`, `test_the_period_keeps_its_meaning_and_nothing_extra_rides_along` (Flask) | да |
 
@@ -529,8 +532,8 @@ production. «Не проверено» названо прямо.
 ошибка читается как 404» — 10, «идентичность не проверяется» — 4, «успех
 другой формы — дескриптор» — 8; проверка приёмника отключена — все 8 тестов
 отказов падают (16 падений с подтестами), контрольный тест проходит;
-период кнопки на прежнем коде — 2 падения. Всё это — синтетика: живой DJI
-прямой запрос в этой сессии не видел.
+период кнопки на прежнем коде — 2 падения. Всё это — синтетика; живой
+результат площадки 24.09.2026 — в §6.
 
 Отрицательные контроли: stdlib-набор на прежних шаблоне и CSS — 7 из 8
 падают; `TreeLayout`/`Screen`/`Parity` на прежнем шаблоне — 11 из 14;
@@ -625,3 +628,18 @@ GIS Map Core и карта; Field Management UI; KML/GeoJSON; группиров
    отменённое требование (`docs/tracks/drones.md`, пункт
    `00-WORK-TIMESTAMP`). Какую из двух отметок считать моментом работы,
    решает владелец при постановке той задачи.
+5. **Прямой запрос дескриптора на живом DJI (§6, 24.09.2026).** Живьём он
+   показал только безопасность: ответ 200 не-дескриптор, отсутствие не
+   заключено. Принять письменно, что на живом DJI он не работает и остаётся
+   безопасным no-op (это закрывает пункт о нём в строке гейта), либо поручить его
+   удаление отдельной задачей. Вылет 715984635 закрывается решением
+   администратора на экране.
+6. **Судьба кандидата без доказательства после решения администратора.**
+   Решения не читаются ни манифестом, ни циклом: пока день такого вылета в
+   окне (23.09 — в окнах 23–25.09), каждое обновление снова посещает его и
+   заканчивается кодом 5 `FAILED`; после выхода дня из окна цикл зеленеет,
+   а запись остаётся «ожидает доказательства», если решения нет. Окно
+   backfill с таким кандидатом — `FAILED`, после трёх попыток `GAVE_UP` и
+   строка в `backfill_unresolved.csv`. Должно ли решение администратора
+   снимать кандидата с захвата или с вердикта цикла — бизнес-правило,
+   код его не выдумывает.

@@ -936,9 +936,10 @@ The page does not always ask for the airlines descriptor. Live case
 airlines request at all — no listener error, no handler error. A longer wait
 proves nothing, and a timeout is never read as "no V4". So after the wait, and
 only for a flight whose card names it and whose route decoded as it, the
-collector makes **one direct GET** of that flight's descriptor path in the
-page's own signed-in context (`page.request`: the context's cookies, invisible
-to the page's listeners, no redirect followed). It is the only request the
+collector makes **one direct GET** of that flight's descriptor path through
+the page's context (`page.request`: the context's cookies and nothing else — no
+`Signature`, no timestamp, none of the headers DJI's client adds; invisible to
+the page's listeners, no redirect followed). It is the only request the
 collector makes of its own in this mode. The URL, the signed link and the body
 are never logged — the flight id and the HTTP status only.
 
@@ -962,7 +963,16 @@ RUN SUMMARY names it: `sources_descriptor_requests` (every direct request:
 descriptors, the control, and a V4 fetched by a direct descriptor's link),
 `sources_descriptor_absent`, `sources_descriptor_unconfirmed`,
 `sources_descriptor_refused`, `sources_descriptor_control` (`OK`, `FAILED`, or
-`None` when no 404 needed one).
+`-` when no 404 needed one).
+
+**Live, 2026-09-24 (staging, `7e6d00d`, flight 715984635):** the direct request
+answered HTTP 200 with 135 bytes that were not a descriptor — the third row of
+the table. `requests=1 refused=1 absent=0 control=-`, exit 18; the daily cycle
+ended FAILED (5) and the record stayed on RAW. The body was not kept. The
+answer is consistent with DJI's documented refusals of requests the page did
+not issue (2026-07-31 `code 101`, 2026-08-27 `code 408`, both HTTP 200), but
+not proven to be one. So far the direct request has shown it is safe, not that
+it works: expect it to settle nothing on live DJI.
 
 ### What never enters the queue
 
