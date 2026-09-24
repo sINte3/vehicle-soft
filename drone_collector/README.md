@@ -958,7 +958,8 @@ control of another flight, bytes that match their sha256, a card of the same
 flight, no V4 kept and no earlier descriptor naming one. Anything short of that
 is refused.
 
-RUN SUMMARY names it: `sources_descriptor_requests` (both kinds of request),
+RUN SUMMARY names it: `sources_descriptor_requests` (every direct request:
+descriptors, the control, and a V4 fetched by a direct descriptor's link),
 `sources_descriptor_absent`, `sources_descriptor_unconfirmed`,
 `sources_descriptor_refused`, `sources_descriptor_control` (`OK`, `FAILED`, or
 `None` when no 404 needed one).

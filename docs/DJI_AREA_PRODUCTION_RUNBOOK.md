@@ -166,7 +166,8 @@ VERIFY идёт и после полного сбора (код 0), если м�
 ровно как до изменения — вывода из запроса, про который не известно, что он
 доходит до дескриптора, не делается.
 
-В RUN SUMMARY сборщика: `sources_descriptor_requests`,
+В RUN SUMMARY сборщика: `sources_descriptor_requests` (все прямые запросы:
+дескрипторы, контрольный и V4 по ссылке из прямого дескриптора),
 `sources_descriptor_absent`, `sources_descriptor_unconfirmed`,
 `sources_descriptor_refused`, `sources_descriptor_control` (`OK`, `FAILED`
 или `None`, если подтверждать было нечего). Как читать:
