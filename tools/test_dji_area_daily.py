@@ -629,13 +629,17 @@ class NoV4AtSource(Base):
                          (tool.EXIT_OK, tool.OUTCOME_SUCCESS, []))
         self.assertEqual(result['candidates_no_v4_at_source'], [])
 
-    def test_the_live_case_715984635_is_a_warning_not_a_failure(self):
-        """The staging incident, after the fix and as it was.
+    def test_a_confirmed_descriptor_absence_is_a_warning_not_a_failure(self):
+        """A single candidate whose absence is proven, and one whose is not.
 
-        The page never asked for the descriptor. Now the direct request
-        answers 404, its control proves the request reaches DJI, the
-        collector ends in 0 and the re-read manifest names the one candidate
-        no-V4-at-source: SUCCESS_WITH_WARNINGS, never FAILED.
+        Formerly `test_the_live_case_715984635_is_a_warning_not_a_failure`.
+        [REASON]: renamed after staging, 24.09.2026. The old name asserted a
+        live outcome that did not happen: the direct request for 715984635
+        answered HTTP 200 with a non-descriptor, no 404, no control, and the
+        cycle ended FAILED -- the negative control below. The first half is
+        SYNTHETIC: what the cycle does IF the direct request is answered 404
+        and a control confirms it (collector 0, the re-read manifest names
+        the candidate no-V4-at-source: SUCCESS_WITH_WARNINGS).
         """
         live = 715984635
         runner = FakeRunner(capture=[cand(live)], after=[], no_v4=[],
@@ -656,8 +660,9 @@ class NoV4AtSource(Base):
                          (tool.EXIT_OK, tool.OUTCOME_WARNINGS,
                           [tool.WARNING_CANDIDATE_NO_V4]))
         self.assertNotIn(tool.STEP_SOURCES, runner.steps())
-        # NEGATIVE CONTROL -- the incident as it was: the collector ended in
-        # 18 and the candidate was still asked for.
+        # NEGATIVE CONTROL -- the incident as it was, and exactly what staging
+        # produced on 24.09.2026 with the fix in place: the collector ended
+        # in 18 and the candidate was still asked for.
         runner = FakeRunner(capture=[cand(live)], after=[cand(live)],
                             no_v4=[], no_v4_after=[],
                             codes={tool.STEP_SOURCES: 18})

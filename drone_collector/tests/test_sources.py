@@ -2339,7 +2339,10 @@ class FlightSourcesStateTests(unittest.TestCase):
 # 70 s passed. The direct request answers what DJI holds. These tests pin
 # what each answer is allowed to mean.
 
-# The live answer to the descriptor of 715984635: 19 bytes, not JSON.
+# A 19-byte non-JSON 404, the size of the answer the owner's manual request
+# for 715984635 got. Its text was never recorded: these bytes are INVENTED.
+# (The collector's own direct request on staging, 24.09.2026, got HTTP 200
+# with 135 bytes that were not a descriptor -- see DescriptorFallbackTests.)
 NOT_FOUND_BODY = b'404 page not found\n'
 
 
@@ -3026,6 +3029,61 @@ class DescriptorSourcesRunTests(unittest.TestCase):
         self.assertEqual(state['sources_descriptor_absent'], 0)
         self.assertIsNone(state['sources_descriptor_control'])
         self.assertEqual(api.paths(), [descriptor_path(FLIGHT_ID)])
+
+    def test_the_staging_run_of_24_09_is_reproduced_counter_for_counter(self):
+        """Staging, 24.09.2026, flight 715984635: the direct request answered
+        HTTP 200 with 135 bytes that were not a descriptor.
+
+        [REASON]: pins the one live observation of the direct request. The
+        real 135 bytes were not kept and are UNKNOWN; the bodies here are
+        invented, one not JSON and one a JSON envelope with a non-zero code,
+        both exactly 135 bytes, and the outcome must not depend on which.
+        The expected values are the RUN SUMMARY staging printed: one request,
+        refused, no absence, no 404 so no control, 18 -- the flight stays
+        incomplete and nothing is concluded about its V4.
+        """
+        from drone_collector import main as main_module
+        not_json = b'x' * 135
+        envelope = json.dumps({'code': 1, 'status': 1, 'message': ''}).encode()
+        envelope = envelope[:-1] + b' ' * (135 - len(envelope)) + b'}'
+        self.assertEqual((len(not_json), len(envelope)), (135, 135))
+        for label, body in (('not JSON', not_json),
+                            ('non-zero code', envelope)):
+            with self.subTest(label):
+                # A queue of its own per body: the second must not skip.
+                self.root = Path(tempfile.mkdtemp(dir=self._directory.name))
+                scripts, answers = self.live_case()
+                answers[descriptor_path(FLIGHT_ID)] = _FakeApiResponse(
+                    200, body)
+                code, state, _page, api, log = self.run_sources(
+                    [OTHER_FLIGHT_ID, FLIGHT_ID], scripts, answers)
+                self.assertEqual(code, main_module.EXIT_SOURCES_INCOMPLETE)
+                self.assertEqual(
+                    {key: state[key] for key in (
+                        'sources_requested', 'sources_visited',
+                        'sources_full', 'sources_airlines', 'sources_v4',
+                        'sources_no_v4', 'sources_descriptor_requests',
+                        'sources_descriptor_absent',
+                        'sources_descriptor_unconfirmed',
+                        'sources_descriptor_refused',
+                        'sources_descriptor_control')},
+                    {'sources_requested': 2, 'sources_visited': 2,
+                     'sources_full': 1, 'sources_airlines': 1,
+                     'sources_v4': 1, 'sources_no_v4': 1,
+                     'sources_descriptor_requests': 1,
+                     'sources_descriptor_absent': 0,
+                     'sources_descriptor_unconfirmed': 0,
+                     'sources_descriptor_refused': 1,
+                     'sources_descriptor_control': None})
+                self.assertEqual(api.paths(), [descriptor_path(FLIGHT_ID)])
+                self.assertIn('answered HTTP 200 (135 bytes)', log.text())
+                self.assertNotIn(SOURCE_AIRLINES,
+                                 known_sources(self.outbox())[FLIGHT_ID])
+                # The next run asks again: nothing was retired.
+                code, _state, page, _api, _log = self.run_sources(
+                    [OTHER_FLIGHT_ID, FLIGHT_ID], scripts, answers)
+                self.assertEqual(code, main_module.EXIT_SOURCES_INCOMPLETE)
+                self.assertEqual(len(page.goto_calls), 1)
 
 
 if __name__ == '__main__':
