@@ -2461,6 +2461,10 @@ p a:not(.vs-btn):not(.btn):not(.vs-pill):not(.vs-tab),
   padding: 8px 14px;
 }
 .vs-tree-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* Команда-фильтр («только проблемные») нажата: видно, что часть строк скрыта. */
+.vs-tree-toolbar .vs-btn[aria-pressed="true"] {
+  background: var(--vs-primary-soft); border-color: var(--vs-primary); color: var(--vs-primary);
+}
 
 /* Ячейки: текст переносится словами, числа -- никогда. Длинное состояние
    записи переносится внутри своей плашки, а не раздвигает колонку. */

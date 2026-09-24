@@ -3,7 +3,9 @@
 // То, чего DOM-тесты Python проверить не могут: скрипт дерева и ширину.
 //   * по умолчанию видны только дроны;
 //   * «Развернуть всё» раскрывает ВСЕ уровни, включая детали;
-//   * «Развернуть проблемные» -- ровно пути к записям с data-problem и их детали;
+//   * «Развернуть проблемные» -- фильтр: строго путь к записям с data-problem и их
+//     детали; ни одного непроблемного дрона, дня, вылета или строки «остальные»;
+//     «Развернуть всё» и ручное раскрытие после него снова дают полный контекст;
 //   * «Только дроны» сворачивает и помнит раскрытое внутри, «Свернуть всё» -- сбрасывает;
 //   * одиночная кнопка раскрывает/сворачивает свой узел;
 //   * на 1280/1366/1440/1920 нет горизонтальной прокрутки ни у документа, ни у таблицы;
@@ -54,13 +56,25 @@ function snapshot() {
     shown: { l1: by('1', true).length, l2: by('2', true).length, l3: by('3', true).length, l4: by('4', true).length },
     shownDetails: ids(by('4', true), 'data-detail-for'),
     problemFlights: ids(rows.filter((r) => r.dataset.level === '3' && r.hasAttribute('data-problem')), 'data-flight'),
-    problemDays: rows.filter((r) => r.dataset.level === '2' && r.hasAttribute('data-problem')).length,
-    // Раскрыт -- кнопка узла в состоянии aria-expanded; видимость дня зависит
-    // от дрона, раскрытость -- от самого дня.
-    openDays: ids(by('2').filter((r) => r.querySelector('button[data-toggle]').getAttribute('aria-expanded') === 'true'), 'data-node'),
-    problemDayIds: ids(rows.filter((r) => r.dataset.level === '2' && r.hasAttribute('data-problem')), 'data-node'),
-    shownFlightParents: [...new Set(by('3', true).map((r) => r.dataset.parent))].sort(),
     heads: [...table.querySelectorAll('thead th')].length,
+  };
+}
+
+// Режим «проблемные»: что видно из проблемного и непроблемного.
+function problemView() {
+  const table = document.querySelector('[data-area-tree]');
+  const rows = [...table.querySelectorAll('tbody tr[data-level]')].filter((r) => r.dataset.level !== '4');
+  const shown = (r) => !r.hidden && r.getClientRects().length > 0;
+  const plain = rows.filter((r) => !r.hasAttribute('data-problem'));
+  const count = (list, level) => list.filter((r) => r.dataset.level === level).length;
+  const empty = table.querySelector('tr[data-tree-problems-empty]');
+  return {
+    nonProblemTotal: { l1: count(plain, '1'), l2: count(plain, '2'), l3: count(plain, '3') },
+    nonProblemShown: plain.filter(shown).map((r) => `L${r.dataset.level}:${r.dataset.flight || r.dataset.node || 'rest'}`),
+    problemTotal: rows.filter((r) => r.hasAttribute('data-problem')).length,
+    problemShown: rows.filter((r) => r.hasAttribute('data-problem') && shown(r)).length,
+    pressed: table.querySelector('button[data-tree-expand="problems"]').getAttribute('aria-pressed'),
+    emptyHidden: !empty || empty.hidden,
   };
 }
 
@@ -144,16 +158,40 @@ async function checkViewport(state, lang, [w, h], shots) {
   s = await command(page, 'none');
   expect(s.shown.l1 === s.total.l1 && s.shown.l2 + s.shown.l3 + s.shown.l4 === 0, `${tag} none: drones only ${JSON.stringify(s.shown)}`);
 
-  // Развернуть проблемные: пути к проблемным и их детали.
+  // Развернуть проблемные: СТРОГО путь к открытым записям -- ни одного
+  // дрона, дня или вылета без data-problem, ни строки «остальные»; все
+  // проблемные строки видны, детали открыты ровно у проблемных вылетов.
   s = await command(page, 'problems');
-  expect(s.problemFlights.length > 0, `${tag} fixture has problem flights (${s.problemFlights.length})`);
+  let p = await page.evaluate(problemView);
+  expect(s.problemFlights.length > 0 && p.nonProblemTotal.l1 > 0 && p.nonProblemTotal.l2 > 0
+    && p.nonProblemTotal.l3 > 0, `${tag} fixture has problem and non-problem drones, days and flights ${JSON.stringify(p.nonProblemTotal)}`);
+  expect(p.nonProblemShown.length === 0,
+    `${tag} problems: no non-problem drone/day/flight/rest row is shown ${JSON.stringify(p.nonProblemShown.slice(0, 5))}`);
+  expect(p.problemShown === p.problemTotal,
+    `${tag} problems: every problem drone/day/flight is shown (${p.problemShown}/${p.problemTotal})`);
   expect(JSON.stringify(s.shownDetails) === JSON.stringify(s.problemFlights),
     `${tag} problems: details shown = problem flights (${s.shownDetails.length}/${s.problemFlights.length})`);
-  expect(JSON.stringify(s.openDays) === JSON.stringify(s.problemDayIds) && s.openDays.length < s.total.l2,
-    `${tag} problems: exactly the problem days are open (${s.openDays.length} of ${s.total.l2})`);
-  expect(JSON.stringify(s.shownFlightParents) === JSON.stringify(s.problemDayIds),
-    `${tag} problems: flights are shown only under problem days (${s.shownFlightParents.length})`);
+  expect(p.pressed === 'true' && p.emptyHidden, `${tag} problems: the filter button is pressed ${JSON.stringify(p)}`.slice(0, 160));
   if (shots) { await page.screenshot({ path: join(shots, `area_${lang}_${w}_problems.png`), fullPage: true }); }
+  // Отрицательный контроль того же измерения: «Развернуть всё» показывает
+  // полный контекст -- непроблемные строки видны, фильтр снят.
+  await command(page, 'all');
+  p = await page.evaluate(problemView);
+  expect(p.nonProblemShown.length > 0 && p.pressed === 'false',
+    `${tag} all after problems: full context again (${p.nonProblemShown.length} non-problem rows shown)`);
+  // Ручное раскрытие дрона снимает фильтр и показывает все его дни.
+  await command(page, 'problems');
+  const drone = await page.evaluate(() => {
+    const row = document.querySelector('[data-area-tree] tr[data-level="1"][data-problem]');
+    return { node: row.dataset.node, days: document.querySelectorAll(`[data-area-tree] tr[data-level="2"][data-parent="${row.dataset.node}"]`).length };
+  });
+  await page.click(`button[data-toggle="${drone.node}"]`);
+  await page.click(`button[data-toggle="${drone.node}"]`);
+  p = await page.evaluate(problemView);
+  const daysShown = await page.evaluate((node) => [...document.querySelectorAll(`[data-area-tree] tr[data-level="2"][data-parent="${node}"]`)]
+    .filter((r) => !r.hidden).length, drone.node);
+  expect(p.pressed === 'false' && daysShown === drone.days,
+    `${tag} manual toggle after problems: filter lifted, all ${drone.days} days of the drone shown (${daysShown})`);
 
   // Одиночные кнопки и память «Только дроны» против сброса «Свернуть всё».
   await command(page, 'none');

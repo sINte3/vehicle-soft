@@ -431,6 +431,39 @@ class TreeLayout(Base):
         self.assertTrue(rows)
         self.assertEqual(marked, set())
 
+    def test_problem_mode_keeps_only_marked_rows(self):
+        # Фильтр «Развернуть проблемные» прячет всё, что без data-problem.
+        # Метки обязаны быть точными: обычные дни, подтверждённые
+        # корректировки, закрытые решения и строка «остальные» -- без них.
+        self.decide(UAT_C, dec.CONFIRM_FULL_PHANTOM)
+        rows = tree_rows(self.table())
+        by_flight = {r.attrs.get('data-flight'): r for r in rows
+                     if r.attrs['data-level'] == '3'}
+        for fid in (C, PARTIAL_C, RULE_MISS, UAT_C):   # решено / исправлено
+            self.assertNotIn('data-problem', by_flight[str(fid)].attrs, fid)
+        for fid in (PENDING_C, REVIEW_C):              # ждут и спорные
+            self.assertIn('data-problem', by_flight[str(fid)].attrs, fid)
+        rests = [r for r in rows if r.attrs['data-level'] == '3'
+                 and 'data-flight' not in r.attrs]
+        self.assertTrue(rests)
+        for row in rests:
+            self.assertNotIn('data-problem', row.attrs)
+        # Строка «пусто» фильтра есть и скрыта; кнопка не нажата.
+        table = self.table()
+        empty = [r for r in table.find('tbody').find_all('tr')
+                 if 'data-tree-problems-empty' in r.attrs]
+        self.assertEqual(len(empty), 1)
+        self.assertIn('hidden', empty[0].attrs)
+        (button,) = [b for b in table.find('thead').find_all('button')
+                     if b.attrs.get('data-tree-expand') == 'problems']
+        self.assertEqual(button.attrs.get('aria-pressed'), 'false')
+        # Отрицательный контроль: без открытых записей в окне (до 08:09 --
+        # только обычные A и B) метить нечего, и фильтр оставит пустоту.
+        plain = tree_rows(self.table(
+            '?date_from=2026-06-05&date_to=2026-06-05&time_to=08:09'))
+        self.assertTrue(plain)
+        self.assertFalse(any('data-problem' in r.attrs for r in plain))
+
     def detail(self, flight_id, query=WINDOW):
         rows = tree_rows(self.table(query))
         (row,) = [r for r in rows

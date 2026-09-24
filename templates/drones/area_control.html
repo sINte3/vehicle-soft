@@ -170,7 +170,7 @@
           <td colspan="6" class="vs-tree-toolbar-cell">
             <div class="vs-tree-toolbar" role="group" aria-label="{{ 'Управление деревом' if is_ru else 'Дарахтни бошқариш' }}">
               <button type="button" class="vs-btn vs-btn-sm" data-tree-expand="drones">{{ 'Только дроны' if is_ru else 'Фақат дронлар' }}</button>
-              <button type="button" class="vs-btn vs-btn-sm" data-tree-expand="problems">{{ 'Развернуть проблемные' if is_ru else 'Муаммолиларни очиш' }}</button>
+              <button type="button" class="vs-btn vs-btn-sm" data-tree-expand="problems" aria-pressed="false">{{ 'Развернуть проблемные' if is_ru else 'Муаммолиларни очиш' }}</button>
               <button type="button" class="vs-btn vs-btn-sm" data-tree-expand="all">{{ 'Развернуть всё' if is_ru else 'Барчасини очиш' }}</button>
               <button type="button" class="vs-btn vs-btn-sm" data-tree-expand="none">{{ 'Свернуть всё' if is_ru else 'Барчасини ёпиш' }}</button>
               <span class="vs-muted vs-ml-auto">{{ 'Проблемные — ждут доказательства или решения' if is_ru else 'Муаммолилар — далил ёки қарор кутаётганлар' }}: {{ total.open_records|vs_num }} · {{ 'площади — в гектарах' if is_ru else 'майдонлар — гектарда' }}</span>
@@ -313,6 +313,9 @@
         {% else %}
         <tr><td colspan="6" class="vs-empty">{{ 'За период расчётов нет.' if is_ru else 'Давр учун ҳисоблар йўқ.' }}</td></tr>
         {% endfor %}
+        {% if tree %}
+        <tr data-tree-problems-empty hidden><td colspan="6" class="vs-empty">{{ 'Открытых записей нет: всё решено или ждать нечего.' if is_ru else 'Очиқ ёзувлар йўқ: ҳаммаси ҳал қилинган ёки кутиладиган нарса йўқ.' }}</td></tr>
+        {% endif %}
       </tbody>
     </table>
   </div>
@@ -339,8 +342,13 @@
 {# Дерево без фреймворков. Хуки -- data-атрибуты, не классы. Состояние
    узла -- aria-expanded его кнопки; строка видна, если открыты все её
    предки. «Только дроны» сворачивает дроны и помнит, что было раскрыто
-   внутри; «Свернуть всё» сбрасывает всё. «Развернуть проблемные» открывает
-   дроны, дни и детали записей, которые ждут доказательства или решения. #}
+   внутри; «Свернуть всё» сбрасывает всё.
+   «Развернуть проблемные» -- ФИЛЬТР, а не раскрытие: видны только дроны,
+   дни и вылеты с data-problem (ждут доказательства или решения человека) и
+   детали этих вылетов; обычные дни, подтверждённые корректировки, закрытые
+   решения и строка «остальные» скрыты. Фильтр снимают другая команда и
+   ручное раскрытие или свёртка дрона либо дня -- ручное раскрытие всегда
+   показывает полный контекст. Кнопка «Детали» вылета фильтр не снимает. #}
 <script>
 (function () {
   var table = document.querySelector('[data-area-tree]');
@@ -358,26 +366,44 @@
     var button = toggles[node];
     if (button) { button.setAttribute('aria-expanded', open ? 'true' : 'false'); }
   }
+  var filterButton = table.querySelector('button[data-tree-expand="problems"]');
+  var problemsEmpty = table.querySelector('tr[data-tree-problems-empty]');
+  function problemsOnly() { return table.getAttribute('data-tree-filter') === 'problems'; }
+  function setFilter(on) {
+    if (on) { table.setAttribute('data-tree-filter', 'problems'); } else { table.removeAttribute('data-tree-filter'); }
+    if (filterButton) { filterButton.setAttribute('aria-pressed', on ? 'true' : 'false'); }
+  }
   function refresh() {
     var shown = {};
+    var filter = problemsOnly();
+    var anyDrone = false;
     rows.forEach(function (row) {
       var parent = row.getAttribute('data-parent');
       var visible = !parent || (shown[parent] === true && isOpen(parent));
+      // Фильтр «проблемные»: дрон, день и вылет без data-problem скрыты;
+      // строка деталей (уровень 4) следует за своим вылетом.
+      if (visible && filter && row.getAttribute('data-level') !== '4' && !row.hasAttribute('data-problem')) {
+        visible = false;
+      }
       row.hidden = !visible;
+      if (visible && row.getAttribute('data-level') === '1') { anyDrone = true; }
       var node = row.getAttribute('data-node');
       if (node) { shown[node] = visible; }
     });
+    if (problemsEmpty) { problemsEmpty.hidden = !(filter && !anyDrone); }
   }
   function everyNode(open) {
     Object.keys(toggles).forEach(function (node) { setOpen(node, open); });
   }
   var commands = {
     drones: function () {
+      setFilter(false);
       rows.forEach(function (row) {
         if (row.getAttribute('data-level') === '1') { setOpen(row.getAttribute('data-node'), false); }
       });
     },
     problems: function () {
+      setFilter(true);
       everyNode(false);
       rows.forEach(function (row) {
         if (row.hasAttribute('data-problem') && row.hasAttribute('data-node')) {
@@ -385,13 +411,15 @@
         }
       });
     },
-    all: function () { everyNode(true); },
-    none: function () { everyNode(false); }
+    all: function () { setFilter(false); everyNode(true); },
+    none: function () { setFilter(false); everyNode(false); }
   };
   table.addEventListener('click', function (event) {
     var toggle = event.target.closest('button[data-toggle]');
     if (toggle) {
       var node = toggle.getAttribute('data-toggle');
+      var level = toggle.closest('tr').getAttribute('data-level');
+      if (level === '1' || level === '2') { setFilter(false); }
       setOpen(node, !isOpen(node));
       refresh();
       return;

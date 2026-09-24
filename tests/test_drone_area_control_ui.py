@@ -182,6 +182,55 @@ OLD_SHAPE = """
 """
 
 
+# Прежний (до фильтра) скрипт режима «проблемные» -- отрицательный контроль.
+OLD_PROBLEMS_SCRIPT = """
+  function refresh() {
+    var shown = {};
+    rows.forEach(function (row) {
+      var parent = row.getAttribute('data-parent');
+      var visible = !parent || (shown[parent] === true && isOpen(parent));
+      row.hidden = !visible;
+    });
+  }
+  var commands = {
+    drones: function () { },
+    problems: function () {
+      everyNode(false);
+      rows.forEach(function (row) {
+        if (row.hasAttribute('data-problem') && row.hasAttribute('data-node')) {
+          setOpen(row.getAttribute('data-node'), true);
+        }
+      });
+    },
+    all: function () { everyNode(true); },
+    none: function () { everyNode(false); }
+  };
+"""
+
+
+def _command_body(script, name):
+    match = re.search(r'\b%s: function \(\) \{(.*?)\n    \}' % name, script,
+                      re.S)
+    if not match:
+        match = re.search(r'\b%s: function \(\) \{([^\n]*)\}' % name, script)
+    return match.group(1) if match else ''
+
+
+def problem_filter_contract(script):
+    """Исходный текст скрипта соблюдает контракт фильтра «проблемные»."""
+    refresh = re.search(r'function refresh\(\) \{(.*?)\n  \}', script, re.S)
+    body = refresh.group(1) if refresh else ''
+    hides_unmarked = bool(re.search(
+        r"filter && row\.getAttribute\('data-level'\) !== '4' && "
+        r"!row\.hasAttribute\('data-problem'\)", body))
+    sets = 'setFilter(true)' in _command_body(script, 'problems')
+    clears = all('setFilter(false)' in _command_body(script, name)
+                 for name in ('drones', 'all', 'none'))
+    manual = bool(re.search(r"level === '1' \|\| level === '2'\) "
+                            r"\{ setFilter\(false\); \}", script))
+    return hides_unmarked and sets and clears and manual
+
+
 class Parser(unittest.TestCase):
 
     def test_the_parser_sees_nesting_attributes_and_text(self):
@@ -250,6 +299,25 @@ class TemplateShape(unittest.TestCase):
         # Отрицательный контроль: в прежней форме команд в thead нет.
         old = tree_table(parse_html(OLD_SHAPE)).find('thead')
         self.assertEqual(old.find_all('button'), [])
+
+    def script(self):
+        return self.source[self.source.rindex('<script>'):]
+
+    def test_problem_mode_is_a_filter_on_the_marks(self):
+        # «Развернуть проблемные» -- фильтр: при нём строка уровня 1-3 без
+        # data-problem скрыта, детали следуют за своим вылетом; остальные
+        # команды и ручное раскрытие дрона/дня фильтр снимают.
+        script = self.script()
+        self.assertTrue(problem_filter_contract(script), script[:200])
+        # Кнопка-фильтр несёт состояние, для «пусто» есть своя строка.
+        thead = self.table.find('thead')
+        (button,) = [b for b in thead.find_all('button')
+                     if b.attrs.get('data-tree-expand') == 'problems']
+        self.assertEqual(button.attrs.get('aria-pressed'), 'false')
+        self.assertIn('data-tree-problems-empty', self.source)
+        # Отрицательный контроль: прежний скрипт только раскрывал узлы --
+        # непроблемные дни и вылеты раскрытого дрона оставались видны.
+        self.assertFalse(problem_filter_contract(OLD_PROBLEMS_SCRIPT))
 
     def test_long_texts_only_in_the_full_width_detail_row(self):
         details = [r for r in tree_rows(self.table)
