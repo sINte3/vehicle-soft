@@ -21,6 +21,9 @@
     <form method="post" action="{{ url_for('drones.dji_refresh_start') }}" onsubmit='return confirm({{ ("Запустить сбор данных DJI за последние дни сейчас? Это займёт несколько минут; страницу можно не держать открытой." if is_ru else "DJI маълумотларини сўнгги кунлар учун ҳозир йиғишни бошлайликми? Бу бир неча дақиқа олади; саҳифани очиқ тутиш шарт эмас.")|tojson }})'>
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="next" value="{{ request.full_path }}">
+      {#- Период экрана -- отдельными полями, только ключи из адреса. #}
+      {%- for key in ('date_from', 'time_from', 'date_to', 'time_to', 'unit_id') %}{% if key in request.args %}
+      <input type="hidden" name="period_{{ key }}" value="{{ request.args.get(key) }}">{% endif %}{% endfor %}
       <button type="submit" class="vs-btn vs-btn-primary vs-btn-sm">{{ 'Обновить данные DJI' if is_ru else 'DJI маълумотларини янгилаш' }}</button>
     </form>
     {% elif rs.can_edit %}

@@ -1123,6 +1123,79 @@ class Refresh(Base):
         uz = self.control_page(user_id=operator, language='uz')
         self.assertIn('DJI номзодлар учун V4 ни сақламайди: 2', uz)
 
+    def refresh_from(self, query, next_path='/drones/area-control'):
+        """Нажать кнопку, как браузер: поля периода берутся из формы
+        экрана; путь возврата подаётся БЕЗ строки запроса -- так, будто
+        она по дороге потерялась (находка площадки)."""
+        from urllib.parse import parse_qs, urlsplit
+        html = self.control_page(query)
+        fields = dict(re.findall(r'name="period_(\w+)" value="([^"]*)"',
+                                 html))
+        data = {'csrf_token': CSRF, 'next': next_path}
+        data.update({'period_' + key: value for key, value in fields.items()})
+        client = self.client_as()
+        location = client.post('/drones/dji-refresh',
+                               data=data).headers['Location']
+        # Пока прогон идёт, кнопки нет (панель говорит «Сбор уже идёт»):
+        # следующее нажатие -- после завершения этого.
+        con = self.store()
+        run = control_store.claim_queued(con)
+        if run:
+            control_store.finish(con, run['id'], control_store.STATUS_SUCCESS,
+                                 exit_code=0)
+        return fields, location, parse_qs(urlsplit(location).query,
+                                          keep_blank_values=True), client
+
+    def test_the_refresh_returns_to_the_same_period(self):
+        query = ('?date_from=2026-06-05&time_from=08:00&date_to=2026-06-06'
+                 '&time_to=09:30&unit_id=%d' % self.unit7_id)
+        fields, location, back, client = self.refresh_from(query)
+        self.assertEqual(fields, {
+            'date_from': '2026-06-05', 'time_from': '08:00',
+            'date_to': '2026-06-06', 'time_to': '09:30',
+            'unit_id': str(self.unit7_id)})
+        self.assertTrue(location.startswith('/drones/area-control?'))
+        self.assertEqual(back, {key: [value] for key, value in fields.items()})
+        # И страница после возврата -- за тот же период и по тому же дрону.
+        page = client.get(location).get_data(as_text=True)
+        for value in ('value="2026-06-05"', 'value="08:00"',
+                      'value="2026-06-06"', 'value="09:30"'):
+            self.assertIn(value, page)
+        self.assertRegex(page, r'<option value="%d"\s+selected>'
+                         % self.unit7_id)
+        self.assertEqual(len(self.runs()), 1)   # прогон поставлен, как был
+
+    def test_the_period_keeps_its_meaning_and_nothing_extra_rides_along(self):
+        # Пустой ключ -- «без границы» -- остаётся пустым; ключа, которого
+        # не было, нет и после возврата (окно по умолчанию).
+        fields, _location, back, _client = self.refresh_from(
+            '?date_from=&date_to=2026-06-06')
+        self.assertEqual(fields, {'date_from': '', 'date_to': '2026-06-06'})
+        self.assertEqual(back, {'date_from': [''], 'date_to': ['2026-06-06']})
+        # Остальные параметры пути возврата (вкладка) сохраняются.
+        _f, _l, back, _c = self.refresh_from(
+            '?date_from=2026-06-05&date_to=2026-06-06',
+            next_path='/drones/area-control?view=review')
+        self.assertEqual(back['view'], ['review'])
+        self.assertEqual(back['date_from'], ['2026-06-05'])
+        # Значение не добавляет своих параметров и не уводит с модуля.
+        client = self.client_as()
+        location = client.post('/drones/dji-refresh', data={
+            'csrf_token': CSRF, 'next': 'https://evil.example/drones/',
+            'period_unit_id': '1&next=https://evil.example/'}).headers[
+                'Location']
+        self.assertTrue(location.startswith('/drones/area-control?'))
+        self.assertNotIn('evil.example/&', location)
+        from urllib.parse import parse_qs, urlsplit
+        self.assertEqual(sorted(parse_qs(urlsplit(location).query)),
+                         ['unit_id'])
+        # Отрицательный контроль: без полей периода путь без строки запроса
+        # ведёт на окно по умолчанию -- ровно то, что видел пользователь.
+        location = self.client_as().post('/drones/dji-refresh', data={
+            'csrf_token': CSRF, 'next': '/drones/area-control'}).headers[
+                'Location']
+        self.assertEqual(location, '/drones/area-control')
+
     def test_the_scheduler_launcher_runs_only_the_named_task(self):
         calls = []
 

@@ -9697,6 +9697,40 @@ def dji_refresh_status():
     })
 
 
+# Параметры периода и дрона, которые кнопка «Обновить данные DJI» уносит
+# с собой и возвращает на экран отчёта.
+DJI_REFRESH_KEEP_KEYS = ('date_from', 'time_from', 'date_to', 'time_to',
+                         'unit_id')
+
+
+def _dji_refresh_back():
+    """Путь возврата после «Обновить данные DJI» -- с периодом экрана.
+
+    [REASON]: пользователь, запустивший обновление с экрана за 01.09-18.09,
+    должен вернуться на тот же период, а не на окно по умолчанию. Период
+    приходит отдельными полями period_<ключ> -- только те ключи, что были в
+    адресе экрана, поэтому «ключа нет» (окно по умолчанию) и «ключ пустой»
+    (без границы) сохраняют свой смысл -- и накладывается на путь `next`,
+    даже если его строка запроса по дороге потерялась. Путь -- только внутри
+    модуля (`_drone_safe_next`); значения экранирует urlencode.
+    """
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+    back = _drone_safe_next(request.form.get('next')) \
+        or url_for('drones.area_control')
+    carried = [(key, (request.form.get('period_' + key) or '')[:32])
+               for key in DJI_REFRESH_KEEP_KEYS
+               if ('period_' + key) in request.form]
+    if not carried:
+        return back
+    parts = urlsplit(back)
+    names = {key for key, _value in carried}
+    query = [(key, value) for key, value in parse_qsl(
+        parts.query, keep_blank_values=True) if key not in names]
+    query.extend(carried)
+    return urlunsplit(('', '', parts.path, urlencode(query), ''))
+
+
 @drones_bp.route('/dji-refresh', methods=['POST'])
 @module_required('drones')
 def dji_refresh_start():
@@ -9708,8 +9742,7 @@ def dji_refresh_start():
 
     if not current_user.can_edit:
         abort(403)
-    back = _drone_safe_next(request.form.get('next')) \
-        or url_for('drones.area_control')
+    back = _dji_refresh_back()
     config = _dji_refresh_config()
     if not config['enabled']:
         flash(_drone_t(
