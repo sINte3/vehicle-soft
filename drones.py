@@ -1378,6 +1378,97 @@ def _drone_evidence_db_path():
         current_app.config.get('SQLALCHEMY_DATABASE_URI', ''))
 
 
+# Запись сборщика «у DJI нет дескриптора этого вылета» (HTTP 404 на прямой
+# запрос, подтверждённый контрольным). Схема -- drone_collector/sources.py.
+DRONE_DESCRIPTOR_ABSENT_SCHEMA = 'airlines-descriptor-absent-1'
+_DRONE_DESCRIPTOR_ABSENT_KEYS = frozenset((
+    'code', 'status', 'descriptor_path', 'descriptor_http_status',
+    'descriptor_content_type', 'descriptor_body_size',
+    'descriptor_body_sha256', 'descriptor_body_text', 'file_v4_url_path',
+    'std_detail_url_path', 'std_summary_url_path'))
+
+
+def _drone_descriptor_absence_problem(con, root, flight_id, body, context,
+                                      batch_cards):
+    """Почему запись «дескриптора нет» принимать нельзя -- или None.
+
+    [REASON]: эта ревизия airlines -- единственная, по которой хранилище
+    (замороженный dji_area/store.py) выводит `NO_V4_URL_AT_SOURCE` без
+    дескриптора DJI в руках: манифест перестаёт звать вылет, цикл называет
+    его «DJI не хранит V4». Поэтому принимается только полная запись: 404
+    на СОБСТВЕННЫЙ путь дескриптора вылета, успешный контрольный запрос
+    другого вылета, байты ответа сходятся со своим sha256, карточка вылета
+    (в этой пачке или уже в хранилище) называет тот же вылет, V4 у вылета
+    нет, и DJI раньше не называл для него ссылку V4. Иначе -- отказ
+    (errors), и отсутствие не наступает.
+    """
+    from dji_area import evidence as dji_evidence
+    from dji_area import store as dji_store
+
+    path = '/api/web/v2/airlines/%d' % flight_id
+    ctx = context or {}
+    if (ctx.get('association') != 'direct_descriptor_get'
+            or ctx.get('http_status') != 404 or ctx.get('path') != path):
+        return ('absence record of flight %d is not a 404 of its own '
+                'descriptor' % flight_id)
+    control = _drone_int(ctx.get('control_flight_id'))
+    if ctx.get('control_http_status') != 200 or control is None \
+            or control == flight_id:
+        return ('absence record of flight %d has no working control request'
+                % flight_id)
+    try:
+        doc = json.loads(body.decode('utf-8'))
+    except (ValueError, UnicodeDecodeError):
+        return 'absence record of flight %d is not JSON' % flight_id
+    if not isinstance(doc, dict) or set(doc) != _DRONE_DESCRIPTOR_ABSENT_KEYS:
+        return 'absence record of flight %d has unexpected fields' % flight_id
+    if any(doc.get(key) is not None for key in (
+            'code', 'status', 'file_v4_url_path', 'std_detail_url_path',
+            'std_summary_url_path')) \
+            or doc.get('descriptor_http_status') != 404 \
+            or doc.get('descriptor_path') != path:
+        return 'absence record of flight %d contradicts itself' % flight_id
+    sha, size = doc.get('descriptor_body_sha256'), doc.get('descriptor_body_size')
+    if not (isinstance(sha, str) and re.fullmatch(r'[0-9a-f]{64}', sha)) \
+            or isinstance(size, bool) or not isinstance(size, int) or size < 0:
+        return 'absence record of flight %d has no body digest' % flight_id
+    text = doc.get('descriptor_body_text')
+    if text is not None:
+        raw = text.encode('utf-8') if isinstance(text, str) else None
+        if raw is None or hashlib.sha256(raw).hexdigest() != sha \
+                or len(raw) != size:
+            return ('absence record of flight %d: the 404 bytes do not match '
+                    'their sha256' % flight_id)
+    revisions = dji_store.latest_revisions(con, flight_id)
+    card = batch_cards.get(flight_id)
+    if card is None and 'card' in revisions:
+        try:
+            card = dji_store.read_body(root, revisions['card'])
+        except dji_store.StoreError:
+            card = None
+    try:
+        card_id = dji_evidence.parse_card_body(card)['flight_id'] \
+            if card is not None else None
+    except (ValueError, UnicodeDecodeError):
+        card_id = None
+    if card_id != flight_id:
+        return ('absence record of flight %d: no card of that flight confirms '
+                'its identity' % flight_id)
+    if 'v4' in revisions:
+        return 'absence record of flight %d: its V4 is already kept' % flight_id
+    for row in con.execute("SELECT * FROM dji_source_revisions WHERE "
+                           "flight_id=? AND source_type='airlines'",
+                           (flight_id,)).fetchall():
+        try:
+            other = json.loads(dji_store.read_body(root, row).decode('utf-8'))
+        except (ValueError, UnicodeDecodeError, dji_store.StoreError):
+            continue
+        if isinstance(other, dict) and other.get('file_v4_url_path'):
+            return ('absence record of flight %d: DJI named a V4 for it '
+                    'earlier' % flight_id)
+    return None
+
+
 def _drone_source_body(item):
     """Байты тела из `body_b64` либо `body_text`. Отказ -- ValueError."""
     import base64
@@ -1481,6 +1572,16 @@ def api_source_sync():
         dji_store.require_tables(con)
         dji_store.begin_immediate(con)
         now = dji_store.utcnow()
+        # Карточки этой пачки: запись «дескриптора нет» сверяется с карточкой
+        # вылета, а в пачке она может идти раньше карточки.
+        batch_cards = {}
+        for item in sources:
+            if isinstance(item, dict) and item.get('source_type') == 'card':
+                try:
+                    batch_cards[_drone_int(item.get('flight_id'))] = \
+                        _drone_source_body(item)
+                except ValueError:
+                    pass
         for position, item in enumerate(sources):
             try:
                 if not isinstance(item, dict):
@@ -1497,6 +1598,13 @@ def api_source_sync():
                 context = item.get('request_context')
                 if context is not None and not isinstance(context, dict):
                     raise ValueError('request_context must be an object')
+                if source_type == dji_evidence.SOURCE_AIRLINES and \
+                        item.get('schema_version') == \
+                        DRONE_DESCRIPTOR_ABSENT_SCHEMA:
+                    problem = _drone_descriptor_absence_problem(
+                        con, root, flight_id, body, context, batch_cards)
+                    if problem:
+                        raise ValueError(problem)
                 _rev_id, created = dji_store.upsert_source_revision(
                     con, root, source_type, body, flight_id=flight_id,
                     provider=_drone_text(item.get('provider_account_id'), 80)

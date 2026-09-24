@@ -1924,6 +1924,7 @@ class SourcesSummaryKeysTests(unittest.TestCase):
         нуля."""
         keys = self.keys_set_by(main_module._run_sources,
                                 main_module._account_for_sources,
+                                main_module._account_for_descriptors,
                                 main_module._flight_ids_of_period)
         self.assertTrue(keys, 'разбор исходника ничего не нашёл')
         missing = keys - set(main_module.SOURCES_SUMMARY_KEYS)
@@ -1950,7 +1951,12 @@ class SourcesSummaryKeysTests(unittest.TestCase):
                     'sources_v4', 'sources_no_v4_url', 'sources_no_v4',
                     'sources_v4_failed', 'sources_page_errors',
                     'sources_route_identity_mismatch', 'sources_queued',
-                    'sources_duplicates', 'sources_queue_refused'):
+                    'sources_duplicates', 'sources_queue_refused',
+                    'sources_descriptor_requests',
+                    'sources_descriptor_absent',
+                    'sources_descriptor_unconfirmed',
+                    'sources_descriptor_refused',
+                    'sources_descriptor_control'):
             self.assertIn(key, main_module.SOURCES_SUMMARY_KEYS)
 
     def test_the_snapshot_summary_reports_every_bucket_of_the_endpoint(self):

@@ -43,10 +43,16 @@ from drone_collector.outbox import (  # noqa: E402
 from drone_collector.sender import (  # noqa: E402
     LandSnapshotSendResult, SourceSendResult)
 from drone_collector.sources import (  # noqa: E402
+    DESCRIPTOR_ABSENT,
+    DESCRIPTOR_ASSOCIATION,
+    DESCRIPTOR_OK,
+    DESCRIPTOR_PENDING,
+    DESCRIPTOR_UNCONFIRMED,
     MAX_CONSECUTIVE_PAGE_ERRORS,
     ROUTE_IDENTITY_MISMATCH,
     ROUTE_IDENTITY_OK,
     ROUTE_IDENTITY_UNDECODABLE,
+    SCHEMA_AIRLINES_DESCRIPTOR_ABSENT,
     SCHEMA_AIRLINES_PATHS_ONLY,
     SCHEMA_RAW_HTTP_BODY,
     SOURCE_AIRLINES,
@@ -67,7 +73,11 @@ from drone_collector.sources import (  # noqa: E402
     api_version_of,
     body_secret_markers,
     capture_run_id,
+    card_flight_id,
     classify_source_url,
+    descriptor_absence_document,
+    descriptor_airline,
+    descriptor_v4_link,
     download_snapshot_geometries,
     drain_land_snapshot_outbox,
     drain_source_outbox,
@@ -2320,6 +2330,702 @@ class FlightSourcesStateTests(unittest.TestCase):
         self.assertTrue(flight.settled)
         self.assertFalse(flight.complete)
         self.assertEqual(flight.outcome(), STATUS_V4_FAILED)
+
+
+
+# ─── 12. The direct descriptor request (live case 715984635) ─────────────────
+#
+# The page asked for card and route and never for the airlines descriptor;
+# 70 s passed. The direct request answers what DJI holds. These tests pin
+# what each answer is allowed to mean.
+
+# The live answer to the descriptor of 715984635: 19 bytes, not JSON.
+NOT_FOUND_BODY = b'404 page not found\n'
+
+
+def descriptor_path(flight_id):
+    return '/api/web/v2/airlines/%d' % flight_id
+
+
+class _FakeApiResponse(object):
+    """An `APIResponse` of `page.request`: status, headers, body, dispose."""
+
+    def __init__(self, status=200, body=b'', content_type='application/json',
+                 body_error=None):
+        self.status = status
+        self.headers = ({'content-type': content_type}
+                        if content_type else {})
+        self._body = body
+        self.body_error = body_error
+        self.disposed = 0
+
+    def body(self):
+        if self.body_error is not None:
+            raise self.body_error
+        return self._body
+
+    def dispose(self):
+        self.disposed += 1
+
+
+class _FakeApiRequest(object):
+    """`page.request`: answers by URL path, and a record of every call.
+
+    [REASON]: a path nobody scripted is answered 599 and noted in
+    `unexpected`. Raising instead would be swallowed by the code under test
+    as a network failure, and a stray request would pass unnoticed.
+    """
+
+    def __init__(self, answers=None):
+        self.answers = dict(answers or {})
+        self.calls = []
+        self.unexpected = []
+
+    def get(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        answer = self.answers.get(url_path(url))
+        if answer is None:
+            self.unexpected.append(url)
+            return _FakeApiResponse(599, b'')
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    def paths(self):
+        return [url_path(url) for url, _kwargs in self.calls]
+
+
+def not_found():
+    return _FakeApiResponse(404, NOT_FOUND_BODY, 'text/plain; charset=utf-8')
+
+
+def descriptor_ok(flight_id, v4_url=None):
+    return _FakeApiResponse(200, airlines_raw(flight_id, v4_url=v4_url))
+
+
+def v4_link_of(flight_id):
+    return ('%s/objects/airline_v4/%d/airline_v4_NOT_REAL.pb?%s'
+            % (STORAGE_HOST, flight_id, V4_QUERY))
+
+
+def card_and_route(flight_id=FLIGHT_ID, card=None, embedded_id=None):
+    """The live case: the page asks for card and route, and nothing else."""
+    return [step_finished(card if card is not None
+                          else card_request(flight_id)),
+            step_finished(route_request(flight_id, embedded_id=embedded_id))]
+
+
+class _DescriptorStand(object):
+    """One SourceRun on a page that may or may not ask for the descriptor."""
+
+    def __init__(self, answers, reference_ids=(), request=True,
+                 known_descriptors=()):
+        self.log = _QuietLog()
+        self.capture = SourceCapture(logger=self.log)
+        self.page = _FakePage()
+        self.api = _FakeApiRequest(answers)
+        if request:
+            self.page.request = self.api
+        self.capture.attach(self.page)
+        self.run = SourceRun(self.page, self.capture, source_config(),
+                             logger=self.log, clock=_Clock(),
+                             reference_ids=reference_ids)
+        self.run.known_descriptors = set(known_descriptors)
+
+    def visit(self, flight_id=FLIGHT_ID, script=None):
+        self.page.script = list(card_and_route(flight_id) if script is None
+                                else script)
+        return self.run.capture_flight(flight_id)
+
+
+def confirmed_absence(reference=OTHER_FLIGHT_ID):
+    """The live case end to end: 404, confirmed by a control. (stand, flight)"""
+    stand = _DescriptorStand(
+        {descriptor_path(FLIGHT_ID): not_found(),
+         descriptor_path(reference): descriptor_ok(reference, v4_url=V4_URL)},
+        reference_ids=[reference])
+    flight = stand.visit()
+    stand.run.confirm_absences(final=True)
+    return stand, flight
+
+
+def airlines_item_of(flight):
+    items = [item for item in source_items(flight, RUN_ID)
+             if item['source_type'] == SOURCE_AIRLINES]
+    return items[0] if items else None
+
+
+class DescriptorHelpersTests(unittest.TestCase):
+
+    def test_the_card_names_its_flight(self):
+        self.assertEqual(card_flight_id(card_body(FLIGHT_ID)), FLIGHT_ID)
+
+    def test_a_card_that_is_not_a_success_names_nothing(self):
+        for body in (card_body(FLIGHT_ID, code=101), b'<html></html>',
+                     json.dumps({'code': 0, 'data': {'id': True}}).encode(),
+                     json.dumps({'code': 0, 'data': {'id': '1'}}).encode(),
+                     json.dumps([1]).encode()):
+            with self.subTest(body=body[:30]):
+                self.assertIsNone(card_flight_id(body))
+
+    def test_a_descriptor_is_a_success_envelope_with_an_airline(self):
+        self.assertIsNotNone(descriptor_airline(airlines_raw()))
+        self.assertIsNotNone(descriptor_airline(airlines_raw(v4_url=None)))
+
+    def test_anything_else_is_not_a_descriptor(self):
+        """[REASON]: `airlines_document` reads `{"code":0,"data":{}}` as "no
+        links"; a direct answer of that shape must not become "no V4"."""
+        for body in (NOT_FOUND_BODY, b'<html>login</html>',
+                     airlines_raw(code=101),
+                     json.dumps({'code': 0, 'data': {}}).encode(),
+                     json.dumps({'code': 0, 'data': None}).encode(),
+                     json.dumps({'code': 0, 'data': {'airline': []}}).encode(),
+                     json.dumps([0]).encode(), b''):
+            with self.subTest(body=body[:30]):
+                self.assertIsNone(descriptor_airline(body))
+                self.assertIsNone(descriptor_v4_link(body))
+
+    def test_the_signed_link_is_read_whole_for_one_request(self):
+        self.assertEqual(descriptor_v4_link(airlines_raw(v4_url=V4_URL)),
+                         V4_URL)
+        self.assertIsNone(descriptor_v4_link(airlines_raw(v4_url=None)))
+
+    def test_the_absence_record_is_deterministic(self):
+        first = descriptor_absence_document(FLIGHT_ID, NOT_FOUND_BODY,
+                                            'text/plain')
+        second = descriptor_absence_document(FLIGHT_ID, NOT_FOUND_BODY,
+                                             'text/plain')
+        self.assertEqual(airlines_bytes(first), airlines_bytes(second))
+        self.assertEqual(first['descriptor_body_sha256'],
+                         hashlib.sha256(NOT_FOUND_BODY).hexdigest())
+        self.assertEqual(first['descriptor_body_size'], 19)
+        self.assertEqual(first['descriptor_body_text'],
+                         NOT_FOUND_BODY.decode('utf-8'))
+        self.assertIsNone(first['file_v4_url_path'])
+        self.assertFalse(v4_url_present(first))
+
+    def test_a_long_or_dirty_answer_keeps_its_hash_but_not_its_text(self):
+        long_body = b'x' * 2000
+        document = descriptor_absence_document(FLIGHT_ID, long_body, None)
+        self.assertIsNone(document['descriptor_body_text'])
+        self.assertEqual(document['descriptor_body_size'], 2000)
+        self.assertEqual(document['descriptor_body_sha256'],
+                         hashlib.sha256(long_body).hexdigest())
+        dirty = ('not found ' + V4_QUERY).encode('utf-8')
+        document = descriptor_absence_document(FLIGHT_ID, dirty, None)
+        self.assertIsNone(document['descriptor_body_text'])
+        self.assertEqual(body_secret_markers(airlines_bytes(document)), [])
+
+
+class DescriptorFallbackTests(unittest.TestCase):
+    """Card and route came, the descriptor did not: one direct request."""
+
+    def assert_not_absence(self, stand, flight):
+        self.assertFalse(flight.complete)
+        self.assertIsNone(flight.v4_url_present)
+        self.assertFalse(flight.has(SOURCE_AIRLINES))
+        self.assertNotEqual(flight.status, STATUS_NO_V4_URL)
+        self.assertNotIn(flight.descriptor, (DESCRIPTOR_ABSENT,
+                                             DESCRIPTOR_PENDING))
+        self.assertIsNone(airlines_item_of(flight))
+        self.assertEqual(stand.api.unexpected, [])
+
+    def assert_clean_log(self, stand):
+        text = stand.log.text()
+        for secret in ('Signature', 'Expires', 'OSSAccessKeyId', '?',
+                       API_HOST, STORAGE_HOST, 'airline_v4_NOT_REAL',
+                       '404 page not found'):
+            self.assertNotIn(secret, text)
+
+    # -- 1, 2: the page's own descriptor -- nothing is asked ------------------
+
+    def test_a_passive_v4_visit_asks_nothing_directly(self):
+        stand = _DescriptorStand({})
+        flight = stand.visit(script=full_visit_script())
+        self.assertEqual(flight.status, STATUS_V4)
+        self.assertTrue(flight.complete)
+        self.assertIsNone(flight.descriptor)
+        self.assertEqual(stand.api.calls, [])
+        item = airlines_item_of(flight)
+        self.assertEqual(item['schema_version'], SCHEMA_AIRLINES_PATHS_ONLY)
+        self.assertEqual(item['request_context']['association'], 'url_path')
+
+    def test_a_passive_descriptor_without_a_link_asks_nothing_directly(self):
+        stand = _DescriptorStand({})
+        flight = stand.visit(script=card_and_route() + [
+            step_finished(airlines_request(v4_url=None))])
+        self.assertEqual(flight.status, STATUS_NO_V4_URL)
+        self.assertTrue(flight.complete)
+        self.assertEqual(stand.api.calls, [])
+        self.assertEqual(airlines_item_of(flight)['schema_version'],
+                         SCHEMA_AIRLINES_PATHS_ONLY)
+
+    # -- 3: the live case -- 404, confirmed by a control ----------------------
+
+    def test_the_live_case_ends_in_absence_after_a_confirmed_404(self):
+        stand = _DescriptorStand(
+            {descriptor_path(FLIGHT_ID): not_found(),
+             descriptor_path(OTHER_FLIGHT_ID): descriptor_ok(OTHER_FLIGHT_ID)},
+            reference_ids=[OTHER_FLIGHT_ID])
+        flight = stand.visit()
+        # After the wait: ONE request, for this flight; the 404 waits.
+        self.assertEqual(stand.api.paths(), [descriptor_path(FLIGHT_ID)])
+        url, kwargs = stand.api.calls[0]
+        self.assertEqual(url, API_HOST + descriptor_path(FLIGHT_ID))
+        self.assertEqual(kwargs.get('max_redirects'), 0)
+        self.assertIs(kwargs.get('fail_on_status_code'), False)
+        self.assertEqual(flight.descriptor, DESCRIPTOR_PENDING)
+        self.assertFalse(flight.complete)
+        self.assertFalse(flight.has(SOURCE_AIRLINES))
+        settled = stand.run.confirm_absences(final=True)
+        self.assertEqual([f.flight_id for f in settled], [FLIGHT_ID])
+        self.assertEqual(stand.api.paths(), [descriptor_path(FLIGHT_ID),
+                                             descriptor_path(OTHER_FLIGHT_ID)])
+        self.assertEqual(stand.api.unexpected, [])
+        self.assertEqual(flight.descriptor, DESCRIPTOR_ABSENT)
+        self.assertIs(flight.v4_url_present, False)
+        self.assertTrue(flight.complete)
+        self.assertEqual(flight.status, STATUS_NO_V4_URL)
+        self.assertFalse(flight.has(SOURCE_V4))
+        self.assert_clean_log(stand)
+
+    def test_the_absence_record_carries_the_answer_not_a_dji_body(self):
+        _stand, flight = confirmed_absence()
+        item = airlines_item_of(flight)
+        self.assertEqual(item['schema_version'],
+                         SCHEMA_AIRLINES_DESCRIPTOR_ABSENT)
+        body = base64.b64decode(item['body_b64'])
+        self.assertNotEqual(body, NOT_FOUND_BODY)
+        self.assertEqual(item['sha256'], hashlib.sha256(body).hexdigest())
+        # The key the receiver reads, spelled as its bytes carry it.
+        self.assertIn(b'"file_v4_url_path":null', body)
+        document = json.loads(body.decode('utf-8'))
+        self.assertEqual(document['descriptor_http_status'], 404)
+        self.assertEqual(document['descriptor_path'],
+                         descriptor_path(FLIGHT_ID))
+        self.assertEqual(document['descriptor_body_size'], 19)
+        self.assertEqual(document['descriptor_body_sha256'],
+                         hashlib.sha256(NOT_FOUND_BODY).hexdigest())
+        self.assertEqual(document['descriptor_body_text'],
+                         NOT_FOUND_BODY.decode('utf-8'))
+        self.assertEqual(document['descriptor_content_type'],
+                         'text/plain; charset=utf-8')
+        self.assertIsNone(document['code'])
+        context = item['request_context']
+        self.assertEqual(context['association'], DESCRIPTOR_ASSOCIATION)
+        self.assertEqual(context['http_status'], 404)
+        self.assertEqual(context['path'], descriptor_path(FLIGHT_ID))
+        self.assertEqual(context['control_flight_id'], OTHER_FLIGHT_ID)
+        self.assertEqual(context['control_http_status'], 200)
+        self.assertEqual(context['descriptor'], 'absent-at-source')
+        self.assertIsNone(item['api_status'])
+        self.assertEqual(body_secret_markers(body), [])
+
+    def test_the_same_answer_is_the_same_revision(self):
+        first = airlines_item_of(confirmed_absence()[1])
+        second = airlines_item_of(confirmed_absence()[1])
+        self.assertEqual(first['sha256'], second['sha256'])
+
+    def test_a_descriptor_the_page_got_in_this_run_is_the_control(self):
+        stand = _DescriptorStand(
+            {descriptor_path(FLIGHT_ID): not_found(),
+             descriptor_path(OTHER_FLIGHT_ID): descriptor_ok(OTHER_FLIGHT_ID)})
+        other = stand.visit(OTHER_FLIGHT_ID,
+                            script=full_visit_script(OTHER_FLIGHT_ID))
+        self.assertEqual(other.status, STATUS_V4)
+        self.assertEqual(stand.api.calls, [])
+        flight = stand.visit()
+        stand.run.confirm_absences(final=True)
+        self.assertEqual(flight.descriptor, DESCRIPTOR_ABSENT)
+        self.assertEqual(stand.api.paths(), [descriptor_path(FLIGHT_ID),
+                                             descriptor_path(OTHER_FLIGHT_ID)])
+
+    def test_a_direct_descriptor_answered_200_is_the_control(self):
+        """No second request: a direct request that got a real descriptor
+        already proves the direct request reaches DJI."""
+        stand = _DescriptorStand(
+            {descriptor_path(OTHER_FLIGHT_ID): descriptor_ok(OTHER_FLIGHT_ID),
+             descriptor_path(FLIGHT_ID): not_found()})
+        other = stand.visit(OTHER_FLIGHT_ID,
+                            script=card_and_route(OTHER_FLIGHT_ID))
+        self.assertEqual(other.status, STATUS_NO_V4_URL)
+        flight = stand.visit()
+        stand.run.confirm_absences(final=True)
+        self.assertEqual(flight.descriptor, DESCRIPTOR_ABSENT)
+        self.assertEqual(len(stand.api.calls), 2)
+        self.assertEqual(
+            airlines_item_of(flight)['request_context']['control_flight_id'],
+            OTHER_FLIGHT_ID)
+
+    # -- the control decides; without it a 404 is nothing ---------------------
+
+    def test_a_404_without_any_control_is_not_absence(self):
+        stand = _DescriptorStand({descriptor_path(FLIGHT_ID): not_found()})
+        flight = stand.visit()
+        # Mid-run nothing is decided: a reference may still come.
+        self.assertEqual(stand.run.confirm_absences(final=False), [])
+        self.assertEqual(flight.descriptor, DESCRIPTOR_PENDING)
+        stand.run.confirm_absences(final=True)
+        self.assertEqual(flight.descriptor, DESCRIPTOR_UNCONFIRMED)
+        self.assert_not_absence(stand, flight)
+        self.assertEqual(len(stand.api.calls), 1)
+        self.assertFalse(stand.run.descriptor_control['ok'])
+
+    def test_a_failed_control_leaves_every_404_unconfirmed(self):
+        controls = {
+            'the control is 404 too': not_found(),
+            'the control is 401': _FakeApiResponse(401, b'{"code":401}'),
+            'the control is a redirect': _FakeApiResponse(302, b''),
+            'the control is 500': _FakeApiResponse(500, b'oops'),
+            'the control is an error envelope': _FakeApiResponse(
+                200, airlines_raw(OTHER_FLIGHT_ID, code=101)),
+            'the control is another shape': _FakeApiResponse(
+                200, json.dumps({'code': 0, 'data': {}}).encode()),
+            'the control is HTML': _FakeApiResponse(
+                200, b'<html>login</html>', 'text/html'),
+            'the control request failed': ConnectionError('NOT-REAL'),
+        }
+        for label, control in controls.items():
+            with self.subTest(label):
+                stand = _DescriptorStand(
+                    {descriptor_path(FLIGHT_ID): not_found(),
+                     descriptor_path(OTHER_FLIGHT_ID): control},
+                    reference_ids=[OTHER_FLIGHT_ID])
+                flight = stand.visit()
+                stand.run.confirm_absences(final=True)
+                self.assertEqual(flight.descriptor, DESCRIPTOR_UNCONFIRMED)
+                self.assert_not_absence(stand, flight)
+                self.assertEqual(len(stand.api.calls), 2)
+
+    def test_the_control_is_asked_once_per_run(self):
+        third = OTHER_FLIGHT_ID + 1
+        stand = _DescriptorStand(
+            {descriptor_path(FLIGHT_ID): not_found(),
+             descriptor_path(third): not_found(),
+             descriptor_path(OTHER_FLIGHT_ID): descriptor_ok(OTHER_FLIGHT_ID)},
+            reference_ids=[OTHER_FLIGHT_ID])
+        first = stand.visit()
+        second = stand.visit(third)
+        stand.run.confirm_absences(final=True)
+        self.assertEqual([first.descriptor, second.descriptor],
+                         [DESCRIPTOR_ABSENT, DESCRIPTOR_ABSENT])
+        self.assertEqual(stand.api.paths().count(
+            descriptor_path(OTHER_FLIGHT_ID)), 1)
+        self.assertEqual(len(stand.api.calls), 3)
+
+    # -- 4, 5: the direct descriptor answered 200 -----------------------------
+
+    def test_a_direct_descriptor_without_a_link_is_no_v4_url(self):
+        stand = _DescriptorStand(
+            {descriptor_path(FLIGHT_ID): descriptor_ok(FLIGHT_ID)})
+        flight = stand.visit()
+        self.assertEqual(flight.status, STATUS_NO_V4_URL)
+        self.assertTrue(flight.complete)
+        self.assertEqual(flight.descriptor, DESCRIPTOR_OK)
+        item = airlines_item_of(flight)
+        self.assertEqual(item['schema_version'], SCHEMA_AIRLINES_PATHS_ONLY)
+        self.assertEqual(item['request_context']['association'],
+                         DESCRIPTOR_ASSOCIATION)
+        self.assertEqual(item['request_context']['http_status'], 200)
+        self.assertEqual(stand.run.confirm_absences(final=True), [])
+        self.assertEqual(len(stand.api.calls), 1)
+
+    def test_a_direct_descriptor_with_a_link_brings_the_v4(self):
+        blob = v4_body()
+        stand = _DescriptorStand(
+            {descriptor_path(FLIGHT_ID): descriptor_ok(FLIGHT_ID,
+                                                       v4_url=V4_URL),
+             V4_PATH_ONLY: _FakeApiResponse(200, blob,
+                                            'application/octet-stream')})
+        flight = stand.visit()
+        self.assertEqual(flight.status, STATUS_V4)
+        self.assertTrue(flight.complete)
+        self.assertIs(flight.v4_url_present, True)
+        self.assertEqual(flight.items[SOURCE_V4].body, blob)
+        # The signed link is asked exactly once, and whole.
+        self.assertEqual([url for url, _kw in stand.api.calls],
+                         [API_HOST + descriptor_path(FLIGHT_ID), V4_URL])
+        self.assertEqual(stand.api.unexpected, [])
+        items = {item['source_type']: item
+                 for item in source_items(flight, RUN_ID)}
+        self.assertEqual(items[SOURCE_V4]['request_context']['path'],
+                         V4_PATH_ONLY)
+        self.assertEqual(items[SOURCE_V4]['sha256'],
+                         hashlib.sha256(blob).hexdigest())
+        for item in items.values():
+            text = json.dumps(item)
+            for secret in ('Signature', 'Expires', 'OSSAccessKeyId'):
+                self.assertNotIn(secret, text)
+            self.assertEqual(
+                body_secret_markers(base64.b64decode(item['body_b64'])), [])
+        self.assert_clean_log(stand)
+
+    def test_a_link_to_another_flights_v4_is_not_followed(self):
+        stand = _DescriptorStand(
+            {descriptor_path(FLIGHT_ID): descriptor_ok(
+                FLIGHT_ID, v4_url=v4_link_of(OTHER_FLIGHT_ID))})
+        flight = stand.visit()
+        self.assertEqual(stand.api.paths(), [descriptor_path(FLIGHT_ID)])
+        self.assertTrue(flight.v4_failed)
+        self.assertFalse(flight.has(SOURCE_V4))
+        self.assertFalse(flight.complete)
+        self.assertEqual(flight.status, STATUS_V4_FAILED)
+
+    def test_a_v4_that_does_not_come_is_a_failure_not_absence(self):
+        for label, answer in (
+                ('403', _FakeApiResponse(403, b'denied')),
+                ('empty', _FakeApiResponse(200, b'')),
+                ('network', ConnectionError('NOT-REAL'))):
+            with self.subTest(label):
+                stand = _DescriptorStand(
+                    {descriptor_path(FLIGHT_ID): descriptor_ok(
+                        FLIGHT_ID, v4_url=V4_URL),
+                     V4_PATH_ONLY: answer})
+                flight = stand.visit()
+                self.assertTrue(flight.v4_failed)
+                self.assertIs(flight.v4_url_present, True)
+                self.assertFalse(flight.complete)
+                self.assertEqual(flight.status, STATUS_V4_FAILED)
+
+    # -- 6: every other answer is NOT absence ---------------------------------
+
+    def test_an_answer_other_than_404_or_a_descriptor_is_not_absence(self):
+        answers = {
+            '401': _FakeApiResponse(401, b'{"code":401}'),
+            '403': _FakeApiResponse(403, b'forbidden', 'text/plain'),
+            'a redirect to sign-in': _FakeApiResponse(302, b''),
+            '500': _FakeApiResponse(500, b'error', 'text/plain'),
+            '502': _FakeApiResponse(502, b'bad gateway', 'text/plain'),
+            '503': _FakeApiResponse(503, b'', None),
+            'the request failed': ConnectionError('NOT-REAL'),
+            'the body could not be read': _FakeApiResponse(
+                200, b'', body_error=RuntimeError('NOT-REAL')),
+            'HTML served as 200': _FakeApiResponse(
+                200, b'<html>login</html>', 'text/html'),
+            'an error envelope as 200': _FakeApiResponse(
+                200, airlines_raw(FLIGHT_ID, code=101)),
+            'a success of another shape': _FakeApiResponse(
+                200, json.dumps({'code': 0, 'data': {}}).encode()),
+        }
+        for label, answer in answers.items():
+            with self.subTest(label):
+                stand = _DescriptorStand(
+                    {descriptor_path(FLIGHT_ID): answer,
+                     descriptor_path(OTHER_FLIGHT_ID):
+                         descriptor_ok(OTHER_FLIGHT_ID)},
+                    reference_ids=[OTHER_FLIGHT_ID])
+                flight = stand.visit()
+                self.assertEqual(stand.run.confirm_absences(final=True), [])
+                self.assert_not_absence(stand, flight)
+                self.assertIsNotNone(flight.descriptor)
+                # No control is asked: there is nothing to confirm.
+                self.assertEqual(stand.api.paths(),
+                                 [descriptor_path(FLIGHT_ID)])
+                self.assertEqual(flight.status, 'NO_V4')
+
+    # -- when the request is NOT made -----------------------------------------
+
+    def test_no_request_without_an_established_identity(self):
+        cases = {
+            'a card naming another flight': dict(script=[
+                step_finished(_FakeRequest(CARD_URL,
+                                           body=card_body(OTHER_FLIGHT_ID))),
+                step_finished(route_request())]),
+            'a route decoded as another flight': dict(
+                script=card_and_route(embedded_id=OTHER_FLIGHT_ID)),
+            'no card at all': dict(script=[step_finished(route_request())]),
+            'no route at all': dict(script=[step_finished(card_request())]),
+            'the descriptor is already queued': dict(
+                known_descriptors={FLIGHT_ID}),
+            'no request API on the page': dict(request=False),
+        }
+        for label, case in cases.items():
+            with self.subTest(label):
+                stand = _DescriptorStand(
+                    {descriptor_path(FLIGHT_ID): not_found()},
+                    reference_ids=[OTHER_FLIGHT_ID],
+                    request=case.get('request', True),
+                    known_descriptors=case.get('known_descriptors', ()))
+                flight = stand.visit(script=case.get('script'))
+                self.assertEqual(stand.api.calls, [])
+                self.assertIsNone(flight.descriptor)
+                self.assertEqual(stand.run.confirm_absences(final=True), [])
+                self.assertFalse(flight.complete)
+
+
+class DescriptorResumeTests(OutboxTestCase):
+    """7: a confirmed absence is final for the queue; nothing else is."""
+
+    def test_a_confirmed_absence_is_not_visited_again(self):
+        _stand, flight = confirmed_absence()
+        self.queue(flight)
+        known = known_sources(self.outbox)
+        self.assertEqual(sorted(known[FLIGHT_ID]),
+                         [SOURCE_AIRLINES, SOURCE_CARD, SOURCE_ROUTE])
+        self.assertTrue(flight_already_captured(FLIGHT_ID, known,
+                                                self.outbox))
+        envelope = self.outbox.read(known[FLIGHT_ID][SOURCE_AIRLINES])
+        self.assertIs(envelope['diagnostics']['v4_url_present'], False)
+
+    def test_an_unconfirmed_404_is_visited_again(self):
+        """NEGATIVE CONTROL: the same visit without a working control."""
+        stand = _DescriptorStand({descriptor_path(FLIGHT_ID): not_found()})
+        flight = stand.visit()
+        stand.run.confirm_absences(final=True)
+        self.queue(flight)
+        known = known_sources(self.outbox)
+        self.assertNotIn(SOURCE_AIRLINES, known[FLIGHT_ID])
+        self.assertFalse(flight_already_captured(FLIGHT_ID, known,
+                                                 self.outbox))
+
+
+class _ScriptedRecordPage(_FakePage):
+    """A record page per flight: `goto` loads that flight's own script."""
+
+    def __init__(self, scripts):
+        _FakePage.__init__(self)
+        self.scripts = scripts
+
+    def goto(self, url, **kwargs):
+        _FakePage.goto(self, url, **kwargs)
+        flight_id = int(url.rstrip('/').rsplit('/', 1)[1])
+        self.script = list(self.scripts.get(flight_id, []))
+
+
+class DescriptorSourcesRunTests(unittest.TestCase):
+    """`--sources` end to end, with the browser replaced and nothing sent."""
+
+    def setUp(self):
+        self._directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self._directory.cleanup)
+        self.root = Path(self._directory.name)
+        self.state_file = self.root / 'storage_state.json'
+        self.state_file.write_text(
+            '{"cookies": [{"name": "sid", "value": "SYNTHETIC-NOT-REAL"}], '
+            '"origins": []}', encoding='utf-8')
+        from drone_collector import browser as browser_module
+        from drone_collector import sources as sources_module
+        real_collector = browser_module.FlightCollector
+        real_clock = sources_module.monotonic_ms
+        self.addCleanup(setattr, browser_module, 'FlightCollector',
+                        real_collector)
+        self.addCleanup(setattr, sources_module, 'monotonic_ms', real_clock)
+        # [REASON]: the run waits on the real monotonic clock; a fake page
+        # does not sleep, so without this each unsettled visit would spin
+        # for the whole wait in real time.
+        sources_module.monotonic_ms = _Clock()
+        self.browser_module = browser_module
+
+    def run_sources(self, ids, scripts, answers):
+        from drone_collector import main as main_module
+        page = _ScriptedRecordPage(scripts)
+        api = _FakeApiRequest(answers)
+        page.request = api
+
+        class _Collector(object):
+            def __init__(self, _cfg, _log):
+                self.page = page
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        self.browser_module.FlightCollector = _Collector
+        ids_file = self.root / 'ids.txt'
+        ids_file.write_text('\n'.join(str(i) for i in ids) + '\n',
+                            encoding='utf-8')
+        args = main_module.build_parser().parse_args(
+            ['--sources', '--ids-file', str(ids_file)])
+        cfg = source_config(outbox_dir=self.root / 'outbox')
+        cfg.storage_state = self.state_file
+        state = {}
+        log = _QuietLog()
+        code = main_module._run_sources(args, cfg, log, state)
+        return code, state, page, api, log
+
+    def outbox(self):
+        return Outbox(self.root / 'outbox').prepare()
+
+    def live_case(self):
+        scripts = {OTHER_FLIGHT_ID: full_visit_script(OTHER_FLIGHT_ID),
+                   FLIGHT_ID: card_and_route()}
+        answers = {descriptor_path(FLIGHT_ID): not_found(),
+                   descriptor_path(OTHER_FLIGHT_ID): descriptor_ok(
+                       OTHER_FLIGHT_ID, v4_url=v4_link_of(OTHER_FLIGHT_ID))}
+        return scripts, answers
+
+    def test_the_live_case_ends_in_zero_and_is_not_visited_again(self):
+        from drone_collector import main as main_module
+        scripts, answers = self.live_case()
+        code, state, page, api, log = self.run_sources(
+            [OTHER_FLIGHT_ID, FLIGHT_ID], scripts, answers)
+        self.assertEqual(code, main_module.EXIT_OK, log.text())
+        self.assertEqual(state['sources_descriptor_absent'], 1)
+        self.assertEqual(state['sources_descriptor_requests'], 2)
+        self.assertEqual(state['sources_descriptor_control'], 'OK')
+        self.assertEqual(state['sources_descriptor_unconfirmed'], 0)
+        self.assertEqual(state['sources_descriptor_refused'], 0)
+        self.assertEqual(api.unexpected, [])
+        outbox = self.outbox()
+        known = known_sources(outbox)
+        self.assertEqual(sorted(known[FLIGHT_ID]),
+                         [SOURCE_AIRLINES, SOURCE_CARD, SOURCE_ROUTE])
+        envelope = outbox.read(known[FLIGHT_ID][SOURCE_AIRLINES])
+        self.assertEqual(envelope['body']['schema_version'],
+                         SCHEMA_AIRLINES_DESCRIPTOR_ABSENT)
+        self.assertIs(envelope['diagnostics']['v4_url_present'], False)
+        # 7. The next run of the same list visits nothing and asks nothing.
+        code, state, page, api, _log = self.run_sources(
+            [OTHER_FLIGHT_ID, FLIGHT_ID], scripts, answers)
+        self.assertEqual(code, main_module.EXIT_OK)
+        self.assertEqual(state['sources_skipped_known'], 2)
+        self.assertEqual(page.goto_calls, [])
+        self.assertEqual(api.calls, [])
+
+    def test_an_unconfirmed_404_ends_in_eighteen_and_is_visited_again(self):
+        """NEGATIVE CONTROL: no flight with a descriptor, no control."""
+        from drone_collector import main as main_module
+        scripts = {FLIGHT_ID: card_and_route()}
+        answers = {descriptor_path(FLIGHT_ID): not_found()}
+        code, state, _page, _api, _log = self.run_sources(
+            [FLIGHT_ID], scripts, answers)
+        self.assertEqual(code, main_module.EXIT_SOURCES_INCOMPLETE)
+        self.assertEqual(state['sources_descriptor_absent'], 0)
+        self.assertEqual(state['sources_descriptor_unconfirmed'], 1)
+        self.assertEqual(state['sources_descriptor_control'], 'FAILED')
+        self.assertNotIn(SOURCE_AIRLINES,
+                         known_sources(self.outbox())[FLIGHT_ID])
+        code, _state, page, _api, _log = self.run_sources(
+            [FLIGHT_ID], scripts, answers)
+        self.assertEqual(code, main_module.EXIT_SOURCES_INCOMPLETE)
+        self.assertEqual(len(page.goto_calls), 1)
+
+    def test_a_flight_already_queued_with_its_v4_is_a_later_runs_control(self):
+        from drone_collector import main as main_module
+        scripts, answers = self.live_case()
+        code, _state, _page, _api, _log = self.run_sources(
+            [OTHER_FLIGHT_ID], scripts, answers)
+        self.assertEqual(code, main_module.EXIT_OK)
+        code, state, _page, api, log = self.run_sources(
+            [FLIGHT_ID], scripts, answers)
+        self.assertEqual(code, main_module.EXIT_OK, log.text())
+        self.assertEqual(state['sources_descriptor_absent'], 1)
+        self.assertEqual(api.paths(), [descriptor_path(FLIGHT_ID),
+                                       descriptor_path(OTHER_FLIGHT_ID)])
+
+    def test_a_refused_descriptor_ends_in_eighteen(self):
+        from drone_collector import main as main_module
+        scripts, answers = self.live_case()
+        answers[descriptor_path(FLIGHT_ID)] = _FakeApiResponse(403, b'no')
+        code, state, _page, api, _log = self.run_sources(
+            [OTHER_FLIGHT_ID, FLIGHT_ID], scripts, answers)
+        self.assertEqual(code, main_module.EXIT_SOURCES_INCOMPLETE)
+        self.assertEqual(state['sources_descriptor_refused'], 1)
+        self.assertEqual(state['sources_descriptor_absent'], 0)
+        self.assertIsNone(state['sources_descriptor_control'])
+        self.assertEqual(api.paths(), [descriptor_path(FLIGHT_ID)])
 
 
 if __name__ == '__main__':

@@ -304,6 +304,9 @@ SOURCES_SUMMARY_KEYS = (
     'sources_no_v4', 'sources_v4_failed', 'sources_page_errors',
     'sources_route_identity_mismatch', 'sources_rejected',
     'sources_airlines_unmatched',
+    'sources_descriptor_requests', 'sources_descriptor_absent',
+    'sources_descriptor_unconfirmed', 'sources_descriptor_refused',
+    'sources_descriptor_control',
     'sources_listener_errors', 'sources_oversized', 'sources_queued',
     'sources_duplicates', 'sources_queue_refused', 'send_enabled',
     'sources_envelopes_sent', 'sources_left_pending', 'sources_batch_accepted',
@@ -1752,7 +1755,9 @@ def _run_sources(args, cfg, log, state):
         return EXIT_SESSION
 
     try:
-        from drone_collector.sources import (SOURCES_MODE_VERSION,
+        from drone_collector.sources import (SOURCE_AIRLINES,
+                                             SOURCES_MODE_VERSION,
+                                             VISIT_SOURCE_TYPES,
                                              SourceCapture, SourceRun,
                                              capture_run_id,
                                              drain_source_outbox,
@@ -1803,7 +1808,18 @@ def _run_sources(args, cfg, log, state):
 
             page = collector.page
             capture.attach(page)
-            runner = SourceRun(page, capture, cfg, logger=log)
+            # [REASON]: a flight whose V4 is already in the queue had a
+            # descriptor -- the page fetched it to reach the V4. Such a flight
+            # is a valid reference for the control of the direct descriptor
+            # request when this run has not seen one of its own.
+            references = sorted((fid for fid, types in known.items()
+                                 if 'v4' in types), reverse=True)[:5]
+            runner = SourceRun(page, capture, cfg, logger=log,
+                               reference_ids=references)
+            # A flight whose descriptor is already queued is missing its V4,
+            # not its descriptor: no direct descriptor request for it.
+            runner.known_descriptors = {fid for fid, types in known.items()
+                                        if 'airlines' in types}
 
             skipped = 0
             for index, flight_id in enumerate(ids, start=1):
@@ -1840,6 +1856,27 @@ def _run_sources(args, cfg, log, state):
                     break
                 if index < len(ids):
                     runner.pause()
+            # A 404 for a descriptor waits until every flight whose
+            # descriptor the page itself received is known: then ONE control
+            # request decides whether the 404s are DJI's answer. Inside the
+            # browser block -- the control needs the signed-in context.
+            for flight in runner.confirm_absences(final=True):
+                # Only the absence record is new; card and route of the
+                # flight went into the queue with its visit.
+                late_items = source_items(
+                    flight, run_id,
+                    exclude=(set(VISIT_SOURCE_TYPES) - {SOURCE_AIRLINES})
+                    | set(known.get(flight.flight_id, {})))
+                items.extend(late_items)
+                if outbox is not None and late_items:
+                    result = enqueue_sources(
+                        outbox, late_items, flight=flight,
+                        diagnostics={'mode_version': SOURCES_MODE_VERSION},
+                        logger=log)
+                    queued += result.queued
+                    duplicates += result.duplicates
+                    refused += result.too_large + result.secret_refused
+            _account_for_descriptors(flights, runner, state)
             state['sources_skipped_known'] = skipped
     except errors as exc:
         log.error('%s', exc)
@@ -1891,6 +1928,23 @@ def _run_sources(args, cfg, log, state):
                     'the missing flights will be visited.')
         return EXIT_SOURCES_INCOMPLETE
     return EXIT_OK
+
+
+def _account_for_descriptors(flights, runner, state):
+    """Counters of the direct descriptor request of one --sources run."""
+    from drone_collector.sources import (DESCRIPTOR_ABSENT, DESCRIPTOR_OK,
+                                         DESCRIPTOR_UNCONFIRMED)
+    state['sources_descriptor_requests'] = runner.descriptor_requests
+    state['sources_descriptor_absent'] = sum(
+        1 for f in flights if f.descriptor == DESCRIPTOR_ABSENT)
+    state['sources_descriptor_unconfirmed'] = sum(
+        1 for f in flights if f.descriptor == DESCRIPTOR_UNCONFIRMED)
+    state['sources_descriptor_refused'] = sum(
+        1 for f in flights if f.descriptor not in (
+            None, DESCRIPTOR_OK, DESCRIPTOR_ABSENT, DESCRIPTOR_UNCONFIRMED))
+    control = runner.descriptor_control
+    state['sources_descriptor_control'] = (
+        None if control is None else ('OK' if control['ok'] else 'FAILED'))
 
 
 def _account_for_sources(flights, capture, state):

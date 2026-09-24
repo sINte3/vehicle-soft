@@ -124,6 +124,27 @@ class Fixture(object):
         con.execute('COMMIT')
         con.close()
 
+    def add_airlines(self, flight_id, body, **kwargs):
+        """An airlines revision through the frozen store, as the receiver
+        keeps it -- no shortcut to the evidence row."""
+        con = store.connect(self.db)
+        root = store.source_root(os.path.abspath(self.db))
+        store.begin_immediate(con)
+        store.upsert_source_revision(con, root, 'airlines', body,
+                                     flight_id=flight_id, **kwargs)
+        store.refresh_flight_evidence(con, root, flight_id)
+        con.execute('COMMIT')
+        con.close()
+
+    def absent_reason(self, flight_id):
+        con = sqlite3.connect(self.db)
+        try:
+            return con.execute('SELECT v4_absent_reason FROM '
+                               'dji_flight_evidence WHERE flight_id = ?',
+                               (flight_id,)).fetchone()[0]
+        finally:
+            con.close()
+
     def mark_no_v4_at_source(self, flight_id):
         con = sqlite3.connect(self.db)
         con.execute("UPDATE dji_flight_evidence SET v4_absent_reason = "
@@ -225,6 +246,46 @@ class NoEndlessCapture(Base):
         self.assertEqual(manifest['no_v4_at_source'][0]['v4_state'],
                          cm.V4_ABSENT_AT_SOURCE)
         self.assertEqual(manifest['counts']['candidates_no_v4_at_source'], 1)
+
+    def test_a_confirmed_descriptor_404_stops_the_daily_visit(self):
+        """Live case 715984635 through the frozen store, no shortcut.
+
+        The collector's record of a descriptor answered with HTTP 404 (and
+        confirmed by its control request) is an airlines revision like any
+        other: the store reads it as NO_V4_URL_AT_SOURCE, and the manifest
+        names the candidate instead of asking for it every day.
+        """
+        from drone_collector.sources import (
+            DESCRIPTOR_ASSOCIATION, SCHEMA_AIRLINES_DESCRIPTOR_ABSENT,
+            airlines_bytes, descriptor_absence_document)
+        target = CANDIDATES[1]
+        answer = b'404 page not found\n'
+        body = airlines_bytes(descriptor_absence_document(
+            target, answer, 'text/plain; charset=utf-8'))
+        self.fx.add_airlines(
+            target, body, schema_version=SCHEMA_AIRLINES_DESCRIPTOR_ABSENT,
+            request_context={'path': '/api/web/v2/airlines/%d' % target,
+                             'association': DESCRIPTOR_ASSOCIATION,
+                             'http_status': 404,
+                             'control_flight_id': CANDIDATES[0],
+                             'control_http_status': 200})
+        self.assertEqual(self.fx.absent_reason(target), 'NO_V4_URL_AT_SOURCE')
+        manifest = self.fx.manifest()
+        self.assertNotIn(target, self.ids(manifest['capture']))
+        self.assertEqual(self.ids(manifest['no_v4_at_source']), [target])
+        self.assertEqual(manifest['no_v4_at_source'][0]['v4_state'],
+                         cm.V4_ABSENT_AT_SOURCE)
+        # The other candidates are still asked for: nothing leaked.
+        for other in (CANDIDATES[0], CANDIDATES[2], CANDIDATES[3]):
+            self.assertIn(other, self.ids(manifest['capture']))
+
+    def test_the_404_bytes_stored_as_they_came_are_not_absence(self):
+        """NEGATIVE CONTROL: the same 19 bytes, kept as if they were the
+        descriptor, say nothing about V4 -- the flight is still asked for."""
+        target = CANDIDATES[1]
+        self.fx.add_airlines(target, b'404 page not found\n')
+        self.assertEqual(self.fx.absent_reason(target), 'NOT_CAPTURED')
+        self.assertIn(target, self.ids(self.fx.manifest()['capture']))
 
     def test_the_other_absent_reason_still_needs_a_capture(self):
         # Отрицательный контроль: «не захвачено» -- НЕ «у DJI нет».

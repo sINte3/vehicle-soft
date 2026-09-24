@@ -629,6 +629,43 @@ class NoV4AtSource(Base):
                          (tool.EXIT_OK, tool.OUTCOME_SUCCESS, []))
         self.assertEqual(result['candidates_no_v4_at_source'], [])
 
+    def test_the_live_case_715984635_is_a_warning_not_a_failure(self):
+        """The staging incident, after the fix and as it was.
+
+        The page never asked for the descriptor. Now the direct request
+        answers 404, its control proves the request reaches DJI, the
+        collector ends in 0 and the re-read manifest names the one candidate
+        no-V4-at-source: SUCCESS_WITH_WARNINGS, never FAILED.
+        """
+        live = 715984635
+        runner = FakeRunner(capture=[cand(live)], after=[], no_v4=[],
+                            no_v4_after=[live])
+        code, result = self.cycle_result(runner)
+        self.assertEqual(code, tool.EXIT_OK)
+        self.assertEqual(result['outcome'], tool.OUTCOME_WARNINGS)
+        self.assertEqual(result['warnings'], [tool.WARNING_CANDIDATE_NO_V4])
+        self.assertIsNone(result['failure'])
+        self.assertEqual(result['candidates_no_v4_at_source'], [live])
+        self.assertFalse((result.get('evidence_misses') or {})
+                         .get('candidates'))
+        self.assertIn(tool.STEP_RECALC, runner.steps())
+        # The next day the manifest no longer asks for it: no DJI visit.
+        runner = FakeRunner(capture=[], no_v4=[live])
+        code, result = self.cycle_result(runner)
+        self.assertEqual((code, result['outcome'], result['warnings']),
+                         (tool.EXIT_OK, tool.OUTCOME_WARNINGS,
+                          [tool.WARNING_CANDIDATE_NO_V4]))
+        self.assertNotIn(tool.STEP_SOURCES, runner.steps())
+        # NEGATIVE CONTROL -- the incident as it was: the collector ended in
+        # 18 and the candidate was still asked for.
+        runner = FakeRunner(capture=[cand(live)], after=[cand(live)],
+                            no_v4=[], no_v4_after=[],
+                            codes={tool.STEP_SOURCES: 18})
+        code, result = self.cycle_result(runner)
+        self.assertEqual(code, tool.EXIT_CANDIDATE_EVIDENCE_MISSING)
+        self.assertEqual(result['outcome'], tool.OUTCOME_FAILED)
+        self.assertEqual(result['evidence_misses']['candidates'], [live])
+
     def test_no_v4_joins_the_verdicts_of_an_incomplete_capture(self):
         runner = FakeRunner(capture=[cand(701), ctrl(702)], after=[ctrl(702)],
                             no_v4=[], no_v4_after=[701],
