@@ -216,6 +216,7 @@ command line.
 | 16 | `--route-ui-collect`: traffic arrived but the set is **incomplete**. | Nothing was queued. Either a response body did not decode, or the requested and returned id sets differ. A partially collected day stored in the database is indistinguishable from a complete one: the work would get fewer routes than existed and compute its useful area as if the input were whole. |
 | 17 | `--send-routes`: the endpoint answered, but did **not accept the whole batch**. | The queue is intact — every envelope stayed in `pending/` and the next run sends them again. The message names which of the four conditions failed: a rejected route, a route naming a flight Vehicle Soft does not have, counters that do not add up, or a `seen` below the number sent. For `unlinked`, sync the flights first and run `--send-routes` again. |
 | 24 | Another collector run holds the **collector lock** and the wait ran out. | Nothing was collected and nothing was sent. The log names the holder (pid, host, mode, start). Wait for it to finish; the wait is `DJI_COLLECTOR_LOCK_WAIT_S` seconds (default 1800, `0` = do not wait). |
+| 25 | Historical backfill only (`--empty-proof-flight`/`--empty-proof-day`): the window is **empty, and that is proven**. | Nothing to do and nothing was sent. The same session, right after the empty answer, walked the control day and listed at least one of the named flights Vehicle Soft knows. Without those flags an empty window is still 6. |
 
 Codes **8** and **9** are deliberately absent from this table: they belong to
 the other entry point of this package, `python -m drone_collector.devices`
@@ -229,6 +230,23 @@ successful and collects nothing. Exit 7 is the fast diagnosis and needs a
 selector that has never been confirmed. Exit 6 needs no selector and is the
 one that actually protects the data — which is why an empty window is a
 failure by default rather than a quiet success.
+
+A historical backfill legitimately meets empty days (live, 2026-09-24: the
+window 2026-03-01 walked 2026-02-28..03-02, got zero flights and stopped on
+exit 6; a positive control over 2026-03-03..03-05 returned exactly the two
+flights the database holds for 03-04). So `tools/dji_area_backfill.py` may
+hand the flight walk `--empty-proof-flight ID` (up to five) and
+`--empty-proof-day DAY`: flights of **our** drones that Vehicle Soft knows on
+the nearest report day outside the walk. When the window comes back empty,
+the same session, in the same process, walks that day with a day of margin;
+if at least one named id is listed, the run ends in **25** and sends nothing.
+If none is — the control walk is empty, incomplete, or lists only other
+flights — it ends in **6** as before: a session in another region or account
+can return a non-empty list, but not one of our flight ids. The proof is
+never stored and reused; every empty window is proven by its own session.
+`DJI_ALLOW_EMPTY_WINDOW` is ignored when the flags are given. The flags are
+refused outside `--from/--to --kind backfill`, and a control day inside the
+period is refused.
 
 Exit 3 deserves its own sentence, because it is the one that looks like an
 over-reaction. After the dates are typed into the picker, the collector reads
