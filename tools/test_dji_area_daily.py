@@ -740,6 +740,81 @@ class NoV4AtSource(Base):
         self.assertEqual(written['outcome'], 'SUCCESS_WITH_WARNINGS')
 
 
+class EmptyWindowProof(Base):
+    """Исторический backfill: доказанно пустое окно -- не сбой FLIGHTS.
+
+    Суточный прогон и кнопка флагов доказательства не получают: их команда
+    обхода та же, что была, и пустой свежий день по-прежнему останавливает
+    цикл.
+    """
+
+    PROOF = ('--from', '2026-03-01', '--to', '2026-03-01', '--flights-kind',
+             'backfill', '--empty-proof-flight', '558595607',
+             '--empty-proof-day', '2026-03-04')
+
+    def flights_command(self, runner):
+        return [c for s, c in runner.commands if s == tool.STEP_FLIGHTS][0]
+
+    def test_without_the_flags_the_flight_walk_is_unchanged(self):
+        for extra in ((), ('--from', '2026-09-16', '--to', '2026-09-18')):
+            runner = FakeRunner()
+            self.run_cycle(runner, *extra)
+            command = self.flights_command(runner)
+            self.assertFalse([t for t in command if 'empty-proof' in t])
+            self.assertEqual(command[command.index('--kind') + 1],
+                             'incremental')
+
+    def test_a_proven_empty_window_goes_on_to_the_manifest_and_recalc(self):
+        runner = FakeRunner(ids=(), codes={tool.STEP_FLIGHTS: 25})
+        code, result = self.cycle_result(runner, *self.PROOF)
+        self.assertEqual(code, tool.EXIT_OK)
+        self.assertEqual(result['outcome'], tool.OUTCOME_SUCCESS)
+        self.assertIsNone(result['failure'])
+        self.assertEqual(runner.steps(), [tool.STEP_FLIGHTS,
+                                          tool.STEP_MANIFEST,
+                                          tool.STEP_RECALC])
+        self.assertEqual(result['steps'][tool.STEP_FLIGHTS], 25)
+        command = self.flights_command(runner)
+        self.assertEqual(command[command.index('--empty-proof-flight') + 1],
+                         '558595607')
+        self.assertEqual(command[command.index('--empty-proof-day') + 1],
+                         '2026-03-04')
+        self.assertEqual(command[command.index('--kind') + 1], 'backfill')
+
+    def test_an_unproven_empty_window_still_stops_the_cycle(self):
+        """NEGATIVE CONTROL: the same window, exit 6 -- as before the fix."""
+        runner = FakeRunner(ids=(), codes={tool.STEP_FLIGHTS: 6})
+        code, result = self.cycle_result(runner, *self.PROOF)
+        self.assertEqual(code, tool.EXIT_STEP_FAILED)
+        self.assertEqual(result['failed_step'], tool.STEP_FLIGHTS)
+        self.assertEqual(runner.steps(), [tool.STEP_FLIGHTS])
+
+    def test_the_flags_are_refused_where_they_do_not_belong(self):
+        base = ['--db', self.db, '--work-dir', self.work]
+        cases = {
+            'one without the other': self.PROOF[:-2],
+            'the rolling window': ('--flights-kind', 'backfill',
+                                   '--empty-proof-flight', '1',
+                                   '--empty-proof-day', '2026-03-04'),
+            'an incremental walk': self.PROOF[:4] + self.PROOF[6:],
+            'the button': ('--run-queued', '--empty-proof-flight', '1',
+                           '--empty-proof-day', '2026-03-04'),
+            'no DJI at all': self.PROOF + ('--no-dji',),
+            'recalculation only': self.PROOF + ('--recalc-only',),
+        }
+        for label, extra in cases.items():
+            with self.subTest(label):
+                args = tool.build_parser().parse_args(base + list(extra))
+                self.assertTrue(tool.check_invocation(args))
+        args = tool.build_parser().parse_args(base + list(self.PROOF))
+        self.assertIsNone(tool.check_invocation(args))
+
+    def test_the_code_is_the_collectors_own(self):
+        from drone_collector import main as collector_main
+        self.assertEqual(tool.COLLECTOR_EMPTY_WINDOW_PROVEN,
+                         collector_main.EXIT_EMPTY_WINDOW_PROVEN)
+
+
 class NoDji(Base):
 
     def test_no_dji_runs_only_the_steps_that_stay_at_home(self):

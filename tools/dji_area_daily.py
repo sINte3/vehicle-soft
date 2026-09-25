@@ -124,6 +124,9 @@ EXIT_BUSY = 7
 COLLECTOR_SOURCES_INCOMPLETE = 18
 COLLECTOR_MANIFEST_TOO_LARGE = 22
 COLLECTOR_BUSY = 24
+# Окно пусто, и та же сессия доказала, что видит наши вылеты (только с
+# --empty-proof-*, то есть в историческом backfill): не сбой шага FLIGHTS.
+COLLECTOR_EMPTY_WINDOW_PROVEN = 25
 
 STEP_FLIGHTS = 'FLIGHTS'
 STEP_MANIFEST = 'MANIFEST'
@@ -293,10 +296,16 @@ def plan(args, date_from, date_to, work_dir):
         return [recalc_step], paths
     steps = []
     if not args.no_dji:
-        steps.append((STEP_FLIGHTS, [
-            collector, '-m', 'drone_collector.main', '--from', walk_from,
-            '--to', walk_to, '--kind',
-            getattr(args, 'flights_kind', None) or 'incremental']))
+        flights = [collector, '-m', 'drone_collector.main', '--from',
+                   walk_from, '--to', walk_to, '--kind',
+                   getattr(args, 'flights_kind', None) or 'incremental']
+        # Только исторический backfill передаёт контроль пустого окна; без
+        # него команда обхода та же, что и была.
+        for flight_id in getattr(args, 'empty_proof_flights', None) or ():
+            flights += ['--empty-proof-flight', str(flight_id)]
+        if getattr(args, 'empty_proof_day', None):
+            flights += ['--empty-proof-day', args.empty_proof_day]
+        steps.append((STEP_FLIGHTS, flights))
     steps.append((STEP_MANIFEST, manifest_command(
         collector, ids_file, manifest_json, date_from, date_to,
         args.stop_above)))
@@ -609,7 +618,15 @@ def run_cycle(args, runner=run_command, today=None, out=say, ledger=None,
                 out('  flights   seen=%(seen)s new=%(new)s duplicates='
                     '%(duplicates)s unresolved=%(unresolved)s errors='
                     '%(errors)s sync_runs=%(sync_runs)s' % stats)
-            if code != 0:
+            if code == COLLECTOR_EMPTY_WINDOW_PROVEN:
+                # [REASON]: пустое окно -- не сбой, но только доказанное: та
+                # же сессия в том же процессе нашла известный контрольный
+                # вылет. Недоказанное пустое окно приходит прежним кодом 6 и
+                # останавливает цикл ниже, как и раньше.
+                out('  flights   the walk is empty, and the same session '
+                    'lists a known control flight: the window has no '
+                    'flights')
+            elif code != 0:
                 failure, hint = step_failure(code)
                 out('STOP: step %s failed with exit %d%s' % (name, code, hint))
                 note(EXIT_STEP_FAILED, failure, name)
@@ -1096,6 +1113,14 @@ def build_parser():
                         action='store_true',
                         help='run the cycle the "refresh DJI data" button '
                              'queued, over the default rolling window')
+    parser.add_argument('--empty-proof-flight', dest='empty_proof_flights',
+                        metavar='DJI_ID', type=int, action='append',
+                        help='historical backfill only: passed to the flight '
+                             'walk, see drone_collector.main')
+    parser.add_argument('--empty-proof-day', dest='empty_proof_day',
+                        metavar='YYYY-MM-DD',
+                        help='historical backfill only: the report day of '
+                             'the --empty-proof-flight flights')
     return parser
 
 
@@ -1103,6 +1128,28 @@ def check_invocation(args):
     """Сочетания, которые не имеют смысла при любом окне. Строка -- отказ."""
     if args.lock_wait is not None and not 0 <= args.lock_wait < float('inf'):
         return '--lock-wait must be a finite number of seconds, not negative'
+    proof = [flag for flag, on in (
+        ('--empty-proof-flight', args.empty_proof_flights),
+        ('--empty-proof-day', args.empty_proof_day)) if on]
+    if proof:
+        # [REASON]: доказательство пустого окна снимает защиту пустого окна
+        # для одного обхода; оно -- только для исторического прохода с явным
+        # окном. Суточный прогон, кнопка и режимы без обхода вылетов его не
+        # получают: без обхода доказывать нечего, а в свежем дне пустота
+        # по-прежнему тревога.
+        if len(proof) != 2:
+            return ('--empty-proof-flight and --empty-proof-day are given '
+                    'together or not at all')
+        conflicting = [flag for flag, on in (
+            ('--run-queued', args.run_queued), ('--no-dji', args.no_dji),
+            ('--recalc-only', args.recalc_only)) if on]
+        if conflicting:
+            return ('an empty-window proof belongs to the flight walk; it '
+                    'does not go with %s' % ', '.join(conflicting))
+        if not (args.date_from and args.date_to) \
+                or args.flights_kind != 'backfill':
+            return ('an empty-window proof is for a historical backfill: '
+                    'give --from, --to and --flights-kind backfill')
     if args.run_queued:
         # [REASON]: запрос из браузера не несёт ни одного аргумента -- окно,
         # режим и интерпретаторы задаёт командная строка исполнителя. Полный

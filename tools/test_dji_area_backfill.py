@@ -672,5 +672,370 @@ class RawAndSummary(Base):
         self.assertTrue(all(ord(ch) < 128 for ch in text), text)
 
 
+
+class _ProofDatabase(Base):
+    """База с формой staging: первые вылеты диапазона 04.03, дальше 08.03;
+    вылет нераспознанного борта 10.03. Тестов здесь нет."""
+
+    def make_db(self):
+        con = sqlite3.connect(self.db)
+        con.execute('CREATE TABLE drone_flights (id INTEGER PRIMARY KEY, '
+                    'dji_flight_id BIGINT, drone_unit_id INTEGER, '
+                    'started_at DATETIME, area_ha FLOAT)')
+        con.execute('CREATE TABLE dji_area_calculations (id INTEGER PRIMARY '
+                    'KEY, flight_id BIGINT, area_algorithm_version TEXT, '
+                    'superseded_at DATETIME, report_start_date DATE, '
+                    'raw_area_m2 FLOAT, corrected_recorded_area_m2 FLOAT, '
+                    'controller_delta_area_m2 FLOAT, area_status TEXT, '
+                    'aggregation_eligibility TEXT, structural_candidate '
+                    'BOOLEAN, scalar_source_check BOOLEAN, '
+                    'anomaly_flags_json TEXT)')
+        rows = [(558595607, 1, '2026-03-04 06:29:50.000000', 0.208),
+                (558595608, 2, '2026-03-04 07:10:00.000000', 0.5),
+                (558700001, 1, '2026-03-08 04:00:00.000000', 1.1),
+                # Не наш борт (ник не распознан): контролем не служит.
+                (558600001, None, '2026-03-10 05:00:00.000000', 0.4)]
+        con.executemany('INSERT INTO drone_flights (dji_flight_id, '
+                        'drone_unit_id, started_at, area_ha) VALUES '
+                        '(?, ?, ?, ?)', rows)
+        con.commit()
+        con.close()
+
+
+class EmptyWindowProof(_ProofDatabase):
+    """Законно пустой исторический день -- DONE, но только с доказательством.
+
+    Staging, 2026-09-24/25: окно 2026-03-01 обошло 28.02..02.03, получило ноль
+    вылетов, Guard A сборщика дал 6, окно FAILED. Живой контроль 03..05.03
+    вернул ровно два вылета 04.03, которые база знает.
+    """
+
+    RANGE = ('--from', '2026-03-01', '--to', '2026-03-03')
+
+    def flights_commands(self, runner):
+        return {w: c for w, s, c in runner.commands
+                if s == daily.STEP_FLIGHTS}
+
+    @staticmethod
+    def proof_of(command):
+        flights = [command[i + 1] for i, token in enumerate(command)
+                   if token == '--empty-proof-flight']
+        day = (command[command.index('--empty-proof-day') + 1]
+               if '--empty-proof-day' in command else None)
+        return flights, day
+
+    # -- 2: the live window of 01.03 --------------------------------------
+
+    def test_the_live_empty_day_is_done_with_its_proof(self):
+        runner = WindowRunner(codes={'2026-03-01': {daily.STEP_FLIGHTS: 25}})
+        self.assertEqual(self.main(runner, '--from', '2026-03-01', '--to',
+                                   '2026-03-01'), tool.EXIT_OK)
+        command = self.flights_commands(runner)['2026-03-01']
+        self.assertEqual(self.proof_of(command),
+                         (['558595607', '558595608'], '2026-03-04'))
+        self.assertEqual(command[command.index('--from') + 1], '2026-02-28')
+        self.assertEqual([s for w, s, _c in runner.commands],
+                         [daily.STEP_FLIGHTS, daily.STEP_MANIFEST,
+                          daily.STEP_RECALC])
+        entry = self.load()['windows']['2026-03-01..2026-03-01']
+        self.assertEqual((entry['status'], entry['attempts']),
+                         (tool.STATUS_DONE, 1))
+        self.assertEqual(entry['empty_window_proof'],
+                         {'control_day': '2026-03-04',
+                          'control_flights': [558595607, 558595608],
+                          'flights_exit': 25})
+
+    def test_the_staging_checkpoint_resumes_as_it_is(self):
+        """The real qualification checkpoint of 24.09 -- no cleanup."""
+        os.makedirs(os.path.dirname(self.checkpoint))
+        live = {'version': 1,
+                'range': {'from': '2026-03-01', 'to': '2026-09-24'},
+                'window_days': 1, 'database': tool.database_key(self.db),
+                'windows': {'2026-03-01..2026-03-01': {
+                    'status': 'FAILED', 'attempts': 1, 'last_exit': 3,
+                    'outcome': 'FAILED', 'failure': 'STEP_FAILED',
+                    'manifest': None, 'warnings': [],
+                    'area_algorithm_version': VERSION,
+                    'evidence_misses': {'candidates': [], 'controls': []},
+                    'candidates_no_v4_at_source': [],
+                    'finished_at_utc': '2026-09-24T10:00:00',
+                    'unresolved': {'pending': 0, 'review': 0,
+                                   'no_v4_at_source': 0, 'flight_ids': [],
+                                   'records': []}}}}
+        with io.open(self.checkpoint, 'w', encoding='utf-8') as fh:
+            json.dump(live, fh)
+        runner = WindowRunner(codes={'2026-03-01': {daily.STEP_FLIGHTS: 25}})
+        code = tool.main(['--db', self.db, '--checkpoint', self.checkpoint,
+                          '--from', '2026-03-01', '--to', '2026-09-24',
+                          '--max-windows', '1'], runner=runner,
+                         out=self.lines.append, today=date(2026, 9, 25))
+        self.assertEqual(code, tool.EXIT_STOPPED)
+        self.assertEqual(runner.windows(), ['2026-03-01'])
+        entry = self.load()['windows']['2026-03-01..2026-03-01']
+        self.assertEqual((entry['status'], entry['attempts'],
+                          entry['last_exit']), (tool.STATUS_DONE, 2, 0))
+        self.assertEqual(entry['empty_window_proof']['control_day'],
+                         '2026-03-04')
+
+    # -- 3, 4: a proof that fails stops everything and charges nothing ----
+
+    def test_a_failed_proof_stops_the_backfill_and_charges_nothing(self):
+        broken = {'2026-03-01': {daily.STEP_FLIGHTS: 6}}
+        for attempt in range(4):
+            runner = WindowRunner(codes=broken)
+            del self.lines[:]
+            self.assertEqual(self.main(runner, *self.RANGE),
+                             tool.EXIT_DATASET_UNPROVEN)
+            # Ни одного следующего окна и ни одного шага после обхода.
+            self.assertEqual([(w, s) for w, s, _c in runner.commands],
+                             [('2026-03-01', daily.STEP_FLIGHTS)])
+            document = self.load()
+            self.assertNotIn('2026-03-01..2026-03-01', document['windows'])
+            self.assertEqual(len(document['stops']), attempt + 1)
+        stop = document['stops'][-1]
+        self.assertEqual((stop['window'], stop['flights_exit'],
+                          stop['reason'], stop['control_day']),
+                         ('2026-03-01..2026-03-01', 6,
+                          'EMPTY_WINDOW_NOT_PROVEN', '2026-03-04'))
+        self.assertIn('Exit 9', '\n'.join(self.lines))
+        # Сессию исправили -- та же команда проходит, попытка первая.
+        fixed = WindowRunner(codes={w: {daily.STEP_FLIGHTS: 25} for w in (
+            '2026-03-01', '2026-03-02', '2026-03-03')})
+        self.assertEqual(self.main(fixed, *self.RANGE), tool.EXIT_OK)
+        entry = self.load()['windows']['2026-03-01..2026-03-01']
+        self.assertEqual((entry['status'], entry['attempts']),
+                         (tool.STATUS_DONE, 1))
+
+    def test_a_session_or_region_failure_stops_without_a_charge(self):
+        for flights_exit, reason in ((2, 'SESSION'), (7, 'REGION')):
+            with self.subTest(reason):
+                runner = WindowRunner(codes={'2026-03-01': {
+                    daily.STEP_FLIGHTS: flights_exit}})
+                self.assertEqual(self.main(runner, *self.RANGE),
+                                 tool.EXIT_DATASET_UNPROVEN)
+                self.assertNotIn('2026-03-01..2026-03-01',
+                                 self.load()['windows'])
+                self.assertEqual(self.load()['stops'][-1]['reason'], reason)
+
+    def test_an_empty_answer_for_a_day_the_database_knows_stops(self):
+        """DB knows two flights on 04.03: no proof is offered, and DJI's
+        empty answer is a contradiction, not an empty day."""
+        runner = WindowRunner(codes={'2026-03-04': {daily.STEP_FLIGHTS: 6}})
+        self.assertEqual(self.main(runner, '--from', '2026-03-04', '--to',
+                                   '2026-03-04'), tool.EXIT_DATASET_UNPROVEN)
+        command = self.flights_commands(runner)['2026-03-04']
+        self.assertEqual(self.proof_of(command), ([], None))
+        stop = self.load()['stops'][-1]
+        self.assertEqual(stop['known_in_window'], 2)
+        self.assertIsNone(stop['control_day'])
+        self.assertIn('knows 2 flight', stop['control_refused'])
+
+    # -- 5: a populated window takes the old path -------------------------
+
+    def test_a_populated_window_runs_exactly_as_before(self):
+        runner = WindowRunner()
+        self.assertEqual(self.main(runner, '--from', '2026-03-04', '--to',
+                                   '2026-03-04'), tool.EXIT_OK)
+        command = self.flights_commands(runner)['2026-03-04']
+        self.assertFalse([t for t in command if 'empty-proof' in t])
+        entry = self.load()['windows']['2026-03-04..2026-03-04']
+        self.assertEqual(entry['status'], tool.STATUS_DONE)
+        self.assertNotIn('empty_window_proof', entry)
+
+    # -- 6, 10: resume and no endless retry --------------------------------
+
+    def test_a_proven_empty_window_is_never_run_again(self):
+        proven = {w: {daily.STEP_FLIGHTS: 25}
+                  for w in ('2026-03-01', '2026-03-02', '2026-03-03')}
+        self.assertEqual(self.main(WindowRunner(codes=proven), *self.RANGE),
+                         tool.EXIT_OK)
+        again = WindowRunner(codes=proven)
+        self.assertEqual(self.main(again, *self.RANGE), tool.EXIT_OK)
+        self.assertEqual(again.commands, [])
+        self.assertEqual({e['attempts'] for e in
+                          self.load()['windows'].values()}, {1})
+
+    def test_a_busy_collector_stops_like_a_busy_cycle(self):
+        runner = WindowRunner(codes={'2026-03-01': {daily.STEP_FLIGHTS: 24}})
+        self.assertEqual(self.main(runner, *self.RANGE), tool.EXIT_BUSY)
+        entry = self.load()['windows']['2026-03-01..2026-03-01']
+        self.assertEqual((entry['status'], entry['attempts']),
+                         (tool.STATUS_BUSY, 0))
+        resumed = WindowRunner(codes={w: {daily.STEP_FLIGHTS: 25} for w in (
+            '2026-03-01', '2026-03-02', '2026-03-03')})
+        self.assertEqual(self.main(resumed, *self.RANGE), tool.EXIT_OK)
+        entry = self.load()['windows']['2026-03-01..2026-03-01']
+        self.assertEqual((entry['status'], entry['attempts']),
+                         (tool.STATUS_DONE, 1))
+
+    # -- 7: a new algorithm version proves the empty day again -------------
+
+    def test_a_new_algorithm_version_proves_the_empty_window_again(self):
+        proven = {'2026-03-01': {daily.STEP_FLIGHTS: 25}}
+        rng = ('--from', '2026-03-01', '--to', '2026-03-01')
+        self.main(WindowRunner(codes=proven), *rng)
+        saved = tool.algorithm_version
+        tool.algorithm_version = lambda: VERSION + '-next'
+        self.addCleanup(setattr, tool, 'algorithm_version', saved)
+        runner = WindowRunner(codes=proven)
+        self.assertEqual(self.main(runner, *rng), tool.EXIT_OK)
+        self.assertEqual(self.proof_of(
+            self.flights_commands(runner)['2026-03-01'])[1], '2026-03-04')
+        entry = self.load()['windows']['2026-03-01..2026-03-01']
+        self.assertEqual(entry['area_algorithm_version'], VERSION + '-next')
+        self.assertEqual(entry['empty_window_proof']['control_day'],
+                         '2026-03-04')
+
+    # -- 8: RAW -------------------------------------------------------------
+
+    def test_the_proof_path_never_writes_the_database(self):
+        before = sha256(self.db)
+        self.main(WindowRunner(codes={'2026-03-01': {
+            daily.STEP_FLIGHTS: 25}}), *self.RANGE)
+        self.main(WindowRunner(codes={'2026-03-02': {
+            daily.STEP_FLIGHTS: 6}}), '--from', '2026-03-01', '--to',
+            '2026-03-03', '--force')
+        self.assertEqual(sha256(self.db), before)
+        con = sqlite3.connect(self.db)
+        try:
+            self.assertEqual(con.execute(
+                'SELECT area_ha FROM drone_flights WHERE dji_flight_id = '
+                '558595607').fetchone()[0], 0.208)
+        finally:
+            con.close()
+
+    # -- 9: no mixing of databases -----------------------------------------
+
+    def test_each_database_proves_with_its_own_flights(self):
+        """A staging copy and a production database with different flights:
+        each backfill names only the control of the database it was given,
+        and its checkpoint stays bound to that database."""
+        other = os.path.join(self.tmp, 'prod', 'transport.db')
+        os.makedirs(os.path.dirname(other))
+        con = sqlite3.connect(other)
+        con.execute('CREATE TABLE drone_flights (id INTEGER PRIMARY KEY, '
+                    'dji_flight_id BIGINT, drone_unit_id INTEGER, '
+                    'started_at DATETIME, area_ha FLOAT)')
+        con.execute('INSERT INTO drone_flights (dji_flight_id, drone_unit_id,'
+                    ' started_at, area_ha) VALUES (777000001, 5, '
+                    "'2026-03-05 06:00:00', 1.0)")
+        con.execute('CREATE TABLE dji_area_calculations (id INTEGER, '
+                    'flight_id BIGINT, area_algorithm_version TEXT, '
+                    'superseded_at DATETIME, report_start_date DATE)')
+        con.commit()
+        con.close()
+        proven = {'2026-03-01': {daily.STEP_FLIGHTS: 25}}
+        rng = ['--from', '2026-03-01', '--to', '2026-03-01']
+        staging = WindowRunner(codes=proven)
+        self.main(staging, *rng)
+        prod = WindowRunner(codes=proven)
+        prod_checkpoint = os.path.join(self.tmp, 'prod_bf', 'checkpoint.json')
+        tool.main(['--db', other, '--checkpoint', prod_checkpoint] + rng,
+                  runner=prod, out=self.lines.append, today=TODAY)
+        self.assertEqual(self.proof_of(
+            self.flights_commands(staging)['2026-03-01']),
+            (['558595607', '558595608'], '2026-03-04'))
+        self.assertEqual(self.proof_of(
+            self.flights_commands(prod)['2026-03-01']),
+            (['777000001'], '2026-03-05'))
+        with io.open(prod_checkpoint, encoding='utf-8') as fh:
+            self.assertEqual(json.load(fh)['database'],
+                             tool.database_key(other))
+
+
+class ChooseEmptyProof(_ProofDatabase):
+    """Выбор контроля: ближайший день наших бортов вне обхода, только чтение."""
+
+    def choose(self, start, end, today=TODAY, db=None):
+        return tool.choose_empty_proof(db or self.db, start, end, today)
+
+    def test_the_nearest_day_of_our_drones_outside_the_walk(self):
+        proof = self.choose(date(2026, 3, 1), date(2026, 3, 1))
+        self.assertEqual((proof['allowed'], proof['day'], proof['flights'],
+                          proof['known_in_window']),
+                         (True, '2026-03-04', [558595607, 558595608], 0))
+
+    def test_a_day_next_to_the_walk_is_never_the_control(self):
+        # 03.03: 04.03 falls inside the walk 02..04.03, so the control is
+        # the next day of our drones, 08.03.
+        proof = self.choose(date(2026, 3, 3), date(2026, 3, 3))
+        self.assertEqual(proof['day'], '2026-03-08')
+
+    def test_the_closer_side_wins_and_the_earlier_one_on_a_tie(self):
+        # 06.03 is two days from 04.03 and from 08.03: the earlier wins.
+        self.assertEqual(self.choose(date(2026, 3, 6),
+                                     date(2026, 3, 6))['day'], '2026-03-04')
+        # 07.03: 08.03 is inside its walk; 04.03 is the nearest outside it.
+        self.assertEqual(self.choose(date(2026, 3, 7),
+                                     date(2026, 3, 7))['day'], '2026-03-04')
+        # 11.03: 10.03 is not our drone's; 08.03 is.
+        self.assertEqual(self.choose(date(2026, 3, 11),
+                                     date(2026, 3, 11))['day'], '2026-03-08')
+
+    def test_a_window_the_database_knows_gets_no_proof(self):
+        proof = self.choose(date(2026, 3, 4), date(2026, 3, 4))
+        self.assertFalse(proof['allowed'])
+        self.assertEqual(proof['known_in_window'], 2)
+        # Even a flight of a drone we do not recognise makes it known.
+        self.assertFalse(self.choose(date(2026, 3, 10),
+                                     date(2026, 3, 10))['allowed'])
+
+    def test_the_report_day_is_utc_plus_five(self):
+        # 03.03 19:30 UTC is 04.03 00:30 in the report day: it belongs to
+        # 04.03, and 03.03 itself stays empty.
+        con = sqlite3.connect(self.db)
+        con.execute("INSERT INTO drone_flights (dji_flight_id, drone_unit_id,"
+                    " started_at, area_ha) VALUES (558595600, 1, "
+                    "'2026-03-03 19:30:00', 0.1)")
+        con.commit()
+        con.close()
+        self.assertEqual(self.choose(date(2026, 3, 3),
+                                     date(2026, 3, 3))['known_in_window'], 0)
+        self.assertEqual(self.choose(date(2026, 3, 4),
+                                     date(2026, 3, 4))['known_in_window'], 3)
+
+    def test_no_flight_of_ours_means_no_proof(self):
+        proof = self.choose(date(2026, 3, 1), date(2026, 3, 1),
+                            today=date(2026, 3, 2))
+        self.assertFalse(proof['allowed'])
+        self.assertIn('no flight of our drones', proof['reason'])
+
+    def test_a_database_without_the_columns_gets_no_proof(self):
+        bare = os.path.join(self.tmp, 'bare.db')
+        con = sqlite3.connect(bare)
+        con.execute('CREATE TABLE drone_flights (id INTEGER PRIMARY KEY, '
+                    'dji_flight_id BIGINT, area_ha FLOAT)')
+        con.commit()
+        con.close()
+        proof = self.choose(date(2026, 3, 1), date(2026, 3, 1), db=bare)
+        self.assertFalse(proof['allowed'])
+        self.assertIn('cannot be read', proof['reason'])
+
+    def test_at_most_five_flights_are_named(self):
+        con = sqlite3.connect(self.db)
+        con.executemany("INSERT INTO drone_flights (dji_flight_id, "
+                        "drone_unit_id, started_at, area_ha) VALUES "
+                        "(?, 1, ?, 0.1)",
+                        [(558595700 + i, '2026-03-04 08:%02d:00' % i)
+                         for i in range(6)])
+        con.commit()
+        con.close()
+        proof = self.choose(date(2026, 3, 1), date(2026, 3, 1))
+        self.assertEqual(len(proof['flights']), tool.EMPTY_PROOF_FLIGHTS)
+        self.assertEqual(proof['flights'][:2], [558595607, 558595608])
+
+    def test_the_stop_codes_are_the_collectors_own(self):
+        from drone_collector import main as collector_main
+        self.assertEqual(set(tool.DATASET_STOP_CODES),
+                         {collector_main.EXIT_EMPTY,
+                          collector_main.EXIT_SESSION,
+                          collector_main.EXIT_REGION})
+        self.assertEqual(daily.COLLECTOR_EMPTY_WINDOW_PROVEN,
+                         collector_main.EXIT_EMPTY_WINDOW_PROVEN)
+        self.assertEqual(tool.EMPTY_PROOF_FLIGHTS,
+                         collector_main.MAX_EMPTY_PROOF_FLIGHTS)
+        self.assertEqual(tool.EXIT_DATASET_UNPROVEN, 9)
+
+
 if __name__ == '__main__':
     unittest.main()

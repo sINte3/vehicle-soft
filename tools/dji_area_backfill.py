@@ -55,11 +55,25 @@ SOURCES (-> VERIFY) -> RECALC, -- под той же блокировкой ци
 доказательств), `backfill_unresolved.csv` (month, window, flight_id, class,
 reason) и рабочий каталог цикла `work\\`.
 
+ПУСТЫЕ ДНИ. В истории законно бывают дни без полётов, а сборщик считает
+пустое окно ошибкой (код 6): сессия в чужом регионе тоже возвращает ноль
+строк без ошибки. Поэтому окну, о котором база не знает ни одного вылета,
+backfill передаёт КОНТРОЛЬ -- ближайший отчётный день с вылетами наших бортов
+и их идентификаторы DJI. Если обход окна пуст, та же сессия в том же
+процессе обходит контрольный день; нашла хотя бы один из этих вылетов --
+окно пусто и это доказано (код сборщика 25, окно DONE, в контрольной точке
+`empty_window_proof`). Не нашла, или база знает вылеты окна, а DJI не
+вернул ни одного, или сессия истекла/не тот регион -- проход ВСТАЁТ с кодом 9,
+окно не отмечено и попытка не списана. «Регион подтверждён» нигде не
+хранится: каждое пустое окно доказывается своей сессией заново.
+
 Коды возврата: 0 все окна DONE; 1 ошибка аргументов или контрольная точка
 другого диапазона; 2 база не найдена (ничего не создано); 3 проход закончен,
 но есть окна FAILED/GAVE_UP; 7 остановлено: блокировку цикла (или эту
-контрольную точку) держит другой процесс -- продолжить позже; 8 остановлено
-по `--max-windows`, окна ещё остались. Вывод в консоль только ASCII.
+контрольную точку, или блокировку сборщика) держит другой процесс --
+продолжить позже; 8 остановлено по `--max-windows`, окна ещё остались; 9
+остановлено: сессия DJI не доказала, что видит наши вылеты (см. `stops` в
+контрольной точке). Вывод в консоль только ASCII.
 """
 
 import argparse
@@ -103,6 +117,27 @@ EXIT_NO_DATABASE = 2
 EXIT_INCOMPLETE = 3
 EXIT_BUSY = 7
 EXIT_STOPPED = 8
+# 9: остановлено -- сессия DJI не доказала, что видит НАШИ вылеты (пустое
+# окно без доказательства, пустой ответ там, где база знает вылеты, сессия
+# или регион). Окно не отмечено: попытка не списана, продолжение -- той же
+# командой, когда сессия исправлена.
+EXIT_DATASET_UNPROVEN = 9
+
+# Коды сборщика на шаге FLIGHTS, после которых дальше идти нельзя: они
+# говорят не об этом окне, а о сессии. Записаны числами -- цикл и backfill не
+# импортируют сборщик; совпадение с `drone_collector.main` держит тест.
+COLLECTOR_SESSION = 2
+COLLECTOR_EMPTY = 6
+COLLECTOR_REGION = 7
+DATASET_STOP_CODES = {
+    COLLECTOR_EMPTY: 'EMPTY_WINDOW_NOT_PROVEN',
+    COLLECTOR_SESSION: 'SESSION',
+    COLLECTOR_REGION: 'REGION',
+}
+# Сколько последних остановок помнит контрольная точка (журнал, не история).
+MAX_STOPS_KEPT = 20
+# Сколько известных вылетов контрольного дня назвать сборщику.
+EMPTY_PROOF_FLIGHTS = 5
 
 STATUS_DONE = 'DONE'
 STATUS_FAILED = 'FAILED'
@@ -338,6 +373,110 @@ def read_unresolved(db_path, start, end, version):
     return out
 
 
+# ─── Контроль пустого окна ──────────────────────────────────────────────────
+
+def _utc_bound(day):
+    """Начало отчётного дня UTC+5 в UTC, строкой как в `started_at`."""
+    moment = datetime(day.year, day.month, day.day) - timedelta(
+        hours=daily.REPORT_UTC_OFFSET_HOURS)
+    return moment.strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _report_day(started_at):
+    moment = datetime.strptime(str(started_at).replace('T', ' ')[:19],
+                               '%Y-%m-%d %H:%M:%S')
+    return (moment + timedelta(hours=daily.REPORT_UTC_OFFSET_HOURS)).date()
+
+
+# `started_at` -- UTC строкой (SQLAlchemy пишет и микросекунды, и
+# иногда `T`); сравнение идёт по нормализованному 19-символьному префиксу.
+_STARTED = "substr(replace(started_at, 'T', ' '), 1, 19)"
+
+
+def choose_empty_proof(db_path, start, end, today):
+    """Можно ли окну [start, end] доказывать пустоту, и чем. Только чтение.
+
+    Возвращает словарь: ``allowed`` (передавать ли сборщику контроль),
+    ``known_in_window`` (сколько вылетов окна знает база), ``day`` и
+    ``flights`` (контрольный отчётный день и известные вылеты наших бортов
+    в нём), ``reason`` (почему нельзя).
+
+    [REASON]: база здесь -- источник ОЖИДАНИЯ, а не доказательства. Её
+    молчание о дне не значит, что день пуст: она могла не получить его вовсе.
+    Поэтому пустоту подтверждает только DJI -- та же сессия находит известный
+    нам вылет другого дня. А вот знание базы запрещает: если она знает вылеты
+    этого окна, пустой ответ DJI -- противоречие, а не пустой день, и
+    доказательство ему не даётся.
+
+    [REASON]: контрольный день -- ближайший к окну день с вылетами НАШИХ
+    бортов (`drone_unit_id` задан), не ближе чем через сутки от обхода
+    (обход берёт окно с сутками запаса): вылет, попавший в обход, делал бы
+    окно непустым, а не доказывал бы его пустоту.
+    """
+    out = {'allowed': False, 'known_in_window': None, 'day': None,
+           'flights': [], 'reason': None}
+    lo, hi = _utc_bound(start), _utc_bound(end + timedelta(days=1))
+    walk_lo = _utc_bound(start - timedelta(days=1))
+    walk_hi = _utc_bound(end + timedelta(days=2))
+    today_hi = _utc_bound(today + timedelta(days=1))
+    uri = 'file:%s?mode=ro' % os.path.abspath(db_path).replace(
+        '\\', '/').replace('?', '%3f').replace('#', '%23')
+    try:
+        con = sqlite3.connect(uri, uri=True, timeout=30)
+    except sqlite3.Error as exc:
+        out['reason'] = 'the database cannot be read (%s)' % type(exc).__name__
+        return out
+    try:
+        known = con.execute(
+            'SELECT COUNT(*) FROM drone_flights WHERE %s >= ? AND %s < ?'
+            % (_STARTED, _STARTED), (lo, hi)).fetchone()[0]
+        out['known_in_window'] = known
+        if known:
+            out['reason'] = ('the database knows %d flight(s) in this window, '
+                             'so an empty answer would contradict it' % known)
+            return out
+        ours = 'drone_unit_id IS NOT NULL AND dji_flight_id IS NOT NULL'
+        before = con.execute(
+            'SELECT started_at FROM drone_flights WHERE %s AND %s < ? '
+            'ORDER BY %s DESC LIMIT 1' % (ours, _STARTED, _STARTED),
+            (walk_lo,)).fetchone()
+        after = con.execute(
+            'SELECT started_at FROM drone_flights WHERE %s AND %s >= ? '
+            'AND %s < ? ORDER BY %s LIMIT 1'
+            % (ours, _STARTED, _STARTED, _STARTED),
+            (walk_hi, today_hi)).fetchone()
+        choices = []
+        if before:
+            choices.append(((start - _report_day(before[0])).days, 0,
+                            _report_day(before[0])))
+        if after:
+            choices.append(((_report_day(after[0]) - end).days, 1,
+                            _report_day(after[0])))
+        if not choices:
+            out['reason'] = ('the database knows no flight of our drones to '
+                             'serve as a control')
+            return out
+        day = min(choices)[2]
+        rows = con.execute(
+            'SELECT dji_flight_id FROM drone_flights WHERE %s AND %s >= ? '
+            'AND %s < ? ORDER BY %s, dji_flight_id LIMIT ?'
+            % (ours, _STARTED, _STARTED, _STARTED),
+            (_utc_bound(day), _utc_bound(day + timedelta(days=1)),
+             EMPTY_PROOF_FLIGHTS)).fetchall()
+    except (sqlite3.Error, ValueError) as exc:
+        out['reason'] = ('the flights of the database cannot be read (%s)'
+                         % type(exc).__name__)
+        return out
+    finally:
+        con.close()
+    flights = [int(row[0]) for row in rows]
+    if not flights:
+        out['reason'] = 'no flight of our drones on the control day %s' % day
+        return out
+    out.update(allowed=True, day=day.isoformat(), flights=flights)
+    return out
+
+
 # ─── Итог ───────────────────────────────────────────────────────────────────
 
 def _empty_month():
@@ -433,8 +572,12 @@ def _summary_line(label, bucket):
 
 # ─── Прогон ──────────────────────────────────────────────────────────────────
 
-def cycle_args(args, start, end, work_dir):
-    """Тот же разбор командной строки, что и у ежедневного цикла."""
+def cycle_args(args, start, end, work_dir, proof=None):
+    """Тот же разбор командной строки, что и у ежедневного цикла.
+
+    ``proof`` -- решение `choose_empty_proof`: если оно разрешает, обход
+    вылетов получает контроль пустого окна; иначе команда та же, что была.
+    """
     argv = ['--db', args.db_path, '--from', start.isoformat(), '--to',
             end.isoformat(), '--work-dir', work_dir, '--flights-kind',
             'backfill', '--stop-above', str(args.stop_above)]
@@ -442,7 +585,25 @@ def cycle_args(args, start, end, work_dir):
         argv += ['--collector-python', args.collector_python]
     if args.app_python:
         argv += ['--app-python', args.app_python]
+    if proof and proof.get('allowed'):
+        for flight_id in proof['flights']:
+            argv += ['--empty-proof-flight', str(flight_id)]
+        argv += ['--empty-proof-day', proof['day']]
     return daily.build_parser().parse_args(argv)
+
+
+def note_stop(checkpoint, key, code, flights_code, proof):
+    """Запись об остановке в контрольную точку: окно не тронуто, но почему
+    проход встал -- видно и после перезапуска."""
+    stops = list(checkpoint.get('stops') or [])
+    stops.append({'at_utc': utcnow().isoformat(), 'window': key,
+                  'cycle_exit': code, 'flights_exit': flights_code,
+                  'reason': DATASET_STOP_CODES.get(flights_code),
+                  'known_in_window': proof.get('known_in_window'),
+                  'control_day': proof.get('day'),
+                  'control_flights': list(proof.get('flights') or []),
+                  'control_refused': proof.get('reason')})
+    checkpoint['stops'] = stops[-MAX_STOPS_KEPT:]
 
 
 def build_parser():
@@ -618,11 +779,18 @@ def _run(args, windows, checkpoint, checkpoint_path, version, runner, out,
         attempt = entry.get('attempts', 0) + 1
         out('WINDOW %s (month %s, %d of %d) attempt %d: %s'
             % (key, month_of(key), index + 1, len(windows), attempt, why))
+        proof = choose_empty_proof(args.db_path, start, end, today)
+        if proof['allowed']:
+            out('  empty-window control: %d known flight(s) of our drones on '
+                '%s' % (len(proof['flights']), proof['day']))
+        else:
+            out('  empty-window control: none (%s); an empty walk stops the '
+                'backfill' % daily.ascii_line(proof['reason']))
         try:
             try:
                 code, result = daily.run_cycle(
-                    cycle_args(args, start, end, work_dir), runner=runner,
-                    today=today, out=out)
+                    cycle_args(args, start, end, work_dir, proof),
+                    runner=runner, today=today, out=out)
             except Exception as exc:
                 for line in daily.redact(traceback.format_exc()).splitlines():
                     out('  ' + line)
@@ -640,6 +808,43 @@ def _run(args, windows, checkpoint, checkpoint_path, version, runner, out,
             # бессмысленно, контрольная точка окна не трогается.
             out('STOP: the daily cycle refused to start (exit %d)' % code)
             stopped = code
+            break
+        flights_code = (result.get('steps') or {}).get(daily.STEP_FLIGHTS)
+        if flights_code in DATASET_STOP_CODES:
+            # [REASON]: пустое окно без доказательства, пустой ответ там, где
+            # база знает вылеты, истёкшая сессия, чужой регион -- это не
+            # беда окна, а беда сессии, и она одинакова для всех следующих
+            # окон. Идти дальше значило бы списать по попытке у каждого окна
+            # диапазона и за три запуска превратить весь исторический проход
+            # в GAVE_UP. Проход встаёт, окно не отмечается, попытка не
+            # списывается; причина -- в контрольной точке (`stops`).
+            note_stop(checkpoint, key, code, flights_code, proof)
+            save_checkpoint(checkpoint_path, checkpoint)
+            out('STOP: the flight walk of %s ended with collector exit %d '
+                '(%s). The DJI session has not shown that it sees our own '
+                'flights; no further window is run, and this one is not '
+                'charged an attempt. Fix the session (see the collector log) '
+                'and run the same command. Exit %d.'
+                % (key, flights_code, DATASET_STOP_CODES[flights_code],
+                   EXIT_DATASET_UNPROVEN))
+            stopped = EXIT_DATASET_UNPROVEN
+            break
+        if result.get('failure') == daily.FAILURE_COLLECTOR_BUSY:
+            # [REASON]: занятый сборщик -- то же, что занятая блокировка
+            # цикла: окно ни при чём, попытка не списывается, продолжение --
+            # позже. Иначе соседний прогон сборщика мог бы довести законно
+            # пустое окно до GAVE_UP, так и не дав ему доказать пустоту.
+            entry.update(status=STATUS_BUSY, last_exit=code,
+                         outcome=result.get('outcome'),
+                         failure=daily.FAILURE_COLLECTOR_BUSY,
+                         finished_at_utc=utcnow().isoformat())
+            entry.setdefault('attempts', 0)
+            checkpoint['windows'][key] = entry
+            save_checkpoint(checkpoint_path, checkpoint)
+            out('BUSY: another collector run holds the collector lock. The '
+                'backfill stopped at %s; run the same command later to '
+                'resume. Exit %d.' % (key, EXIT_BUSY))
+            stopped = EXIT_BUSY
             break
         done = result.get('outcome') in (daily.OUTCOME_SUCCESS,
                                          daily.OUTCOME_WARNINGS)
@@ -663,6 +868,15 @@ def _run(args, windows, checkpoint, checkpoint_path, version, runner, out,
             candidates_no_v4_at_source=result.get(
                 'candidates_no_v4_at_source') or [],
             unresolved=read_unresolved(args.db_path, start, end, version))
+        if flights_code == daily.COLLECTOR_EMPTY_WINDOW_PROVEN:
+            # Чем доказана пустота окна: контрольный день и вылеты, которые
+            # та же сессия нашла (хотя бы один из них -- см. collector.log).
+            entry['empty_window_proof'] = {
+                'control_day': proof['day'],
+                'control_flights': list(proof['flights']),
+                'flights_exit': flights_code}
+        else:
+            entry.pop('empty_window_proof', None)
         checkpoint['windows'][key] = entry
         save_checkpoint(checkpoint_path, checkpoint)
         unresolved = entry['unresolved']

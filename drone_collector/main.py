@@ -66,6 +66,8 @@ import argparse
 import os
 import sys
 
+from datetime import timedelta
+
 from drone_collector import config as config_module
 from drone_collector import runlock
 from drone_collector.config import ConfigError, load_config
@@ -73,7 +75,8 @@ from drone_collector.logging_setup import format_run_summary, setup_logging
 from drone_collector.sender import (IngestRejected, send, send_lands,
                                     write_dry_run, write_lands_dry_run)
 from drone_collector.session import SessionMissing, require_session
-from drone_collector.window import (compute_window, format_date, parse_date,
+from drone_collector.window import (compute_window, format_date,
+                                    local_today, parse_date,
                                     split_by_calendar_year)
 
 EXIT_OK = 0
@@ -180,6 +183,20 @@ EXIT_SNAPSHOT_GEOMETRY_ABSENT = 21
 # действия, а цикл площади (`tools/dji_area_daily.py`) и журнал прогонов
 # обязаны показать оператору второе, а не первое.
 EXIT_COLLECTOR_BUSY = 24
+# 25: окно пусто, и это ДОКАЗАНО -- только при `--empty-proof-flight` и
+# `--empty-proof-day` (исторический backfill). Та же сессия, в том же
+# процессе, сразу после пустого ответа обошла контрольный день и нашла в нём
+# хотя бы один вылет, который Vehicle Soft знает за нашими бортами. Ничего не
+# отправлено: отправлять нечего.
+#
+# [REASON]: свой код, а не 0. Цикл площади и backfill обязаны отличать «окно
+# пусто и это доказано» от «окно собрано и отправлено» -- первое пишется в
+# контрольную точку как доказательство, второе нет. Без флагов доказательства
+# пустое окно по-прежнему 6: суточный прогон и ручной сбор не меняются.
+EXIT_EMPTY_WINDOW_PROVEN = 25
+# Сколько известных вылетов контрольного дня можно назвать: достаточно
+# одного найденного, несколько -- на случай вылета, удалённого в кабинете.
+MAX_EMPTY_PROOF_FLIGHTS = 5
 
 # Сколько ждать чужой прогон, прежде чем сдаться (переопределяется
 # DJI_COLLECTOR_LOCK_WAIT_S; 0 -- не ждать вовсе).
@@ -217,6 +234,11 @@ FLIGHT_SUMMARY_KEYS = (
     'list_pages_captured', 'list_pages_without_raw', 'list_sources_built',
     'list_sources_queued', 'list_sources_duplicates', 'list_sources_refused',
     'list_sources_sent', 'list_sources_left_pending',
+    # Доказательство пустого окна (только с --empty-proof-*): PROVEN или
+    # NOT_PROVEN, контрольный обход, сколько вылетов он увидел и сколько из
+    # названных известных нашёл.
+    'empty_proof', 'empty_proof_window', 'empty_proof_seen',
+    'empty_proof_listed',
     'exit',
 )
 
@@ -475,6 +497,22 @@ def build_parser():
                              'more than once. Without it every contour of the '
                              'directory is downloaded, which is the run a '
                              'first pilot must not make.')
+    parser.add_argument('--empty-proof-flight', dest='empty_proof_flights',
+                        metavar='DJI_ID', type=int, action='append',
+                        help='historical backfill only (with --from/--to and '
+                             '--kind backfill): a DJI flight id Vehicle Soft '
+                             'knows on --empty-proof-day. If the period comes '
+                             'back empty, the same session walks that day and '
+                             'the period counts as empty (exit %d) only when '
+                             'at least one named flight is listed; otherwise '
+                             'exit %d as always. Up to %d, repeat the flag.'
+                             % (EXIT_EMPTY_WINDOW_PROVEN, EXIT_EMPTY,
+                                MAX_EMPTY_PROOF_FLIGHTS))
+    parser.add_argument('--empty-proof-day', dest='empty_proof_day',
+                        metavar='YYYY-MM-DD',
+                        help='the report day (UTC+5) of the '
+                             '--empty-proof-flight flights; must lie outside '
+                             'the period')
     return parser
 
 
@@ -605,6 +643,49 @@ def check_usage(args):
         raise UsageError('--routes needs to know WHICH flights: give '
                          '--from/--to, and the flights of that period name '
                          'the ids, or give --ids-file')
+    check_empty_proof_usage(args)
+
+
+def check_empty_proof_usage(args):
+    """--empty-proof-flight / --empty-proof-day: only where they are safe.
+
+    [REASON]: доказательство пустого окна снимает Guard A для ОДНОГО прогона,
+    поэтому ему нельзя появиться там, где оно не задумано: только обход
+    вылетов, только явный исторический период с `--kind backfill`, и
+    контрольный день -- ВНЕ периода. Вылет внутри периода, найденный в нём
+    же, сделал бы окно непустым; «доказать» пустоту окна его собственным днём
+    -- противоречие, а не доказательство.
+    """
+    flights = getattr(args, 'empty_proof_flights', None) or []
+    day = getattr(args, 'empty_proof_day', None)
+    if not flights and not day:
+        return
+    if not flights or not day:
+        raise UsageError('--empty-proof-flight and --empty-proof-day are '
+                         'given together or not at all')
+    if run_mode(args) != MODE_FLIGHTS:
+        raise UsageError('an empty-window proof belongs to the flight walk '
+                         'only, not to --%s' % run_mode(args))
+    if not (args.date_from and args.date_to) \
+            or (args.kind or KIND_BACKFILL) != KIND_BACKFILL:
+        raise UsageError('an empty-window proof is for a historical backfill: '
+                         'give --from, --to and --kind backfill')
+    if len(flights) > MAX_EMPTY_PROOF_FLIGHTS:
+        raise UsageError('at most %d --empty-proof-flight values'
+                         % MAX_EMPTY_PROOF_FLIGHTS)
+    if any(value <= 0 for value in flights):
+        raise UsageError('--empty-proof-flight takes positive DJI flight ids')
+    try:
+        control = parse_date(day)
+        date_from = parse_date(args.date_from)
+        date_to = parse_date(args.date_to)
+    except ValueError as exc:
+        raise UsageError(str(exc))
+    if date_from <= control <= date_to:
+        raise UsageError('the control day %s lies inside the period %s .. %s '
+                         'it is meant to prove empty; the control must come '
+                         'from another day' % (day, args.date_from,
+                                               args.date_to))
 
 
 def resolve_period(args, cfg):
@@ -878,6 +959,7 @@ def _dispatch(args, cfg, log, state):
     errors = (BrowserError, PeriodVerificationFailed, RegionMismatch,
               SessionExpired, SessionMissing)
     completed = []
+    proven_empty = 0
     code = EXIT_OK
 
     try:
@@ -885,14 +967,37 @@ def _dispatch(args, cfg, log, state):
             collector.open_records()
             state['region'] = collector.check_region(cfg.expected_region)
 
+            proof = {}
+
+            def prove_empty():
+                # [REASON]: одно доказательство на процесс. Все под-окна
+                # этого прогона идут одной сессией и одной страницей, и то,
+                # что она видит наши вылеты, второй раз не меняется.
+                if 'passed' not in proof:
+                    proof['passed'] = _prove_empty_window(collector, args,
+                                                          cfg, log, state)
+                return proof['passed']
+
             for index, (window_from, window_to) in enumerate(windows, start=1):
                 log.info('Window %d/%d: %s .. %s', index, len(windows),
                          format_date(window_from), format_date(window_to))
                 result = collector.collect_window(window_from, window_to)
-                code = _account_for(result, args, kind, cfg, log, state)
+                code = _account_for(
+                    result, args, kind, cfg, log, state,
+                    prove_empty=prove_empty if args.empty_proof_flights
+                    else None)
+                if code == EXIT_EMPTY_WINDOW_PROVEN:
+                    proven_empty += 1
+                    completed.append((window_from, window_to))
+                    continue
                 if code != EXIT_OK:
                     break
                 completed.append((window_from, window_to))
+            if code in (EXIT_OK, EXIT_EMPTY_WINDOW_PROVEN):
+                # Пустым с доказательством прогон называется, только если
+                # пусты ВСЕ его под-окна; иначе он собран и отправлен.
+                code = (EXIT_EMPTY_WINDOW_PROVEN
+                        if proven_empty == len(windows) else EXIT_OK)
     except ImportError as exc:
         # playwright is imported lazily, inside start().
         log.error('Playwright is not available in this environment (%s). '
@@ -2729,8 +2834,78 @@ def _exit_code_for(exc, log):
     return EXIT_PAGINATION
 
 
-def _account_for(result, args, kind, cfg, log, state):
-    """Record one window's result and send it. Returns an exit code."""
+def _prove_empty_window(collector, args, cfg, log, state):
+    """True when THIS session, now, lists a flight Vehicle Soft knows.
+
+    The control is the report day ``--empty-proof-day`` and the DJI flight
+    ids ``--empty-proof-flight`` that Vehicle Soft holds for it. The walk is
+    the day with a day of margin on each side -- the same margin the daily
+    cycle gives its own walk -- through the same picker, the same period
+    verification and the same page. Read-only: nothing is sent or queued.
+
+    [REASON]: «DJI вернул хоть что-то» -- не доказательство. Сессия в чужом
+    регионе или аккаунте тоже может вернуть непустой список, но вылет с
+    НАШИМ идентификатором DJI в нём оказаться не может. Поэтому нужен точный
+    id, а не число строк. И проверка -- в этом же процессе, сразу после
+    пустого ответа: никакого «регион подтверждён», записанного однажды и
+    прочитанного через сутки, когда сессию уже пересохранили.
+    """
+    expected = sorted(set(args.empty_proof_flights))
+    day = parse_date(args.empty_proof_day)
+    proof_from = day - timedelta(days=1)
+    proof_to = min(day + timedelta(days=1), local_today(cfg.tz_offset_hours))
+    state['empty_proof_window'] = '%s..%s' % (format_date(proof_from),
+                                              format_date(proof_to))
+    log.info('EMPTY WINDOW PROOF: walking %s .. %s in the same session; the '
+             'control is %d flight(s) Vehicle Soft knows on %s: %s',
+             format_date(proof_from), format_date(proof_to), len(expected),
+             format_date(day), ', '.join(str(value) for value in expected))
+    listed = set()
+    seen = 0
+    complete = True
+    for window_from, window_to in split_by_calendar_year(proof_from,
+                                                         proof_to):
+        result = collector.collect_window(window_from, window_to)
+        seen += len(result.flights)
+        complete = complete and bool(result.complete)
+        for flight in result.flights:
+            value = flight.get('id') if isinstance(flight, dict) else None
+            if isinstance(value, bool):
+                continue
+            try:
+                listed.add(int(value))
+            except (TypeError, ValueError):
+                continue
+    found = [value for value in expected if value in listed]
+    state['empty_proof_seen'] = seen
+    state['empty_proof_listed'] = '%d/%d' % (len(found), len(expected))
+    if found:
+        state['empty_proof'] = 'PROVEN'
+        log.info('EMPTY WINDOW PROOF PASSED: the control walk lists %d of the '
+                 '%d known flight(s) (%s) among %d flight(s)', len(found),
+                 len(expected), ', '.join(str(value) for value in found),
+                 seen)
+        return True
+    state['empty_proof'] = 'NOT_PROVEN'
+    if not seen:
+        why = 'the control walk returned no flights at all'
+    elif not complete:
+        why = ('the control walk was incomplete, and none of the known '
+               'flights was among the %d it saw' % seen)
+    else:
+        why = ('the control walk returned %d flight(s), none of them a '
+               'flight Vehicle Soft knows for that day' % seen)
+    log.error('EMPTY WINDOW PROOF FAILED: %s. The session does not '
+              'demonstrably see our own flights.', why)
+    return False
+
+
+def _account_for(result, args, kind, cfg, log, state, prove_empty=None):
+    """Record one window's result and send it. Returns an exit code.
+
+    ``prove_empty`` -- only with --empty-proof-*: a callable that proves, in
+    the same session, that it sees our own flights (see _prove_empty_window).
+    """
     _accumulate(state, result)
     if result.rejected:
         log.warning('Rejected responses by reason: %s', result.rejected)
@@ -2741,6 +2916,30 @@ def _account_for(result, args, kind, cfg, log, state):
     # at all -- the run looks successful and collects nothing. This guard
     # needs no selector and is the one that actually protects the data.
     if not result.flights:
+        if prove_empty is not None:
+            # [REASON]: с флагами доказательства решает ТОЛЬКО доказательство,
+            # и `DJI_ALLOW_EMPTY_WINDOW` здесь не действует: исторический
+            # проход не должен принимать пустые дни по переменной, оставленной
+            # в .env для другого случая. Guard A не снят -- он требует ответа
+            # на вопрос «видит ли эта сессия наши вылеты», и отвечает на него
+            # та же сессия, сейчас.
+            if cfg.allow_empty_window:
+                log.info('DJI_ALLOW_EMPTY_WINDOW is ignored: an empty-window '
+                         'proof was requested, and the proof decides.')
+            if prove_empty():
+                log.warning('EMPTY WINDOW %s .. %s PROVEN: zero flights, and '
+                            'the same session lists a flight Vehicle Soft '
+                            'knows on the control day. Nothing is sent.',
+                            format_date(result.date_from),
+                            format_date(result.date_to))
+                return EXIT_EMPTY_WINDOW_PROVEN
+            log.error('EMPTY WINDOW %s .. %s NOT PROVEN: zero flights, and the '
+                      'same session does not list any of the known control '
+                      'flights. Nothing is sent. The usual cause is a session '
+                      'switched to another region or account.',
+                      format_date(result.date_from),
+                      format_date(result.date_to))
+            return EXIT_EMPTY
         if cfg.allow_empty_window:
             log.warning('EMPTY WINDOW %s .. %s: zero flights captured, and '
                         'DJI_ALLOW_EMPTY_WINDOW is set, so the run continues. '
