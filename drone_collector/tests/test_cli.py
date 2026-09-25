@@ -25,6 +25,8 @@ from pathlib import Path
 
 from drone_collector import config as config_module
 from drone_collector import main as main_module
+from drone_collector import runlock
+from drone_collector.session import SessionMissing
 from drone_collector.main import (
     EXIT_CONFIG,
     EXIT_SESSION,
@@ -39,6 +41,7 @@ from drone_collector.tests.support import make_flight
 from drone_collector.sender import SendResult
 from drone_collector.tests.test_sender import config
 
+import shutil
 import sys
 import tempfile
 import types
@@ -61,7 +64,8 @@ COLLECTOR_VARS = ('DJI_RECORDS_URL', 'DJI_STORAGE_STATE', 'DJI_HEADLESS',
                   'DJI_ROUTE_PROBE_POLL_MS', 'DJI_ROUTE_PROBE_WAIT_MS',
                   'DJI_ROUTE_PROBE_DRAIN_MS', 'DJI_ROUTE_PROBE_QUIET_MS',
                   'DJI_RECORD_URL_TEMPLATE', 'DJI_SOURCE_WAIT_MS',
-                  'DJI_SOURCE_PAUSE_MS', 'DJI_SOURCE_BATCH_SIZE')
+                  'DJI_SOURCE_PAUSE_MS', 'DJI_SOURCE_BATCH_SIZE',
+                  'DJI_COLLECTOR_LOCK_PATH', 'DJI_COLLECTOR_LOCK_WAIT_S')
 
 
 class CliTestCase(unittest.TestCase):
@@ -74,6 +78,16 @@ class CliTestCase(unittest.TestCase):
             os.environ.pop(name, None)
         self._saved_dotenv = config_module.DOTENV_PATH
         config_module.DOTENV_PATH = Path(MISSING_STATE)
+        # [REASON]: every main() here now takes the collector lock. Without a
+        # private lock file the suite would take the REAL one under
+        # drone_collector/data/ -- and on the workstation where the collector
+        # lives, a scheduled run holding it would hang the suite for the
+        # default half-hour wait instead of failing.
+        self._lock_dir = tempfile.TemporaryDirectory(
+            prefix='collector_lock_', ignore_cleanup_errors=True)
+        self.lock_path = os.path.join(self._lock_dir.name, 'collector.lock')
+        os.environ['DJI_COLLECTOR_LOCK_PATH'] = self.lock_path
+        os.environ['DJI_COLLECTOR_LOCK_WAIT_S'] = '0'
 
     def tearDown(self):
         config_module.DOTENV_PATH = self._saved_dotenv
@@ -87,6 +101,7 @@ class CliTestCase(unittest.TestCase):
         root = logging.getLogger()
         for handler in list(root.handlers):
             root.removeHandler(handler)
+        self._lock_dir.cleanup()
 
 
 class ResolvePeriodTests(CliTestCase):
@@ -273,6 +288,39 @@ class ExitCodeConstantsTests(unittest.TestCase):
         taken = {devices_module.EXIT_NO_DEVICES,
                  devices_module.EXIT_MISMATCH}
         self.assertNotIn(main_module.EXIT_ROUTE_REFUSED, taken)
+
+    def test_no_exit_code_of_the_package_carries_two_meanings(self):
+        """24 -- «сборщик занят» -- и ни одно число не названо дважды.
+
+        [REASON]: внутри `main` у каждого числа одно имя; между входами пакета
+        совпадать могут только общие коды с общим смыслом (успех, конфигурация
+        и у `devices` -- сессия, период, обход). Новый код, взятый наугад,
+        однажды совпал бы с 22/23 манифеста, и цикл площади прочёл бы «занят»
+        как «манифест велик».
+        """
+        from drone_collector import area_manifest
+        from drone_collector import devices as devices_module
+
+        def codes(module):
+            return {name: value for name, value in vars(module).items()
+                    if name.startswith('EXIT_') and isinstance(value, int)
+                    and not isinstance(value, bool)}
+
+        self.assertEqual(main_module.EXIT_COLLECTOR_BUSY, 24)
+        by_value = {}
+        for name, value in codes(main_module).items():
+            by_value.setdefault(value, []).append(name)
+        self.assertEqual({value: names for value, names in by_value.items()
+                          if len(names) > 1}, {})
+        mine = set(codes(main_module).values())
+        # 24 -- общий код с общим смыслом: обход по бортам тоже ждёт
+        # блокировку сборщика и называет её тем же именем.
+        self.assertLessEqual(mine & set(codes(devices_module).values()),
+                             {0, 1, 2, 3, 4, 24})
+        self.assertEqual(devices_module.EXIT_COLLECTOR_BUSY,
+                         main_module.EXIT_COLLECTOR_BUSY)
+        self.assertLessEqual(mine & set(codes(area_manifest).values()),
+                             {0, 1})
 
 
 class StageBUsageTests(CliTestCase):
@@ -1876,6 +1924,7 @@ class SourcesSummaryKeysTests(unittest.TestCase):
         нуля."""
         keys = self.keys_set_by(main_module._run_sources,
                                 main_module._account_for_sources,
+                                main_module._account_for_descriptors,
                                 main_module._flight_ids_of_period)
         self.assertTrue(keys, 'разбор исходника ничего не нашёл')
         missing = keys - set(main_module.SOURCES_SUMMARY_KEYS)
@@ -1902,7 +1951,12 @@ class SourcesSummaryKeysTests(unittest.TestCase):
                     'sources_v4', 'sources_no_v4_url', 'sources_no_v4',
                     'sources_v4_failed', 'sources_page_errors',
                     'sources_route_identity_mismatch', 'sources_queued',
-                    'sources_duplicates', 'sources_queue_refused'):
+                    'sources_duplicates', 'sources_queue_refused',
+                    'sources_descriptor_requests',
+                    'sources_descriptor_absent',
+                    'sources_descriptor_unconfirmed',
+                    'sources_descriptor_refused',
+                    'sources_descriptor_control'):
             self.assertIn(key, main_module.SOURCES_SUMMARY_KEYS)
 
     def test_the_snapshot_summary_reports_every_bucket_of_the_endpoint(self):
@@ -1920,6 +1974,517 @@ def collect_result(flights, complete=True):
         flights_captured=len(flights), self_duplicates=0, unidentified=0,
         rejected={}, ignored_detail=0, clicks=0, complete=complete,
         page_size=100, date_from=date(2026, 7, 1), date_to=date(2026, 7, 31))
+
+
+class _ListHandler(logging.Handler):
+
+    def __init__(self):
+        logging.Handler.__init__(self)
+        self.messages = []
+
+    def emit(self, record):
+        self.messages.append(record.getMessage())
+
+
+class CollectorLockTests(CliTestCase):
+    """DRONE-AREA-CONTROL-V2-MEGA, блок D: один прогон сборщика за раз.
+
+    [REASON]: кнопка «Обновить данные DJI» и суточный цикл запускают тот же
+    сборщик, что и ночная задача. Два браузера на одной сохранённой сессии DJI
+    и два опустошения одной файловой очереди -- ровно то, что блокировка
+    запрещает. Здесь держится: чужая блокировка даёт код 24 быстро и без
+    единого шага; своя держится весь прогон под именем режима и отпускается
+    после него; командная строка и конфигурация проверяются ДО блокировки.
+    """
+
+    DRY_FLIGHTS = ['--dry-run', '--from', '2026-07-01', '--to', '2026-07-07']
+    SECRET = 'sekret-token-value-4711'
+
+    def setUp(self):
+        CliTestCase.setUp(self)
+        self.handler = _ListHandler()
+        logging.getLogger('collector').addHandler(self.handler)
+        self.addCleanup(logging.getLogger('collector').removeHandler,
+                        self.handler)
+        self.summaries = []
+        real_summary = main_module.format_run_summary
+
+        def recording_summary(pairs):
+            self.summaries.append(dict(pairs))
+            return real_summary(pairs)
+
+        self._patch(main_module, 'format_run_summary', recording_summary)
+        self.seen = []
+
+        def recording_require_session(path):
+            # Первое, что делает каждый режим, -- проверка сессии. Здесь
+            # видно, держит ли прогон блокировку в этот момент и под каким
+            # именем.
+            self.seen.append((runlock.is_held(self.lock_path),
+                              (runlock.owner(self.lock_path) or {})
+                              .get('purpose')))
+            raise SessionMissing('no session in this test')
+
+        self._patch(main_module, 'require_session', recording_require_session)
+        os.environ['DJI_STORAGE_STATE'] = MISSING_STATE
+
+    def _patch(self, owner, name, value):
+        saved = getattr(owner, name)
+        setattr(owner, name, value)
+        self.addCleanup(setattr, owner, name, saved)
+
+    def hold(self, purpose='test-holder'):
+        holder = runlock.RunLock(self.lock_path, purpose=purpose)
+        self.assertTrue(holder.acquire())
+        self.addCleanup(holder.release)
+        return holder
+
+    def test_a_held_lock_returns_24_quickly_and_runs_nothing(self):
+        os.environ['DRONE_API_TOKEN'] = self.SECRET
+        self.hold()
+        started = time.monotonic()
+        code = main(list(self.DRY_FLIGHTS))
+        self.assertEqual(code, main_module.EXIT_COLLECTOR_BUSY)
+        self.assertLess(time.monotonic() - started, 5.0)
+        self.assertEqual(self.seen, [], 'a mode ran without the lock')
+        # Сводная строка печатается и при отказе -- с кодом 24.
+        self.assertEqual(len(self.summaries), 1)
+        self.assertEqual(self.summaries[0].get('exit'), 24)
+        text = '\n'.join(self.handler.messages)
+        self.assertIn('test-holder', text)
+        self.assertIn('pid=%d' % os.getpid(), text)
+        self.assertNotIn(self.SECRET, text)
+
+    def test_the_device_sweep_waits_for_the_same_lock(self):
+        from drone_collector import devices as devices_module
+        out_dir = tempfile.mkdtemp(prefix='devices_out_')
+        self.addCleanup(shutil.rmtree, out_dir, True)
+        argv = ['--from', '2026-07-01', '--to', '2026-07-07', '--out',
+                out_dir]
+        ran = []
+
+        def recording_run(args, cfg, log):
+            ran.append(((runlock.owner(self.lock_path) or {})
+                        .get('purpose')))
+            return devices_module.EXIT_OK
+
+        self._patch(devices_module, 'run', recording_run)
+        holder = self.hold('nightly-walk')
+        self.assertEqual(devices_module.main(list(argv)),
+                         devices_module.EXIT_COLLECTOR_BUSY)
+        self.assertEqual(ran, [], 'the sweep ran without the lock')
+        holder.release()
+        self.assertEqual(devices_module.main(list(argv)),
+                         devices_module.EXIT_OK)
+        self.assertEqual(ran, ['devices'])
+        self.assertFalse(runlock.is_held(self.lock_path))
+
+    def test_the_lock_is_held_for_the_run_and_released_after_it(self):
+        self.assertEqual(main(list(self.DRY_FLIGHTS)), EXIT_SESSION)
+        # Отрицательный контроль встроен: без блокировки здесь было бы False.
+        self.assertEqual(self.seen, [(True, main_module.MODE_FLIGHTS)])
+        self.assertFalse(runlock.is_held(self.lock_path))
+        again = runlock.RunLock(self.lock_path)
+        self.assertTrue(again.acquire())
+        again.release()
+        self.assertEqual(self.summaries[0].get('exit'), EXIT_SESSION)
+
+    def test_every_mode_holds_the_lock_under_its_own_name(self):
+        cases = [
+            (['--lands', '--dry-run'], main_module.MODE_LANDS),
+            (['--sources', '--ids-file', MISSING_STATE],
+             main_module.MODE_SOURCES),
+            (['--land-snapshot'], main_module.MODE_LAND_SNAPSHOT),
+            (['--route-ui-probe'], main_module.MODE_ROUTE_PROBE),
+            (['--route-ui-collect'], main_module.MODE_ROUTE_COLLECT),
+            (['--area-48h'], main_module.MODE_AREA_48H),
+        ]
+        for argv, purpose in cases:
+            del self.seen[:]
+            self.assertEqual(main(argv), EXIT_SESSION, argv)
+            self.assertEqual(self.seen, [(True, purpose)], argv)
+            self.assertFalse(runlock.is_held(self.lock_path), argv)
+
+    def test_run_mode_names_what_dispatch_runs(self):
+        parse = build_parser().parse_args
+        self.assertEqual(main_module.run_mode(parse(['--save-session'])),
+                         main_module.MODE_SAVE_SESSION)
+        self.assertEqual(main_module.run_mode(parse(['--routes', '--ids-file',
+                                                     'x'])),
+                         main_module.MODE_ROUTES)
+        self.assertEqual(main_module.run_mode(parse(['--dry-run'])),
+                         main_module.MODE_FLIGHTS)
+
+    def test_usage_and_configuration_errors_never_wait_for_the_lock(self):
+        self.hold()
+        os.environ['DJI_COLLECTOR_LOCK_WAIT_S'] = '60'
+        started = time.monotonic()
+        self.assertEqual(main(['--lands', '--from', '2026-07-01', '--to',
+                               '2026-07-31']), EXIT_CONFIG)
+        # Отправляющий прогон без токена -- ошибка конфигурации, не «занято».
+        self.assertEqual(main(['--from', '2026-07-01', '--to', '2026-07-07']),
+                         EXIT_CONFIG)
+        self.assertLess(time.monotonic() - started, 5.0)
+        self.assertEqual(self.seen, [])
+
+    def test_an_unusable_wait_setting_is_a_configuration_error(self):
+        for value in ('soon', '-1', 'nan', 'inf'):
+            os.environ['DJI_COLLECTOR_LOCK_WAIT_S'] = value
+            self.assertEqual(main(list(self.DRY_FLIGHTS)), EXIT_CONFIG, value)
+        self.assertEqual(self.seen, [])
+        self.assertFalse(runlock.is_held(self.lock_path))
+
+    def test_a_run_waits_for_the_holder_and_then_proceeds(self):
+        holder = self.hold()
+        os.environ['DJI_COLLECTOR_LOCK_WAIT_S'] = '20'
+        self._patch(main_module, 'COLLECTOR_LOCK_POLL_S', 0.05)
+        timer = threading.Timer(0.3, holder.release)
+        timer.start()
+        self.addCleanup(timer.cancel)
+        started = time.monotonic()
+        self.assertEqual(main(list(self.DRY_FLIGHTS)), EXIT_SESSION)
+        elapsed = time.monotonic() - started
+        self.assertGreaterEqual(elapsed, 0.25)
+        self.assertLess(elapsed, 10.0)
+        self.assertEqual(self.seen, [(True, main_module.MODE_FLIGHTS)])
+        self.assertTrue(any('waiting up to' in m
+                            for m in self.handler.messages))
+
+    def test_the_defaults_are_the_data_directory_and_half_an_hour(self):
+        os.environ.pop('DJI_COLLECTOR_LOCK_PATH', None)
+        os.environ.pop('DJI_COLLECTOR_LOCK_WAIT_S', None)
+        self.assertEqual(
+            main_module.collector_lock_path(),
+            str(config_module.PACKAGE_ROOT / 'data' / 'collector.lock'))
+        self.assertEqual(main_module.collector_lock_wait(), 1800.0)
+
+
+# ─── Доказательство пустого окна (исторический backfill) ─────────────────────
+#
+# Staging, 24-25.09.2026: окно backfill 2026-03-01 обошло 28.02..02.03 и
+# получило ноль вылетов, Guard A дал 6, окно упало. Живой контроль 03..05.03
+# вернул ровно два вылета, которые база знает за 04.03 -- день был пуст на
+# самом деле. Тесты ниже держат, что пустое окно принимается ТОЛЬКО с
+# доказательством той же сессии, а без флагов всё как было.
+
+PROOF_DAY = date(2026, 3, 4)
+KNOWN = 558595607
+
+
+def proof_argv(*extra):
+    return ['--from', '2026-02-28', '--to', '2026-03-02', '--kind',
+            'backfill', '--empty-proof-flight', str(KNOWN),
+            '--empty-proof-day', '2026-03-04'] + list(extra)
+
+
+class EmptyProofUsageTests(CliTestCase):
+    """Флаги доказательства -- только там, где они безопасны."""
+
+    def parse(self, argv):
+        return build_parser().parse_args(argv)
+
+    def refuses(self, argv):
+        with self.assertRaises(UsageError):
+            main_module.check_usage(self.parse(argv))
+
+    def test_a_backfill_period_with_a_control_day_outside_it_is_accepted(self):
+        main_module.check_usage(self.parse(proof_argv()))
+        args = self.parse(proof_argv('--empty-proof-flight', '558595608'))
+        main_module.check_usage(args)
+        self.assertEqual(args.empty_proof_flights, [KNOWN, 558595608])
+
+    def test_without_the_flags_nothing_changes(self):
+        args = self.parse(['--from', '2026-02-28', '--to', '2026-03-02'])
+        main_module.check_usage(args)
+        self.assertIsNone(args.empty_proof_flights)
+        self.assertIsNone(args.empty_proof_day)
+
+    def test_one_flag_without_the_other_is_refused(self):
+        self.refuses(['--from', '2026-02-28', '--to', '2026-03-02', '--kind',
+                      'backfill', '--empty-proof-flight', str(KNOWN)])
+        self.refuses(['--from', '2026-02-28', '--to', '2026-03-02', '--kind',
+                      'backfill', '--empty-proof-day', '2026-03-04'])
+
+    def test_the_rolling_window_and_other_kinds_are_refused(self):
+        self.refuses(['--empty-proof-flight', str(KNOWN),
+                      '--empty-proof-day', '2026-03-04'])
+        self.refuses(proof_argv('--kind', 'incremental'))
+
+    def test_other_walks_are_refused(self):
+        for mode in (['--sources'], ['--routes'], ['--lands']):
+            with self.subTest(mode[0]):
+                with self.assertRaises(UsageError):
+                    main_module.check_usage(self.parse(proof_argv(*mode)))
+
+    def test_a_control_day_inside_the_period_is_refused(self):
+        for day in ('2026-02-28', '2026-03-01', '2026-03-02'):
+            with self.subTest(day):
+                self.refuses(['--from', '2026-02-28', '--to', '2026-03-02',
+                              '--kind', 'backfill', '--empty-proof-flight',
+                              str(KNOWN), '--empty-proof-day', day])
+
+    def test_bad_ids_and_too_many_ids_are_refused(self):
+        self.refuses(proof_argv('--empty-proof-flight', '0'))
+        many = []
+        for value in range(1, main_module.MAX_EMPTY_PROOF_FLIGHTS + 1):
+            many += ['--empty-proof-flight', str(KNOWN + value)]
+        self.refuses(proof_argv(*many))
+        self.refuses(['--from', '2026-02-28', '--to', '2026-03-02', '--kind',
+                      'backfill', '--empty-proof-flight', str(KNOWN),
+                      '--empty-proof-day', '2026-13-04'])
+
+
+class _ProofCollector(object):
+    """collect_window по сценарию: {(from, to): (flights, complete) или
+    исключение}; всё остальное -- пустое окно. Записывает каждый вызов."""
+
+    def __init__(self, script=None):
+        self.script = dict(script or {})
+        self.calls = []
+
+    def collect_window(self, date_from, date_to):
+        self.calls.append((date_from, date_to))
+        answer = self.script.get((date_from, date_to), ([], True))
+        if isinstance(answer, BaseException):
+            raise answer
+        flights, complete = answer
+        return CollectResult(
+            flights=flights, pages_captured=1, total_pages=1,
+            flights_captured=len(flights), self_duplicates=0, unidentified=0,
+            rejected={}, ignored_detail=0, clicks=0, complete=complete,
+            page_size=50, date_from=date_from, date_to=date_to)
+
+
+CONTROL = (date(2026, 3, 3), date(2026, 3, 5))
+WALK = (date(2026, 2, 28), date(2026, 3, 2))
+
+
+class ProveEmptyWindowTests(unittest.TestCase):
+    """Доказательство: ТОЧНЫЙ известный id DJI, а не «хоть что-то»."""
+
+    def prove(self, script, argv=None):
+        args = build_parser().parse_args(argv or proof_argv())
+        self.state = {}
+        self.collector = _ProofCollector(script)
+        cfg = config()
+        return main_module._prove_empty_window(
+            self.collector, args, cfg, logging.getLogger('t'), self.state)
+
+    def test_the_known_flight_in_the_control_walk_proves_the_window(self):
+        self.assertTrue(self.prove({CONTROL: (
+            [make_flight(KNOWN), make_flight(558595999)], True)}))
+        self.assertEqual(self.collector.calls, [CONTROL])
+        self.assertEqual(self.state['empty_proof'], 'PROVEN')
+        self.assertEqual(self.state['empty_proof_listed'], '1/1')
+        self.assertEqual(self.state['empty_proof_window'],
+                         '2026-03-03..2026-03-05')
+
+    def test_other_flights_without_the_known_one_prove_nothing(self):
+        """Чужой регион или аккаунт тоже может вернуть непустой список."""
+        self.assertFalse(self.prove({CONTROL: (
+            [make_flight(1), make_flight(2)], True)}))
+        self.assertEqual(self.state['empty_proof'], 'NOT_PROVEN')
+        self.assertEqual(self.state['empty_proof_listed'], '0/1')
+
+    def test_an_empty_control_walk_proves_nothing(self):
+        self.assertFalse(self.prove({CONTROL: ([], True)}))
+        self.assertEqual(self.state['empty_proof_seen'], 0)
+
+    def test_an_incomplete_walk_proves_only_what_it_saw(self):
+        self.assertFalse(self.prove({CONTROL: ([make_flight(1)], False)}))
+        self.assertTrue(self.prove({CONTROL: ([make_flight(KNOWN)], False)}))
+
+    def test_one_of_several_named_flights_is_enough(self):
+        argv = proof_argv('--empty-proof-flight', '558595608')
+        self.assertTrue(self.prove({CONTROL: ([make_flight(558595608)],
+                                              True)}, argv))
+        self.assertEqual(self.state['empty_proof_listed'], '1/2')
+
+    def test_ids_are_compared_as_numbers_and_booleans_are_not_ids(self):
+        self.assertTrue(self.prove({CONTROL: (
+            [make_flight(str(KNOWN))], True)}))
+        self.assertFalse(self.prove({CONTROL: ([make_flight(True)], True)},
+                                    ['--from', '2026-02-28', '--to',
+                                     '2026-03-02', '--kind', 'backfill',
+                                     '--empty-proof-flight', '1',
+                                     '--empty-proof-day', '2026-03-04']))
+
+    def test_the_control_walk_never_reaches_past_today(self):
+        today = main_module.local_today(config().tz_offset_hours)
+        argv = ['--from', '2026-02-28', '--to', '2026-03-02', '--kind',
+                'backfill', '--empty-proof-flight', str(KNOWN),
+                '--empty-proof-day', today.isoformat()]
+        self.prove({}, argv)
+        self.assertEqual(self.collector.calls,
+                         [(today - timedelta(days=1), today)])
+
+
+class EmptyProofAccountingTests(CliTestCase):
+    """Guard A с доказательством: 25 только с доказательством, иначе 6."""
+
+    def setUp(self):
+        CliTestCase.setUp(self)
+        self.posted = []
+        real_send = main_module.send
+        self.addCleanup(setattr, main_module, 'send', real_send)
+
+        def fake_send(flights, kind, period_from, period_to, cfg, **kwargs):
+            self.posted.append((flights, kind, period_from, period_to))
+            return SendResult().add({'log_id': 1, 'seen': len(flights),
+                                     'new': len(flights)})
+
+        main_module.send = fake_send
+        real_evidence = main_module._send_list_evidence
+        self.addCleanup(setattr, main_module, '_send_list_evidence',
+                        real_evidence)
+        main_module._send_list_evidence = lambda *a, **k: None
+
+    def account(self, result, prove, cfg=None):
+        args = build_parser().parse_args(proof_argv())
+        return main_module._account_for(result, args, 'backfill',
+                                        cfg or config(),
+                                        logging.getLogger('t'), {},
+                                        prove_empty=prove)
+
+    def test_a_proven_empty_window_is_25_and_posts_nothing(self):
+        self.assertEqual(self.account(collect_result([]), lambda: True),
+                         main_module.EXIT_EMPTY_WINDOW_PROVEN)
+        self.assertEqual(self.posted, [])
+
+    def test_an_unproven_empty_window_is_still_6(self):
+        self.assertEqual(self.account(collect_result([]), lambda: False),
+                         main_module.EXIT_EMPTY)
+        self.assertEqual(self.posted, [])
+
+    def test_the_proof_outranks_the_environment_switch(self):
+        cfg = config()
+        cfg.allow_empty_window = True
+        self.assertEqual(self.account(collect_result([]), lambda: False,
+                                      cfg=cfg), main_module.EXIT_EMPTY)
+
+    def test_a_populated_window_is_sent_and_never_asks_for_a_proof(self):
+        def never():
+            raise AssertionError('a populated window needs no proof')
+        self.assertEqual(self.account(collect_result([make_flight(1)]),
+                                      never), main_module.EXIT_OK)
+        self.assertEqual(len(self.posted), 1)
+
+
+class EmptyProofDispatchTests(CliTestCase):
+    """Обход вылетов целиком: подменены браузер и отправка, DJI не трогается."""
+
+    def setUp(self):
+        CliTestCase.setUp(self)
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        state_file = Path(self._dir.name) / 'storage_state.json'
+        state_file.write_text(
+            '{"cookies": [{"name": "sid", "value": "SYNTHETIC-NOT-REAL"}], '
+            '"origins": []}', encoding='utf-8')
+        self.cfg = config()
+        self.cfg.storage_state = state_file
+        self.posted = []
+        real_send = main_module.send
+        self.addCleanup(setattr, main_module, 'send', real_send)
+
+        def fake_send(flights, kind, period_from, period_to, cfg, **kwargs):
+            self.posted.append((flights, kind, period_from, period_to))
+            return SendResult().add({'log_id': 1, 'seen': len(flights),
+                                     'new': len(flights)})
+
+        main_module.send = fake_send
+        real_evidence = main_module._send_list_evidence
+        self.addCleanup(setattr, main_module, '_send_list_evidence',
+                        real_evidence)
+        main_module._send_list_evidence = lambda *a, **k: None
+        from drone_collector import browser as browser_module
+        self.browser_module = browser_module
+        self.addCleanup(setattr, browser_module, 'FlightCollector',
+                        browser_module.FlightCollector)
+
+    def dispatch(self, argv, script):
+        fake = _ProofCollector(script)
+
+        class _Collector(object):
+            def __init__(self, _cfg, _log):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def open_records(self):
+                pass
+
+            def check_region(self, _expected):
+                return 'skipped'
+
+            def collect_window(self, date_from, date_to):
+                return fake.collect_window(date_from, date_to)
+
+        self.browser_module.FlightCollector = _Collector
+        self.state = {}
+        code = main_module._dispatch(build_parser().parse_args(argv),
+                                     self.cfg, logging.getLogger('t'),
+                                     self.state)
+        return code, fake.calls
+
+    def test_legacy_an_empty_window_without_a_proof_is_still_6(self):
+        code, calls = self.dispatch(['--from', '2026-02-28', '--to',
+                                     '2026-03-02', '--kind', 'backfill'], {})
+        self.assertEqual(code, main_module.EXIT_EMPTY)
+        self.assertEqual(calls, [WALK])
+        self.assertEqual(self.posted, [])
+
+    def test_an_empty_window_proven_by_the_same_session_is_25(self):
+        code, calls = self.dispatch(proof_argv(), {CONTROL: (
+            [make_flight(KNOWN), make_flight(558595608)], True)})
+        self.assertEqual(code, main_module.EXIT_EMPTY_WINDOW_PROVEN)
+        # Сначала пустой обход, затем контроль -- в той же сессии.
+        self.assertEqual(calls, [WALK, CONTROL])
+        # Контрольные вылеты -- доказательство, а не данные: не отправлены.
+        self.assertEqual(self.posted, [])
+        self.assertEqual(self.state['empty_proof'], 'PROVEN')
+
+    def test_a_control_without_the_known_flight_is_6(self):
+        code, calls = self.dispatch(proof_argv(), {CONTROL: (
+            [make_flight(1), make_flight(2)], True)})
+        self.assertEqual(code, main_module.EXIT_EMPTY)
+        self.assertEqual(calls, [WALK, CONTROL])
+        self.assertEqual(self.posted, [])
+
+    def test_a_populated_window_takes_the_old_path_and_asks_no_proof(self):
+        code, calls = self.dispatch(proof_argv(), {WALK: (
+            [make_flight(7)], True)})
+        self.assertEqual(code, main_module.EXIT_OK)
+        self.assertEqual(calls, [WALK])
+        self.assertEqual(len(self.posted), 1)
+        self.assertNotIn('empty_proof', self.state)
+
+    def test_a_session_that_expires_during_the_proof_is_not_proof(self):
+        from drone_collector.browser import (PeriodVerificationFailed,
+                                             SessionExpired)
+        for exc, expected in ((SessionExpired('NOT-REAL'),
+                               main_module.EXIT_SESSION),
+                              (PeriodVerificationFailed('NOT-REAL'),
+                               main_module.EXIT_PERIOD)):
+            with self.subTest(type(exc).__name__):
+                code, calls = self.dispatch(proof_argv(), {CONTROL: exc})
+                self.assertEqual(code, expected)
+                self.assertEqual(self.posted, [])
+
+    def test_the_summary_template_prints_the_proof(self):
+        for key in ('empty_proof', 'empty_proof_window', 'empty_proof_seen',
+                    'empty_proof_listed'):
+            self.assertIn(key, main_module.FLIGHT_SUMMARY_KEYS)
+
+    def test_the_new_code_carries_one_meaning(self):
+        self.assertEqual(main_module.EXIT_EMPTY_WINDOW_PROVEN, 25)
+        names = [name for name, value in vars(main_module).items()
+                 if name.startswith('EXIT_') and value == 25]
+        self.assertEqual(names, ['EXIT_EMPTY_WINDOW_PROVEN'])
 
 
 if __name__ == '__main__':

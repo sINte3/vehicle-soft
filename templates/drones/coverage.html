@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from 'drones/_period.html' import period_notes %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Дроны — полезная площадь' if is_ru else 'Дронлар — фойдали майдон' }}{% endblock %}
 {% block content %}
@@ -69,6 +70,12 @@
     </form>
   </div>
 </div>
+
+{# DRONE-AREA-CONTROL-V2-MEGA, блок C. Поля времени здесь нет намеренно:
+   строка страницы -- работа за целый местный день (work_date без времени),
+   и минутам в ней резать нечего. Общий разбор периода всё равно тот же,
+   поэтому «начало позже конца» объясняется так же, как на вылетах. #}
+{{ period_notes(period_messages) }}
 
 <div class="vs-stat-grid vs-mb">
   <div class="vs-stat">

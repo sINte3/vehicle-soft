@@ -215,6 +215,8 @@ command line.
 | 15 | `--route-ui-collect`: the run is **not confirmed**. | Nothing was queued and nothing was sent. The log names every reason separately — the operator never confirmed, traffic had not settled, a request failed, an observation errored. One reason per line, because each is a different thing to fix. |
 | 16 | `--route-ui-collect`: traffic arrived but the set is **incomplete**. | Nothing was queued. Either a response body did not decode, or the requested and returned id sets differ. A partially collected day stored in the database is indistinguishable from a complete one: the work would get fewer routes than existed and compute its useful area as if the input were whole. |
 | 17 | `--send-routes`: the endpoint answered, but did **not accept the whole batch**. | The queue is intact — every envelope stayed in `pending/` and the next run sends them again. The message names which of the four conditions failed: a rejected route, a route naming a flight Vehicle Soft does not have, counters that do not add up, or a `seen` below the number sent. For `unlinked`, sync the flights first and run `--send-routes` again. |
+| 24 | Another collector run holds the **collector lock** and the wait ran out. | Nothing was collected and nothing was sent. The log names the holder (pid, host, mode, start). Wait for it to finish; the wait is `DJI_COLLECTOR_LOCK_WAIT_S` seconds (default 1800, `0` = do not wait). |
+| 25 | Historical backfill only (`--empty-proof-flight`/`--empty-proof-day`): the window is **empty, and that is proven**. | Nothing to do and nothing was sent. The same session, right after the empty answer, walked the control day and listed at least one of the named flights Vehicle Soft knows. Without those flags an empty window is still 6. |
 
 Codes **8** and **9** are deliberately absent from this table: they belong to
 the other entry point of this package, `python -m drone_collector.devices`
@@ -229,6 +231,23 @@ selector that has never been confirmed. Exit 6 needs no selector and is the
 one that actually protects the data — which is why an empty window is a
 failure by default rather than a quiet success.
 
+A historical backfill legitimately meets empty days (live, 2026-09-24: the
+window 2026-03-01 walked 2026-02-28..03-02, got zero flights and stopped on
+exit 6; a positive control over 2026-03-03..03-05 returned exactly the two
+flights the database holds for 03-04). So `tools/dji_area_backfill.py` may
+hand the flight walk `--empty-proof-flight ID` (up to five) and
+`--empty-proof-day DAY`: flights of **our** drones that Vehicle Soft knows on
+the nearest report day outside the walk. When the window comes back empty,
+the same session, in the same process, walks that day with a day of margin;
+if at least one named id is listed, the run ends in **25** and sends nothing.
+If none is — the control walk is empty, incomplete, or lists only other
+flights — it ends in **6** as before: a session in another region or account
+can return a non-empty list, but not one of our flight ids. The proof is
+never stored and reused; every empty window is proven by its own session.
+`DJI_ALLOW_EMPTY_WINDOW` is ignored when the flags are given. The flags are
+refused outside `--from/--to --kind backfill`, and a control day inside the
+period is refused.
+
 Exit 3 deserves its own sentence, because it is the one that looks like an
 over-reaction. After the dates are typed into the picker, the collector reads
 `filters[timestamp_gteq]` and `filters[timestamp_lteq]` back out of the request
@@ -237,6 +256,25 @@ hour of slack on each edge. On a mismatch it logs both values, fails, and sends
 nothing. A collector that silently harvests the wrong period is worse than one
 that fails: the flights it brings back are real, they land in the database, and
 nothing downstream can tell that the window was not the one that was asked for.
+
+### One collector run at a time (DRONE-AREA-CONTROL-V2-MEGA)
+
+Every run that gets past the command line and the configuration -- the
+nightly walk, `--sources`, `--lands`, `--land-snapshot`, the route modes,
+`--area-48h`, `--save-session`, dry runs, and the device sweep
+(`python -m drone_collector.devices`) -- holds the collector lock
+`drone_collector/data/collector.lock` for its whole duration
+(`DJI_COLLECTOR_LOCK_PATH` overrides the path). A second run waits up to
+`DJI_COLLECTOR_LOCK_WAIT_S` seconds (default 1800) and then exits 24 without
+touching the cabinet or the outbox. The lock is an OS lock on an open file, so
+a process killed by the service manager or a reboot releases it by dying;
+`collector.lock` and `collector.lock.owner` never need deleting by hand. The
+owner file is only a hint (pid, host, mode, start) for the log.
+
+The area cycle (`tools/dji_area_daily.py`) additionally holds its own cycle
+lock next to the database for the whole FLIGHTS -> MANIFEST -> SOURCES ->
+RECALC run, so the "refresh DJI data" button, a scheduled cycle and the
+backfill tool never interleave either.
 
 ---
 
@@ -909,6 +947,51 @@ listening — `route.fetch()` continues **the page's own** request with its URL,
 headers and signature untouched, and `route.fulfill()` hands the page exactly
 what the storage sent. What changed is who holds the buffer, not who asked.
 
+### When the page never asks for the descriptor
+
+The page does not always ask for the airlines descriptor. Live case
+715984635 (September 2026): card and route came, 70 s passed, and there was no
+airlines request at all — no listener error, no handler error. A longer wait
+proves nothing, and a timeout is never read as "no V4". So after the wait, and
+only for a flight whose card names it and whose route decoded as it, the
+collector makes **one direct GET** of that flight's descriptor path through
+the page's context (`page.request`: the context's cookies and nothing else — no
+`Signature`, no timestamp, none of the headers DJI's client adds; invisible to
+the page's listeners, no redirect followed). It is the only request the
+collector makes of its own in this mode. The URL, the signed link and the body
+are never logged — the flight id and the HTTP status only.
+
+| Answer | What it means |
+|---|---|
+| 200 with a descriptor | Kept like the page's own. No V4 link — `NO_V4_URL`. A link — the V4 is fetched by it once; it must be **this** flight's object, then the usual V4 checks apply. |
+| 404 | "DJI holds no descriptor, so no V4" — **only** after one control request per run: the same direct GET for a flight whose descriptor exists (the page got it in this run, or its V4 is already queued) must answer 200 with a descriptor. The 404 is then kept as a derived airlines record, schema `airlines-descriptor-absent-1`: the path, the status, the answer's bytes (verbatim up to 1 KB) with their sha256 and size, and `file_v4_url_path: null`. Without a working control the 404 means nothing and the flight stays incomplete. |
+| anything else | 3xx, 401, 403, 5xx, a network failure, a 2xx that is not a descriptor: **not** absence. The flight stays incomplete, the run ends in 18. |
+
+The control is what makes a 404 evidence. If DJI demanded its WASM signature
+for this endpoint too (see "The constraint that is not negotiable"), the
+control would fail, every 404 would stay unconfirmed, and the run would end in
+18 exactly as it did before the direct request existed — nothing is ever
+concluded from a request that is not known to reach the descriptor. The
+receiver checks the record again: a 404 of the flight's own path, a working
+control of another flight, bytes that match their sha256, a card of the same
+flight, no V4 kept and no earlier descriptor naming one. Anything short of that
+is refused.
+
+RUN SUMMARY names it: `sources_descriptor_requests` (every direct request:
+descriptors, the control, and a V4 fetched by a direct descriptor's link),
+`sources_descriptor_absent`, `sources_descriptor_unconfirmed`,
+`sources_descriptor_refused`, `sources_descriptor_control` (`OK`, `FAILED`, or
+`-` when no 404 needed one).
+
+**Live, 2026-09-24 (staging, `7e6d00d`, flight 715984635):** the direct request
+answered HTTP 200 with 135 bytes that were not a descriptor — the third row of
+the table. `requests=1 refused=1 absent=0 control=-`, exit 18; the daily cycle
+ended FAILED (5) and the record stayed on RAW. The body was not kept. The
+answer is consistent with DJI's documented refusals of requests the page did
+not issue (2026-07-31 `code 101`, 2026-08-27 `code 408`, both HTTP 200), but
+not proven to be one. So far the direct request has shown it is safe, not that
+it works: expect it to settle nothing on live DJI.
+
 ### What never enters the queue
 
 No signed link, no query string of a storage URL, no cookie, no header value.
@@ -980,7 +1063,7 @@ md5 would be a confident wrong area later.
 
 | Code | Meaning | What to do |
 |---|---|---|
-| 18 | `--sources`: some flights did **not** yield a full set. | What *was* captured is already queued. The page did not open, or the V4 did not arrive within `DJI_SOURCE_WAIT_MS`. Re-run the same period: only the missing flights are visited. |
+| 18 | `--sources`: some flights did **not** yield a full set. | What *was* captured is already queued. The page did not open, the V4 did not arrive within `DJI_SOURCE_WAIT_MS`, or the page never asked for the descriptor and the direct request did not settle it (`sources_descriptor_unconfirmed` / `sources_descriptor_refused`). Re-run the same period: only the missing flights are visited. |
 | 19 | `--send-sources`: the endpoint answered, but did **not accept the whole batch**. | The queue is intact — the chunk and everything after it stayed in `pending/`. The log names which of the four conditions failed. Fix the cause and run again; re-sending is idempotent. |
 | 20 | `--send-snapshot`: a snapshot chunk was **not accepted in full**. | The chunks stay in `pending/` whole. Half a snapshot read as a whole one would make an absent contour look like a deleted one. |
 

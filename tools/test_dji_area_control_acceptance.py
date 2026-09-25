@@ -175,7 +175,12 @@ class ReadOnly(Base):
         with open(os.path.join(out_dir, 'area_control_report.xlsx'),
                   'rb') as fh:
             book = load_workbook(fh)
-        self.assertEqual(len(book.sheetnames), 4)
+        # DRONE-AREA-CONTROL-V2-MEGA: книга выросла с четырёх листов до
+        # семи; прежние четыре -- первыми и в прежнем порядке.
+        self.assertEqual(book.sheetnames[:4], ['Сводка', 'По_дронам',
+                                               'Корректировки',
+                                               'Требует_проверки'])
+        self.assertEqual(len(book.sheetnames), 7)
 
 
 class TheDryRunRecalculation(Base):

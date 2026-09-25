@@ -159,7 +159,9 @@ DEFAULT_ROUTE_PROBE_QUIET_MS = 2000
 
 # The record page of one flight. `{id}` is substituted with the DJI flight id.
 # Navigating to it makes the SPA fetch the card, the route, the airlines
-# descriptor and the signed V4 file for itself -- the collector only listens.
+# descriptor and the signed V4 file for itself -- the collector listens. The
+# one exception, a direct request for a descriptor the page never asked
+# for, is described at the top of `sources.py`.
 DEFAULT_RECORD_URL_TEMPLATE = 'https://www.djiag.com/record/{id}'
 
 # [REASON]: how long to wait, per flight, for either the V4 body or the
