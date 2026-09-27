@@ -27,6 +27,7 @@ import struct
 
 from drone_collector.route_decode import RouteDecodeError, walk
 
+from dji_area import APPLICATION_MOTION_RULE_VERSION
 from dji_area import V4_PARSER_VERSION  # noqa: F401  (re-exported for callers)
 
 # ─── Масштаб счётчика ────────────────────────────────────────────────────────
@@ -285,6 +286,15 @@ def _median(values):
     return ordered[len(ordered) // 2]
 
 
+def is_application_frame(frame):
+    """Кадр несёт признак применения: флаг распыления (7.1) ИЛИ расход (7.2) > 0.
+
+    Одно определение на пакет: им считаются и ``application_frames`` сводки, и
+    движение при применении (``application_motion``).
+    """
+    return (frame.get('spray_flag') or 0) > 0 or (frame.get('flow') or 0) > 0
+
+
 def summarize_v4(decoded, record_start_ts=None, record_end_ts=None):
     """Сводка одного файла V4. Чистая функция, детерминирована.
 
@@ -361,14 +371,20 @@ def summarize_v4(decoded, record_start_ts=None, record_end_ts=None):
     spray_block_frames = sum(1 for f in frames if f.get('spray_block'))
     flag_frames = sum(1 for f in frames if (f.get('spray_flag') or 0) > 0)
     flow_frames = sum(1 for f in frames if (f.get('flow') or 0) > 0)
-    application_frames = sum(1 for f in frames
-                             if (f.get('spray_flag') or 0) > 0
-                             or (f.get('flow') or 0) > 0)
+    application_frames = sum(1 for f in frames if is_application_frame(f))
     flow_values = [f['flow'] for f in frames if 'flow' in f]
     flow_max = max(flow_values) if flow_values else None
     quantities = [f['quantity'] for f in frames if 'quantity' in f]
     quantity_delta = (quantities[-1] - quantities[0]) if quantities else None
 
+    # [REASON]: `moving_application_*` сводки -- диагностика парсера
+    # v4-parse-1, и решения её не читают: только spray_flag, только скорость
+    # из поля 3 и только кадры после первого. Решение о движении при применении
+    # принимает `application_motion` (флаг ИЛИ расход, скорость И координаты).
+    # Здесь счёт не меняется намеренно: другой вывод парсера требует подъёма
+    # V4_PARSER_VERSION, а он переписывает отпечаток каждой строки расчёта.
+    # На августовском корпусе (2 003 092 кадра применения) флаг и расход не
+    # расходились ни разу, так что по признаку применения значения совпадают.
     moving_frames = 0
     moving_distance = 0.0
     gps_frames = 0
@@ -469,6 +485,105 @@ def summarize_v4(decoded, record_start_ts=None, record_end_ts=None):
         'mode_histogram': {str(k): v for k, v in sorted(
             modes.items(), key=lambda kv: (kv[0] is None, kv[0]))},
         'warnings': sorted(warnings),
+    }
+
+
+# ─── Движение при применении ─────────────────────────────────────────────────
+
+def _gps_step(frames, i):
+    """(метры, м/с) перехода в кадр ``i`` по координатам либо None.
+
+    Шаг наблюдаем, только когда у обоих кадров закодированы координаты и время,
+    а интервал 0 < dt <= WINDOW_MAX_DT_S: средняя скорость через длинный разрыв
+    ничего не говорит о движении внутри него.
+    """
+    if i <= 0:
+        return None
+    prev, cur = frames[i - 1], frames[i]
+    if prev.get('t') is None or cur.get('t') is None:
+        return None
+    dt = (cur['t'] - prev['t']) / 1000.0
+    if dt <= 0 or dt > WINDOW_MAX_DT_S:
+        return None
+    distance = _distance_m(prev, cur)
+    if distance is None:
+        return None
+    return distance, distance / dt
+
+
+def application_motion(decoded):
+    """Двигался ли борт в кадрах применения. Чистая функция, детерминирована.
+
+    Кадр применения -- ``is_application_frame``. Движущимся он считается, если
+    ЛЮБОЕ наблюдение скорости в нём больше MOVING_APPLICATION_MIN_SPEED_MPS:
+
+    * полная скорость по полю 3 (закодированы и vx, и vy);
+    * одна закодированная компонента -- её модуль, нижняя граница скорости;
+    * шаг координат к предыдущему кадру (``_gps_step``).
+
+    Неподвижность, наоборот, требует ПОЛНОГО наблюдения: полной скорости по
+    полю 3 или шага координат. Кадр без того и другого -- ``unobserved``.
+
+    [REASON]: присутствие поля на проводе отличается от значения по
+    умолчанию, и для скорости это не теория. На августовском корпусе (1410
+    файлов, 3,83 млн кадров) подсообщение скорости есть всегда, но vx/vy
+    опущены по правилу нуля protobuf в 380 тыс. кадров, одна из двух -- в
+    272 тыс. Прежний счёт движения (`summarize_v4`) такой кадр пропускал, и
+    «движения не было» получалось из отсутствия данных. Координаты тоже не
+    безупречны: на 2,8 млн кадров с полной скоростью выше 2 м/с шаг координат
+    был ровно нулём в 1712 (позиция повторилась). Поэтому один канал
+    неподвижность не доказывает, а любой канал движение опровергает.
+
+    Порог -- прежний MOVING_APPLICATION_MIN_SPEED_MPS, новых порогов нет.
+    ``application_path_m`` -- весь путь по координатам за кадры применения,
+    при любой скорости: правило его не читает, он показывает человеку, что
+    осталось ниже порога движения.
+    """
+    frames = decoded.frames
+    application = 0
+    moving = 0
+    distance = 0.0
+    path = 0.0
+    unobserved = 0
+    velocity_complete = 0
+    gps_steps = 0
+    max_speed = None
+    for i, frame in enumerate(frames):
+        if not is_application_frame(frame):
+            continue
+        application += 1
+        readings = []
+        complete = 'vx' in frame and 'vy' in frame
+        if complete:
+            velocity_complete += 1
+            readings.append(math.hypot(frame['vx'], frame['vy']))
+        else:
+            readings.extend(abs(frame[key]) for key in ('vx', 'vy')
+                            if key in frame)
+        step = _gps_step(frames, i)
+        if step is not None:
+            gps_steps += 1
+            path += step[0]
+            readings.append(step[1])
+        if readings:
+            top = max(readings)
+            max_speed = top if max_speed is None else max(max_speed, top)
+        if any(r > MOVING_APPLICATION_MIN_SPEED_MPS for r in readings):
+            moving += 1
+            if step is not None:
+                distance += step[0]
+        elif not complete and step is None:
+            unobserved += 1
+    return {
+        'rule_version': APPLICATION_MOTION_RULE_VERSION,
+        'application_frames': application,
+        'moving_application_frames': moving,
+        'moving_application_distance_m': round(distance, 1),
+        'application_path_m': round(path, 1),
+        'motion_unobserved_frames': unobserved,
+        'velocity_complete_frames': velocity_complete,
+        'gps_step_frames': gps_steps,
+        'max_speed_mps': max_speed,
     }
 
 

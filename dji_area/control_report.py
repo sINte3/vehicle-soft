@@ -40,7 +40,8 @@ from dji_area import accounting as acc
 from dji_area import decisions as dec
 from dji_area import resolver as rs
 
-REPORT_VERSION = 'area-control-report-2'
+# -3: причина «распыление только на месте» среди подтверждённых корректировок.
+REPORT_VERSION = 'area-control-report-3'
 DJI_RECORD_URL = 'https://www.djiag.com/record/%d'
 M2_PER_HA = 10000.0
 LOCAL_OFFSET = timedelta(hours=5)
@@ -104,6 +105,11 @@ EXPLANATIONS = {
         'автоматического решения нет.',
         'Майдон ҳисоблагичи ўсмади, аммо пуркаш кузатилди; хавфсиз автоматик '
         'қарор йўқ.'),
+    acc.R_APPLICATION_WITHOUT_MOVING_WORK: (
+        'Счётчик площади V4 не вырос; распыление было только на месте, без '
+        'движения, поэтому новой обработанной площади нет.',
+        'V4 майдон ҳисоблагичи ўсмади; пуркаш фақат жойида, ҳаракатсиз '
+        'бўлган, шунинг учун янги ишланган майдон йўқ.'),
     acc.R_OVERSTATEMENT_NOT_CERTIFIED: (
         'Признаки завышения есть, но окно V4 не позволяет подтвердить '
         'поправку.',
@@ -295,6 +301,10 @@ def evidence_state(row):
 def explanation(decision, row, lang):
     """(код причины, текст) -- человеку, а не enum резолвера."""
     cls = decision['accounting_class']
+    if cls == acc.PHANTOM_PROVEN \
+            and decision['reason'] == acc.R_APPLICATION_WITHOUT_MOVING_WORK:
+        code = decision['reason']
+        return code, pick(EXPLANATIONS[code], lang)
     if cls == acc.PHANTOM_PROVEN:
         accepted = decision['accounted_area_m2'] or 0.0
         structural = decision['reason'] == acc.R_RETAINED_VALIDATED

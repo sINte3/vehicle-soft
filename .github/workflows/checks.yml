@@ -285,6 +285,19 @@ jobs:
           python -m unittest tests.test_dji_area_accounting
           python -m unittest tests.test_dji_area_identity_001
 
+      # DJI-AREA-APPLICATION-MOTION-001. A flat V4 counter with application
+      # observed ONLY while standing is a proven zero; any observed movement
+      # keeps the record for a human. Held here: "no velocity on the wire" is
+      # never read as "standing" (protobuf omits a zero), velocity and
+      # coordinates can each refute standing, and the rule's version reaches
+      # the fingerprint of exactly the records where it fired -- a moving
+      # record keeps its row and its hash, a code rollback reactivates the
+      # previous row instead of writing a third. The dry evaluation tool is
+      # read-only (sha256 before and after) and its prepared commands carry
+      # no placeholders. Stdlib only, its own SQLite fixture.
+      - name: DJI area application motion (standing application, scoped fingerprint)
+        run: python -m unittest tests.test_dji_area_application_motion_001
+
       - name: DJI area SIMPLIFY-001 rig (holdout tool, runbook, reparse)
         run: |
           python tools/test_dji_area_holdout.py

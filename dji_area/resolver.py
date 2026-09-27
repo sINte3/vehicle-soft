@@ -24,16 +24,18 @@
 Здесь нет ввода-вывода, Flask и базы.
 """
 
-from dji_area import (AREA_ALGORITHM_VERSION, CHANNEL_CAPABILITY_REVISION,
-                      STRUCTURAL_RULE_VERSION)
+from dji_area import (APPLICATION_MOTION_RULE_VERSION, AREA_ALGORITHM_VERSION,
+                      CHANNEL_CAPABILITY_REVISION, STRUCTURAL_RULE_VERSION)
 from dji_area.v4 import (
     BASELINE_UNKNOWN as _BASELINE_UNKNOWN_VALUE,
     COUNTER_QUANTUM_M2,
+    MOVING_APPLICATION_MIN_SPEED_MPS,
     WINDOW_BASELINE_UNKNOWN,
     WINDOW_CHANNEL_MISSING,
     WINDOW_GOOD,
     WINDOW_IDENTITY_ERROR,
     WINDOW_INCOMPLETE,
+    WINDOW_MAX_DT_S,
     WINDOW_NONMONOTONE,
     counter_endpoints_at_boundary,
     evaluate_window,
@@ -108,6 +110,12 @@ EK_QUANTITY_ONLY = 'QUANTITY_ONLY'
 EK_MULTIPLE = 'MULTIPLE'
 EK_NONE = 'NONE'
 EK_UNRELIABLE = 'UNRELIABLE'
+
+# Плоский счётчик при наблюдённом применении: спор человеку.
+F_APPLICATION_WITH_FLAT_COUNTER = 'APPLICATION_WITH_FLAT_COUNTER'
+# Плоский счётчик, применение было, но только без движения: доказанный ноль.
+# Отдельное имя, а не NOT_OBSERVED: применение наблюдалось, и это видно.
+F_APPLICATION_WITHOUT_MOVING_WORK = 'APPLICATION_PRESENT_WITHOUT_MOVING_WORK'
 
 # [REASON]: борт `3 Gijduvon` (1581F5742255T0C1L061) не пишет flow/flags даже
 # на длинных нормальных вылетах (B2: четыре нормальных targets без флагов и
@@ -184,6 +192,54 @@ def assess_application(summary, channel_quality):
     return ACT_UNKNOWN, EK_UNRELIABLE, flags
 
 
+# ─── Движение при применении (плоский счётчик) ───────────────────────────────
+
+def application_motion_needed(summary):
+    """Нужна ли записи оценка движения: счётчик плоский И применение было.
+
+    Необходимое, а не достаточное условие -- по нему конвейер решает, читать
+    ли тело V4 ещё раз. Всё остальное (окно, концы, RAW) проверяет резолвер.
+    """
+    return (summary is not None
+            and (summary.get('application_frames') or 0) > 0
+            and is_exactly_flat(summary))
+
+
+def application_without_moving_work(motion, summary):
+    """Доказано ли, что применение наблюдалось ТОЛЬКО без движения.
+
+    ``motion`` -- результат ``v4.application_motion`` того же файла V4, что и
+    ``summary``. Нет оценки, чужая версия, расхождение числа кадров
+    применения, хоть один движущийся или ненаблюдаемый кадр -- не доказано.
+
+    [REASON]: так и только так снимается возражение, ради которого запись с
+    плоским счётчиком и применением уходила человеку: «повторный проход по
+    уже учтённой поверхности». Проход -- это движение с распылением. Если в
+    каждом кадре применения скорость наблюдалась и нигде не превышала порога
+    движения, прохода не было, распыление было на месте (проба, прокачка,
+    стоянка), и ноль счётчика -- утверждение уже и о земле. Малое, но
+    настоящее движение (1-N м) сюда не проходит: для него нужен эмпирический
+    порог, а его нет.
+    """
+    if not motion or summary is None:
+        return False
+    if motion.get('rule_version') != APPLICATION_MOTION_RULE_VERSION:
+        return False
+    frames = motion.get('application_frames') or 0
+    return (frames > 0
+            and frames == (summary.get('application_frames') or 0)
+            and motion.get('moving_application_frames') == 0
+            and motion.get('moving_application_distance_m') == 0
+            and motion.get('motion_unobserved_frames') == 0)
+
+
+def application_motion_rule_snapshot():
+    """То, что входит в отпечаток записи, где правило сработало."""
+    return {'rule_version': APPLICATION_MOTION_RULE_VERSION,
+            'moving_min_speed_mps': MOVING_APPLICATION_MIN_SPEED_MPS,
+            'gps_step_max_dt_s': WINDOW_MAX_DT_S}
+
+
 # ─── Результат ───────────────────────────────────────────────────────────────
 
 class AreaDecision(object):
@@ -226,7 +282,9 @@ def resolve_area(evidence):
     """Таблица решений. ``evidence`` -- словарь, см. ``EVIDENCE_KEYS``.
 
     Обязательные ключи: ``raw_area_m2`` (float или None), ``raw_area_source``.
-    Необязательные: ``v4`` ({'summary': dict, 'identity_ok': bool}),
+    Необязательные: ``v4`` ({'summary': dict, 'identity_ok': bool,
+    'application_motion': dict | None} -- последнее из
+    ``v4.application_motion`` того же файла, только при плоском счётчике),
     ``route`` ({'identity_status': str}), ``structural`` (результат
     ``structural.screen``), ``overlap`` ({'group_id', 'conflict'}),
     ``channel_quality`` (INFORMATIVE/UNRELIABLE/UNKNOWN), ``hardware_id``.
@@ -302,6 +360,9 @@ def resolve_area(evidence):
         None if identity_conflict else summary, channel_quality)
     for name in app_flags:
         _flag(flags, name)
+    # Движение чужого файла -- о чужом вылете, как и его флаги применения.
+    motion = (v4.get('application_motion')
+              if summary is not None and not identity_conflict else None)
 
     controller_delta = None
     corrected = None
@@ -382,7 +443,10 @@ def resolve_area(evidence):
                         COUNTER_FLAT_RAW_OVERSTATED, 0.0,
                         M_VALIDATED_COUNTER_DELTA, C_HIGH)
                     if activity == ACT_PRESENT:
-                        _flag(flags, 'APPLICATION_WITH_FLAT_COUNTER')
+                        if application_without_moving_work(motion, summary):
+                            _flag(flags, F_APPLICATION_WITHOUT_MOVING_WORK)
+                        else:
+                            _flag(flags, F_APPLICATION_WITH_FLAT_COUNTER)
                 elif raw_and_counter_agree(controller_delta, raw):
                     status, corrected, method, confidence = (
                         RAW_CORROBORATED, raw, M_RAW_WITH_VALIDATED_COUNTER,
@@ -484,7 +548,7 @@ def resolve_area(evidence):
         method = M_UNRESOLVED_INTERVAL_OWNERSHIP
         confidence = C_LOW
         eligibility = AGG_EXCLUDED_OVERLAP
-    elif 'APPLICATION_WITH_FLAT_COUNTER' in flags:
+    elif F_APPLICATION_WITH_FLAT_COUNTER in flags:
         # [REASON]: жёсткий ноль здесь -- корректное утверждение о СЧЁТЧИКЕ
         # DJI, но не о земле. Счётчик не вырос, а применение наблюдалось: либо
         # площадь перенесена из прошлой записи, либо это повторный проход по
@@ -492,6 +556,9 @@ def resolve_area(evidence):
         # независимый footprint, поэтому запись не имеет права попасть в
         # ПРОВЕРЕННЫЙ подытог наравне с доказанным нулём: она уходит в
         # «недостаточно данных» вместе со своей RAW-экспозицией.
+        # Подкласс, где footprint заведомо нулевой (применение только без
+        # движения), получает F_APPLICATION_WITHOUT_MOVING_WORK вместо этого
+        # флага и проходит в проверенный подытог по общему правилу ниже.
         eligibility = AGG_UNRESOLVED
     elif status in CERTIFIED_STATUSES:
         eligibility = AGG_CERTIFIED

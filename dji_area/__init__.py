@@ -62,6 +62,25 @@ AREA_ALGORITHM_VERSION = MODEL_VERSION + '-impl-4'
 FIELD_RESOLVER_VERSION = 'dji-field-tiers-2026-09-08-impl-1'
 STRUCTURAL_RULE_VERSION = 'structural-retained-screen-frozen-1'
 V4_PARSER_VERSION = 'v4-parse-1'
+
+# Правило DJI-AREA-APPLICATION-MOTION-001: плоский счётчик при применении,
+# которое наблюдалось ТОЛЬКО без движения, -- доказанный ноль, а не спор.
+# Версия описывает и чтение движения из V4 (`v4.application_motion`), и само
+# правило (`resolver.application_without_moving_work`).
+#
+# [REASON]: это правило меняет результат, но НЕ поднимает ни `impl-4`, ни
+# `V4_PARSER_VERSION`, хотя соглашение выше требует суффикса. Обе версии
+# входят в отпечаток КАЖДОЙ строки, а экран контроля, приёмка и контрольная
+# точка backfill читают строки по точному `AREA_ALGORITHM_VERSION`. Подъём
+# скрыл бы всю историю до полного пересчёта, перевёл бы 202 законченных окна
+# backfill в «algorithm changed» (повторный обход и сбор DJI при следующем
+# запуске) и сделал бы «устаревшими» решения администратора по записям, чей
+# результат не изменился. Правило затрагивает записи с плоским счётчиком и
+# применением -- десятки из тысяч. Поэтому его версия попадает в отпечаток
+# ТОЛЬКО тех записей, где правило сработало (`pipeline`), а строка несёт
+# явный флаг `APPLICATION_PRESENT_WITHOUT_MOVING_WORK`. Где правило не
+# сработало, строка байт в байт прежняя, и отпечаток тоже прежний.
+APPLICATION_MOTION_RULE_VERSION = 'flat-counter-application-motion-1'
 # Ключ свидетельства канала: (устойчивая машина, месяц). Ревизия 1 брала
 # (hardware из доказательства, месяц) и потому считала один борт дважды.
 CHANNEL_CAPABILITY_REVISION = 'app-channel-unit-month-2'

@@ -326,6 +326,32 @@ def ensure_v4_summary(con, root, item, apply, cache):
     return cache[rev_id]
 
 
+def ensure_application_motion(con, root, item, cache):
+    """Движение при применении по телу V4 записи либо None.
+
+    Не кэшируется в базе: считается заново только для записей, которым оно
+    нужно (``resolver.application_motion_needed``), -- их десятки. Тело не
+    прочиталось или не разобралось -- None, и резолвер оставляет запись там,
+    где она была без правила (``APPLICATION_WITH_FLAT_COUNTER``): отсутствие
+    оценки движения -- не доказательство неподвижности.
+    """
+    rev_id = item.get('v4_revision_id')
+    if not rev_id:
+        return None
+    if rev_id in cache:
+        return cache[rev_id]
+    motion = None
+    rev = store.revision_by_id(con, rev_id)
+    if rev is not None:
+        try:
+            motion = v4mod.application_motion(
+                v4mod.decode_v4(store.read_body(root, rev)))
+        except (store.StoreError, OSError, v4mod.V4DecodeError):
+            motion = None
+    cache[rev_id] = motion
+    return motion
+
+
 def revision_sha(con, revision_id, cache):
     if not revision_id:
         return None
@@ -391,9 +417,15 @@ def _empty_summary():
 
 def recalculate(db_path, date_from, date_to, apply=False, flight_ids=None,
                 with_geometric=False, batch_size=500, now=None,
-                collect_rows=False, progress=None):
-    """Пересчёт периода. Возвращает сводку (словарь с обычными типами)."""
-    con = store.connect(db_path)
+                collect_rows=False, progress=None, read_only=False):
+    """Пересчёт периода. Возвращает сводку (словарь с обычными типами).
+
+    ``read_only`` открывает базу ``mode=ro``: сухой прогон на production не
+    может ничего записать даже по ошибке кода. С ``apply`` несовместим.
+    """
+    if apply and read_only:
+        raise PipelineError('apply and read_only are mutually exclusive')
+    con = store.connect(db_path, read_only=read_only)
     root = store.source_root(db_path)
     try:
         store.require_tables(con)
@@ -523,6 +555,7 @@ def _recalculate(con, root, date_from, date_to, apply, flight_ids,
     catalog_sha = catalog.catalog_state_sha()
     polygons = catalog.current_polygons() if with_geometric else None
 
+    motion_cache = {}
     pending = 0
     for n, item in enumerate(targets):
         fid = item['flight_id']
@@ -550,6 +583,10 @@ def _recalculate(con, root, date_from, date_to, apply, flight_ids,
             v4_evidence = {'summary': summ,
                            'identity_ok': item.get('v4_identity_status')
                            != ev.V4_MISMATCH}
+            if v4_evidence['identity_ok'] \
+                    and rs.application_motion_needed(summ):
+                v4_evidence['application_motion'] = ensure_application_motion(
+                    con, root, item, motion_cache)
         decision = rs.resolve_area({
             'raw_area_m2': item['raw_area_m2'],
             'raw_area_source': item['raw_area_source'],
@@ -580,6 +617,42 @@ def _recalculate(con, root, date_from, date_to, apply, flight_ids,
         neighbours = [(nid, revision_sha(con, _neighbour_revision(items, nid),
                                          sha_cache))
                       for nid in neighbours_by_flight.get(fid, [])]
+        extra = {'hardware_id': hw, 'hardware_id_source':
+                 item['hardware_id_source'],
+                 # [REASON]: от ключа хронологии зависит и структурный экран,
+                 # и свидетельство канала. Не войди он в отпечаток --
+                 # пересчёт после исправления идентичности ответил бы
+                 # `unchanged` и навсегда оставил строки, посчитанные по
+                 # разорванной цепочке.
+                 'chronology_key': item.get('chronology_key'),
+                 'chronology_key_source': item.get('chronology_key_source'),
+                 'channel_identity': channel_hw,
+                 'route_identity': item.get('route_identity_status'),
+                 'v4_identity': item.get('v4_identity_status'),
+                 # [REASON]: различить ревизию и raw_json отпечаток умел и
+                 # без этого поля -- у них разный `sources['list']`. Поле
+                 # нужно для ТРЕТЬЕГО состояния: ревизия названа, но её
+                 # значения не пришли. Там `sources['list']` совпадает со
+                 # здоровым случаем, и без явной пометки деградированная
+                 # строка и здоровая дали бы один отпечаток, а пересчёт
+                 # после починки тела ответил бы `unchanged`.
+                 'list_value_source': item.get('list_value_source'),
+                 # [REASON]: без этого «тело V4 не прочиталось» и «тела V4
+                 # нет» дают ОДИН отпечаток, и после возврата файлового
+                 # хранилища пересчёт отвечает `unchanged`, оставляя
+                 # деградированную строку навсегда.
+                 'v4_failure': v4_failure}
+        # [REASON]: метка правила движения -- только у записи, где оно
+        # СРАБОТАЛО. Там результат другой, и пересчёт обязан его записать, а
+        # не ответить `unchanged`. Где правило не сработало, решение и строка
+        # те же, что до него, -- и отпечаток обязан остаться тем же: иначе
+        # пересчёт переписал бы десятки строк без изменения результата, а
+        # решения администратора по ним получили бы пометку «расчёт
+        # изменился». Ключ добавляется, а не пишется со значением None:
+        # canonical_json словаря с лишним ключом -- другой отпечаток.
+        if rs.F_APPLICATION_WITHOUT_MOVING_WORK in decision.anomaly_flags:
+            extra['application_motion_rule'] = \
+                rs.application_motion_rule_snapshot()
         input_hash = calculation_input_hash(
             {'list': revision_sha(con, item['list_revision_id'], sha_cache)
              or _list_fallback_sha(item),
@@ -592,31 +665,7 @@ def _recalculate(con, root, date_from, date_to, apply, flight_ids,
             # СОСЕДА по борту, и пересчёт отвечал бы `unchanged` на
             # запись, качество канала которой уже изменилось.
             neighbours, channel_evidence.get((key, month), False),
-            extra={'hardware_id': hw, 'hardware_id_source':
-                   item['hardware_id_source'],
-                   # [REASON]: от ключа хронологии зависит и структурный экран,
-                   # и свидетельство канала. Не войди он в отпечаток --
-                   # пересчёт после исправления идентичности ответил бы
-                   # `unchanged` и навсегда оставил строки, посчитанные по
-                   # разорванной цепочке.
-                   'chronology_key': item.get('chronology_key'),
-                   'chronology_key_source': item.get('chronology_key_source'),
-                   'channel_identity': channel_hw,
-                   'route_identity': item.get('route_identity_status'),
-                   'v4_identity': item.get('v4_identity_status'),
-                   # [REASON]: различить ревизию и raw_json отпечаток умел и
-                   # без этого поля -- у них разный `sources['list']`. Поле
-                   # нужно для ТРЕТЬЕГО состояния: ревизия названа, но её
-                   # значения не пришли. Там `sources['list']` совпадает со
-                   # здоровым случаем, и без явной пометки деградированная
-                   # строка и здоровая дали бы один отпечаток, а пересчёт
-                   # после починки тела ответил бы `unchanged`.
-                   'list_value_source': item.get('list_value_source'),
-                   # [REASON]: без этого «тело V4 не прочиталось» и «тела V4
-                   # нет» дают ОДИН отпечаток, и после возврата файлового
-                   # хранилища пересчёт отвечает `unchanged`, оставляя
-                   # деградированную строку навсегда.
-                   'v4_failure': v4_failure})
+            extra=extra)
 
         calc_row = _calc_row(item, decision, input_hash, summ_id, now)
 
@@ -664,7 +713,8 @@ def _recalculate(con, root, date_from, date_to, apply, flight_ids,
 
         _accumulate(summary, item, decision, field, calc_row)
         if collect_rows:
-            summary['flights'].append(_flight_line(item, decision, field))
+            summary['flights'].append(_flight_line(item, decision, field,
+                                                   calc_row))
         if progress and n % 500 == 0:
             progress('resolve %d/%d' % (n, len(targets)))
     if apply:
@@ -822,10 +872,14 @@ def _accumulate(summary, item, decision, field, calc_row):
             s['structural_scalar_matches'] += 1
 
 
-def _flight_line(item, decision, field):
+def _flight_line(item, decision, field, calc_row):
     return {
         'flight_id': item['flight_id'],
         'report_day': item['report_day'].isoformat(),
+        # Отпечаток и billable строки, которую пересчёт записал бы: по ним
+        # сухая оценка видит, КАКИЕ строки переписываются, не записывая их.
+        'calculation_input_hash': calc_row['calculation_input_hash'],
+        'billable_area_m2': calc_row['billable_area_m2'],
         'hardware_id': item['hardware_id'],
         'raw_area_m2': decision.raw_area_m2,
         'corrected_recorded_area_m2': decision.corrected_recorded_area_m2,

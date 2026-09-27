@@ -8489,6 +8489,9 @@ DRONE_AREA_FLAG_LABELS = {
     'APPLICATION_WITH_FLAT_COUNTER': (
         'применение при неподвижном счётчике',
         'ҳисоблагич ўзгармаганда қўллаш'),
+    'APPLICATION_PRESENT_WITHOUT_MOVING_WORK': (
+        'применение только на месте, без движения',
+        'қўллаш фақат жойида, ҳаракатсиз'),
     'SMALL_POSITIVE_INCREMENT_RETAINED': (
         'малый прирост сохранён', 'кичик ўсиш сақланган'),
     'RAW_COUNTER_MAGNITUDE_MISMATCH': (

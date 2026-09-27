@@ -107,6 +107,52 @@ class ProvenNeedsAValidatedCounterInterval(unittest.TestCase):
         self.assertEqual(out['exposure_m2'], RAW)
 
 
+class StandingApplicationIsProvenByItsOwnReason(unittest.TestCase):
+    """DJI-AREA-APPLICATION-MOTION-001: применение только без движения."""
+
+    def classify_with_motion(self, frames, raw=RAW, **kw):
+        return classify(raw, frames, motion=True, **kw)
+
+    def test_standing_application_is_proven_with_a_reason_of_its_own(self):
+        frames = counter_series(FLAT, spray_flag=1, flow=100, vx=0.0, vy=0.0)
+        out = self.classify_with_motion(frames, structural=MATCH)
+        self.assertEqual(out['accounting_class'], acc.PHANTOM_PROVEN)
+        self.assertEqual(out['reason'], acc.R_APPLICATION_WITHOUT_MOVING_WORK)
+        self.assertEqual(out['accounted_area_m2'], 0.0)
+        self.assertEqual(out['validated_delta_m2'], 0.0)
+        self.assertEqual(out['confirmed_overstatement_m2'], RAW)
+        # RAW не переписан: он остаётся экспозицией и исходным числом.
+        self.assertEqual(out['raw_area_m2'], RAW)
+        self.assertEqual(out['exposure_m2'], RAW)
+        self.assertTrue(out['structural_match'])
+
+    def test_control_moving_application_stays_in_review(self):
+        # Те же кадры, но борт летит 3 м/с: спор остаётся человеку.
+        frames = counter_series(FLAT, spray_flag=1, flow=100, vx=3.0, vy=0.0)
+        out = self.classify_with_motion(frames, structural=MATCH)
+        self.assertEqual(out['accounting_class'], acc.REVIEW)
+        self.assertEqual(out['reason'], acc.R_APPLICATION_WITH_FLAT_COUNTER)
+        self.assertIsNone(out['accounted_area_m2'])
+
+    def test_the_reason_is_counted_apart_in_period_totals(self):
+        standing = counter_series(FLAT, spray_flag=1, flow=100, vx=0.0,
+                                  vy=0.0)
+        moving = counter_series(FLAT, spray_flag=1, flow=100)
+        rows = [decide(RAW, standing, motion=True, structural=MATCH),
+                decide(RAW, moving, motion=True, structural=MATCH),
+                decide(RAW, counter_series(FLAT), structural=MATCH)]
+        total = acc.summarize(rows)['total']
+        self.assertTrue(total['partition_holds'])
+        self.assertEqual(
+            total['reason_records'][acc.R_APPLICATION_WITHOUT_MOVING_WORK], 1)
+        self.assertEqual(
+            total['reason_records'][acc.R_APPLICATION_WITH_FLAT_COUNTER], 1)
+        self.assertEqual(total['reason_records'][acc.R_RETAINED_VALIDATED], 1)
+        self.assertEqual(total['class_records'][acc.PHANTOM_PROVEN], 2)
+        self.assertEqual(total['confirmed_overstatement_m2'], 2 * RAW)
+        self.assertEqual(total['raw_sum_m2'], 3 * RAW)
+
+
 class NoAutoZeroWithoutV4(unittest.TestCase):
 
     def test_structural_match_without_v4_keeps_raw_as_unresolved(self):
@@ -216,6 +262,14 @@ class DatabaseRowsAreReadTheSameWay(unittest.TestCase):
         self.assertEqual(out['accounting_class'], acc.REVIEW)
         self.assertEqual(out['reason'], acc.R_APPLICATION_WITH_FLAT_COUNTER)
         self.assertTrue(out['structural_match'])
+
+    def test_the_standing_application_flag_is_read_from_json_too(self):
+        frames = counter_series(FLAT, spray_flag=1, flow=100, vx=0.0, vy=0.0)
+        row = dict(decide(RAW, frames, motion=True, structural=MATCH))
+        row['anomaly_flags_json'] = json.dumps(row.pop('anomaly_flags'))
+        out = acc.classify(row)
+        self.assertEqual(out['accounting_class'], acc.PHANTOM_PROVEN)
+        self.assertEqual(out['reason'], acc.R_APPLICATION_WITHOUT_MOVING_WORK)
 
 
 class PeriodQuantitiesStaySeparate(unittest.TestCase):

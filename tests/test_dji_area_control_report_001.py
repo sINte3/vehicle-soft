@@ -398,5 +398,54 @@ class Workbook(unittest.TestCase):
                           cr.SHEET_HISTORY[1]])
 
 
+STANDING_C = 980063
+
+
+class StandingApplicationInTheReport(unittest.TestCase):
+    """DJI-AREA-APPLICATION-MOTION-001: то, что правило закрыло само, --
+    подтверждённая корректировка со своей причиной, а не «требует проверки»."""
+
+    def rows(self):
+        return fixture() + [
+            row(STANDING_C, rs.COUNTER_FLAT_RAW_OVERSTATED, rs.AGG_CERTIFIED,
+                6000.0, 0.0, 0.0, drone='DRONE-3', candidate=True, match=True,
+                base=980061, bridges=[980062],
+                flags=[rs.F_APPLICATION_WITHOUT_MOVING_WORK])]
+
+    def test_it_is_a_confirmed_correction_with_its_own_words(self):
+        for lang, word in (('ru', 'без движения'), ('uz', 'ҳаракатсиз')):
+            item = by_id(cr.build(self.rows(), lang))[STANDING_C]
+            self.assertEqual(item['accounting_class'], acc.PHANTOM_PROVEN)
+            self.assertEqual(item['raw_m2'], 6000.0)
+            self.assertEqual(item['accepted_m2'], 0.0)
+            self.assertEqual(item['excluded_m2'], 6000.0)
+            self.assertFalse(item['needs_human'])
+            self.assertEqual(item['reason_code'],
+                             acc.R_APPLICATION_WITHOUT_MOVING_WORK)
+            self.assertIn(word, item['reason_text'])
+
+    def test_it_leaves_the_review_queue_and_moves_the_totals(self):
+        before = cr.build(fixture(), 'ru')['total']
+        after = cr.build(self.rows(), 'ru')['total']
+        self.assertEqual(after['review_records'], before['review_records'])
+        self.assertEqual(after['excluded_records'],
+                         before['excluded_records'] + 1)
+        self.assertAlmostEqual(after['excluded_m2'],
+                               before['excluded_m2'] + 6000.0)
+        self.assertAlmostEqual(after['raw_m2'], before['raw_m2'] + 6000.0)
+        self.assertTrue(after['partition_holds'])
+
+    def test_control_the_same_row_with_the_review_flag_needs_a_human(self):
+        rows = self.rows()
+        rows[-1] = dict(rows[-1], aggregation_eligibility=rs.AGG_UNRESOLVED,
+                        corrected_recorded_area_m2=None,
+                        anomaly_flags_json=json.dumps(
+                            [rs.F_APPLICATION_WITH_FLAT_COUNTER]))
+        item = by_id(cr.build(rows, 'ru'))[STANDING_C]
+        self.assertEqual(item['accounting_class'], acc.REVIEW)
+        self.assertTrue(item['needs_human'])
+        self.assertEqual(item['excluded_m2'], 0.0)
+
+
 if __name__ == '__main__':
     unittest.main()
