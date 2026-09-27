@@ -378,9 +378,10 @@ def summarize_v4(decoded, record_start_ts=None, record_end_ts=None):
     quantity_delta = (quantities[-1] - quantities[0]) if quantities else None
 
     # [REASON]: `moving_application_*` сводки -- диагностика парсера
-    # v4-parse-1, и решения её не читают: только spray_flag, только скорость
-    # из поля 3 и только кадры после первого. Решение о движении при применении
-    # принимает `application_motion` (флаг ИЛИ расход, скорость И координаты).
+    # v4-parse-1 с порогом исследования, и решения её не читают: только
+    # spray_flag, только скорость из поля 3 выше 1 м/с, только кадры после
+    # первого. Решение о движении при применении принимает `application_motion`
+    # (флаг ИЛИ расход, любая ненулевая скорость, любое изменение координат).
     # Здесь счёт не меняется намеренно: другой вывод парсера требует подъёма
     # V4_PARSER_VERSION, а он переписывает отпечаток каждой строки расчёта.
     # На августовском корпусе (2 003 092 кадра применения) флаг и расход не
@@ -490,16 +491,17 @@ def summarize_v4(decoded, record_start_ts=None, record_end_ts=None):
 
 # ─── Движение при применении ─────────────────────────────────────────────────
 
-def _gps_step(frames, i):
-    """(метры, м/с) перехода в кадр ``i`` по координатам либо None.
+def _coordinate_step(frames, k):
+    """Шаг координат из кадра ``k - 1`` в кадр ``k``: (метры, м/с, сдвиг) либо None.
 
     Шаг наблюдаем, только когда у обоих кадров закодированы координаты и время,
-    а интервал 0 < dt <= WINDOW_MAX_DT_S: средняя скорость через длинный разрыв
-    ничего не говорит о движении внутри него.
+    а интервал 0 < dt <= WINDOW_MAX_DT_S: через длинный разрыв он ничего не
+    говорит о движении внутри него. ``сдвиг`` -- координаты не равны ТОЧНО
+    (как они пришли на провод): допуска нет, любое изменение -- движение.
     """
-    if i <= 0:
+    if k <= 0 or k >= len(frames):
         return None
-    prev, cur = frames[i - 1], frames[i]
+    prev, cur = frames[k - 1], frames[k]
     if prev.get('t') is None or cur.get('t') is None:
         return None
     dt = (cur['t'] - prev['t']) / 1000.0
@@ -508,81 +510,83 @@ def _gps_step(frames, i):
     distance = _distance_m(prev, cur)
     if distance is None:
         return None
-    return distance, distance / dt
+    moved = (cur['lat'], cur['lng']) != (prev['lat'], prev['lng'])
+    return distance, distance / dt, moved
 
 
 def application_motion(decoded):
-    """Двигался ли борт в кадрах применения. Чистая функция, детерминирована.
+    """Было ли ХОТЬ КАКОЕ-ТО горизонтальное перемещение в кадрах применения.
 
-    Кадр применения -- ``is_application_frame``. Движущимся он считается, если
-    ЛЮБОЕ наблюдение скорости в нём больше MOVING_APPLICATION_MIN_SPEED_MPS:
+    Чистая функция, детерминирована. Кадр применения -- ``is_application_frame``.
+    Кадр **смещён** (``displaced``), если это видит хоть один канал:
 
-    * полная скорость по полю 3 (закодированы и vx, и vy);
-    * одна закодированная компонента -- её модуль, нижняя граница скорости;
-    * шаг координат к предыдущему кадру (``_gps_step``).
+    * любая закодированная ненулевая компонента скорости vx/vy (поле 3) --
+      без порога: 0,1 м/с -- тоже движение;
+    * любой наблюдаемый шаг координат РЯДОМ с кадром (в кадр и из кадра)
+      с изменившимися координатами -- без допуска в метрах.
 
-    Неподвижность, наоборот, требует ПОЛНОГО наблюдения: полной скорости по
-    полю 3 или шага координат. Кадр без того и другого -- ``unobserved``.
+    Кадр **не наблюдён** (``unobserved``), если смещения не видно, но и
+    доказать неподвижность нечем: нет ни обеих компонент скорости, ни одного
+    наблюдаемого шага координат рядом.
 
     [REASON]: присутствие поля на проводе отличается от значения по
     умолчанию, и для скорости это не теория. На августовском корпусе (1410
     файлов, 3,83 млн кадров) подсообщение скорости есть всегда, но vx/vy
     опущены по правилу нуля protobuf в 380 тыс. кадров, одна из двух -- в
-    272 тыс. Прежний счёт движения (`summarize_v4`) такой кадр пропускал, и
-    «движения не было» получалось из отсутствия данных. Координаты тоже не
-    безупречны: на 2,8 млн кадров с полной скоростью выше 2 м/с шаг координат
-    был ровно нулём в 1712 (позиция повторилась). Поэтому один канал
-    неподвижность не доказывает, а любой канал движение опровергает.
+    272 тыс., а координата повторялась при настоящем движении в 1712 кадрах.
+    Поэтому отсутствие скорости не читается как ноль, а неподвижность
+    признаётся, только когда ни один канал не видит сдвига и хоть один её
+    наблюдает. Порога скорости здесь нет: MOVING_APPLICATION_MIN_SPEED_MPS --
+    диагностика исследования, а не доказательство отсутствия работы.
 
-    Порог -- прежний MOVING_APPLICATION_MIN_SPEED_MPS, новых порогов нет.
-    ``application_path_m`` -- весь путь по координатам за кадры применения,
-    при любой скорости: правило его не читает, он показывает человеку, что
-    осталось ниже порога движения.
+    ``application_path_m`` -- путь по наблюдаемым шагам рядом с кадрами
+    применения (каждый шаг один раз), ``max_speed_mps`` -- наибольшее
+    наблюдение скорости: только для человека.
     """
     frames = decoded.frames
     application = 0
-    moving = 0
-    distance = 0.0
-    path = 0.0
+    displaced = 0
     unobserved = 0
     velocity_complete = 0
-    gps_steps = 0
+    step_observed = 0
+    steps = {}
     max_speed = None
     for i, frame in enumerate(frames):
         if not is_application_frame(frame):
             continue
         application += 1
-        readings = []
-        complete = 'vx' in frame and 'vy' in frame
+        encoded = [frame[key] for key in ('vx', 'vy') if key in frame]
+        complete = len(encoded) == 2
         if complete:
             velocity_complete += 1
-            readings.append(math.hypot(frame['vx'], frame['vy']))
-        else:
-            readings.extend(abs(frame[key]) for key in ('vx', 'vy')
-                            if key in frame)
-        step = _gps_step(frames, i)
-        if step is not None:
-            gps_steps += 1
-            path += step[0]
-            readings.append(step[1])
+        # NaN != 0.0 тоже истинно: непонятное значение -- не неподвижность.
+        velocity_moved = any(value != 0.0 for value in encoded)
+        readings = ([math.hypot(*encoded)] if complete
+                    else [abs(value) for value in encoded])
+        adjacent = []
+        for k in (i, i + 1):
+            step = _coordinate_step(frames, k)
+            if step is not None:
+                adjacent.append(step)
+                steps[k] = step
+                readings.append(step[1])
+        if adjacent:
+            step_observed += 1
         if readings:
             top = max(readings)
             max_speed = top if max_speed is None else max(max_speed, top)
-        if any(r > MOVING_APPLICATION_MIN_SPEED_MPS for r in readings):
-            moving += 1
-            if step is not None:
-                distance += step[0]
-        elif not complete and step is None:
+        if velocity_moved or any(step[2] for step in adjacent):
+            displaced += 1
+        elif not (complete or adjacent):
             unobserved += 1
     return {
         'rule_version': APPLICATION_MOTION_RULE_VERSION,
         'application_frames': application,
-        'moving_application_frames': moving,
-        'moving_application_distance_m': round(distance, 1),
-        'application_path_m': round(path, 1),
-        'motion_unobserved_frames': unobserved,
+        'displaced_frames': displaced,
+        'unobserved_frames': unobserved,
+        'application_path_m': sum(step[0] for step in steps.values()),
         'velocity_complete_frames': velocity_complete,
-        'gps_step_frames': gps_steps,
+        'step_observed_frames': step_observed,
         'max_speed_mps': max_speed,
     }
 

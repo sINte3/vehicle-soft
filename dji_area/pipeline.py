@@ -352,6 +352,21 @@ def ensure_application_motion(con, root, item, cache):
     return motion
 
 
+def selective_rule_marks(anomaly_flags):
+    """{ключ отпечатка: снимок} выборочных правил, чей флаг стоит у строки.
+
+    [REASON]: контракт версий `dji_area/__init__.py`, способ 2. Метка -- только
+    у строки, где правило СРАБОТАЛО: там результат другой, и пересчёт обязан
+    его записать, а не ответить `unchanged`. Где не сработало, строка та же,
+    что до правила, -- и отпечаток обязан остаться тем же, иначе пересчёт
+    переписал бы строки без изменения результата, а решения администратора по
+    ним получили бы пометку «расчёт изменился». Поэтому пустой словарь, а не
+    ключи со значением None: canonical_json лишнего ключа -- другой отпечаток.
+    """
+    return {key: snapshot() for flag, key, snapshot in rs.SELECTIVE_RULES
+            if flag in anomaly_flags}
+
+
 def revision_sha(con, revision_id, cache):
     if not revision_id:
         return None
@@ -642,17 +657,7 @@ def _recalculate(con, root, date_from, date_to, apply, flight_ids,
                  # хранилища пересчёт отвечает `unchanged`, оставляя
                  # деградированную строку навсегда.
                  'v4_failure': v4_failure}
-        # [REASON]: метка правила движения -- только у записи, где оно
-        # СРАБОТАЛО. Там результат другой, и пересчёт обязан его записать, а
-        # не ответить `unchanged`. Где правило не сработало, решение и строка
-        # те же, что до него, -- и отпечаток обязан остаться тем же: иначе
-        # пересчёт переписал бы десятки строк без изменения результата, а
-        # решения администратора по ним получили бы пометку «расчёт
-        # изменился». Ключ добавляется, а не пишется со значением None:
-        # canonical_json словаря с лишним ключом -- другой отпечаток.
-        if rs.F_APPLICATION_WITHOUT_MOVING_WORK in decision.anomaly_flags:
-            extra['application_motion_rule'] = \
-                rs.application_motion_rule_snapshot()
+        extra.update(selective_rule_marks(decision.anomaly_flags))
         input_hash = calculation_input_hash(
             {'list': revision_sha(con, item['list_revision_id'], sha_cache)
              or _list_fallback_sha(item),

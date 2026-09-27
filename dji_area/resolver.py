@@ -29,7 +29,6 @@ from dji_area import (APPLICATION_MOTION_RULE_VERSION, AREA_ALGORITHM_VERSION,
 from dji_area.v4 import (
     BASELINE_UNKNOWN as _BASELINE_UNKNOWN_VALUE,
     COUNTER_QUANTUM_M2,
-    MOVING_APPLICATION_MIN_SPEED_MPS,
     WINDOW_BASELINE_UNKNOWN,
     WINDOW_CHANNEL_MISSING,
     WINDOW_GOOD,
@@ -206,20 +205,23 @@ def application_motion_needed(summary):
 
 
 def application_without_moving_work(motion, summary):
-    """Доказано ли, что применение наблюдалось ТОЛЬКО без движения.
+    """Доказано ли, что при применении борт НЕ СДВИНУЛСЯ ни на что.
 
     ``motion`` -- результат ``v4.application_motion`` того же файла V4, что и
-    ``summary``. Нет оценки, чужая версия, расхождение числа кадров
-    применения, хоть один движущийся или ненаблюдаемый кадр -- не доказано.
+    ``summary``. Доказано только когда: версия правила своя, число кадров
+    применения совпадает со сводкой, ни один канал не видит сдвига (ни одной
+    ненулевой компоненты скорости, ни одного изменения координат), каждый кадр
+    наблюдён и путь по координатам рядом с применением ровно ноль. Иначе --
+    не доказано, и запись остаётся человеку.
 
     [REASON]: так и только так снимается возражение, ради которого запись с
     плоским счётчиком и применением уходила человеку: «повторный проход по
-    уже учтённой поверхности». Проход -- это движение с распылением. Если в
-    каждом кадре применения скорость наблюдалась и нигде не превышала порога
-    движения, прохода не было, распыление было на месте (проба, прокачка,
-    стоянка), и ноль счётчика -- утверждение уже и о земле. Малое, но
-    настоящее движение (1-N м) сюда не проходит: для него нужен эмпирический
-    порог, а его нет.
+    уже учтённой поверхности». Проход -- это сдвиг с распылением. Порога
+    скорости или пути здесь нет намеренно: медленный проход (0,8 м/с,
+    несколько метров) -- тоже проход, а любой допуск был бы эмпирическим
+    порогом, которого нет. Нулевой путь проверяется отдельно от числа
+    смещённых кадров -- оба условия обязаны держаться, ни одно не заменяет
+    другое.
     """
     if not motion or summary is None:
         return False
@@ -228,16 +230,27 @@ def application_without_moving_work(motion, summary):
     frames = motion.get('application_frames') or 0
     return (frames > 0
             and frames == (summary.get('application_frames') or 0)
-            and motion.get('moving_application_frames') == 0
-            and motion.get('moving_application_distance_m') == 0
-            and motion.get('motion_unobserved_frames') == 0)
+            and motion.get('displaced_frames') == 0
+            and motion.get('unobserved_frames') == 0
+            and motion.get('application_path_m') == 0)
 
 
 def application_motion_rule_snapshot():
     """То, что входит в отпечаток записи, где правило сработало."""
     return {'rule_version': APPLICATION_MOTION_RULE_VERSION,
-            'moving_min_speed_mps': MOVING_APPLICATION_MIN_SPEED_MPS,
-            'gps_step_max_dt_s': WINDOW_MAX_DT_S}
+            'coordinate_step_max_dt_s': WINDOW_MAX_DT_S}
+
+
+# Выборочные правила: (флаг строки, ключ в отпечатке, снимок правила).
+# [REASON]: это реестр контракта версий из `dji_area/__init__.py`. Правило
+# сюда попадает, только если оно ДОБАВЛЯЕТ исход своим флагом и без флага
+# строка остаётся той же, что до него; тогда `pipeline.selective_rule_marks`
+# кладёт его снимок в отпечаток ровно тех строк, где флаг стоит. Правка смысла
+# такого правила поднимает ЕГО версию, а не `impl-N`.
+SELECTIVE_RULES = (
+    (F_APPLICATION_WITHOUT_MOVING_WORK, 'application_motion_rule',
+     application_motion_rule_snapshot),
+)
 
 
 # ─── Результат ───────────────────────────────────────────────────────────────
@@ -556,9 +569,10 @@ def resolve_area(evidence):
         # независимый footprint, поэтому запись не имеет права попасть в
         # ПРОВЕРЕННЫЙ подытог наравне с доказанным нулём: она уходит в
         # «недостаточно данных» вместе со своей RAW-экспозицией.
-        # Подкласс, где footprint заведомо нулевой (применение только без
-        # движения), получает F_APPLICATION_WITHOUT_MOVING_WORK вместо этого
-        # флага и проходит в проверенный подытог по общему правилу ниже.
+        # Подкласс, где footprint заведомо нулевой (при применении борт не
+        # сдвинулся ни на что), получает F_APPLICATION_WITHOUT_MOVING_WORK
+        # вместо этого флага и проходит в проверенный подытог по общему
+        # правилу ниже.
         eligibility = AGG_UNRESOLVED
     elif status in CERTIFIED_STATUSES:
         eligibility = AGG_CERTIFIED

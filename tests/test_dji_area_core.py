@@ -1023,88 +1023,102 @@ def motion_of(frames):
 
 
 class ApplicationMotionReading(unittest.TestCase):
-    """Чтение движения из V4: признак применения -- флаг ИЛИ расход, движение
-    -- по любому каналу, неподвижность -- только по полному наблюдению."""
+    """Чтение движения из V4: признак применения -- флаг ИЛИ расход; сдвиг --
+    любая ненулевая скорость или любое изменение координат, без порогов;
+    неподвижность -- только при наблюдении."""
 
-    def test_flow_without_the_flag_while_moving_is_moving_application(self):
+    def test_flow_without_the_flag_while_moving_is_displacement(self):
         # C. Расход без флага -- тот же признак применения, что в
-        # application_frames, и движение при нём -- движущееся применение.
+        # application_frames, и движение при нём -- сдвиг.
         frames = run(6, gps_speed=3.0, vx=0.0, vy=3.0, spray_flag=None)
         m = motion_of(frames)
         self.assertEqual(m['application_frames'], 6)
-        self.assertEqual(m['moving_application_frames'], 6)
-        self.assertGreater(m['moving_application_distance_m'], 0.0)
+        self.assertEqual(m['displaced_frames'], 6)
+        self.assertGreater(m['application_path_m'], 0.0)
         # Прежняя диагностика сводки считала только флаг и этого не видела:
         # ровно поэтому решение читает application_motion, а не её.
         s = summary_for(frames)
         self.assertEqual(s['application_frames'], 6)
         self.assertEqual(s['moving_application_frames'], 0)
 
-    def test_standing_flow_alone_is_application_without_motion(self):
-        # D. Расход на месте: применение есть, движения нет.
+    def test_standing_flow_alone_is_application_without_displacement(self):
+        # D. Расход на месте: скорость закодирована нулём, координаты те же.
         m = motion_of(run(6, spray_flag=None))
         self.assertEqual(m['application_frames'], 6)
-        self.assertEqual(m['moving_application_frames'], 0)
-        self.assertEqual(m['moving_application_distance_m'], 0.0)
+        self.assertEqual(m['displaced_frames'], 0)
+        self.assertEqual(m['unobserved_frames'], 0)
         self.assertEqual(m['application_path_m'], 0.0)
-        self.assertEqual(m['motion_unobserved_frames'], 0)
         self.assertEqual(m['max_speed_mps'], 0.0)
-
-    def test_crawling_below_the_threshold_is_visible_as_path(self):
-        # 0.8 м/с на 3 с -- ниже порога движения: для правила это стоянка,
-        # но путь 2.3 м виден в диагностике, которую печатает оценка.
-        m = motion_of(run(30, gps_speed=0.8, vx=0.0, vy=0.8))
-        self.assertEqual(m['moving_application_frames'], 0)
-        self.assertAlmostEqual(m['application_path_m'], 2.3, 0)
 
     def test_omitted_velocity_without_coordinates_is_not_standing_still(self):
         # Нет ни скорости, ни координат: «движения не было» здесь вывели бы
-        # из отсутствия данных -- ровно ошибка прежнего счёта.
+        # из отсутствия данных.
         m = motion_of(run(6, vx=None, vy=None, lat=None))
-        self.assertEqual(m['moving_application_frames'], 0)
-        self.assertEqual(m['motion_unobserved_frames'], 6)
+        self.assertEqual(m['displaced_frames'], 0)
+        self.assertEqual(m['unobserved_frames'], 6)
         self.assertIsNone(m['max_speed_mps'])
+
+    def test_omitted_velocity_with_unchanged_coordinates_is_observed(self):
+        m = motion_of(run(6, vx=None, vy=None, spray_from=1))
+        self.assertEqual(m['application_frames'], 5)
+        self.assertEqual(m['displaced_frames'], 0)
+        self.assertEqual(m['unobserved_frames'], 0)
+        self.assertEqual(m['step_observed_frames'], 5)
+        self.assertEqual(m['velocity_complete_frames'], 0)
+
+    def test_the_first_frame_is_observed_through_the_step_after_it(self):
+        m = motion_of(run(6, vx=None, vy=None, spray_from=0))
+        self.assertEqual(m['unobserved_frames'], 0)
+        self.assertEqual(m['displaced_frames'], 0)
 
     def test_coordinates_catch_motion_hidden_by_omitted_velocity(self):
         m = motion_of(run(6, gps_speed=5.0, vx=None, vy=None, spray_from=1))
-        self.assertEqual(m['moving_application_frames'], 5)
-        self.assertEqual(m['motion_unobserved_frames'], 0)
-        self.assertAlmostEqual(m['moving_application_distance_m'], 2.5, 1)
+        self.assertEqual(m['displaced_frames'], 5)
+        self.assertAlmostEqual(m['application_path_m'], 2.5, 3)
 
     def test_velocity_catches_a_frozen_position(self):
-        # Координата повторилась (шаг 0), а поле 3 говорит 4 м/с.
+        # Координата повторилась, а поле 3 говорит 4 м/с.
         m = motion_of(run(6, gps_speed=0.0, vx=0.0, vy=4.0))
-        self.assertEqual(m['moving_application_frames'], 6)
+        self.assertEqual(m['displaced_frames'], 6)
+        self.assertEqual(m['application_path_m'], 0.0)
 
-    def test_one_encoded_component_is_a_lower_bound_of_speed(self):
-        m = motion_of(run(6, gps_speed=0.0, vx=None, vy=2.5))
-        self.assertEqual(m['moving_application_frames'], 6)
-        slow = motion_of(run(6, gps_speed=0.0, vx=None, vy=0.5, spray_from=1))
-        self.assertEqual(slow['moving_application_frames'], 0)
-        self.assertEqual(slow['motion_unobserved_frames'], 0)
+    def test_any_nonzero_velocity_component_is_displacement(self):
+        # Ниже прежнего порога 1 м/с, координаты стоят: всё равно сдвиг.
+        for vx, vy in ((0.1, 0.0), (0.0, -0.3), (None, 0.5), (0.2, None)):
+            m = motion_of(run(6, vx=vx, vy=vy))
+            self.assertEqual(m['displaced_frames'], 6, (vx, vy))
 
-    def test_omitted_velocity_with_standing_coordinates_is_observed(self):
-        m = motion_of(run(6, vx=None, vy=None, spray_from=1))
-        self.assertEqual(m['application_frames'], 5)
-        self.assertEqual(m['moving_application_frames'], 0)
-        self.assertEqual(m['motion_unobserved_frames'], 0)
-        self.assertEqual(m['gps_step_frames'], 5)
-        self.assertEqual(m['velocity_complete_frames'], 0)
+    def test_a_centimetre_of_coordinate_change_is_displacement(self):
+        frames = run(6, vx=None, vy=None)
+        frames[3] = frame(MS + 300, area=FLAT_MU, vx=None, vy=None,
+                          lat=39.9 + 0.01 / M_PER_DEG_LAT, spray_flag=1,
+                          flow=900)
+        m = motion_of(frames)
+        # Сдвиг виден с обеих сторон кадра 3: в него и из него.
+        self.assertEqual(m['displaced_frames'], 3)
+        self.assertAlmostEqual(m['application_path_m'], 0.02, 4)
 
-    def test_the_first_frame_has_no_coordinate_step(self):
-        m = motion_of(run(6, vx=None, vy=None, spray_from=0))
-        self.assertEqual(m['motion_unobserved_frames'], 1)
+    def test_movement_right_after_the_last_application_frame_counts(self):
+        # Применение в кадрах 1..3 на месте, к кадру 4 борт уже сдвинулся:
+        # шаг из последнего кадра применения -- тоже «при применении».
+        frames = run(6, vx=None, vy=None, spray_from=1)
+        for i in (4, 5):
+            frames[i] = frame(MS + i * 100, area=FLAT_MU, vx=None, vy=None,
+                              lat=39.9 + 0.5 / M_PER_DEG_LAT)
+        m = motion_of(frames)
+        self.assertEqual(m['application_frames'], 3)
+        self.assertEqual(m['displaced_frames'], 1)
 
     def test_a_coordinate_step_across_a_gap_is_not_an_observation(self):
         m = motion_of(run(6, vx=None, vy=None, spray_from=1, step_ms=2000))
-        self.assertEqual(m['gps_step_frames'], 0)
-        self.assertEqual(m['motion_unobserved_frames'], 5)
+        self.assertEqual(m['step_observed_frames'], 0)
+        self.assertEqual(m['unobserved_frames'], 5)
 
-    def test_slow_real_movement_is_movement(self):
-        # «1-N метров»: 1.5 м/с на 3 с -- 4.35 м. Порога по метрам нет.
-        m = motion_of(run(30, gps_speed=1.5, vx=0.0, vy=1.5))
-        self.assertEqual(m['moving_application_frames'], 30)
-        self.assertAlmostEqual(m['moving_application_distance_m'], 4.3, 0)
+    def test_crawling_below_the_old_threshold_is_displacement(self):
+        # 0,8 м/с на 3 с -- 2,3 м: прежний порог 1 м/с называл это стоянкой.
+        m = motion_of(run(30, gps_speed=0.8, vx=0.0, vy=0.8))
+        self.assertEqual(m['displaced_frames'], 30)
+        self.assertAlmostEqual(m['application_path_m'], 2.32, 2)
 
     def test_the_reading_names_its_rule_version(self):
         m = motion_of(run(3))
@@ -1113,8 +1127,9 @@ class ApplicationMotionReading(unittest.TestCase):
 
 
 class StationaryApplicationWithFlatCounter(unittest.TestCase):
-    """Плоский счётчик + применение ТОЛЬКО без движения -> доказанный ноль.
-    Всё остальное -- как было: спор человеку, запасной RAW, UNKNOWN."""
+    """Плоский счётчик + применение, при котором борт НЕ СДВИНУЛСЯ ни на что,
+    -> доказанный ноль. Любой сдвиг и любая нехватка наблюдения -- как было:
+    спор человеку, запасной RAW, UNKNOWN."""
 
     STAND = staticmethod(lambda **kw: run(6, **kw))
     MOVE = staticmethod(lambda **kw: run(6, gps_speed=6.0, vx=0.0, vy=6.0,
@@ -1130,20 +1145,28 @@ class StationaryApplicationWithFlatCounter(unittest.TestCase):
         self.assertNotIn(rs.F_APPLICATION_WITHOUT_MOVING_WORK, d.anomaly_flags)
         self.assertEqual(d.aggregation_eligibility, rs.AGG_UNRESOLVED)
 
+    def assert_proven(self, d):
+        self.assertIn(rs.F_APPLICATION_WITHOUT_MOVING_WORK, d.anomaly_flags)
+        self.assertNotIn(rs.F_APPLICATION_WITH_FLAT_COUNTER, d.anomaly_flags)
+        self.assertEqual(d.aggregation_eligibility, rs.AGG_CERTIFIED)
+
     def test_standing_application_on_a_flat_counter_is_a_proven_zero(self):
-        # A.
+        # A. Скорость закодирована нулём, координаты не менялись.
         d = self.decide(self.STAND())
+        self.assert_proven(d)
         self.assertEqual(d.area_status, rs.COUNTER_FLAT_RAW_OVERSTATED)
         self.assertEqual(d.corrected_recorded_area_m2, 0.0)
         self.assertEqual(d.controller_delta_area_m2, 0.0)
         self.assertEqual(d.raw_area_m2, RAW_FLAT)
         self.assertEqual(d.area_confidence, rs.C_HIGH)
-        self.assertEqual(d.aggregation_eligibility, rs.AGG_CERTIFIED)
-        self.assertIn(rs.F_APPLICATION_WITHOUT_MOVING_WORK, d.anomaly_flags)
-        self.assertNotIn(rs.F_APPLICATION_WITH_FLAT_COUNTER, d.anomaly_flags)
         # Не маскируется под NOT_OBSERVED: применение было и названо.
         self.assertEqual(d.application_activity, rs.ACT_PRESENT)
         self.assertIs(d.application_without_area, True)
+
+    def test_omitted_velocity_and_unchanged_coordinates_are_a_proven_zero(self):
+        # A. Как на проводе у стоящего борта: vx/vy опущены (нуль protobuf),
+        # координаты повторяются точно.
+        self.assert_proven(self.decide(run(6, vx=None, vy=None)))
 
     def test_control_without_a_motion_reading_the_record_stays_in_review(self):
         # Отрицательный контроль к A: те же кадры, оценки движения нет
@@ -1156,9 +1179,26 @@ class StationaryApplicationWithFlatCounter(unittest.TestCase):
         self.assert_review(d)
         self.assertEqual(d.application_activity, rs.ACT_PRESENT)
 
+    def test_crawling_at_0_8_mps_over_2_3_metres_stays_in_review(self):
+        # Ниже прежнего порога 1 м/с -- но это проход, а не стоянка.
+        self.assert_review(self.decide(run(30, gps_speed=0.8, vx=0.0,
+                                           vy=0.8)))
+
     def test_a_few_metres_of_real_movement_stay_in_review(self):
         self.assert_review(self.decide(run(30, gps_speed=1.5, vx=0.0,
                                            vy=1.5)))
+
+    def test_a_centimetre_of_coordinate_change_stays_in_review(self):
+        frames = run(6, vx=None, vy=None)
+        frames[3] = frame(MS + 300, area=FLAT_MU, vx=None, vy=None,
+                          lat=39.9 + 0.01 / M_PER_DEG_LAT, spray_flag=1,
+                          flow=900)
+        self.assert_review(self.decide(frames))
+
+    def test_a_velocity_component_below_one_mps_stays_in_review(self):
+        # Координаты стоят, но поле 3 говорит 0,3 м/с.
+        self.assert_review(self.decide(run(6, vx=0.0, vy=0.3)))
+        self.assert_review(self.decide(run(6, vx=None, vy=0.3)))
 
     def test_flow_without_the_flag_while_moving_blocks_the_zero(self):
         # C.
@@ -1169,9 +1209,12 @@ class StationaryApplicationWithFlatCounter(unittest.TestCase):
     def test_standing_flow_alone_is_not_area_work(self):
         # D.
         d = self.decide(self.STAND(spray_flag=None))
-        self.assertIn(rs.F_APPLICATION_WITHOUT_MOVING_WORK, d.anomaly_flags)
-        self.assertEqual(d.aggregation_eligibility, rs.AGG_CERTIFIED)
+        self.assert_proven(d)
         self.assertEqual(d.application_activity, rs.ACT_PRESENT)
+
+    def test_an_unobservable_application_stays_in_review(self):
+        # Ни скорости, ни координат: доказать неподвижность нечем.
+        self.assert_review(self.decide(run(6, vx=None, vy=None, lat=None)))
 
     def test_an_incomplete_window_is_never_turned_into_a_zero(self):
         # E. Разрыв 2.9 с: окно INCOMPLETE -- запасной RAW, как прежде.
@@ -1204,28 +1247,27 @@ class StationaryApplicationWithFlatCounter(unittest.TestCase):
 
     def test_missing_width_decides_nothing_by_itself(self):
         # G. Ширина в правиле не участвует: ни auto-zero, ни auto-real.
-        stand = self.decide(self.STAND(width=None))
-        self.assertIn(rs.F_APPLICATION_WITHOUT_MOVING_WORK,
-                      stand.anomaly_flags)
-        move = self.decide(self.MOVE(width=None))
-        self.assert_review(move)
-        for d in (stand, move):
-            self.assertNotIn(d.area_status, (rs.RAW_CORROBORATED,
-                                              rs.RAW_CORROBORATED_QUALIFIED))
-
-    def test_one_unobservable_frame_blocks_the_proof(self):
-        # Скорость опущена, а у первого кадра нет шага координат.
-        self.assert_review(self.decide(run(6, vx=None, vy=None)))
-        # Контроль: то же, но применение со второго кадра -- доказано.
-        d = self.decide(run(6, vx=None, vy=None, spray_from=1))
-        self.assertIn(rs.F_APPLICATION_WITHOUT_MOVING_WORK, d.anomaly_flags)
+        self.assert_proven(self.decide(self.STAND(width=None)))
+        self.assert_review(self.decide(self.MOVE(width=None)))
+        for frames in (self.STAND(width=None), self.MOVE(width=None)):
+            self.assertNotIn(self.decide(frames).area_status,
+                             (rs.RAW_CORROBORATED,
+                              rs.RAW_CORROBORATED_QUALIFIED))
 
     def test_a_reading_of_another_file_or_version_is_ignored(self):
+        # В том числе чтение прежней версии -1, где 0,8 м/с было «стоянкой».
         for key, value in (('application_frames', 7),
-                           ('rule_version', 'flat-counter-application-motion-0')):
+                           ('rule_version', 'flat-counter-application-motion-1')):
             ev = evidence(RAW_FLAT, self.STAND(), motion=True)
             ev['v4']['application_motion'][key] = value
             self.assert_review(rs.resolve_area(ev))
+
+    def test_a_nonzero_path_blocks_the_proof_on_its_own(self):
+        # Два условия -- «ни одного смещённого кадра» и «путь ровно ноль» --
+        # держатся раздельно: одно не заменяет другое.
+        ev = evidence(RAW_FLAT, self.STAND(), motion=True)
+        ev['v4']['application_motion']['application_path_m'] = 0.3
+        self.assert_review(rs.resolve_area(ev))
 
     def test_raw_zero_is_untouched_by_the_rule(self):
         d = self.decide(self.STAND(), raw=0.0)

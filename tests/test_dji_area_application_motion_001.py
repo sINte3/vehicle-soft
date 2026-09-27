@@ -297,11 +297,13 @@ class DryEvaluationTool(Base):
         by_id = {t['flight_id']: t for t in report['targets']}
         self.assertTrue(by_id[TARGET]['rule_fired'])
         self.assertEqual(by_id[TARGET]['class_after'], acc.PHANTOM_PROVEN)
-        self.assertEqual(by_id[TARGET]['moving_application_frames'], 0)
+        self.assertEqual(by_id[TARGET]['displaced_frames'], 0)
+        self.assertEqual(by_id[TARGET]['unobserved_frames'], 0)
         self.assertEqual(by_id[TARGET]['application_path_m'], 0.0)
         self.assertFalse(by_id[LONE]['rule_fired'])
         self.assertFalse(by_id[LONE]['would_write'])
-        self.assertGreater(by_id[LONE]['moving_application_distance_m'], 0)
+        self.assertGreater(by_id[LONE]['displaced_frames'], 0)
+        self.assertGreater(by_id[LONE]['application_path_m'], 0)
         self.assertTrue(text.isascii())
 
     def test_the_prepared_commands_are_ready_to_paste(self):
@@ -358,6 +360,55 @@ class DryEvaluationTool(Base):
         code, _text = self.run_tool('--db', missing)
         self.assertEqual(code, tool.EXIT_NO_DATABASE)
         self.assertFalse(os.path.exists(missing))
+
+
+class SelectiveVersionContract(unittest.TestCase):
+    """Контракт версий `dji_area/__init__.py`, способ 2: версия выборочного
+    правила входит в отпечаток ТОЛЬКО строки с его флагом и никогда -- в общую
+    конфигурацию, которая есть у каждой строки. Сквозная половина контракта --
+    `TheRuleReachesTheDatabaseOnlyWhereItFired` выше."""
+
+    def test_every_selective_rule_is_declared_once_with_a_version(self):
+        flags = [flag for flag, _key, _snap in rs.SELECTIVE_RULES]
+        keys = [key for _flag, key, _snap in rs.SELECTIVE_RULES]
+        self.assertEqual(len(flags), len(set(flags)))
+        self.assertEqual(len(keys), len(set(keys)))
+        self.assertIn(rs.F_APPLICATION_WITHOUT_MOVING_WORK, flags)
+        for _flag, _key, snapshot in rs.SELECTIVE_RULES:
+            self.assertTrue(snapshot()['rule_version'])
+
+    def test_a_row_without_a_selective_flag_gets_no_mark(self):
+        for flags in ([], [rs.F_APPLICATION_WITH_FLAT_COUNTER, 'V4_MISSING']):
+            self.assertEqual(pl.selective_rule_marks(flags), {})
+
+    def test_a_row_with_the_flag_gets_exactly_its_own_mark(self):
+        marks = pl.selective_rule_marks(
+            ['V4_MISSING', rs.F_APPLICATION_WITHOUT_MOVING_WORK])
+        self.assertEqual(marks, {'application_motion_rule':
+                                 rs.application_motion_rule_snapshot()})
+
+    def test_the_mark_changes_the_fingerprint_and_its_absence_does_not(self):
+        from dji_area.hashing import calculation_input_hash
+        sources = {'list': 'a', 'card': None, 'route': None, 'v4': 'b'}
+        base = calculation_input_hash(sources, [], True, extra={'k': 1})
+        marked = dict({'k': 1}, **pl.selective_rule_marks(
+            [rs.F_APPLICATION_WITHOUT_MOVING_WORK]))
+        self.assertNotEqual(
+            calculation_input_hash(sources, [], True, extra=marked), base)
+        unmarked = dict({'k': 1}, **pl.selective_rule_marks([]))
+        self.assertEqual(
+            calculation_input_hash(sources, [], True, extra=unmarked), base)
+
+    def test_selective_versions_stay_out_of_the_shared_configuration(self):
+        from dji_area.hashing import canonical_json, resolver_config_snapshot
+        shared = canonical_json(resolver_config_snapshot())
+        for _flag, _key, snapshot in rs.SELECTIVE_RULES:
+            self.assertNotIn(snapshot()['rule_version'], shared)
+
+    def test_a_selective_rule_does_not_move_the_algorithm_version(self):
+        import dji_area
+        self.assertTrue(dji_area.AREA_ALGORITHM_VERSION.endswith('-impl-4'))
+        self.assertEqual(dji_area.V4_PARSER_VERSION, 'v4-parse-1')
 
 
 if __name__ == '__main__':

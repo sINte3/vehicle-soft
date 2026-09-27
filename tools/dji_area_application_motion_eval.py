@@ -78,10 +78,9 @@ M2_PER_HA = 10000.0
 CSV_COLUMNS = (
     'flight_id', 'report_start_date', 'raw_m2', 'class_before',
     'reason_before', 'class_after', 'reason_after', 'rule_fired',
-    'would_write', 'application_frames', 'moving_application_frames',
-    'moving_application_distance_m', 'application_path_m',
-    'motion_unobserved_frames', 'max_speed_mps', 'velocity_complete_frames',
-    'gps_step_frames',
+    'would_write', 'application_frames', 'displaced_frames',
+    'unobserved_frames', 'application_path_m', 'max_speed_mps',
+    'velocity_complete_frames', 'step_observed_frames',
     'structural_match', 'v4_sha256', 'active_decision',
     'decision_becomes_stale',
 )
@@ -209,10 +208,9 @@ def evaluate(db_path, date_from=None, date_to=None, named=()):
             'active_decision': decision['decision_type'] if decision else None,
             'decision_becomes_stale': bool(decision) and would_write,
         }
-        for key in ('application_frames', 'moving_application_frames',
-                    'moving_application_distance_m', 'application_path_m',
-                    'motion_unobserved_frames', 'max_speed_mps',
-                    'velocity_complete_frames', 'gps_step_frames'):
+        for key in ('application_frames', 'displaced_frames',
+                    'unobserved_frames', 'application_path_m', 'max_speed_mps',
+                    'velocity_complete_frames', 'step_observed_frames'):
             item[key] = motion.get(key) if motion else None
         report['targets'].append(item)
 
@@ -303,21 +301,19 @@ def print_report(report, problems):
               % (totals['review_after'], _ha(totals['review_after_raw_m2'])))
         print('  would write       : %d (without the rule firing: %d)'
               % (totals['would_write'], totals['would_write_without_rule']))
-        print('  %-10s %-8s %-10s %-10s %5s %5s %7s %7s %5s %6s %s' % (
-            'flight', 'raw_ha', 'before', 'after', 'app', 'mov', 'mov_m',
-            'path_m', 'unobs', 'maxv', 'decision'))
+        print('  %-10s %-8s %-10s %-10s %5s %5s %5s %8s %6s %s' % (
+            'flight', 'raw_ha', 'before', 'after', 'app', 'moved', 'unobs',
+            'path_m', 'maxv', 'decision'))
 
         def cell(value, fmt='%s'):
             return '-' if value is None else fmt % value
 
         for t in report['targets']:
-            print('  %-10d %-8.4f %-10s %-10s %5s %5s %7s %7s %5s %6s %s' % (
+            print('  %-10d %-8.4f %-10s %-10s %5s %5s %5s %8s %6s %s' % (
                 t['flight_id'], _ha(t['raw_m2']), t['class_before'][:10],
                 t['class_after'][:10], cell(t['application_frames']),
-                cell(t['moving_application_frames']),
-                cell(t['moving_application_distance_m'], '%.1f'),
-                cell(t['application_path_m'], '%.1f'),
-                cell(t['motion_unobserved_frames']),
+                cell(t['displaced_frames']), cell(t['unobserved_frames']),
+                cell(t['application_path_m'], '%.3f'),
                 cell(t['max_speed_mps'], '%.2f'),
                 (t['active_decision'] or '-')
                 + (' (stale)' if t['decision_becomes_stale'] else '')))
