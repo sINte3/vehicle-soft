@@ -463,15 +463,50 @@ class ByHand(Base):
         self.assertIn('matches object 5 exactly', problem)
         self.assertIsNone(self.rows()[row]['wialon_id'])
 
-    def test_set_on_a_skipped_row_is_refused(self):
+    def test_set_on_a_skipped_row_writes_the_id_and_keeps_the_decision(self):
+        """GPS-12: заменяет прежний test_set_on_a_skipped_row_is_refused.
+
+        [REASON]: до 27.09 `--set` на помеченную строку отказывал -- берёг
+        решение владельца «не наша техника». Оказалось, что он берёг его от
+        самого расчёта: план-факт исключает объект по `wialon_id`
+        (`gps/exclusion.py`), а экран сопоставления `wialon_id` не заполняет
+        вовсе, и другого пути его поставить нет. Галочка «нет в системе» до
+        расчёта не доходила, объект продолжал считаться.
+
+        Проверка стала СТРОЖЕ прежней: мало того, что id теперь пишется --
+        `skip` обязан остаться на месте. Проставить id значит записать, какой
+        объект человек имел в виду, а не отменить его решение.
+        """
+        row = self.mapping('Чужой', skip=1)
+        server = FakeServer([(5, 'Чужой', MORNING)])
+        code, log = self.run_tool(server, '--set', '%d=5' % row, '--apply')
+        self.assertEqual(code, 0, log)
+        written = self.rows()[row]
+        self.assertEqual(written['wialon_id'], 5)
+        self.assertEqual(written['skip'], 1)
+        self.assertIsNone(written['equipment_id'])
+
+    def test_set_on_a_skipped_row_still_checks_the_object_exists(self):
+        """Прочие замки `--set` на помеченной строке остались."""
         row = self.mapping('Чужой', skip=1)
         server = FakeServer([(5, 'Чужой', MORNING)])
         saved, sys.stderr = sys.stderr, io.StringIO()
         try:
-            code, log = self.run_tool(server, '--set', '%d=5' % row, '--apply')
+            code, log = self.run_tool(server, '--set', '%d=99999' % row,
+                                      '--apply')
+            problem = sys.stderr.getvalue()
         finally:
             sys.stderr = saved
         self.assertEqual(code, 2, log)
+        self.assertIn('is not in Wialon', problem)
+        self.assertIsNone(self.rows()[row]['wialon_id'])
+
+    def test_a_skipped_row_is_still_left_out_of_the_automatic_plan(self):
+        """Автоплан помеченные строки по-прежнему не трогает."""
+        row = self.mapping('Чужой', skip=1)
+        server = FakeServer([(5, 'Чужой', MORNING)])
+        code, log = self.run_tool(server, '--apply')
+        self.assertEqual(code, 0, log)
         self.assertIsNone(self.rows()[row]['wialon_id'])
 
     def test_unset_clears_a_link_only_with_apply(self):
