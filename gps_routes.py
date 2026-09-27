@@ -36,6 +36,7 @@ from flask_login import current_user, login_required
 
 from models import (
     db,
+    CAT_PASSENGER,
     Equipment,
     GPS_DECISION_DISPUTED,
     GPS_DECISIONS,
@@ -100,6 +101,47 @@ def _machine_names(wialon_ids):
     for wialon_id, wialon_name, equipment_name in rows:
         names[wialon_id] = equipment_name or wialon_name
     return names
+
+
+# [REASON]: слаг категории «Йўловчи ташиш техникаси» (`CAT_PASSENGER`). Взят
+# из `models.CATEGORIES` через импорт, в отличие от `gps/daily.py`, которому
+# импортировать models нельзя. Одно и то же множество исключённых объектов
+# считается здесь и там ДВУМЯ реализациями -- по-другому нельзя: расчёт живёт
+# в своём venv с numpy, а служба Flask этот стек не тянет. Чтобы реализации не
+# разъехались, их ответы закреплены общим тестом на одной и той же базе
+# (tests/test_gps_fact_excluded.py).
+NON_FIELD_CATEGORIES = frozenset({CAT_PASSENGER})
+
+
+def _excluded_units():
+    """wialon_id объектов, которых на план-факте быть не должно.
+
+    То же правило, что в `gps.daily.excluded_units`:
+
+    - строка сопоставления со `skip = 1` -- владелец сказал «не наша техника»;
+    - машина в непольевой категории -- легковая остаётся нашей и в импорте
+      моточасов, просто поля не пашет, поэтому категория, а не `skip`.
+
+    Исключает ТОЛЬКО явное. `skip NULL` (колонку добавляли миграцией к уже
+    существующим строкам) не исключает, объект без строки сопоставления -- тоже.
+    Если у одного id есть и исключающая строка, и оставляющая, объект остаётся:
+    противоречие разбирает человек, а не запрос.
+
+    Строки НЕ удаляются и расчёт задним числом не переписывается: уже
+    посчитанные сутки остаются в базе, просто не показываются.
+    """
+    marked, kept, non_field, field = set(), set(), set(), set()
+    rows = (db.session.query(VialonMapping.wialon_id, VialonMapping.skip,
+                             Equipment.category)
+            .outerjoin(Equipment, VialonMapping.equipment_id == Equipment.id)
+            .filter(VialonMapping.wialon_id.isnot(None)).all())
+    for wialon_id, skip, category in rows:
+        unit_id = int(wialon_id)
+        (marked if skip else kept).add(unit_id)
+        if category is None:
+            continue
+        (non_field if category in NON_FIELD_CATEGORIES else field).add(unit_id)
+    return (marked - kept) | (non_field - field)
 
 
 def _svg_shapes(sites):
@@ -474,13 +516,24 @@ def orders():
 @module_required('wialon')
 @login_required
 def fact():
-    days = [row[0] for row in db.session.query(GpsDailyAggregate.work_date)
-            .distinct().order_by(GpsDailyAggregate.work_date.desc()).all()]
+    skipped = _excluded_units()
+    day_query = db.session.query(GpsDailyAggregate.work_date)
+    aggregate_query = GpsDailyAggregate.query
+    if skipped:
+        ids = list(skipped)
+        day_query = day_query.filter(~GpsDailyAggregate.wialon_id.in_(ids))
+        aggregate_query = aggregate_query.filter(
+            ~GpsDailyAggregate.wialon_id.in_(ids))
+    days = [row[0] for row in day_query.distinct()
+            .order_by(GpsDailyAggregate.work_date.desc()).all()]
     day = _parse_date(request.args.get('date'))
     if day is None:
         day = days[0] if days else date_cls.today()
 
-    aggregates = (GpsDailyAggregate.query.filter_by(work_date=day)
+    # [REASON]: сутки фильтруются тоже, а не только список машин. День, в
+    # котором остались одни легковые, иначе стоял бы в выборе даты и открывался
+    # пустым -- человек искал бы пропавшую машину там, где её не было.
+    aggregates = (aggregate_query.filter_by(work_date=day)
                   .order_by(GpsDailyAggregate.wialon_id).all())
     names = _machine_names({a.wialon_id for a in aggregates})
 
