@@ -553,6 +553,13 @@ production у дрона № 9 есть `hardware_id` и оба ника, «9 Ga
 запускать. Иначе откажет собственный гейт блока, и это правильно: он для того и
 стоит.
 
+С DJI-AREA-APPLICATION-MOTION-001 (27.09.2026) замороженный код модели
+изменился, и отпечаток в блоках — `d8c977ae…` (у `rc1` — `7c01a131…`): так
+требует самотест ранбука. Ветка и тег оставлены прежними, поэтому блоки в
+нынешнем виде остановятся на сверке отпечатка до первого действия. Порядок
+проверки самого правила — `docs/DJI_AREA_APPLICATION_MOTION_001.md` §6; эти
+блоки для него не нужны.
+
 Чем блоки проверены. `tools/test_dji_area_production_runbook.py` держит их
 свойства в CI (порядок шагов, гейты, обращение с унаследованным токеном,
 отсутствие production и заполнителей, равенство пина настоящему отпечатку,
@@ -606,7 +613,7 @@ $backup  = 'C:\transport-report-staging\backups\dji-area'
 $py      = 'C:\Program Files\Python314\python.exe'
 $branch  = 'claude/dji-area-productionization-001'
 $ExpectedTag = 'dji-area-productionization-001-rc1'
-$ExpectedFingerprint = '7c01a13148410b494d725984b2725618f3ef096535e52dfdd75305eb3d10edb6'
+$ExpectedFingerprint = 'd8c977ae837d3ee08b0f65d0d4d14615c0fcfec6436aaee5022ff38263a9c720'
 $from    = '2026-09-01'
 $to      = '2026-09-18'
 if ((hostname) -ne $expectedHost) { throw "STEP FAILED: host is $(hostname), expected $expectedHost" }
@@ -802,7 +809,7 @@ $py       = 'C:\Program Files\Python314\python.exe'
 $daily    = 'C:\VehicleSoft_AreaDaily\src\drone_collector\data\area_daily'
 $branch   = 'claude/dji-area-productionization-001'
 $ExpectedTag = 'dji-area-productionization-001-rc1'
-$ExpectedFingerprint = '7c01a13148410b494d725984b2725618f3ef096535e52dfdd75305eb3d10edb6'
+$ExpectedFingerprint = 'd8c977ae837d3ee08b0f65d0d4d14615c0fcfec6436aaee5022ff38263a9c720'
 $StopAbove = 50
 if (-not (Test-Path -LiteralPath $py)) { throw "STEP FAILED: python not found: $py" }
 if (-not (Test-Path -LiteralPath $cpy)) { throw "STEP FAILED: collector python not found: $cpy" }
@@ -911,7 +918,7 @@ $rawSnap = 'C:\VehicleSoft_Area_Staging\raw_before.json'
 $backup  = 'C:\transport-report-staging\backups\dji-area'
 $py      = 'C:\Program Files\Python314\python.exe'
 $ExpectedTag = 'dji-area-productionization-001-rc1'
-$ExpectedFingerprint = '7c01a13148410b494d725984b2725618f3ef096535e52dfdd75305eb3d10edb6'
+$ExpectedFingerprint = 'd8c977ae837d3ee08b0f65d0d4d14615c0fcfec6436aaee5022ff38263a9c720'
 if ((hostname) -ne $expectedHost) { throw "STEP FAILED: host is $(hostname), expected $expectedHost" }
 if ($staging -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a root that is not the staging checkout" }
 if ($db -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a database outside the staging checkout" }

@@ -67,6 +67,16 @@ SHA в файл меняет содержимое коммита и, значи�
 пересчёт 01.09–18.09 на копии площадки — `unchanged=4623`); блок R и holdout
 сентября исполнены на `reviewed-4` / `reviewed-5` и остаются историей этих тегов.
 
+27.09.2026 (DJI-AREA-APPLICATION-MOTION-001) замороженные `resolver.py`,
+`v4.py`, `pipeline.py`, `store.py`, `accounting.py` и `__init__.py` изменились
+(правило движения при применении, `docs/DJI_AREA_APPLICATION_MOTION_001.md`;
+`structural.py` — нет), и отпечаток в блоках переведён с `7c01a131…` на
+`d8c977ae…`, как того требует самотест. Ветка и тег оставлены прежними: блоки —
+запись исполненной квалификации `rc1`, а у `rc1` отпечаток прежний. Поэтому в
+нынешнем виде блок остановится на сверке отпечатка сразу после клонирования,
+до первого действия; повторный прогон требует перенести всю тройку на тег
+проверенной ревизии с новым кодом.
+
 Отпечаток печатает сам инструмент:
 
 ```powershell
@@ -99,7 +109,7 @@ $backup  = 'C:\transport-report-staging\backups\dji-area'
 $py      = 'C:\Program Files\Python314\python.exe'
 $branch  = 'claude/dji-area-productionization-001'
 $ExpectedTag = 'dji-area-productionization-001-rc1'
-$ExpectedFingerprint = '7c01a13148410b494d725984b2725618f3ef096535e52dfdd75305eb3d10edb6'
+$ExpectedFingerprint = 'd8c977ae837d3ee08b0f65d0d4d14615c0fcfec6436aaee5022ff38263a9c720'
 $from    = '2026-09-01'
 $to      = '2026-09-18'
 if ($staging -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a root that is not the staging checkout" }
@@ -351,7 +361,7 @@ $ids     = 'C:\VehicleSoft_Holdout\plan\capture_ids.txt'
 $py      = 'C:\Program Files\Python314\python.exe'
 $branch  = 'claude/dji-area-productionization-001'
 $ExpectedTag = 'dji-area-productionization-001-rc1'
-$ExpectedFingerprint = '7c01a13148410b494d725984b2725618f3ef096535e52dfdd75305eb3d10edb6'
+$ExpectedFingerprint = 'd8c977ae837d3ee08b0f65d0d4d14615c0fcfec6436aaee5022ff38263a9c720'
 if (-not (Test-Path -LiteralPath $py)) { throw "STEP FAILED: python not found: $py" }
 if (-not (Test-Path -LiteralPath $review)) { throw "STEP FAILED: review clone not found: $review" }
 if (-not (Test-Path -LiteralPath $work)) { New-Item -ItemType Directory -Force -Path $work | Out-Null }
@@ -472,7 +482,7 @@ $backup  = 'C:\transport-report-staging\backups\dji-area'
 $py      = 'C:\Program Files\Python314\python.exe'
 $branch  = 'claude/dji-area-productionization-001'
 $ExpectedTag = 'dji-area-productionization-001-rc1'
-$ExpectedFingerprint = '7c01a13148410b494d725984b2725618f3ef096535e52dfdd75305eb3d10edb6'
+$ExpectedFingerprint = 'd8c977ae837d3ee08b0f65d0d4d14615c0fcfec6436aaee5022ff38263a9c720'
 if ($staging -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a root that is not the staging checkout" }
 if ($db -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a database outside the staging checkout" }
 if ($service -ne 'TransportReportStaging') { throw "STEP FAILED: refusing a service that is not the staging service" }
