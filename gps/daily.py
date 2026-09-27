@@ -235,7 +235,16 @@ def compute_day(points, contours=None):
         # "We looked and the machine did not move" -- a fact worth a row.
         aggregate["reason"] = REASON_NO_MOTION
         return DayResult(aggregate, [])
-    if aggregate["interval_median_s"] > MAX_INTERVAL_S:
+    median_s = aggregate["interval_median_s"]
+    # [REASON]: a day holding ONE message has no interval at all, so the
+    # median is None -- and `None > 30.0` is a TypeError, which is how
+    # --catch-up died on 27.09.2026 over the objects whose history starts
+    # one day back. None is not a measurement waiting to be filled in: it
+    # means the interval cannot be measured, which is strictly worse than
+    # any finite one, and an area from a single point is not a number.
+    # gps.area.track_quality spells the same len < 2 case out; here it was
+    # left to the comparison.
+    if median_s is None or median_s > MAX_INTERVAL_S:
         aggregate["reason"] = REASON_RARE
         return DayResult(aggregate, [])
 

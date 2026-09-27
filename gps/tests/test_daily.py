@@ -206,6 +206,32 @@ class RefusalPaths(unittest.TestCase):
         self.assertEqual(result.reason, "net_tochek")
         self.assertEqual(result.aggregate["points_total"], 0)
 
+    def test_a_day_of_one_single_message_is_a_refusal_and_not_a_crash(self):
+        # The crash of --catch-up on 27.09.2026: `None > 30.0`. One message
+        # yields no interval at all, and an object whose history starts a day
+        # back has such days. The refusal is redkaya_zapis -- one message a day
+        # is the rarest recording there is -- and the measurements still get a
+        # row, because "we looked and there was one message" is a fact.
+        result = daily.compute_day(synthetic_day(count=1))
+        self.assertEqual(result.reason, "redkaya_zapis")
+        self.assertEqual(result.sites, [])
+        self.assertIsNone(result.aggregate["interval_median_s"])
+        self.assertEqual(result.aggregate["points_total"], 1)
+        self.assertEqual(result.aggregate["points_work"], 1)
+
+    def test_two_messages_are_enough_and_are_not_refused_with_it(self):
+        # The control that keeps `is None` from swallowing the working case:
+        # two messages DO have an interval, and this day is not a refusal.
+        result = daily.compute_day(synthetic_day(count=2))
+        self.assertEqual(result.aggregate["interval_median_s"], 30.0)
+        self.assertIsNone(result.reason)
+
+    def test_one_standing_message_is_no_motion_not_rare(self):
+        # The order of the two guards, pinned: a single message at 0 km/h never
+        # reaches the interval at all, and "did not move" is the stronger fact.
+        result = daily.compute_day(synthetic_day(count=1, speed=0.0))
+        self.assertEqual(result.reason, "net_dvizheniya")
+
     def test_a_day_that_moved_but_worked_nowhere_is_published_as_empty(self):
         # Driving down a road at 8 km/h in a straight line: points in the work
         # window, but no patch reaches the area floor. That is "we looked and
@@ -586,6 +612,33 @@ class CatchUpGaps(CollectionCompleteness):
                                   "--window-days", "3")
         self.assertEqual(code, 0, log)
         self.assertIsNone(self.rows("gps_daily_aggregates")[0]["reason"])
+
+    def test_a_gap_day_of_one_single_message_does_not_kill_the_catch_up(self):
+        # The live crash of 27.09.2026: --catch-up walked the gap days, met an
+        # object with ONE message in the day and died on `None > 30.0` -- after
+        # the first loop had already reported "recomputed 124". Everything the
+        # second loop had not reached yet stayed uncomputed, and the run left no
+        # trace of why. The day gets a row with a reason; the neighbour on the
+        # same day is computed in the same pass.
+        lonely = 999001
+        midnight, finish = daily.day_bounds(self.DAY)
+        storage.write_points(self.folder,
+                             [(lonely, midnight + 9 * 3600,
+                               64.50, 39.99, 8.0, 90, 14)])
+        storage.set_watermark(self.folder, self.UNIT, self.finish)
+        storage.set_watermark(self.folder, lonely, self.finish)
+        code, log = self.run_main("--catch-up", "--until", self.DAY,
+                                  "--window-days", "3")
+        self.assertEqual(code, 0, log)
+        self.assertIn("days without a row: 2 -- computed 2, marked "
+                      "sbor_nepolnyy 0", log)
+        rows = {r["wialon_id"]: r for r in self.rows("gps_daily_aggregates")}
+        self.assertEqual(rows[lonely]["reason"], "redkaya_zapis")
+        self.assertEqual(rows[lonely]["points_total"], 1)
+        self.assertIsNone(rows[lonely]["interval_median_s"])
+        # and the object next to it in the same run is published as before
+        self.assertIsNone(rows[self.UNIT]["reason"])
+        self.assertGreater(len(self.rows("gps_work_polygons")), 0)
 
     def test_a_day_that_already_has_a_row_is_left_alone(self):
         storage.set_watermark(self.folder, self.UNIT, self.finish)
