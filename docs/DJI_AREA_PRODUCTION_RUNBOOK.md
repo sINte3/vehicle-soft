@@ -544,7 +544,7 @@ production у дрона № 9 есть `hardware_id` и оба ника, «9 Ga
 строки не останавливает.
 
 Все три блока доказывают ревизию до первого действия: аннотированный тег
-`dji-area-productionization-001-rc1` плюс отпечаток кода — та же пара, что в
+`dji-area-application-motion-001-rc1` плюс отпечаток кода — та же пара, что в
 `docs/DJI_AREA_SIMPLIFY_001_RUNBOOK.md`.
 
 Пин называет ревизию, которая прошла квалификацию. Закрывающие коммиты — раздел
@@ -553,12 +553,16 @@ production у дрона № 9 есть `hardware_id` и оба ника, «9 Ga
 запускать. Иначе откажет собственный гейт блока, и это правильно: он для того и
 стоит.
 
-С DJI-AREA-APPLICATION-MOTION-001 (27.09.2026) замороженный код модели
-изменился, и отпечаток в блоках — `d8c977ae…` (у `rc1` — `7c01a131…`): так
-требует самотест ранбука. Ветка и тег оставлены прежними, поэтому блоки в
-нынешнем виде остановятся на сверке отпечатка до первого действия. Порядок
-проверки самого правила — `docs/DJI_AREA_APPLICATION_MOTION_001.md` §6; эти
-блоки для него не нужны.
+27.09.2026 тройка «ветка, тег, отпечаток» переведена вместе с кодом
+DJI-AREA-APPLICATION-MOTION-001 (изменились замороженные файлы модели):
+`claude/dji-area-moving-application` / `dji-area-application-motion-001-rc1` /
+`8f143183…` вместо `claude/dji-area-productionization-001` /
+`dji-area-productionization-001-rc1` / `7c01a131…`. Квалификация 21.09 и
+раздел выше остаются историей `rc1` прежней задачи. Тег новой ревизии владелец
+создаёт на проверенном коммите ветки после ревью, до любого прогона блоков; без
+тега каждый блок останавливается на проверке ревизии, до первого действия.
+Проверка самого правила этих блоков не требует —
+`docs/DJI_AREA_APPLICATION_MOTION_001.md` §6.
 
 Чем блоки проверены. `tools/test_dji_area_production_runbook.py` держит их
 свойства в CI (порядок шагов, гейты, обращение с унаследованным токеном,
@@ -575,7 +579,7 @@ PowerShell 5.1 и 7 без ошибок. Главное же — **все три
 
 ### Что именно разрешает владелец
 
-> Разрешаю развернуть `dji-area-productionization-001-rc1` на площадке и один
+> Разрешаю развернуть `dji-area-application-motion-001-rc1` на площадке и один
 > адресный сбор из кабинета DJI сохранённой сессией: список вылетов за три дня и
 > источники по манифесту за один вчерашний день (ожидается 6–42 записи, порог
 > остановки 50), с отправкой **только на площадку**; и запись пересчёта окна в
@@ -611,9 +615,9 @@ $memo    = 'C:\VehicleSoft_Area_Staging\before_head.txt'
 $rawSnap = 'C:\VehicleSoft_Area_Staging\raw_before.json'
 $backup  = 'C:\transport-report-staging\backups\dji-area'
 $py      = 'C:\Program Files\Python314\python.exe'
-$branch  = 'claude/dji-area-productionization-001'
-$ExpectedTag = 'dji-area-productionization-001-rc1'
-$ExpectedFingerprint = 'd8c977ae837d3ee08b0f65d0d4d14615c0fcfec6436aaee5022ff38263a9c720'
+$branch  = 'claude/dji-area-moving-application'
+$ExpectedTag = 'dji-area-application-motion-001-rc1'
+$ExpectedFingerprint = '8f14318351ac172f9a7168dcd2d015ce049baf7dbef319fd820ffe4d31b79886'
 $from    = '2026-09-01'
 $to      = '2026-09-18'
 if ((hostname) -ne $expectedHost) { throw "STEP FAILED: host is $(hostname), expected $expectedHost" }
@@ -807,9 +811,9 @@ $browsers = 'C:\VehicleSoft_Holdout\playwright-browsers'
 $cpy      = 'C:\VehicleSoft_Holdout\session_venv\Scripts\python.exe'
 $py       = 'C:\Program Files\Python314\python.exe'
 $daily    = 'C:\VehicleSoft_AreaDaily\src\drone_collector\data\area_daily'
-$branch   = 'claude/dji-area-productionization-001'
-$ExpectedTag = 'dji-area-productionization-001-rc1'
-$ExpectedFingerprint = 'd8c977ae837d3ee08b0f65d0d4d14615c0fcfec6436aaee5022ff38263a9c720'
+$branch   = 'claude/dji-area-moving-application'
+$ExpectedTag = 'dji-area-application-motion-001-rc1'
+$ExpectedFingerprint = '8f14318351ac172f9a7168dcd2d015ce049baf7dbef319fd820ffe4d31b79886'
 $StopAbove = 50
 if (-not (Test-Path -LiteralPath $py)) { throw "STEP FAILED: python not found: $py" }
 if (-not (Test-Path -LiteralPath $cpy)) { throw "STEP FAILED: collector python not found: $cpy" }
@@ -917,8 +921,8 @@ $out     = 'C:\VehicleSoft_Area_Staging\smoke'
 $rawSnap = 'C:\VehicleSoft_Area_Staging\raw_before.json'
 $backup  = 'C:\transport-report-staging\backups\dji-area'
 $py      = 'C:\Program Files\Python314\python.exe'
-$ExpectedTag = 'dji-area-productionization-001-rc1'
-$ExpectedFingerprint = 'd8c977ae837d3ee08b0f65d0d4d14615c0fcfec6436aaee5022ff38263a9c720'
+$ExpectedTag = 'dji-area-application-motion-001-rc1'
+$ExpectedFingerprint = '8f14318351ac172f9a7168dcd2d015ce049baf7dbef319fd820ffe4d31b79886'
 if ((hostname) -ne $expectedHost) { throw "STEP FAILED: host is $(hostname), expected $expectedHost" }
 if ($staging -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a root that is not the staging checkout" }
 if ($db -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a database outside the staging checkout" }

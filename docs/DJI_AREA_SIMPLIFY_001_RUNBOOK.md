@@ -51,7 +51,7 @@ SHA в файл меняет содержимое коммита и, значи�
 
 | Пин | Что доказывает | Почему не самореференция |
 |---|---|---|
-| Аннотированный тег `dji-area-productionization-001-rc1` | `git rev-parse HEAD` совпадает с коммитом, на который указывает тег: это ровно та ревизия целиком | тег создаётся **после** коммита и живёт отдельной ссылкой; в блоке записано только его ИМЯ |
+| Аннотированный тег `dji-area-application-motion-001-rc1` | `git rev-parse HEAD` совпадает с коммитом, на который указывает тег: это ровно та ревизия целиком | тег создаётся **после** коммита и живёт отдельной ссылкой; в блоке записано только его ИМЯ |
 | Отпечаток кода `$ExpectedFingerprint` | содержимое девяти файлов, которые считают вердикт, не разошлось с проверенным | отпечаток берётся по `FROZEN_FILES`, а этот файл в них не входит |
 
 Тег отвечает на вопрос «та ли ревизия», отпечаток — на вопрос «не правили ли
@@ -67,15 +67,15 @@ SHA в файл меняет содержимое коммита и, значи�
 пересчёт 01.09–18.09 на копии площадки — `unchanged=4623`); блок R и holdout
 сентября исполнены на `reviewed-4` / `reviewed-5` и остаются историей этих тегов.
 
-27.09.2026 (DJI-AREA-APPLICATION-MOTION-001) замороженные `resolver.py`,
-`v4.py`, `pipeline.py`, `store.py`, `accounting.py` и `__init__.py` изменились
-(правило движения при применении, `docs/DJI_AREA_APPLICATION_MOTION_001.md`;
-`structural.py` — нет), и отпечаток в блоках переведён с `7c01a131…` на
-`d8c977ae…`, как того требует самотест. Ветка и тег оставлены прежними: блоки —
-запись исполненной квалификации `rc1`, а у `rc1` отпечаток прежний. Поэтому в
-нынешнем виде блок остановится на сверке отпечатка сразу после клонирования,
-до первого действия; повторный прогон требует перенести всю тройку на тег
-проверенной ревизии с новым кодом.
+27.09.2026 (DJI-AREA-APPLICATION-MOTION-001) тройка переведена ещё раз, вместе
+с кодом: замороженные `resolver.py`, `v4.py`, `pipeline.py`, `store.py`,
+`accounting.py` и `__init__.py` изменились (правило движения при применении,
+`docs/DJI_AREA_APPLICATION_MOTION_001.md`; `structural.py` — нет). Было
+`claude/dji-area-productionization-001` / `dji-area-productionization-001-rc1` /
+`7c01a131…`, стало `claude/dji-area-moving-application` /
+`dji-area-application-motion-001-rc1` / `8f143183…`. Тег владелец создаёт на
+проверенном коммите ветки после ревью; до этого каждый блок останавливается на
+проверке тега, до первого действия. Квалификация `rc1` остаётся её историей.
 
 Отпечаток печатает сам инструмент:
 
@@ -107,9 +107,9 @@ $src     = 'C:\VehicleSoft_Holdout_Staging\src_r'
 $out     = 'C:\VehicleSoft_Holdout_Staging\reparse'
 $backup  = 'C:\transport-report-staging\backups\dji-area'
 $py      = 'C:\Program Files\Python314\python.exe'
-$branch  = 'claude/dji-area-productionization-001'
-$ExpectedTag = 'dji-area-productionization-001-rc1'
-$ExpectedFingerprint = 'd8c977ae837d3ee08b0f65d0d4d14615c0fcfec6436aaee5022ff38263a9c720'
+$branch  = 'claude/dji-area-moving-application'
+$ExpectedTag = 'dji-area-application-motion-001-rc1'
+$ExpectedFingerprint = '8f14318351ac172f9a7168dcd2d015ce049baf7dbef319fd820ffe4d31b79886'
 $from    = '2026-09-01'
 $to      = '2026-09-18'
 if ($staging -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a root that is not the staging checkout" }
@@ -359,9 +359,9 @@ $planDir = 'C:\VehicleSoft_Holdout\plan'
 $plan    = 'C:\VehicleSoft_Holdout\plan\plan.json'
 $ids     = 'C:\VehicleSoft_Holdout\plan\capture_ids.txt'
 $py      = 'C:\Program Files\Python314\python.exe'
-$branch  = 'claude/dji-area-productionization-001'
-$ExpectedTag = 'dji-area-productionization-001-rc1'
-$ExpectedFingerprint = 'd8c977ae837d3ee08b0f65d0d4d14615c0fcfec6436aaee5022ff38263a9c720'
+$branch  = 'claude/dji-area-moving-application'
+$ExpectedTag = 'dji-area-application-motion-001-rc1'
+$ExpectedFingerprint = '8f14318351ac172f9a7168dcd2d015ce049baf7dbef319fd820ffe4d31b79886'
 if (-not (Test-Path -LiteralPath $py)) { throw "STEP FAILED: python not found: $py" }
 if (-not (Test-Path -LiteralPath $review)) { throw "STEP FAILED: review clone not found: $review" }
 if (-not (Test-Path -LiteralPath $work)) { New-Item -ItemType Directory -Force -Path $work | Out-Null }
@@ -480,9 +480,9 @@ $out     = 'C:\VehicleSoft_Holdout_Staging\report'
 $recalc  = 'C:\VehicleSoft_Holdout_Staging\recalc'
 $backup  = 'C:\transport-report-staging\backups\dji-area'
 $py      = 'C:\Program Files\Python314\python.exe'
-$branch  = 'claude/dji-area-productionization-001'
-$ExpectedTag = 'dji-area-productionization-001-rc1'
-$ExpectedFingerprint = 'd8c977ae837d3ee08b0f65d0d4d14615c0fcfec6436aaee5022ff38263a9c720'
+$branch  = 'claude/dji-area-moving-application'
+$ExpectedTag = 'dji-area-application-motion-001-rc1'
+$ExpectedFingerprint = '8f14318351ac172f9a7168dcd2d015ce049baf7dbef319fd820ffe4d31b79886'
 if ($staging -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a root that is not the staging checkout" }
 if ($db -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a database outside the staging checkout" }
 if ($service -ne 'TransportReportStaging') { throw "STEP FAILED: refusing a service that is not the staging service" }
