@@ -426,7 +426,7 @@ class OwnSourceDrift(Base):
 
     def test_without_rolling_the_pointers_back_nothing_is_proven(self):
         # Отрицательный контроль к доказательству: «откат» к ТЕКУЩИМ
-        # указателям. Если бы ворота пропускали строку и так, контрафакт был
+        # указателям. Если бы ворота пропускали строку и так, контрфакт был
         # бы декорацией.
         with mock.patch.object(tool.ProvenanceHistory, 'as_of',
                                lambda _self, fid, _moment: {}):
@@ -545,7 +545,7 @@ class BillableStops(Base):
 class UnexplainedDriftStops(Base):
     """Решение то же, но изменился не источник, а вход расчёта: вылет
     перенесён на другую машину. Одни ворота семантики его бы пропустили --
-    останавливает контрафакт."""
+    останавливает контрфакт."""
 
     def setUp(self):
         super(UnexplainedDriftStops, self).setUp()
@@ -844,6 +844,23 @@ class ReleaseR1(Base):
         self.assertIn('must stay REVIEW %d: %s'
                       % (LONE, acc.R_APPLICATION_WITH_FLAT_COUNTER),
                       accepted['transition']['notes'])
+
+    def test_a_second_r1_keeps_the_raw_snapshot_and_passes(self):
+        # Снимок RAW снимается один раз -- до первой записи -- и дальше
+        # только сверяется: повтор R1 не подменяет точку отсчёта.
+        self.oracle()
+        self.assertEqual(self.r1(baseline=False)[0], tool.EXIT_PASS)
+        with io.open(self.raw_snapshot, 'rb') as fh:
+            snapshot = fh.read()
+        code, text, out = self.r1(baseline=False)
+        self.assertEqual(code, tool.EXIT_PASS, text)
+        steps = [s['step'] for s in self.verdict(out)['steps']]
+        self.assertNotIn('RAW snapshot', steps)
+        self.assertIn('RAW guard', steps)
+        self.assertFalse(self.verdict(out)['raw_snapshot']['created_now'])
+        self.assertEqual(self.verdict(out)['normalization']['planned'], 0)
+        with io.open(self.raw_snapshot, 'rb') as fh:
+            self.assertEqual(fh.read(), snapshot)
 
     def test_the_verdict_pins_the_model_and_the_oracle(self):
         from tools import dji_area_holdout as holdout

@@ -139,7 +139,7 @@ R_FIELD = 'FIELD_ATTRIBUTION_WOULD_CHANGE'
 R_FIELD_MISSING = 'FIELD_ATTRIBUTION_MISSING'
 R_TRANSITION = 'TRANSITION_NOT_AS_EXPECTED'
 
-# Чей источник сменился (доказывает контрафакт, называет сверка указателей).
+# Чей источник сменился (доказывает контрфакт, называет сверка указателей).
 CAUSE_OWN = 'OWN_SOURCE_REVISION'
 CAUSE_NEIGHBOUR = 'NEIGHBOUR_SOURCE_REVISION'
 CAUSE_BOTH = 'OWN_AND_NEIGHBOUR_SOURCE_REVISION'
@@ -282,7 +282,7 @@ def instrumented_pipeline(provenance=None):
     """Сухой прогон `dji_area.pipeline` со снятием ПОЛНОЙ строки расчёта.
 
     ``provenance`` -- None либо функция flight_id -> {ключ ревизии: id}: её
-    указатели ставятся в загруженные записи вместо текущих (контрафакт).
+    указатели ставятся в загруженные записи вместо текущих (контрфакт).
 
     [REASON]: построчный вывод `--rows` несёт решение, но не всю строку -- нет
     ни мостиков цепочки, ни причин окна, ни источника RAW. Ворота обязаны
