@@ -23,7 +23,7 @@
       вход с обновлением токена, прочее отказывается до сети
       (`agro_work/client.py`).
   Не хранит персональных полей: имён и телефонов фермеров, водителей и
-      операторов, названия хозяйства (вопрос 8 открыт), комментариев.
+      операторов, названия хозяйства (ответ на вопрос 8), комментариев.
   Не трогает связки владельца и метод сверки видов работ.
   Ничего не удаляет: пропавшая из полной выгрузки заявка получает отметку.
 
@@ -183,7 +183,7 @@ def print_summary(run_id, status, counters, detail, log=print):
     log('')
     log('agro-work import run %d: %s' % (run_id, status))
     log('applications: seen %d | new %d | updated %d | unchanged %d | '
-        'rejected %d | duplicate %d | gone %d'
+        'rejected %d | duplicate %d | deleted in agro-work %d'
         % (counters['rows_seen'], counters['rows_new'], counters['rows_updated'],
            counters['rows_unchanged'], counters['rows_rejected'],
            counters['rows_duplicate'], counters['rows_gone']))

@@ -36,8 +36,9 @@ Creates:
 owner ruled on 28.09 (question 6) that names and phones of farmers, drivers
 and operators are not stored: farm_info.owner_name, farm_info.owner_phone,
 transport_info.driver_name, created_by_name, updated_by_name. None of these
-tables has a column that could hold them. The farm's NAME is an open question
-(8) and has no column either; the farm is kept by its agro-work id only.
+tables has a column that could hold them. The farm's NAME has no column
+either -- the owner's answer to question 8 (28.09): not stored; the farm is
+kept by its agro-work id only.
 agro_work_status_events.changed_fields keeps field names, never values: a
 changed farmer would otherwise carry both names into our database.
 
@@ -393,9 +394,9 @@ EXPECTED_COLUMNS = {
 # claim it: no table of this migration may carry a column with one of these
 # names. The first five are the owner's own list (question 6, 28.09).
 # driver_phone is the same kind of field in the transport registry. farm_name
-# waits for question 8. comment is the operators' free text: the
-# reconciliation does not need it, and a name or a phone typed into it would
-# arrive here unasked.
+# -- the owner's answer to question 8 (28.09): not stored. comment is the
+# operators' free text: the reconciliation does not need it, and a name or a
+# phone typed into it would arrive here unasked.
 FORBIDDEN_COLUMNS = ('owner_name', 'owner_phone', 'driver_name',
                      'created_by_name', 'updated_by_name',
                      'driver_phone', 'farm_name', 'comment')
