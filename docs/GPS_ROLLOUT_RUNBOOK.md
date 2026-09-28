@@ -179,7 +179,13 @@ cd C:\transport-report
 
 В выводе — по строке на объект: сколько участков и сколько гектаров, либо
 причина, по которой площадь не публикуется (`redkaya_zapis`, `net_dvizheniya`,
-`net_tochek`, `sbor_nepolnyy`). Внизу — `published / not computed / sites`.
+`net_tochek`, `sbor_nepolnyy`, `spetstekhnika`). Внизу — `published / not computed / sites`.
+
+`spetstekhnika` — машина в категории «Спецтехника» (решение владельца
+28.09.2026): след трека посчитан, гектары по ней не считаются никогда. Если
+машина на самом деле полевая — поменять категорию в карточке техники; ночной
+`--catch-up` пересчитает последние 30 суток сам (строка
+`category rule -- N day(s) now track only ..., M day(s) back to hectares`).
 
 `sbor_nepolnyy` — коллектор не дошёл до конца этих суток (его отметка по
 объекту стоит раньше полуночи: усечённый ответ после простоя). Площадь по

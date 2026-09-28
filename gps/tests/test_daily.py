@@ -908,6 +908,232 @@ class ExcludedObjects(CollectionCompleteness):
         self.assertEqual(self.rows("gps_daily_aggregates"), [])
 
 
+class TrackWithoutHectares(unittest.TestCase):
+    """A1: спецтехника -- след трека считается, гектары нет. Без базы.
+
+    [REASON]: решение владельца 28.09.2026 -- «исключать нет, гектар по ней не
+    считать», и прочтение «машина остаётся на экране со следом» подтверждено.
+    Проверяется, что СЛЕД остаётся тем же самым: иначе «без гектаров» тихо
+    превратилось бы в «без всего», и экран показывал бы погрузчик с нулями.
+    """
+
+    MEASURES = ("points_total", "points_work", "track_km", "interval_median_s",
+                "sats_median", "motion_gaps", "lost_seconds", "gps_jumps")
+
+    def test_the_track_is_measured_exactly_as_for_a_field_machine(self):
+        track = read_fixture_track()
+        field = daily.compute_day(track)
+        special = daily.compute_day(track, track_only=True)
+        # Отрицательный контроль: этот же трек у полевой машины даёт участок
+        # 8,772 га -- без него «участков нет» было бы верно и на пустом треке.
+        self.assertIsNone(field.reason)
+        self.assertAlmostEqual(sum(s["area_ha"] for s in field.sites), 8.772,
+                               delta=0.01)
+        self.assertEqual(special.reason, "spetstekhnika")
+        self.assertEqual(special.sites, [])
+        for name in self.MEASURES:
+            self.assertEqual(special.aggregate[name], field.aggregate[name], name)
+        self.assertAlmostEqual(special.aggregate["track_km"], 32.1, delta=0.2)
+
+    def test_the_category_speaks_before_the_measurements(self):
+        # Погрузчик, простоявший день, и погрузчик с редкой записью -- одна
+        # причина: ни тому, ни другому гектары не полагались бы и так.
+        standing = daily.compute_day(synthetic_day(speed=0.0), track_only=True)
+        rare = daily.compute_day(synthetic_day(step_s=301), track_only=True)
+        self.assertEqual(standing.reason, "spetstekhnika")
+        self.assertEqual(rare.reason, "spetstekhnika")
+        self.assertEqual(standing.aggregate["points_work"], 0)
+        self.assertEqual(rare.aggregate["interval_median_s"], 301.0)
+
+    def test_a_day_without_points_is_still_no_points(self):
+        # Строка «точек нет» правдива при любом правиле: без неё нельзя
+        # отличить погрузчик без трекера от погрузчика без гектаров.
+        self.assertEqual(daily.compute_day([], track_only=True).reason,
+                         "net_tochek")
+
+
+class SpecialMachinery(ExcludedObjects):
+    """A1 в базе: правило по категории, catch-up в обе стороны, ответы целы.
+
+    Фикстура 3464 (27.07, 8,772 га) -- машина, которую меняют между
+    категориями; легковая соседка из ExcludedObjects здесь не участвует.
+    """
+
+    def set_category(self, category, unit=None):
+        """Одна строка сопоставления на объект; категория меняется ей на месте."""
+        unit = unit or self.UNIT
+        con = sqlite3.connect(self.db)
+        try:
+            row = con.execute("SELECT equipment_id FROM vialon_mappings "
+                              "WHERE wialon_id = ?", (unit,)).fetchone()
+            if row is None:
+                cursor = con.execute(
+                    "INSERT INTO equipment (name, plate, category, "
+                    "organization_id, is_active) VALUES (?, ?, ?, 1, 1)",
+                    ("Pogruzchik", "80 373 HA", category))
+                con.execute(
+                    "INSERT INTO vialon_mappings (vialon_name, wialon_id, "
+                    "equipment_id, skip) VALUES (?, ?, ?, 0)",
+                    ("Unit %d" % unit, unit, cursor.lastrowid))
+            else:
+                con.execute("UPDATE equipment SET category = ? WHERE id = ?",
+                            (category, row[0]))
+            con.commit()
+        finally:
+            con.close()
+
+    def day_row(self, unit=None):
+        unit = unit or self.UNIT
+        return next(r for r in self.rows("gps_daily_aggregates")
+                    if r["wialon_id"] == unit)
+
+    def polygons(self, unit=None):
+        unit = unit or self.UNIT
+        return [r for r in self.rows("gps_work_polygons")
+                if r["wialon_id"] == unit]
+
+    def catch_up(self):
+        return self.run_main("--catch-up", "--until", self.DAY,
+                             "--window-days", "3")
+
+    def test_a_special_machine_gets_its_track_and_no_site(self):
+        self.watermarks()
+        self.set_category("special")
+        code, log = self.run_main("--date", self.DAY)
+        self.assertEqual(code, 0, log)
+        row = self.day_row()
+        self.assertEqual(row["reason"], "spetstekhnika")
+        self.assertEqual(row["points_total"], 1598)
+        self.assertAlmostEqual(row["track_km"], 32.1, delta=0.2)
+        self.assertEqual(row["interval_median_s"], 30.0)
+        self.assertEqual(self.polygons(), [])
+        # и в консоли сказано, сколько таких и под каким словом
+        self.assertIn("track only (spetstekhnika): 1", log)
+
+    def test_a_field_machine_on_the_same_track_gets_its_hectares(self):
+        """Отрицательный контроль: категория, а не трек, снимает гектары."""
+        self.watermarks()
+        self.set_category("mtz")
+        code, log = self.run_main("--date", self.DAY)
+        self.assertEqual(code, 0, log)
+        self.assertIsNone(self.day_row()["reason"])
+        self.assertEqual(len(self.polygons()), 1)
+        self.assertNotIn("track only", log)
+
+    def test_an_explicit_unit_does_not_bypass_the_rule(self):
+        # «Покажи этот объект» считает его, но гектары от просьбы не появляются:
+        # правило о публикации, а не о том, смотреть ли.
+        self.watermarks()
+        self.set_category("special")
+        code, log = self.run_main("--date", self.DAY, "--unit", str(self.UNIT))
+        self.assertEqual(code, 0, log)
+        self.assertEqual(self.day_row()["reason"], "spetstekhnika")
+
+    def test_catch_up_turns_old_hectares_into_the_track_and_keeps_the_answer(self):
+        self.watermarks()
+        self.run_main("--date", self.DAY)          # до решения: 8,772 га
+        self.answer("работа")
+        self.set_category("special")
+        code, log = self.catch_up()
+        self.assertEqual(code, 0, log)
+        self.assertIn("category rule -- 1 day(s) now track only", log)
+        self.assertEqual(self.day_row()["reason"], "spetstekhnika")
+        # Полигон с ответом оператора НЕ удалён: ответ -- ручные данные.
+        kept = self.polygons()
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0]["operator_label"], "работа")
+        # второй прогон ничего не делает: правило уже в силе
+        code, log = self.catch_up()
+        self.assertEqual(code, 0, log)
+        self.assertIn("nothing is waiting", log)
+
+    def test_back_to_a_field_category_returns_the_hectares_and_the_answer(self):
+        """Решение обратимо: ответ, данный до него, переезжает на новый участок."""
+        self.watermarks()
+        self.run_main("--date", self.DAY)
+        self.answer("проезд")
+        self.set_category("special")
+        self.catch_up()
+        self.set_category("mtz")
+        code, log = self.catch_up()
+        self.assertEqual(code, 0, log)
+        self.assertIn("1 day(s) back to hectares", log)
+        self.assertIsNone(self.day_row()["reason"])
+        polygons = self.polygons()
+        self.assertEqual(len(polygons), 1)
+        self.assertAlmostEqual(polygons[0]["area_ha"], 8.772, delta=0.01)
+        self.assertEqual(polygons[0]["operator_label"], "проезд")
+        self.assertNotIn("poteryano", log)
+
+    def test_a_day_whose_points_are_gone_is_left_alone(self):
+        # Сутки без точек на диске пересчитать нельзя: пересчёт из пустого
+        # файла затёр бы измеренный трек словом net_tochek. Такие сутки
+        # называются числом и остаются как были.
+        self.watermarks()
+        self.run_main("--date", self.DAY)
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute(
+                "INSERT INTO gps_daily_aggregates (work_date, wialon_id, "
+                "points_total, points_work, track_km, interval_median_s, "
+                "sats_median, motion_gaps, lost_seconds, gps_jumps, reason, "
+                "method_version, computed_at) VALUES ('2026-07-26', ?, 900, "
+                "500, 20.5, 30.0, 12.0, 0, 0, 0, NULL, 'm', '2026-07-27 03:00')",
+                (self.UNIT,))
+            con.commit()
+        finally:
+            con.close()
+        self.set_category("special")
+        code, log = self.catch_up()
+        self.assertEqual(code, 0, log)
+        self.assertIn("1 day(s) now track only", log)
+        self.assertIn("1 left alone: points no longer on disk", log)
+        rows = {r["work_date"]: r for r in self.rows("gps_daily_aggregates")
+                if r["wialon_id"] == self.UNIT}
+        self.assertEqual(rows[self.DAY]["reason"], "spetstekhnika")
+        self.assertIsNone(rows["2026-07-26"]["reason"])
+        self.assertEqual(rows["2026-07-26"]["track_km"], 20.5)
+
+    def test_an_excluded_object_is_not_recomputed_by_the_category_pass(self):
+        # «Не наша» строка на погрузчик: объект исключён, и проход по категории
+        # его не трогает -- экран его скрывает, задним числом ничего не
+        # пересчитывается.
+        self.watermarks()
+        self.run_main("--date", self.DAY)
+        self.set_category("special")
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute("UPDATE vialon_mappings SET skip = 1 WHERE wialon_id = ?",
+                        (self.UNIT,))
+            con.commit()
+        finally:
+            con.close()
+        code, log = self.catch_up()
+        self.assertEqual(code, 0, log)
+        self.assertIn("nothing is waiting", log)
+        self.assertIsNone(self.day_row()["reason"])
+
+    def test_a_pending_day_of_a_special_machine_comes_back_as_track_only(self):
+        # sbor_nepolnyy принадлежит первому проходу; когда коллектор дошёл,
+        # сутки досчитываются уже по правилу категории.
+        storage.set_watermark(self.folder, self.UNIT, self.finish - 3600)
+        self.set_category("special")
+        self.run_main("--date", self.DAY, "--unit", str(self.UNIT))
+        self.assertEqual(self.day_row()["reason"], "sbor_nepolnyy")
+        storage.set_watermark(self.folder, self.UNIT, self.finish)
+        code, log = self.catch_up()
+        self.assertEqual(code, 0, log)
+        self.assertEqual(self.day_row()["reason"], "spetstekhnika")
+        self.assertEqual(self.polygons(), [])
+
+    def test_run_day_looks_the_rule_up_when_not_told(self):
+        self.watermarks()
+        self.set_category("special")
+        result = daily.run_day(self.DAY, self.UNIT, folder=self.folder,
+                               db_path=self.db, log=lambda *a: None)
+        self.assertEqual(result.reason, "spetstekhnika")
+
+
 class OneBadDayDoesNotKillTheRun(CollectionCompleteness):
     """GPS-13: сбой одних суток не уносит прогон по остальным объектам.
 
