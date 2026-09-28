@@ -42,6 +42,12 @@ from app import app  # noqa: E402
 from models import db, User, Organization, ROLE_ADMIN  # noqa: E402
 
 app.config['TESTING'] = True
+# [REASON]: GPS A2 -- экран «Факт по технике» читает трек из помесячных файлов
+# точек и ключ спутниковой подложки из instance/. Без этих двух строк тесты
+# на машине с настоящими файлами читали бы их (только чтением, но ответ
+# зависел бы от машины), а ключ владельца попал бы в страницу теста.
+app.config['GPS_POINTS_DIR'] = os.path.join(_TMP, 'gps_points')
+app.config['MAP_ESRI_KEY_FILE'] = os.path.join(_TMP, 'esri_api_key.txt')
 
 CSRF = 'test-csrf-token'
 
