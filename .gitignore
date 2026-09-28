@@ -165,3 +165,17 @@ docs/ux/5?-regression-*/after/
 
 # DJI-AREA-EVIDENCE-001: content-addressed source bodies beside the database
 instance/dji_sources/
+
+# agro-work (трек agro-work, B1-B3): учётные данные agro-work и выгрузки
+# инструментов импорта и сверки.
+#
+# [REASON]: файл учётных данных держит пароль АДМИНСКОЙ учётной записи
+# владельца в agro-work -- той, у которой там есть права на запись. Ранбук
+# кладёт его вне любой рабочей копии, но инструмент ищет его и в рабочей
+# папке, как wialon_token.txt; правило стоит здесь на тот день, когда его
+# положат рядом с кодом. CSV и xlsx -- выгрузки конкретной базы, не исходник.
+agro_work_credentials.txt
+agro_work_unmatched.csv
+agro_work_link_plan.csv
+agro_work_methods*.xlsx
+agro_work_reconcile*.xlsx
