@@ -38,12 +38,13 @@
 `status` -- что известно об объекте:
 
   polevaya        машина сопоставлена и в полевой категории -- считается
+  bez_ga          спецтехника: след считается, гектары нет (решение 28.09)
   ne_polevaya     категория непольевая (легковые) -- исключён
   ne_nasha        строка сопоставления помечена «не наша техника» -- исключён
   bez_mashiny     строка есть, машина к ней не привязана -- считается
   bez_stroki      строки сопоставления нет вовсе -- считается
-  protivorechie   у одного id строки говорят противоположное -- считается,
-                  разбирать человеку
+  protivorechie   у одного id строки говорят противоположное -- считается
+                  (с гектарами), разбирать человеку
   ischez          в строке стоит id, которого в Wialon больше нет
 
 ТОЛЬКО STDLIB, как и `gps_link_mappings.py`: `app = create_app()` вызывает
@@ -82,7 +83,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from gps_collector import config, storage                           # noqa: E402
 from gps_collector.wialon import Client, login_failure              # noqa: E402
 from gps.exclusion import (EXCLUDED_NON_FIELD, EXCLUDED_NOT_OURS,   # noqa: E402
-                           NON_FIELD_CATEGORIES, excluded_units)
+                           NON_FIELD_CATEGORIES, REASON_TRACK_ONLY,
+                           TRACK_ONLY_CATEGORIES, excluded_units,
+                           track_only_units)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(ROOT, 'instance', 'transport.db')
@@ -90,6 +93,7 @@ DB_PATH = os.path.join(ROOT, 'instance', 'transport.db')
 WINDOW_DAYS = 30
 
 FIELD = 'polevaya'
+TRACK_ONLY = 'bez_ga'
 NON_FIELD = 'ne_polevaya'
 NOT_OURS = 'ne_nasha'
 NO_EQUIPMENT = 'bez_mashiny'
@@ -98,8 +102,8 @@ CONTRADICTION = 'protivorechie'
 GONE = 'ischez'
 
 # Порядок в CSV: сначала то, что требует решения, потом справка.
-CSV_ORDER = (CONTRADICTION, NO_ROW, NO_EQUIPMENT, FIELD, NON_FIELD, NOT_OURS,
-             GONE)
+CSV_ORDER = (CONTRADICTION, NO_ROW, NO_EQUIPMENT, FIELD, TRACK_ONLY, NON_FIELD,
+             NOT_OURS, GONE)
 
 CSV_COLUMNS = ('status', 'v_plan_fakte', 'pochemu_net', 'wialon_id',
                'wialon_name', 'equipment', 'plate', 'category', 'mapping_id',
@@ -186,14 +190,23 @@ def points_activity(folder, since_t):
 
 
 def computed_activity(con, since_day):
-    """unit_id -> сколько суток посчитано, сколько гектаров и километров."""
+    """unit_id -> сколько суток посчитано, сколько гектаров и километров.
+
+    [REASON]: «посчитано» -- это сутки, чей след показан на экране: площадь
+    опубликована либо не положена по категории (спецтехника, решение 28.09).
+    Сутки с отказом измерить (`redkaya_zapis`, `sbor_nepolnyy`...) не входят.
+    Гектары -- ТОЛЬКО с опубликованных суток. Полигоны суток с причиной расчёт
+    намеренно оставляет в базе (на них могут быть ответы оператора), и сумма
+    по всем полигонам показала бы владельцу гектары, которых нет ни на экране,
+    ни в сверке нарядов.
+    """
     out = defaultdict(lambda: {'days': 0, 'ha': 0.0, 'km': 0.0})
     try:
         rows = con.execute(
             'SELECT wialon_id, COUNT(*), COALESCE(SUM(track_km), 0) '
             'FROM gps_daily_aggregates '
-            'WHERE work_date >= ? AND reason IS NULL GROUP BY wialon_id',
-            (since_day,)).fetchall()
+            'WHERE work_date >= ? AND (reason IS NULL OR reason = ?) '
+            'GROUP BY wialon_id', (since_day, REASON_TRACK_ONLY)).fetchall()
     except sqlite3.OperationalError:
         return out
     for unit_id, days, km in rows:
@@ -201,13 +214,17 @@ def computed_activity(con, since_day):
         item['days'] = int(days)
         item['km'] = float(km or 0.0)
     for unit_id, area in con.execute(
-            'SELECT wialon_id, COALESCE(SUM(area_ha), 0) FROM gps_work_polygons '
-            'WHERE work_date >= ? GROUP BY wialon_id', (since_day,)).fetchall():
+            'SELECT p.wialon_id, COALESCE(SUM(p.area_ha), 0) '
+            'FROM gps_work_polygons p '
+            'JOIN gps_daily_aggregates a ON a.work_date = p.work_date '
+            'AND a.wialon_id = p.wialon_id AND a.reason IS NULL '
+            'WHERE p.work_date >= ? GROUP BY p.wialon_id',
+            (since_day,)).fetchall():
         out[int(unit_id)]['ha'] = float(area or 0.0)
     return out
 
 
-def status_of(unit_id, rows_of_unit, excluded):
+def status_of(unit_id, rows_of_unit, excluded, track_only=frozenset()):
     """Что известно об объекте. `rows_of_unit` -- строки сопоставления этого id."""
     why = excluded.get(unit_id)
     if why == EXCLUDED_NOT_OURS:
@@ -216,19 +233,25 @@ def status_of(unit_id, rows_of_unit, excluded):
         return NON_FIELD
     if not rows_of_unit:
         return NO_ROW
+    if unit_id in track_only:
+        return TRACK_ONLY
     # Объект остался в расчёте, хотя строки о нём есть. Если строки спорят --
     # это надо назвать, а не спрятать за «считается».
     marked = [row for row in rows_of_unit if row['skip']]
     non_field = [row for row in rows_of_unit
                  if row['category'] in NON_FIELD_CATEGORIES]
-    if marked or non_field:
+    # Строка на спецтехнику, а объект не «без гектаров» -- значит, рядом
+    # строка на полевую машину, и гектары у него остались по противоречию.
+    special = [row for row in rows_of_unit
+               if row['category'] in TRACK_ONLY_CATEGORIES]
+    if marked or non_field or special:
         return CONTRADICTION
     if any(row['equipment_id'] for row in rows_of_unit):
         return FIELD
     return NO_EQUIPMENT
 
 
-def inventory(units, rows, excluded, activity, computed):
+def inventory(units, rows, excluded, activity, computed, track_only=frozenset()):
     """Строки CSV и сводка. Ничего не пишет."""
     by_id = defaultdict(list)
     by_key = defaultdict(list)
@@ -245,7 +268,8 @@ def inventory(units, rows, excluded, activity, computed):
             normalize_name(unit['name']), [])
         rows_of_unit = [row for row in rows_of_unit
                         if row['wialon_id'] in (None, unit_id)]
-        status = status_of(unit_id, by_id.get(unit_id, []), excluded)
+        status = status_of(unit_id, by_id.get(unit_id, []), excluded,
+                           track_only)
         if status == NO_ROW and rows_of_unit:
             # Строка есть, но связка ей id ещё не поставила: расчёт объект
             # считает (он работает по id), и это надо показать как есть.
@@ -334,7 +358,9 @@ def report(items, summary, categories, log=print):
     log('')
     log('by equipment category (a category nobody named is still counted):')
     for name, count in sorted(categories.items(), key=lambda p: (-p[1], p[0])):
-        mark = ' <- not field' if name in NON_FIELD_CATEGORIES else ''
+        mark = (' <- not field' if name in NON_FIELD_CATEGORIES else
+                ' <- track only, no hectares' if name in TRACK_ONLY_CATEGORIES
+                else '')
         log('  %-18s %4d%s' % (name, count, mark))
 
 
@@ -391,12 +417,14 @@ def main(argv=None):
     try:
         rows = mapping_rows(con)
         excluded = excluded_units(con)
+        track_only = track_only_units(con)
         computed = computed_activity(con, since_day)
     finally:
         con.close()
     print('mapping rows     : %d' % len(rows))
 
-    items, summary = inventory(units, rows, excluded, activity, computed)
+    items, summary = inventory(units, rows, excluded, activity, computed,
+                               track_only)
     write_inventory(args.out, items)
     report(items, summary, category_counts(items))
     print('')
