@@ -87,6 +87,14 @@ SENTINEL_MAX_CLOUD = 30
 # свежий снимок».
 SENTINEL_DAYS_BEFORE = 30
 SENTINEL_DAYS_AFTER = 15
+# [REASON]: квота Copernicus -- 10 000 единиц обработки в месяц, и лимит
+# запросов у бесплатного тарифа тоже есть; плитка стоит одинаково на любом
+# уровне. Снимок -- 10 м на пиксель, а плитка уровня 14 на широте Бухары --
+# 7,3 м: мельче самого снимка. Ближе браузер увеличивает плитки 14-го уровня
+# сам: картинка та же, а поле на уровне 17 стоит 2 плитки вместо 21 (стенд,
+# tools/ux/check_gps_imagery.mjs). Уровень 13 (14,6 м) уже терял бы детали --
+# поэтому ровно 14.
+SENTINEL_NATIVE_ZOOM = 14
 
 _INSTANCE_RE = re.compile(r'^[A-Za-z0-9-]{8,64}$')
 _LAYER_RE = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
@@ -195,7 +203,7 @@ def fresh_layer(is_ru, instance, layer, day, today=None):
         'attribution': ('Contains modified Copernicus Sentinel data %d | '
                         '<a href="https://dataspace.copernicus.eu">Copernicus '
                         'Data Space Ecosystem</a>' % end.year),
-        'maxZoom': MAX_ZOOM}
+        'maxZoom': MAX_ZOOM, 'maxNativeZoom': SENTINEL_NATIVE_ZOOM}
 
 
 def base_layers(is_ru, key_path=None, instance_path=None, day=None,

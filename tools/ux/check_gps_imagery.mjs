@@ -12,6 +12,8 @@
 //     облачность, EPSG:3857, без логотипа;
 //   * снимков нет -> подпись «нет безоблачного снимка»; WFS не ответил ->
 //     «дату узнать не удалось», и ошибок страницы нет ни там, ни там;
+//   * ближе 14-го уровня свежий слой просит плитки 14-го и растягивает их,
+//     мельче не просит (квота Copernicus);
 //   * узбекский интерфейс подписывает по-узбекски.
 //
 // Стенд: python tools/ux/serve_gps_fact.py --port 5099 --state-dir <dir> --imagery
@@ -116,6 +118,32 @@ const param = (url, name) => new URL(url).searchParams.get(name);
   }
   const attribution = await page.locator('.leaflet-control-attribution').textContent();
   expect(/Copernicus Sentinel data 2026/.test(attribution), 'A Copernicus attribution shown');
+  // Потолок уровня свежего слоя (vs_map.SENTINEL_NATIVE_ZOOM): ближе 14-го
+  // браузер растягивает плитки 14-го и квоту не тратит. Уровень карты
+  // берётся из адресов плиток Esri (/tile/{z}/...) -- до и после.
+  const Z14 = 40075016.68557849 / 2 ** 14;
+  const zoomOf = (u) => Number((u.match(/\/tile\/(\d+)\//) || [])[1]);
+  const startZoom = zoomOf(seen.esri[0] || '');
+  const wmsBefore = seen.wms.length;
+  const target = Math.min(19, Math.max(17, startZoom + 1));  // хотя бы один шаг ближе
+  for (let z = startZoom; z < target; z += 1) {
+    await page.click('.leaflet-control-zoom-in');
+    await page.waitForTimeout(450);
+  }
+  await page.waitForTimeout(800);
+  const widths = seen.wms.map((u) => {
+    const b = (param(u, 'BBOX') || '').split(',').map(Number);
+    return b[2] - b[0];
+  });
+  const finest = Math.min(...widths);
+  await page.hover('.leaflet-control-layers');
+  await page.locator('.leaflet-control-layers-base label', { hasText: 'Спутник (чёткий, Esri)' }).click();
+  await page.waitForTimeout(800);
+  const nowZoom = zoomOf(seen.esri[seen.esri.length - 1] || '');
+  expect(nowZoom > startZoom && nowZoom > 14, `A map zoomed in, past level 14 (level ${startZoom} -> ${nowZoom})`);
+  expect(widths.length > 0 && finest >= Z14 - 1,
+    `A no fresh tile finer than level 14 (finest ${Math.round(finest)} m, level 14 = ${Math.round(Z14)} m; ` +
+    `${seen.wms.length - wmsBefore} more tiles while zooming in)`);
   expect(seen.errors.length === 0, `A no page errors (${seen.errors.join(' | ')})`);
   await ctx.close();
 }

@@ -107,6 +107,10 @@
 
   function baseLayer(base) {
     var common = { attribution: base.attribution || '', maxZoom: base.maxZoom || 19 };
+    // [REASON]: svezhiy snimok -- 10 m na piksel; plitki melche urovnya 14
+    // detaley ne dobavlyayut, a kvotu Copernicus tratyat. Blizhe brauzer sam
+    // uvelichivaet plitki urovnya 14 (vs_map.SENTINEL_NATIVE_ZOOM).
+    if (base.maxNativeZoom) common.maxNativeZoom = base.maxNativeZoom;
     if (base.kind !== 'wms') return L.tileLayer(base.url, common);
     // [REASON]: vse klyuchi `wms` idut v adres zaprosa (tak ustroen
     // L.TileLayer.WMS), zaglavnymi bukvami -- tak ih zhdyot Sentinel Hub:

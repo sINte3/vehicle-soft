@@ -29,6 +29,7 @@
 import ast
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -491,6 +492,22 @@ class FreshImagery(Base):
                                             today=date(2026, 9, 28))
         self.assertEqual((start, end), (date(2026, 8, 28), date(2026, 9, 28)))
 
+    def test_tiles_stop_at_the_level_of_the_10_m_image(self):
+        # Квота Copernicus тратится плитками. Уровень плиток -- не грубее
+        # снимка (иначе теряются детали) и не мельче его на целый уровень
+        # (иначе квота уходит на увеличение, которое браузер делает сам).
+        # На широте Бухары (40° с.ш.) это ровно 14.
+        def metres_per_pixel(zoom):
+            return 156543.03392 * math.cos(math.radians(40.0)) / 2 ** zoom
+        native = vs_map.SENTINEL_NATIVE_ZOOM
+        self.assertLessEqual(metres_per_pixel(native), 10.0)
+        self.assertGreater(metres_per_pixel(native - 1), 10.0)
+        fresh = vs_map.fresh_layer(True, INSTANCE, 'TRUE_COLOR',
+                                   date(2026, 7, 27), today=date(2026, 9, 28))
+        self.assertEqual(fresh['maxNativeZoom'], native)
+        # ближе 14-го слой не пропадает: браузер растягивает его плитки
+        self.assertEqual(fresh['maxZoom'], vs_map.MAX_ZOOM)
+
     def test_with_the_instance_only_the_fresh_layer_comes_first(self):
         self.write(self.instance_file, INSTANCE)
         html, data = self.page_data()
@@ -503,6 +520,7 @@ class FreshImagery(Base):
         self.assertEqual(fresh['wms']['time'], '2026-06-27/2026-08-11')
         self.assertEqual(fresh['wms']['maxcc'], 30)
         self.assertEqual(fresh['wms']['priority'], 'mostRecent')
+        self.assertEqual(fresh['maxNativeZoom'], 14)
         self.assertEqual(fresh['dates']['typename'], 'DSS2')
         self.assertEqual(fresh['dates']['time'], fresh['wms']['time'])
         self.assertTrue(fresh['dates']['url'].endswith('/ogc/wfs/' + INSTANCE))
@@ -524,6 +542,11 @@ class FreshImagery(Base):
         self.assertEqual([b['key'] for b in data['base']],
                          ['satellite', 'fresh', 'map'])
         self.assertNotIn('не подключ', html)
+        # потолок уровня -- только у 10-метрового снимка: Esri и карта
+        # чёткие до 19-го, потолок размыл бы их на масштабе поля
+        sharp, _fresh, osm = data['base']
+        self.assertNotIn('maxNativeZoom', sharp)
+        self.assertNotIn('maxNativeZoom', osm)
 
     def test_without_the_instance_there_is_no_fresh_layer_and_no_note(self):
         """Отрицательный контроль: слой появляется только по файлу."""
