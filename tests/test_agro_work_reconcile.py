@@ -136,6 +136,9 @@ class DayState(unittest.TestCase):
                          (rc.UNKNOWN, 0.0))
         self.assertEqual(rc.day_state({'reason': 'redkaya_zapis'}, []),
                          (rc.UNKNOWN, 0.0))
+        # Причина, которой трек GPS ещё не заводил, -- незнание, а не простой.
+        self.assertEqual(rc.day_state({'reason': 'novaya_prichina'}, []),
+                         (rc.UNKNOWN, 0.0))
         self.assertEqual(rc.day_state({'reason': 'net_dvizheniya'}, []),
                          (rc.IDLE, 0.0))
         self.assertEqual(rc.day_state({'reason': None}, []), (rc.IDLE, 0.0))
