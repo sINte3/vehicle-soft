@@ -508,6 +508,36 @@ def worked_area(track, contour, contour_id=None, alpha_m=None):
                     alpha, spacing)
 
 
+def repair_polygon(polygon):
+    """Валидный многоугольник или None, если чинить нечего. Площадь НЕ меняет.
+
+    [REASON]: 28.09.2026 прогон --catch-up умер на
+    `TopologyException: side location conflict at 628751.6 4427188.7` внутри
+    `piece.intersection(geom)`. Контуры полей зеркалятся из зон Wialon, а их
+    рисуют мышкой: самопересечение («бабочка») там обычное дело, и GEOS на
+    такой геометрии не возвращает пустое пересечение, а ПОДНИМАЕТ исключение.
+    Один кривой контур обрывал расчёт всем объектам после себя.
+
+    `make_valid` разбивает «бабочку» на части; берутся только полигональные --
+    линии и точки, которыми GEOS иногда отдаёт вырожденные куски, площади не
+    несут и в пересечении бесполезны. Если полигональных частей не осталось,
+    контур не чинится и возвращается None: лучше участок без имени, чем
+    участок, названный по мусору.
+    """
+    if polygon is None or polygon.is_empty:
+        return None
+    if polygon.is_valid:
+        return polygon
+    fixed = shapely.make_valid(polygon)
+    parts = [part for part in getattr(fixed, "geoms", [fixed])
+             if part.geom_type in ("Polygon", "MultiPolygon") and not part.is_empty]
+    if not parts:
+        return None
+    if len(parts) == 1:
+        return parts[0]
+    return shapely.union_all(parts)
+
+
 def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None):
     """Every patch of ground worked in this interval -- geozone or not.
 
@@ -567,11 +597,17 @@ def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None)
         if area_ha < min_area_ha:
             continue
         contour_id = None
-        if tree is not None:
+        # [REASON]: пересечение считается по ПОЧИНЕННОЙ копии, а сам `piece`
+        # не трогается: его площадь -- измерение, и переcобирать её ради
+        # наименования нельзя. Имя участка -- дело необязательное (участок без
+        # контура это нормальная работа на неоформленной земле), а вот
+        # исключение из GEOS обрывало сутки целиком.
+        probe = repair_polygon(piece) if tree is not None else None
+        if probe is not None:
             best = 0.0
             for position in np.atleast_1d(tree.query(piece)):
                 geom = contours[named[int(position)]]
-                overlap = piece.intersection(geom).area
+                overlap = probe.intersection(geom).area
                 if overlap > best:
                     best, contour_id = overlap, named[int(position)]
         sites.append(WorkArea(contour_id, area_ha, piece, quality, alpha, spacing))

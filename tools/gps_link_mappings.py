@@ -23,17 +23,18 @@ GPS нужно не имя, а id объекта: точки лежат по `wi
       владельцу, а не в базу.
   Не перезаписывает. Строка с уже стоящим `wialon_id` не трогается, даже если
       имя теперь указывает на другой объект: это только сообщается.
-  Не удаляет и не гасит. Строки со `skip = 1` (не наша техника) в автоплан не
-      входят: владелец уже сказал, что это не наша техника, и связывать их
-      автоматически незачем.
-      НО `--set` на такую строку с 27.09 РАЗРЕШЁН, и это не послабление, а
-      необходимость: план-факт исключает объект по `wialon_id`
-      (`gps/exclusion.py`), а экран сопоставления `wialon_id` не заполняет
-      вовсе. Без этого пути галочка «нет в системе» не доходила до расчёта, и
-      помеченный объект продолжал считаться. Проставить id помеченной строке --
-      значит записать, КАКОЙ объект имел в виду человек; решение «не наша» этим
-      не отменяется, `skip` не трогается. id и номер строки берутся из
-      `tools/gps_units_inventory.py`.
+  Не удаляет и не гасит. Строкам со `skip = 1` (не наша техника) с 28.09
+      проставляется `wialon_id` -- тем же точным совпадением имени и с теми же
+      замками, что и обычным. Решение «не наша» этим не отменяется: `skip` не
+      трогается, `equipment_id` не появляется. Проставить id значит записать,
+      КАКОЙ объект человек имел в виду.
+      Зачем: план-факт исключает объект по `wialon_id` (`gps/exclusion.py`), а
+      экран сопоставления `wialon_id` не заполняет вовсе. Инвентарь 28.09 нашёл
+      124 помеченные строки -- легковые, размеченные владельцем давно, -- и ни
+      одна до расчёта не доходила. Решение было принято и молча не работало.
+      Неоднозначное по-прежнему решает человек: имя на нескольких объектах,
+      имя без объекта и два наших имени с точностью до пробелов идут в CSV со
+      статусом `propusk_neyasen`, а не в базу.
   Не ставит `equipment_id`: какой машине принадлежит имя, решает человек на
       экране сопоставления, как и прежде.
 
@@ -106,10 +107,14 @@ CONFLICT = 'rashozhdenie'         # wialon_id стоит, а имя указыв
 RENAMED = 'pereimenovan'          # wialon_id стоит, объект жив, но зовётся иначе
 GONE = 'obekt_ischez'             # wialon_id стоит, объекта в Wialon больше нет
 NO_ROW = 'bez_stroki'             # объект есть в Wialon, строки сопоставления нет
+# Строки «не наша техника». Им тоже нужен id -- см. блок про skip в докстринге.
+SKIP_LINK = 'svyazat_propusk'     # помечена, id пуст, имя совпало ровно с одним
+SKIP_ALREADY = 'propusk_svyazan'  # помечена, id уже стоит
+SKIP_UNCLEAR = 'propusk_neyasen'  # помечена, но имя неоднозначно или без объекта
 
 # Порядок в CSV: сначала то, что требует решения, потом план, потом справка.
 CSV_ORDER = (CONFLICT, COLLISION, AMBIGUOUS, NOT_FOUND, RENAMED, GONE,
-             LINK, ALREADY, NO_ROW)
+             LINK, SKIP_LINK, SKIP_UNCLEAR, ALREADY, SKIP_ALREADY, NO_ROW)
 
 CSV_COLUMNS = ('status', 'mapping_id', 'vialon_name', 'equipment', 'plate',
                'wialon_id_now', 'wialon_id_match', 'wialon_name_live',
@@ -267,6 +272,33 @@ def plan(rows, units):
                 'candidates': ' | '.join('%d %s' % (u['id'], u['name'])
                                          for u in found),
             }))
+
+    # Помеченные строки. [REASON]: инвентарь 28.09 нашёл 124 строки со
+    # `skip = 1` -- владелец давно пометил легковые на экране сопоставления, --
+    # и НИ ОДНА не доходила до расчёта: план-факт исключает объект по
+    # `wialon_id`, а экран его не заполняет. Решение было принято и молча не
+    # работало. Поэтому помеченным строкам id проставляется тем же точным
+    # совпадением имени и с теми же замками; `skip` при этом не трогается и
+    # `equipment_id` не появляется -- проставить id значит записать, КАКОЙ
+    # объект человек имел в виду, а не отменить его решение.
+    skipped_rows = [row for row in rows if row['skip']]
+    skip_key_count = Counter(normalize_name(row['vialon_name'])
+                             for row in rows)
+    for row in skipped_rows:
+        key = normalize_name(row['vialon_name'])
+        matches = by_key.get(key, [])
+        if row['wialon_id'] is not None:
+            items.append(_item(row, SKIP_ALREADY, live=by_id.get(row['wialon_id'])))
+        elif len(matches) == 1 and skip_key_count[key] == 1:
+            items.append(_item(row, SKIP_LINK, match=matches[0]))
+        else:
+            # Имя без объекта, имя на нескольких объектах, два наших имени с
+            # точностью до пробелов -- всё это решает человек, как и в автоплане.
+            items.append(_item(row, SKIP_UNCLEAR, extra={
+                'wialon_id_match': ' '.join(str(u['id']) for u in matches),
+                'wialon_name_live': matches[0]['name'] if matches else '',
+                'last_message': ' / '.join(local_stamp(u['last_t']) or '-'
+                                           for u in matches)}))
 
     # Объекты Wialon, о которых сопоставление не знает вовсе: ни строки с
     # таким именем (включая skip -- «не наша» тоже знание), ни строки с таким id.
@@ -487,6 +519,10 @@ def main(argv=None):
         print('mapping rows: %d | skipped (not ours): %d | already linked: %d'
               % (summary['rows'], summary['skipped'], summary[ALREADY]))
         print('to link: %d' % summary[LINK])
+        print('marked "not ours", to link so the computation sees it: %d'
+              % summary[SKIP_LINK])
+        print('marked "not ours", already linked: %d | unclear: %d'
+              % (summary[SKIP_ALREADY], summary[SKIP_UNCLEAR]))
         print('name not found in Wialon: %d' % summary[NOT_FOUND])
         print('name on several objects: %d' % summary[AMBIGUOUS])
         print('name collision inside mappings: %d' % summary[COLLISION])
@@ -503,7 +539,7 @@ def main(argv=None):
         print('plan written to %s' % args.plan_out)
 
         links = [(item['mapping_id'], item['wialon_id_match'])
-                 for item in items if item['status'] == LINK]
+                 for item in items if item['status'] in (LINK, SKIP_LINK)]
         problems = check_manual(manual, args.unset, rows, units, links)
         if problems:
             for problem in problems:

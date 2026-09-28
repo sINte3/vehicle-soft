@@ -305,17 +305,68 @@ class NoGuessing(Base):
         self.assertEqual(planned['wialon_id_now'], '999')
         self.assertEqual(planned['wialon_id_match'], '5')
 
-    def test_skipped_rows_are_left_alone(self):
+    def test_a_skipped_row_gets_its_id_and_keeps_the_decision(self):
+        """GPS-14: заменяет прежний test_skipped_rows_are_left_alone.
+
+        [REASON]: прежнее поведение берегло решение владельца от самого
+        расчёта. Инвентарь 28.09 показал 124 строки со `skip = 1` -- легковые,
+        помеченные на экране сопоставления, -- и НИ ОДНА не доходила до
+        план-факта: он исключает объект по `wialon_id`, а экран его не
+        заполняет. Решение было принято и молча не работало.
+
+        Проверка стала строже прежней: мало того, что id теперь проставляется,
+        `skip` обязан остаться единицей, а `equipment_id` -- пустым. Проставить
+        id значит записать, КАКОЙ объект человек имел в виду.
+        """
         row = self.mapping('Чужой 111 AA', skip=1)
         server = FakeServer([(9, 'Чужой 111 AA', MORNING)])
         code, log = self.run_tool(server, '--apply')
         self.assertEqual(code, 0, log)
-        self.assertIn('skipped (not ours): 1', log)
-        self.assertIn('to link: 0', log)
+        self.assertIn('to link so the computation sees it: 1', log)
+        self.assertIn('to link: 0', log)          # обычных связок нет
+        written = self.rows()[row]
+        self.assertEqual(written['wialon_id'], 9)
+        self.assertEqual(written['skip'], 1)
+        self.assertIsNone(written['equipment_id'])
+        # объект по-прежнему не считается «без строки»: «не наша» — тоже знание
+        self.assertEqual([r['status'] for r in self.plan_rows()],
+                         ['svyazat_propusk'])
+
+    def test_a_skipped_row_is_not_linked_without_apply(self):
+        """Сухой прогон не пишет и помеченным строкам."""
+        row = self.mapping('Чужой 111 AA', skip=1)
+        server = FakeServer([(9, 'Чужой 111 AA', MORNING)])
+        code, log = self.run_tool(server)
+        self.assertEqual(code, 0, log)
+        self.assertIn('dry run: nothing was written', log)
         self.assertIsNone(self.rows()[row]['wialon_id'])
-        # в план строка не попадает, и объект не считается «без строки»:
-        # «не наша» — тоже знание о нём
-        self.assertEqual(self.plan_rows(), [])
+
+    def test_a_skipped_row_whose_name_is_on_two_objects_is_not_linked(self):
+        """Те же замки, что у автоплана: неоднозначное решает человек."""
+        row = self.mapping('Чужой 111 AA', skip=1)
+        server = FakeServer([(9, 'Чужой 111 AA', MORNING),
+                             (10, 'чужой 111 aa', EVENING)])
+        code, log = self.run_tool(server, '--apply')
+        self.assertEqual(code, 0, log)
+        self.assertIn('unclear: 1', log)
+        self.assertIsNone(self.rows()[row]['wialon_id'])
+
+    def test_a_skipped_row_without_an_object_is_not_linked(self):
+        row = self.mapping('Snyatyy s ucheta', skip=1)
+        server = FakeServer([(9, 'Чужой 111 AA', MORNING)])
+        code, log = self.run_tool(server, '--apply')
+        self.assertEqual(code, 0, log)
+        self.assertIn('unclear: 1', log)
+        self.assertIsNone(self.rows()[row]['wialon_id'])
+
+    def test_a_skipped_row_already_linked_is_not_touched_twice(self):
+        row = self.mapping('Чужой 111 AA', wialon_id=9, skip=1)
+        server = FakeServer([(9, 'Чужой 111 AA', MORNING)])
+        code, log = self.run_tool(server, '--apply')
+        self.assertEqual(code, 0, log)
+        self.assertIn('already linked: 1', log)
+        self.assertEqual(self.rows()[row]['wialon_id'], 9)
+        self.assertEqual(self.rows()[row]['skip'], 1)
 
     def test_two_rows_with_one_name_up_to_spelling_block_each_other(self):
         first = self.mapping('МТЗ 873 GA', self.equipment('Первая'))
@@ -501,13 +552,23 @@ class ByHand(Base):
         self.assertIn('is not in Wialon', problem)
         self.assertIsNone(self.rows()[row]['wialon_id'])
 
-    def test_a_skipped_row_is_still_left_out_of_the_automatic_plan(self):
-        """Автоплан помеченные строки по-прежнему не трогает."""
+    def test_a_skipped_row_never_gains_equipment_from_the_plan(self):
+        """Автоплан помеченной строке ставит id -- и больше ничего.
+
+        [REASON]: замена прежнего test_a_skipped_row_is_still_left_out_of_the
+        _automatic_plan. Связывать помеченные строки пришлось (124 решения
+        владельца иначе не доходят до расчёта), но граница осталась прежней:
+        `equipment_id` автоплан не ставит НИКОМУ, ни помеченным, ни обычным --
+        какой машине принадлежит имя, решает человек на экране.
+        """
         row = self.mapping('Чужой', skip=1)
         server = FakeServer([(5, 'Чужой', MORNING)])
         code, log = self.run_tool(server, '--apply')
         self.assertEqual(code, 0, log)
-        self.assertIsNone(self.rows()[row]['wialon_id'])
+        written = self.rows()[row]
+        self.assertEqual(written['wialon_id'], 5)
+        self.assertIsNone(written['equipment_id'])
+        self.assertEqual(written['skip'], 1)
 
     def test_unset_clears_a_link_only_with_apply(self):
         row = self.mapping('A', self.equipment('A'), wialon_id=5)

@@ -37,6 +37,12 @@ Run (PowerShell, one command per line; needs the geo venv, see gps/README.md):
   & C:\\gps_venv\\Scripts\\python.exe -m gps.daily --catch-up
 
 Console output is ASCII.
+
+КОДЫ ВОЗВРАТА. 0 -- посчитано всё, что можно было посчитать; 2 -- отказ на
+разборе аргументов, не сделано ничего; 5 -- часть суток не посчиталась из-за
+сбоя. При 5 прогон ДОШЁЛ до конца и посчитал всё остальное: сбойные сутки
+перечислены в конце вывода поимённо, строк в базу по ним не записано, и
+следующий `--catch-up` возьмёт их снова.
 """
 
 import argparse
@@ -56,7 +62,8 @@ from shapely.ops import transform as shapely_transform
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from gps.area import (METHOD_VERSION, SPEED_MAX_KMH, SPEED_MIN_KMH,  # noqa: E402
-                      UTM_41N, to_utm, track_quality, work_sites)
+                      UTM_41N, repair_polygon, to_utm, track_quality,
+                      work_sites)
 from gps.exclusion import excluded_units                            # noqa: E402
 # [REASON]: the reader takes the writer's definition of where the points are
 # and what shape they are in, instead of keeping a second copy of the path and
@@ -64,7 +71,7 @@ from gps.exclusion import excluded_units                            # noqa: E402
 # pulls no dependency into anything; the arrow never points the other way --
 # the collector must never import gps.area.
 from gps_collector import storage                                   # noqa: E402
-from gps_collector.config import TZ, points_dir                     # noqa: E402
+from gps_collector.config import TZ, ascii_only, points_dir         # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(ROOT, 'instance', 'transport.db')
@@ -272,12 +279,19 @@ def compute_day(points, contours=None):
 
 # --- storing -----------------------------------------------------------------
 
-def load_contours(con):
+def load_contours(con, log=None):
     """contour_id -> UTM polygon, from the shared field_contours directory.
 
     Empty until the Wialon directory is mirrored (step 5 of the track), and an
     empty answer is fine: a site with no contour is real work on unregistered
     ground, which is the normal case and never a zero.
+
+    [REASON]: контуры чинятся ЗДЕСЬ, один раз на прогон, а не в каждом
+    пересечении. Зоны Wialon рисуют мышкой, самопересечение там обычное дело,
+    и GEOS на таком контуре поднимает исключение вместо пустого пересечения --
+    27.09 это убило --catch-up на 400+ объектах. Починенное и выброшенное
+    считается и называется: контур, по которому нельзя назвать участок, --
+    это расхождение со справочником, а не мелочь.
     """
     contours = {}
     try:
@@ -287,6 +301,7 @@ def load_contours(con):
             "AND (is_active IS NULL OR is_active = 1)").fetchall()
     except sqlite3.OperationalError:
         return contours
+    repaired = dropped = 0
     for contour_id, geometry in rows:
         try:
             polygon = shapely_shape(json.loads(geometry))
@@ -298,7 +313,17 @@ def load_contours(con):
             else (None, None)
         if xs is None:
             continue
-        contours[contour_id] = shapely.Polygon(zip(xs, ys))
+        raw = shapely.Polygon(zip(xs, ys))
+        fixed = repair_polygon(raw)
+        if fixed is None:
+            dropped += 1
+            continue
+        if fixed is not raw:
+            repaired += 1
+        contours[contour_id] = fixed
+    if log and (repaired or dropped):
+        log("  contours: %d repaired (self-intersecting), %d dropped as "
+            "unusable" % (repaired, dropped))
     return contours
 
 
@@ -310,7 +335,11 @@ def _utm_polygon_from_geojson(text):
     if polygon.is_empty or polygon.geom_type != "Polygon":
         return None
     xs, ys = to_utm(*polygon.exterior.coords.xy)
-    return shapely.Polygon(zip(xs, ys))
+    # [REASON]: тот же ремонт, что и у контуров, и по той же причине --
+    # `_carry_labels` пересекает старый полигон с новым, и исключение из GEOS
+    # здесь стоило бы не суток расчёта, а ОТВЕТОВ ОПЕРАТОРА: they are
+    # hand-entered data and the training set of the work/transit rule.
+    return repair_polygon(shapely.Polygon(zip(xs, ys)))
 
 
 def _carry_labels(existing, sites):
@@ -553,6 +582,49 @@ def days_without_a_row(con, folder, days):
     return missing
 
 
+# Код возврата, когда часть суток не посчиталась из-за сбоя. Ночной .bat
+# коды не проверяет, но человек и будущая обёртка должны иметь по чему отличить
+# «всё посчитано» от «посчитано не всё».
+EXIT_SOME_DAYS_FAILED = 5
+
+
+def _guarded_day(day, unit_id, folder, db_path, contours, log, failures):
+    """run_day, но сбой ОДНИХ суток не уносит весь прогон. None при сбое.
+
+    [REASON]: дважды за два дня одна кривая строка убивала прогон по 400+
+    объектам: 27.09 -- `None > 30.0` на сутках с единственной точкой, 28.09 --
+    `TopologyException` на самопересекающемся контуре. В обоих случаях всё, до
+    чего цикл не дошёл, осталось непосчитанным, и прогон не оставил следа
+    почему. Причины разные, форма отказа одна, и лечится она здесь, а не
+    добавлением ещё одного частного случая.
+
+    Сбой НЕ прячется: он печатается строкой, считается, перечисляется в конце и
+    меняет код возврата. Строка в базу не пишется вовсе -- сутки остаются «мы
+    не смотрели», что правда, и следующий --catch-up возьмёт их снова; когда
+    причина сбоя уйдёт, сутки досчитаются сами.
+    """
+    try:
+        return run_day(day, unit_id, folder=folder, db_path=db_path,
+                       contours=contours, log=log)
+    except Exception as problem:                                   # noqa: BLE001
+        failures.append((day, unit_id, type(problem).__name__,
+                         ascii_only(str(problem))[:160]))
+        log("  %s %-8s SBOY: %s" % (day, unit_id, type(problem).__name__))
+        return None
+
+
+def _report_failures(failures, log):
+    """Перечислить сбойные сутки. Возвращает код возврата прогона."""
+    if not failures:
+        return 0
+    log("")
+    log("NE POSCHITANO IZ-ZA SBOYA: %d day(s). Strok v bazu ne zapisano, "
+        "--catch-up voz'myot ikh snova:" % len(failures))
+    for day, unit_id, kind, message in failures:
+        log("  %s %-8s %s: %s" % (day, unit_id, kind, message))
+    return EXIT_SOME_DAYS_FAILED
+
+
 def catch_up(folder, db_path, log=print, window=CATCH_UP_WINDOW_DAYS,
              until=None):
     """Recompute the days marked incomplete whose collection has completed,
@@ -569,20 +641,23 @@ def catch_up(folder, db_path, log=print, window=CATCH_UP_WINDOW_DAYS,
     try:
         pending = pending_days(con)
         missing = days_without_a_row(con, folder, days)
-        contours = load_contours(con) if (pending or missing) else {}
+        contours = load_contours(con, log=log) if (pending or missing) else {}
     finally:
         con.close()
     if not pending and not missing:
         log("catch-up: nothing is waiting for the collector")
         return 0
+    failures = []
     recomputed = waiting = 0
     for day, unit_id in pending:
         complete, _ = collection_state(folder, unit_id, day)
         if not complete:
             waiting += 1
             continue
-        result = run_day(day, unit_id, folder=folder, db_path=db_path,
-                         contours=contours, log=log)
+        result = _guarded_day(day, unit_id, folder, db_path, contours, log,
+                              failures)
+        if result is None:
+            continue
         recomputed += 1
         if result.reason:
             log("  %s %-8s %s" % (day, unit_id, result.reason))
@@ -595,8 +670,10 @@ def catch_up(folder, db_path, log=print, window=CATCH_UP_WINDOW_DAYS,
 
     filled = marked = 0
     for day, unit_id in missing:
-        result = run_day(day, unit_id, folder=folder, db_path=db_path,
-                         contours=contours, log=log)
+        result = _guarded_day(day, unit_id, folder, db_path, contours, log,
+                              failures)
+        if result is None:
+            continue
         if result.reason == REASON_INCOMPLETE:
             marked += 1
         else:
@@ -606,7 +683,7 @@ def catch_up(folder, db_path, log=print, window=CATCH_UP_WINDOW_DAYS,
     log("catch-up window %s..%s: days without a row: %d -- computed %d, "
         "marked %s %d" % (days[0], days[-1], len(missing), filled,
                           REASON_INCOMPLETE, marked))
-    return 0
+    return _report_failures(failures, log)
 
 
 def main(argv=None):
@@ -678,7 +755,7 @@ def main(argv=None):
 
     con = sqlite3.connect(db_path, timeout=30)
     try:
-        contours = load_contours(con)
+        contours = load_contours(con, log=print)
         excluded = excluded_units(con)
     finally:
         con.close()
@@ -707,9 +784,12 @@ def main(argv=None):
              ", left out -- %s" % reasons if reasons else ""))
 
     published = refused = incomplete = sites_total = 0
+    failures = []
     for unit_id in units:
-        result = run_day(day, unit_id, folder=folder, db_path=db_path,
-                         contours=contours)
+        result = _guarded_day(day, unit_id, folder, db_path, contours, print,
+                              failures)
+        if result is None:
+            continue
         if result.reason:
             refused += 1
             incomplete += result.reason == REASON_INCOMPLETE
@@ -725,7 +805,7 @@ def main(argv=None):
     if incomplete:
         print("waiting for the collector: %d -- run the collector again, then "
               "gps.daily --catch-up" % incomplete)
-    return 0
+    return _report_failures(failures, print)
 
 
 if __name__ == "__main__":
