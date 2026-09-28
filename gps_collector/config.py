@@ -85,6 +85,10 @@ ZONE_TYPE_POLYGON = 2
 
 LIMIT_ERRORS = (1003, 1004, 1005)
 LIMIT_BACKOFF_S = 30.0
+# [REASON]: a refused login waits LONGER than the documented one-minute block
+# of an address that exceeded the failed-login limit (roadmap 4.1.1), so the
+# single repeat lands after the block and not inside it. See Client.login.
+LOGIN_LIMIT_PAUSE_S = 65.0
 
 # [REASON]: documented ceiling is 15 mln messages per user per two minutes;
 # half of it is used here, so a second tool running against the same account
