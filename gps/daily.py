@@ -44,6 +44,7 @@ import json
 import os
 import sqlite3
 import sys
+from collections import Counter
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -56,6 +57,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from gps.area import (METHOD_VERSION, SPEED_MAX_KMH, SPEED_MIN_KMH,  # noqa: E402
                       UTM_41N, to_utm, track_quality, work_sites)
+from gps.exclusion import excluded_units                            # noqa: E402
 # [REASON]: the reader takes the writer's definition of where the points are
 # and what shape they are in, instead of keeping a second copy of the path and
 # the schema. gps_collector is standard library only, so importing it here
@@ -235,7 +237,16 @@ def compute_day(points, contours=None):
         # "We looked and the machine did not move" -- a fact worth a row.
         aggregate["reason"] = REASON_NO_MOTION
         return DayResult(aggregate, [])
-    if aggregate["interval_median_s"] > MAX_INTERVAL_S:
+    median_s = aggregate["interval_median_s"]
+    # [REASON]: a day holding ONE message has no interval at all, so the
+    # median is None -- and `None > 30.0` is a TypeError, which is how
+    # --catch-up died on 27.09.2026 over the objects whose history starts
+    # one day back. None is not a measurement waiting to be filled in: it
+    # means the interval cannot be measured, which is strictly worse than
+    # any finite one, and an area from a single point is not a number.
+    # gps.area.track_quality spells the same len < 2 case out; here it was
+    # left to the comparison.
+    if median_s is None or median_s > MAX_INTERVAL_S:
         aggregate["reason"] = REASON_RARE
         return DayResult(aggregate, [])
 
@@ -493,10 +504,18 @@ def run_day(day, unit_id, folder=None, db_path=None, contours=None, log=print):
 
 
 def pending_days(con):
-    """(day, unit_id) of every aggregate still waiting for the collector."""
+    """(day, unit_id) of every aggregate still waiting for the collector.
+
+    Excluded objects are left exactly as they are: the sbor_nepolnyy row of a
+    machine the owner has since called not ours stays, and it is honest -- we
+    did stop looking. The screen hides the object; nothing is deleted, and
+    nothing is recomputed behind the owner's back.
+    """
+    excluded = excluded_units(con)
     return [(row[0], int(row[1])) for row in con.execute(
         "SELECT work_date, wialon_id FROM gps_daily_aggregates "
-        "WHERE reason = ? ORDER BY work_date, wialon_id", (REASON_INCOMPLETE,))]
+        "WHERE reason = ? ORDER BY work_date, wialon_id", (REASON_INCOMPLETE,))
+            if int(row[1]) not in excluded]
 
 
 CATCH_UP_WINDOW_DAYS = 30
@@ -522,13 +541,14 @@ def days_without_a_row(con, folder, days):
     """
     if not days:
         return []
+    excluded = excluded_units(con)
     have = {(row[0], int(row[1])) for row in con.execute(
         "SELECT work_date, wialon_id FROM gps_daily_aggregates "
         "WHERE work_date >= ? AND work_date <= ?", (days[0], days[-1]))}
     missing = []
     for day in days:
         for unit_id in storage.units_with_points(folder, day):
-            if (day, unit_id) not in have:
+            if (day, unit_id) not in have and unit_id not in excluded:
                 missing.append((day, unit_id))
     return missing
 
@@ -659,10 +679,32 @@ def main(argv=None):
     con = sqlite3.connect(db_path, timeout=30)
     try:
         contours = load_contours(con)
+        excluded = excluded_units(con)
     finally:
         con.close()
-    print("%s: %d object(s), %d contour(s) in the directory"
-          % (day, len(units), len(contours)))
+    # [REASON]: an explicit --unit is a request from a person and is honoured
+    # even for an excluded object -- "show me this one" must not answer with
+    # silence. The list nobody named is filtered, and WHY each object was left
+    # out is printed, because a day that quietly computes fewer objects than
+    # yesterday is exactly the kind of change that goes unnoticed for weeks.
+    left_out = Counter()
+    if not args.unit and excluded:
+        keep = []
+        for unit_id in units:
+            why = excluded.get(unit_id)
+            if why is None:
+                keep.append(unit_id)
+            else:
+                left_out[why] += 1
+        units = keep
+    reasons = ", ".join("%s: %d" % pair for pair in sorted(left_out.items()))
+    if not units:
+        print("no objects left for %s -- every one is excluded (%s)"
+              % (day, reasons))
+        return 0
+    print("%s: %d object(s), %d contour(s) in the directory%s"
+          % (day, len(units), len(contours),
+             ", left out -- %s" % reasons if reasons else ""))
 
     published = refused = incomplete = sites_total = 0
     for unit_id in units:

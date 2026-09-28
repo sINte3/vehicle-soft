@@ -206,6 +206,32 @@ class RefusalPaths(unittest.TestCase):
         self.assertEqual(result.reason, "net_tochek")
         self.assertEqual(result.aggregate["points_total"], 0)
 
+    def test_a_day_of_one_single_message_is_a_refusal_and_not_a_crash(self):
+        # The crash of --catch-up on 27.09.2026: `None > 30.0`. One message
+        # yields no interval at all, and an object whose history starts a day
+        # back has such days. The refusal is redkaya_zapis -- one message a day
+        # is the rarest recording there is -- and the measurements still get a
+        # row, because "we looked and there was one message" is a fact.
+        result = daily.compute_day(synthetic_day(count=1))
+        self.assertEqual(result.reason, "redkaya_zapis")
+        self.assertEqual(result.sites, [])
+        self.assertIsNone(result.aggregate["interval_median_s"])
+        self.assertEqual(result.aggregate["points_total"], 1)
+        self.assertEqual(result.aggregate["points_work"], 1)
+
+    def test_two_messages_are_enough_and_are_not_refused_with_it(self):
+        # The control that keeps `is None` from swallowing the working case:
+        # two messages DO have an interval, and this day is not a refusal.
+        result = daily.compute_day(synthetic_day(count=2))
+        self.assertEqual(result.aggregate["interval_median_s"], 30.0)
+        self.assertIsNone(result.reason)
+
+    def test_one_standing_message_is_no_motion_not_rare(self):
+        # The order of the two guards, pinned: a single message at 0 km/h never
+        # reaches the interval at all, and "did not move" is the stronger fact.
+        result = daily.compute_day(synthetic_day(count=1, speed=0.0))
+        self.assertEqual(result.reason, "net_dvizheniya")
+
     def test_a_day_that_moved_but_worked_nowhere_is_published_as_empty(self):
         # Driving down a road at 8 km/h in a straight line: points in the work
         # window, but no patch reaches the area floor. That is "we looked and
@@ -587,6 +613,33 @@ class CatchUpGaps(CollectionCompleteness):
         self.assertEqual(code, 0, log)
         self.assertIsNone(self.rows("gps_daily_aggregates")[0]["reason"])
 
+    def test_a_gap_day_of_one_single_message_does_not_kill_the_catch_up(self):
+        # The live crash of 27.09.2026: --catch-up walked the gap days, met an
+        # object with ONE message in the day and died on `None > 30.0` -- after
+        # the first loop had already reported "recomputed 124". Everything the
+        # second loop had not reached yet stayed uncomputed, and the run left no
+        # trace of why. The day gets a row with a reason; the neighbour on the
+        # same day is computed in the same pass.
+        lonely = 999001
+        midnight, finish = daily.day_bounds(self.DAY)
+        storage.write_points(self.folder,
+                             [(lonely, midnight + 9 * 3600,
+                               64.50, 39.99, 8.0, 90, 14)])
+        storage.set_watermark(self.folder, self.UNIT, self.finish)
+        storage.set_watermark(self.folder, lonely, self.finish)
+        code, log = self.run_main("--catch-up", "--until", self.DAY,
+                                  "--window-days", "3")
+        self.assertEqual(code, 0, log)
+        self.assertIn("days without a row: 2 -- computed 2, marked "
+                      "sbor_nepolnyy 0", log)
+        rows = {r["wialon_id"]: r for r in self.rows("gps_daily_aggregates")}
+        self.assertEqual(rows[lonely]["reason"], "redkaya_zapis")
+        self.assertEqual(rows[lonely]["points_total"], 1)
+        self.assertIsNone(rows[lonely]["interval_median_s"])
+        # and the object next to it in the same run is published as before
+        self.assertIsNone(rows[self.UNIT]["reason"])
+        self.assertGreater(len(self.rows("gps_work_polygons")), 0)
+
     def test_a_day_that_already_has_a_row_is_left_alone(self):
         storage.set_watermark(self.folder, self.UNIT, self.finish)
         daily.run_day(self.DAY, self.UNIT, folder=self.folder,
@@ -634,6 +687,153 @@ class CatchUpGaps(CollectionCompleteness):
             sys.stderr = saved
         self.assertIn("--window-days", err.getvalue())
         self.assertIn("--until", err.getvalue())
+
+
+class ExcludedObjects(CollectionCompleteness):
+    """GPS-12: объект, которого на план-факте быть не должно, не считается.
+
+    [REASON]: 27.09.2026 объектов в Wialon стало 621, и владелец попросил убрать
+    легковые. Экран «Факт по технике» -- то место, где размечаются 40 участков
+    и 15 проездов; лишние сто строк в списке машин делают эту работу дороже
+    ровно там, где она и без того ручная.
+    """
+
+    MAPPING_DDL = (
+        'CREATE TABLE vialon_mappings (id INTEGER PRIMARY KEY AUTOINCREMENT, '
+        'vialon_name VARCHAR(300) NOT NULL UNIQUE, wialon_id INTEGER, '
+        'equipment_id INTEGER, skip BOOLEAN, created_by INTEGER, '
+        'created_at DATETIME, updated_at DATETIME)',
+        'CREATE TABLE equipment (id INTEGER PRIMARY KEY AUTOINCREMENT, '
+        'name VARCHAR(200) NOT NULL, plate VARCHAR(50), '
+        'category VARCHAR(20) NOT NULL, eq_type VARCHAR(100), '
+        'organization_id INTEGER NOT NULL, default_price FLOAT, '
+        'default_unit VARCHAR(30), is_active BOOLEAN, model_id INTEGER)')
+
+    CAR = 777001
+
+    def setUp(self):
+        super().setUp()
+        con = sqlite3.connect(self.db)
+        try:
+            for statement in self.MAPPING_DDL:
+                con.execute(statement)
+            con.commit()
+        finally:
+            con.close()
+        # Легковая машина рядом с трактором фикстуры, в те же сутки.
+        midnight, _ = daily.day_bounds(self.DAY)
+        storage.write_points(self.folder, [
+            (self.CAR, midnight + 8 * 3600 + i * 30,
+             64.40 + i * 2e-5, 39.80 + i * 2e-5, 8.0, 90, 14)
+            for i in range(200)])
+
+    def watermarks(self, *units):
+        """Отметки, дошедшие до конца суток: без них сутки не публикуются.
+
+        Ставятся в тестах, а НЕ в setUp: унаследованный
+        test_no_watermark_at_all_means_the_day_is_computed проверяет, что файла
+        состояния нет вовсе, и setUp его бы создал.
+        """
+        for unit_id in (units or (self.UNIT, self.CAR)):
+            storage.set_watermark(self.folder, unit_id, self.finish)
+
+    def mark_as_passenger(self):
+        con = sqlite3.connect(self.db)
+        try:
+            cursor = con.execute(
+                'INSERT INTO equipment (name, category, organization_id, '
+                'is_active) VALUES (?, ?, 1, 1)', ('Nexia', 'passenger'))
+            con.execute(
+                'INSERT INTO vialon_mappings (vialon_name, wialon_id, '
+                'equipment_id, skip) VALUES (?, ?, ?, 0)',
+                ('Nexia 80 123 ABA', self.CAR, cursor.lastrowid))
+            con.commit()
+        finally:
+            con.close()
+
+    def test_without_a_mapping_the_car_is_computed_like_everything_else(self):
+        self.watermarks()
+        # Отрицательный контроль: до решения владельца объект считается, иначе
+        # проверки ниже проходили бы и на неверном коде.
+        code, log = self.run_main("--date", self.DAY)
+        self.assertEqual(code, 0, log)
+        self.assertEqual({r["wialon_id"] for r in self.rows("gps_daily_aggregates")},
+                         {self.UNIT, self.CAR})
+
+    def test_a_passenger_car_is_left_out_of_the_day(self):
+        self.watermarks()
+        self.mark_as_passenger()
+        code, log = self.run_main("--date", self.DAY)
+        self.assertEqual(code, 0, log)
+        self.assertEqual({r["wialon_id"] for r in self.rows("gps_daily_aggregates")},
+                         {self.UNIT})
+        # и в консоли написано, сколько и почему -- молча считать меньше нельзя
+        self.assertIn("left out -- ne_polevaya: 1", log)
+
+    def test_an_explicit_unit_is_computed_even_when_excluded(self):
+        self.watermarks()
+        # [REASON]: «покажи мне этот объект» -- просьба человека, и отвечать на
+        # неё тишиной нельзя: владелец решит, что расчёт сломан.
+        self.mark_as_passenger()
+        code, log = self.run_main("--date", self.DAY, "--unit", str(self.CAR))
+        self.assertEqual(code, 0, log)
+        self.assertEqual([r["wialon_id"] for r in self.rows("gps_daily_aggregates")],
+                         [self.CAR])
+
+    def test_catch_up_does_not_pick_up_an_excluded_object(self):
+        self.watermarks()
+        self.mark_as_passenger()
+        code, log = self.run_main("--catch-up", "--until", self.DAY,
+                                  "--window-days", "3")
+        self.assertEqual(code, 0, log)
+        self.assertIn("days without a row: 1 -- computed 1", log)
+        self.assertEqual({r["wialon_id"] for r in self.rows("gps_daily_aggregates")},
+                         {self.UNIT})
+
+    def test_an_earlier_row_of_an_excluded_object_is_left_in_place(self):
+        """Ничего не удаляется и задним числом не пересчитывается."""
+        self.watermarks()
+        self.run_main("--date", self.DAY)
+        self.mark_as_passenger()
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute("UPDATE gps_daily_aggregates SET reason = ? "
+                        "WHERE wialon_id = ?",
+                        (daily.REASON_INCOMPLETE, self.CAR))
+            con.commit()
+        finally:
+            con.close()
+        code, log = self.run_main("--catch-up", "--until", self.DAY,
+                                  "--window-days", "3")
+        self.assertEqual(code, 0, log)
+        self.assertIn("nothing is waiting", log)
+        rows = {r["wialon_id"]: r for r in self.rows("gps_daily_aggregates")}
+        self.assertIn(self.CAR, rows)
+        self.assertEqual(rows[self.CAR]["reason"], daily.REASON_INCOMPLETE)
+
+    def test_a_day_of_only_excluded_objects_says_so_and_writes_nothing(self):
+        self.watermarks()
+        self.mark_as_passenger()
+        code, log = self.run_main("--date", self.DAY, "--unit", str(self.UNIT))
+        self.assertEqual(code, 0, log)
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute("DELETE FROM gps_work_polygons")
+            con.execute("DELETE FROM gps_daily_aggregates")
+            con.commit()
+        finally:
+            con.close()
+        # только легковая имеет точки в эти сутки
+        storage.write_points(self.folder, [])
+        other = "2026-07-28"
+        midnight, _ = daily.day_bounds(other)
+        storage.write_points(self.folder, [
+            (self.CAR, midnight + 9 * 3600 + i * 30,
+             64.40, 39.80, 8.0, 90, 14) for i in range(10)])
+        code, log = self.run_main("--date", other)
+        self.assertEqual(code, 0, log)
+        self.assertIn("every one is excluded (ne_polevaya: 1)", log)
+        self.assertEqual(self.rows("gps_daily_aggregates"), [])
 
 
 class CommandLine(unittest.TestCase):
