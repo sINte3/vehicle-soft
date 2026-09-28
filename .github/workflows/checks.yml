@@ -250,9 +250,25 @@ jobs:
       # whole-route footprint would make a phantom look like work), a step
       # across a gap over 1 s is not a step, the width falls back frame ->
       # record -> list -> undefined, and a run writes nothing (sha256 before
-      # and after; a missing database is refused, not created).
+      # and after; a missing database is refused, not created). Its
+      # --evaluate-rule mode (DJI-AREA-RETAINED-FOOTPRINT-001) dry-runs the
+      # real pipeline read-only; a negative control that fires and a rewrite
+      # where the rule did not fire must each exit 4, and both are proven to.
       - name: DJI area footprint calibration self-test (read-only)
         run: python tools/test_dji_area_footprint_calibration.py
+
+      # DJI-AREA-RETAINED-FOOTPRINT-001. The first rule that turns a flat
+      # counter WITH observed spraying into a proven zero, so every gate is
+      # held by a pair: the case that must fire beside the case that would
+      # fire only if that gate were missing (no structural match, a scalar
+      # mismatch, an unobservable step, a width over the 12 m envelope, a
+      # ratio a hair above 0.027, an identity conflict, an overlap). Through
+      # the pipeline it holds the version contract: only the fired row gets
+      # a new fingerprint, a second apply writes nothing, a rollback
+      # reactivates the old row, and decisions on untouched rows do not go
+      # stale. Stdlib only, synthetic V4, no network.
+      - name: DJI area retained scalar with negligible footprint (gates, versions)
+        run: python -m unittest tests.test_dji_area_retained_footprint_001
 
       # The Block 1B evidence document quotes numbers that live in the CSV
       # tables next to it. A report is not proof -- the artifact is -- so the

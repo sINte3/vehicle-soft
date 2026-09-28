@@ -40,7 +40,8 @@ from dji_area import accounting as acc
 from dji_area import decisions as dec
 from dji_area import resolver as rs
 
-REPORT_VERSION = 'area-control-report-2'
+# -3: причина «площадь перенесена, собственный след мал» среди корректировок.
+REPORT_VERSION = 'area-control-report-3'
 DJI_RECORD_URL = 'https://www.djiag.com/record/%d'
 M2_PER_HA = 10000.0
 LOCAL_OFFSET = timedelta(hours=5)
@@ -104,6 +105,13 @@ EXPLANATIONS = {
         'автоматического решения нет.',
         'Майдон ҳисоблагичи ўсмади, аммо пуркаш кузатилди; хавфсиз автоматик '
         'қарор йўқ.'),
+    acc.R_RETAINED_NEGLIGIBLE_FOOTPRINT: (
+        'Площадь перенесена из предыдущей записи: счётчик V4 не вырос, RAW '
+        'точно совпадает с площадью исходной записи цепочки, а собственный '
+        'след распыления слишком мал, чтобы объяснить RAW.',
+        'Майдон олдинги ёзувдан кўчирилган: V4 ҳисоблагичи ўсмади, RAW '
+        'занжирнинг манба ёзуви майдони билан аниқ мос келади, ёзувнинг ўз '
+        'пуркаш изи эса RAW ни тушунтириш учун жуда кичик.'),
     acc.R_OVERSTATEMENT_NOT_CERTIFIED: (
         'Признаки завышения есть, но окно V4 не позволяет подтвердить '
         'поправку.',
@@ -295,6 +303,10 @@ def evidence_state(row):
 def explanation(decision, row, lang):
     """(код причины, текст) -- человеку, а не enum резолвера."""
     cls = decision['accounting_class']
+    if cls == acc.PHANTOM_PROVEN \
+            and decision['reason'] == acc.R_RETAINED_NEGLIGIBLE_FOOTPRINT:
+        code = decision['reason']
+        return code, pick(EXPLANATIONS[code], lang)
     if cls == acc.PHANTOM_PROVEN:
         accepted = decision['accounted_area_m2'] or 0.0
         structural = decision['reason'] == acc.R_RETAINED_VALIDATED

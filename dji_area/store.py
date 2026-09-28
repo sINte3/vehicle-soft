@@ -55,15 +55,24 @@ def iso(dt):
 
 # ─── Соединение ──────────────────────────────────────────────────────────────
 
-def connect(db_path, timeout_s=30):
-    """Открыть СУЩЕСТВУЮЩУЮ базу. Отсутствие -- отказ, файл не создаётся."""
+def connect(db_path, timeout_s=30, read_only=False):
+    """Открыть СУЩЕСТВУЮЩУЮ базу. Отсутствие -- отказ, файл не создаётся.
+
+    ``read_only`` -- ``mode=ro``: любая запись падает, а не проходит молча.
+    """
     if not os.path.exists(db_path):
         raise StoreError('database not found at %s - refusing to run' % db_path)
+    target, uri = db_path, False
+    if read_only:
+        target = 'file:%s?mode=ro' % os.path.abspath(db_path).replace(
+            '\\', '/').replace('?', '%3f').replace('#', '%23')
+        uri = True
     # [REASON]: isolation_level=None отключает неявные BEGIN модуля sqlite3;
     # транзакциями управляют явные BEGIN/COMMIT писателей. Иначе первый
     # INSERT открывал бы транзакцию молча, а явный BEGIN после него падал бы
     # с «cannot start a transaction within a transaction».
-    con = sqlite3.connect(db_path, timeout=timeout_s, isolation_level=None)
+    con = sqlite3.connect(target, timeout=timeout_s, isolation_level=None,
+                          uri=uri)
     con.row_factory = sqlite3.Row
     con.execute('PRAGMA busy_timeout=%d' % int(timeout_s * 1000))
     return con
