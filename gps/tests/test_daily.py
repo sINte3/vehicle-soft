@@ -399,6 +399,78 @@ class Recomputation(unittest.TestCase):
                       log=lambda *a: None)
         self.assertEqual(self.rows("gps_work_polygons")[0]["contour_id"], 77)
 
+    def broken_contour(self, contour_id=78):
+        """Контур-«бабочка» в справочнике: ровно то, что рисуют мышкой в Wialon.
+
+        Два узла кольца меняются местами -- получается самопересечение поверх
+        той же земли, что и рабочий контур фикстуры.
+        """
+        ring = [[point["x"], point["y"]] for point in read_fixture_zone()["points"]]
+        ring[1], ring[len(ring) // 2] = ring[len(ring) // 2], ring[1]
+        if ring[0] != ring[-1]:
+            ring.append(ring[0])
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute("INSERT INTO field_contours (id, source, external_id, "
+                        "name, geometry_geojson, is_active) VALUES "
+                        "(?, 'wialon', '3208', 'babochka', ?, 1)",
+                        (contour_id,
+                         json.dumps({"type": "Polygon", "coordinates": [ring]})))
+            con.commit()
+        finally:
+            con.close()
+
+    def test_a_self_intersecting_contour_names_the_site_instead_of_killing_it(self):
+        # Живой отказ 28.09.2026: `piece.intersection(geom)` на таком контуре
+        # поднимает TopologyException, и сутки не считались ни у этого объекта,
+        # ни у всех после него. Проверено, что именно эта геометрия валит расчёт
+        # без починки (мутация repair_polygon -> identity).
+        self.broken_contour(78)
+        result = daily.run_day("2026-07-27", 3464, folder=self.folder,
+                               db_path=self.db, log=lambda *a: None)
+        self.assertIsNone(result.reason)
+        self.assertGreater(len(result.sites), 0)
+        # и участок всё-таки назван: починка не выбрасывает контур, а чинит
+        self.assertEqual(self.rows("gps_work_polygons")[0]["contour_id"], 78)
+
+    def test_a_contour_that_cannot_be_repaired_is_dropped_and_counted(self):
+        # Зона, схлопнутая в одну точку: площади нет, чинить не во что.
+        # Проекция такое кольцо не «расправит» -- точки совпадают побайтно, в
+        # отличие от почти коллинеарных, которые в UTM дают настоящие 183 кв. м.
+        line = [[64.50, 39.99]] * 4
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute("INSERT INTO field_contours (id, source, external_id, "
+                        "name, geometry_geojson, is_active) VALUES "
+                        "(79, 'wialon', '1', 'otrezok', ?, 1)",
+                        (json.dumps({"type": "Polygon", "coordinates": [line]}),))
+            con.commit()
+            said = []
+            contours = daily.load_contours(con, log=said.append)
+        finally:
+            con.close()
+        self.assertNotIn(79, contours)
+        self.assertTrue(any("1 dropped as unusable" in line for line in said),
+                        said)
+
+    def test_a_good_contour_is_not_touched(self):
+        # Отрицательный контроль починки: валидный контур возвращается ТЕМ ЖЕ
+        # объектом, а не пересобранным. Иначе «починка» тихо меняла бы
+        # измеренную землю на всём справочнике.
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute("INSERT INTO field_contours (id, source, external_id, "
+                        "name, geometry_geojson, is_active) VALUES "
+                        "(77, 'wialon', '3208', '1508 Nurhon', ?, 1)",
+                        (zone_geojson(read_fixture_zone()),))
+            con.commit()
+            said = []
+            contours = daily.load_contours(con, log=said.append)
+        finally:
+            con.close()
+        self.assertTrue(contours[77].is_valid)
+        self.assertEqual(said, [])
+
     def test_a_day_with_no_points_is_stored_as_a_row_with_a_reason(self):
         daily.run_day("2026-07-20", 3464, folder=self.folder, db_path=self.db,
                       log=lambda *a: None)
@@ -834,6 +906,117 @@ class ExcludedObjects(CollectionCompleteness):
         self.assertEqual(code, 0, log)
         self.assertIn("every one is excluded (ne_polevaya: 1)", log)
         self.assertEqual(self.rows("gps_daily_aggregates"), [])
+
+
+class OneBadDayDoesNotKillTheRun(CollectionCompleteness):
+    """GPS-13: сбой одних суток не уносит прогон по остальным объектам.
+
+    [REASON]: дважды за два дня один объект убивал прогон по 400+ машинам.
+    27.09 -- `None > 30.0` на сутках с единственной точкой; 28.09 --
+    `TopologyException` на самопересекающемся контуре. Оба частных случая
+    починены по отдельности, но форма отказа одна, и она повторится на
+    следующей неизвестной причине. Проверяется именно ФОРМА: любое исключение
+    на одних сутках должно быть названо, посчитано, оставить базу без строки --
+    и не помешать соседу.
+    """
+
+    OTHER = 555001
+
+    def setUp(self):
+        super().setUp()
+        midnight, _ = daily.day_bounds(self.DAY)
+        storage.write_points(self.folder, [
+            (self.OTHER, midnight + 9 * 3600 + i * 30,
+             64.60 + i * 2e-5, 40.10 + i * 2e-5, 8.0, 90, 14)
+            for i in range(200)])
+
+    def ready(self):
+        for unit_id in (self.UNIT, self.OTHER):
+            storage.set_watermark(self.folder, unit_id, self.finish)
+
+    def explode_on(self, target):
+        """Подменить run_day так, чтобы он падал ровно на одном объекте.
+
+        Синтетическое исключение, а не конкретный баг: проверяется охранник, а
+        не очередная известная причина -- у следующей причины будет свой класс.
+        """
+        original = daily.run_day
+
+        def patched(day, unit_id, **kwargs):
+            if unit_id == target:
+                raise RuntimeError("sintetichesky sboy rascheta")
+            return original(day, unit_id, **kwargs)
+
+        daily.run_day = patched
+        self.addCleanup(setattr, daily, "run_day", original)
+        return lambda: setattr(daily, "run_day", original)
+
+    def units_with_rows(self):
+        return sorted(r["wialon_id"] for r in self.rows("gps_daily_aggregates"))
+
+    def test_the_neighbour_is_computed_and_the_failure_is_named(self):
+        self.ready()
+        self.explode_on(self.UNIT)          # падает ПЕРВЫЙ по номеру объект
+        code, log = self.run_main("--date", self.DAY)
+        self.assertEqual(code, daily.EXIT_SOME_DAYS_FAILED, log)
+        self.assertIn("SBOY: RuntimeError", log)
+        self.assertIn("NE POSCHITANO IZ-ZA SBOYA: 1", log)
+        self.assertIn("sintetichesky sboy rascheta", log)
+        self.assertEqual(self.units_with_rows(), [self.OTHER])
+
+    def test_nothing_is_written_for_the_failing_day(self):
+        """Сутки остаются «мы не смотрели» -- это правда, и это поправимо."""
+        self.ready()
+        self.explode_on(self.UNIT)
+        self.run_main("--date", self.DAY)
+        self.assertNotIn(self.UNIT, self.units_with_rows())
+        self.assertEqual([r["wialon_id"] for r in self.rows("gps_work_polygons")],
+                         [])
+
+    def test_the_day_is_computed_once_the_cause_is_gone(self):
+        """Строки нет -> --catch-up возьмёт сутки снова и досчитает сам."""
+        self.ready()
+        recover = self.explode_on(self.UNIT)
+        self.run_main("--date", self.DAY)
+        self.assertNotIn(self.UNIT, self.units_with_rows())
+        recover()                           # причина ушла
+        code, log = self.run_main("--catch-up", "--until", self.DAY,
+                                  "--window-days", "3")
+        self.assertEqual(code, 0, log)
+        self.assertIn(self.UNIT, self.units_with_rows())
+
+    def test_catch_up_survives_a_failing_day_too(self):
+        self.ready()
+        self.explode_on(self.UNIT)
+        code, log = self.run_main("--catch-up", "--until", self.DAY,
+                                  "--window-days", "3")
+        self.assertEqual(code, daily.EXIT_SOME_DAYS_FAILED, log)
+        self.assertIn("NE POSCHITANO IZ-ZA SBOYA: 1", log)
+        self.assertEqual(self.units_with_rows(), [self.OTHER])
+
+    def test_a_clean_run_says_nothing_about_failures_and_returns_zero(self):
+        """Отрицательный контроль: без сбоя ни блока, ни кода 5."""
+        self.ready()
+        code, log = self.run_main("--date", self.DAY)
+        self.assertEqual(code, 0, log)
+        self.assertNotIn("SBOY", log)
+        self.assertEqual(self.units_with_rows(), [self.UNIT, self.OTHER])
+
+    def test_the_failure_report_stays_ascii(self):
+        """Консоль -- ASCII: та самая буква U+04B2, что убила прогон 18.08."""
+        self.ready()
+        original = daily.run_day
+
+        def patched(day, unit_id, **kwargs):
+            if unit_id == self.UNIT:
+                raise RuntimeError("Ҳосил йиғиш сорвался")
+            return original(day, unit_id, **kwargs)
+
+        daily.run_day = patched
+        self.addCleanup(setattr, daily, "run_day", original)
+        code, log = self.run_main("--date", self.DAY)
+        self.assertEqual(code, daily.EXIT_SOME_DAYS_FAILED, log)
+        log.encode("ascii")
 
 
 class CommandLine(unittest.TestCase):
