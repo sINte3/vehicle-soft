@@ -34,6 +34,7 @@ from flask import (Blueprint, abort, flash, g, redirect, render_template,
                    request, url_for)
 from flask_login import current_user, login_required
 
+from gps.exclusion import REASON_TRACK_ONLY
 from models import (
     db,
     CAT_PASSENGER,
@@ -73,6 +74,11 @@ REASON_LABELS = {
     # публикуется; gps.daily --catch-up досчитает сутки, когда точки доедут.
     'sbor_nepolnyy': ('Сбор точек за эти сутки не завершён — площадь не публикуется',
                       'Бу кун учун нуқталар йиғиш тугалланмаган — майдон эълон қилинмайди'),
+    # [REASON]: A1, решение владельца 28.09.2026 -- по спецтехнике след есть,
+    # гектаров нет. Слово пишет gps/daily.py, берётся из gps/exclusion.py:
+    # импорт стоит на stdlib-модуль, а не на расчёт с numpy.
+    REASON_TRACK_ONLY: ('Спецтехника — гектары не считаются',
+                        'Махсус техника — гектар ҳисобланмайди'),
 }
 
 
@@ -91,17 +97,51 @@ def _machine_names(wialon_ids):
     отсутствовать. Тогда показывается сам wialon_id: подставить сюда имя по
     похожести номера нельзя -- шесть номеров указывают на несколько объектов,
     и у одной машины их три.
+
+    [REASON]: имя машины -- это `Equipment.name` ВМЕСТЕ с госномером. Одно
+    `name` -- это модель («МТЗ-80.1»), и владелец 28.09 увидел в списке дюжину
+    одинаковых строк, среди которых свою машину не найти. Формат «модель —
+    номер» тот же, что в выборе техники наряда и отчёта по запчастям. Строка
+    сопоставления без машины показывает имя объекта в Wialon -- в нём номер
+    обычно уже есть.
+
+    Несколько строк на один id (сменённые трекеры) дают одно имя, и всегда
+    одно и то же: сначала строка с машиной, при равенстве -- меньший номер
+    строки. Иначе имя в списке зависело бы от порядка, в котором база вернула
+    строки.
     """
     if not wialon_ids:
         return {}
     rows = (db.session.query(VialonMapping.wialon_id, VialonMapping.vialon_name,
-                             Equipment.name)
+                             Equipment.name, Equipment.plate)
             .outerjoin(Equipment, VialonMapping.equipment_id == Equipment.id)
-            .filter(VialonMapping.wialon_id.in_(list(wialon_ids))).all())
-    names = {}
-    for wialon_id, wialon_name, equipment_name in rows:
-        names[wialon_id] = equipment_name or wialon_name
+            .filter(VialonMapping.wialon_id.in_(list(wialon_ids)))
+            .order_by(VialonMapping.id).all())
+    names, from_machine = {}, set()
+    for wialon_id, wialon_name, equipment_name, plate in rows:
+        if equipment_name:
+            if wialon_id in from_machine:
+                continue
+            plate = (plate or '').strip()
+            names[wialon_id] = ('%s — %s' % (equipment_name, plate) if plate
+                                else equipment_name)
+            from_machine.add(wialon_id)
+        elif wialon_name and wialon_id not in names:
+            names[wialon_id] = wialon_name
     return names
+
+
+def _by_machine_name(aggregates, names):
+    """Строки суток в порядке имён: сначала названные, потом голые номера.
+
+    [REASON]: список машин читает человек, который ищет СВОЮ машину. В порядке
+    номеров объектов Wialon «МТЗ-80.1 — 80 248 HA» стоит между комбайном и
+    погрузчиком, а соседние номера одной модели разбросаны по всему списку.
+    """
+    return sorted(aggregates, key=lambda a: (
+        a.wialon_id not in names,
+        (names.get(a.wialon_id) or '').casefold(),
+        a.wialon_id))
 
 
 # [REASON]: слаг категории «Йўловчи ташиш техникаси» (`CAT_PASSENGER`). Взят
@@ -537,6 +577,7 @@ def fact():
     aggregates = (aggregate_query.filter_by(work_date=day)
                   .order_by(GpsDailyAggregate.wialon_id).all())
     names = _machine_names({a.wialon_id for a in aggregates})
+    aggregates = _by_machine_name(aggregates, names)
 
     unit_id = None
     asked_unit = (request.args.get('unit') or '').strip()
@@ -551,7 +592,12 @@ def fact():
 
     aggregate = next((a for a in aggregates if a.wialon_id == unit_id), None)
     sites = []
-    if aggregate is not None:
+    # [REASON]: у спецтехники участков нет по правилу, а не по случаю. Полигоны,
+    # оставшиеся от расчёта до решения 28.09, расчёт намеренно не удаляет
+    # (gps/daily.py, write_track_only: на них могут быть ответы оператора), и
+    # показать их значило бы вернуть на экран те самые гектары, которые
+    # владелец велел не считать.
+    if aggregate is not None and aggregate.reason != REASON_TRACK_ONLY:
         sites = (GpsWorkPolygon.query
                  .filter_by(work_date=day, wialon_id=unit_id)
                  .order_by(GpsWorkPolygon.site_number).all())
