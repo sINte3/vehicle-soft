@@ -1,0 +1,28 @@
+{# Почему страница пуста или чего стоят её числа. Ждёт empty, lookback,
+   last_run и local_time. #}
+{% if empty == 'not_installed' %}
+  <div class="vs-empty vs-mb">
+    <div class="vs-empty-title">{{ 'Импорт agro-work на этом сервере ещё не установлен' if is_ru else 'Бу серверда agro-work импорти ҳали ўрнатилмаган' }}</div>
+    <div class="vs-empty-sub">{{ 'Таблицы появляются миграцией AGRO_WORK_001, заявки — первым прогоном импорта. До этого сверять нечего, и пустая страница означает именно это.' if is_ru else 'Жадваллар AGRO_WORK_001 миграцияси билан, буюртмалар — импортнинг биринчи прогони билан пайдо бўлади. Ундан олдин солиштирадиган нарса йўқ, бўш саҳифа айнан шуни билдиради.' }}</div>
+  </div>
+{% elif empty == 'not_sqlite' %}
+  <div class="vs-empty vs-mb">
+    <div class="vs-empty-title">{{ 'Сверка работает только с базой SQLite' if is_ru else 'Солиштириш фақат SQLite базаси билан ишлайди' }}</div>
+  </div>
+{% else %}
+  {% if last_run %}
+  <div class="vs-help vs-mb">
+    {{ 'Последний импорт: ' if is_ru else 'Сўнгги импорт: ' }}{{ local_time(last_run.started_at) }}
+    {% if last_run.status == 'ok' %}<span class="vs-badge vs-badge-success">{{ 'полный' if is_ru else 'тўлиқ' }}</span>
+    {% elif last_run.status == 'incomplete' %}<span class="vs-badge vs-badge-warning">{{ 'неполный' if is_ru else 'тўлиқ эмас' }}</span>
+    {% elif last_run.status == 'running' %}<span class="vs-badge vs-badge-info">{{ 'идёт' if is_ru else 'давом этмоқда' }}</span>
+    {% else %}<span class="vs-badge vs-badge-danger">{{ 'прерван' if is_ru else 'узилди' }}</span>{% endif %}
+    {% if last_run.history_pending %}· {{ 'история статусов ещё не загружена у заявок: ' if is_ru else 'ҳолатлар тарихи ҳали юкланмаган буюртмалар: ' }}{{ last_run.history_pending }}{% endif %}
+  </div>
+  {% else %}
+  <div class="vs-help vs-mb">{{ 'Импорт ещё не запускался.' if is_ru else 'Импорт ҳали ишга туширилмаган.' }}</div>
+  {% endif %}
+  {% if lookback is none %}
+  <div class="vs-help vs-mb">{{ 'Заявки, заведённые сразу «Выполнено», идут отдельной строкой «заведена задним числом» и нарушением не считаются: сколько суток до ввода искать их работу (N), владелец утвердит после замера на обычных заявках.' if is_ru else 'Дарҳол «Бажарилди» деб киритилган буюртмалар «орқа сана билан киритилган» алоҳида қатори бўлиб боради ва қоидабузарлик ҳисобланмайди: уларнинг ишини киритишдан неча кун олдин излаш кераклигини (N) эгаси оддий буюртмаларда ўлчовдан кейин тасдиқлайди.' }}</div>
+  {% endif %}
+{% endif %}

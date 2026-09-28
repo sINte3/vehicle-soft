@@ -280,7 +280,7 @@ class Reconciliation:
         # нужно целиком, иначе её вердикт считался бы по обрезку.
         first, last = self.date_from, self.date_to
         for app in self.applications:
-            if app.window and self._in_period(app):
+            if app.window and self.in_period(app):
                 first = min(first, app.window[0])
                 last = max(last, app.window[1])
         last = min(last, self.today)
@@ -302,7 +302,7 @@ class Reconciliation:
         for key, aggregate in aggregates.items():
             self.gps[key] = day_state(aggregate, sites.get(key, []))
 
-    def _in_period(self, app):
+    def in_period(self, app):
         start, end = app.listed_span
         return start <= self.date_to and end >= self.date_from
 
@@ -372,7 +372,7 @@ class Reconciliation:
     def forward_rows(self):
         rows = []
         for app in self.applications:
-            if not self._in_period(app):
+            if not self.in_period(app):
                 continue
             row = self.forward_row(app)
             equipment_id = row['equipment_id']

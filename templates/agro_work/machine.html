@@ -1,0 +1,116 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Машина — сверка agro-work' if is_ru else 'Машина — agro-work солиштируви' }}{% endblock %}
+{% block content %}
+{% include 'agro_work/_nav.html' %}
+
+{% if empty %}
+{% include 'agro_work/_notices.html' %}
+{% else %}
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ equipment.name }} {{ equipment.plate }}</div>
+    <div class="vs-hero-sub">{{ org_name }} · {{ category_label(equipment.category) }}
+      · Wialon: {% for unit in units %}{{ unit }}{% if not loop.last %}, {% endif %}{% else %}{{ 'нет объекта' if is_ru else 'объект йўқ' }}{% endfor %}
+      · agro-work: {% for t in transports %}{{ t.plate_number }} ({% if t.match_status == 'manual' %}{{ 'связка владельца' if is_ru else 'эгаси боғлаган' }}{% else %}{{ 'по номеру' if is_ru else 'рақам бўйича' }}{% endif %}){% if not loop.last %}, {% endif %}{% else %}{{ 'не связана' if is_ru else 'боғланмаган' }}{% endfor %}
+    </div>
+  </div>
+</div>
+
+{% include 'agro_work/_period.html' %}
+
+{% if units|length > 1 %}
+<div class="vs-help vs-mb">{{ 'У машины несколько объектов Wialon: сверка по ней не выносит вердикт — сложить объекты значит посчитать работу дважды, выбрать один — угадать. Лишний трекер гасится пометкой на экране сопоставления Wialon.' if is_ru else 'Машинада бир нечта Wialon объекти бор: у бўйича солиштириш ҳукм чиқармайди — объектларни қўшиш ишни икки марта ҳисоблаш, биттасини танлаш — тахмин қилиш демак. Ортиқча трекер Wialon мослаштириш экранида белги билан ўчирилади.' }}</div>
+{% elif excluded %}
+<div class="vs-help vs-mb">{{ 'Объект этой машины план-факт GPS не считает (категория или пометка «не наша»): работа по нему не публикуется, и вердиктов нет.' if is_ru else 'Бу машина объектини GPS режа-факти ҳисобламайди (тоифа ёки «бизники эмас» белгиси): у бўйича иш эълон қилинмайди ва ҳукмлар йўқ.' }}</div>
+{% endif %}
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Сутки: GPS и заявки рядом' if is_ru else 'Кунлар: GPS ва буюртмалар ёнма-ён' }}</span>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table">
+      <thead>
+        <tr>
+          <th>{{ 'Сутки' if is_ru else 'Кун' }}</th>
+          <th>{{ 'Работа по GPS' if is_ru else 'GPS бўйича иш' }}</th>
+          <th>{{ 'Заявки на эти сутки' if is_ru else 'Шу кунга буюртмалар' }}</th>
+          <th>{{ 'Покрытие' if is_ru else 'Қопланиш' }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for day in days %}
+        <tr>
+          <td>{{ day.day.strftime('%d.%m.%Y') }}</td>
+          <td>
+            {% for unit, st in day.states %}
+              <div>
+              {% if st[0] == WORK %}<span class="vs-badge vs-badge-success">{{ 'работа' if is_ru else 'иш' }} {{ st[1] }} {{ 'га' if is_ru else 'га' }}</span>
+                <a href="{{ url_for('gps.fact', date=day.day.isoformat(), unit=unit) }}">{{ 'участки' if is_ru else 'участкалар' }}</a>
+              {% elif st[0] == IDLE %}{{ 'работы нет' if is_ru else 'иш йўқ' }}
+              {% else %}<span class="vs-soft">{{ 'нет данных' if is_ru else 'маълумот йўқ' }}</span>{% endif %}
+              {% if units|length > 1 %}<span class="vs-soft">({{ unit }})</span>{% endif %}
+              </div>
+            {% else %}
+              <span class="vs-soft">—</span>
+            {% endfor %}
+          </td>
+          <td>
+            {% for app in day.apps %}
+              <div>{{ app.number }} <span class="vs-soft">· {{ status_label(app.status) }}{% if app.backdated %} · {{ 'задним числом' if is_ru else 'орқа сана билан' }}{% endif %}</span></div>
+            {% else %}
+              <span class="vs-soft">—</span>
+            {% endfor %}
+          </td>
+          <td>
+            {% if day.coverage %}
+              {% if day.coverage[0] == 'pokryta' %}<span class="vs-badge vs-badge-success">{{ coverage_label(day.coverage[0]) }}</span>
+              {% elif day.coverage[0] == 'bez_zayavki' %}<span class="vs-badge vs-badge-danger">{{ coverage_label(day.coverage[0]) }}</span>
+              {% else %}<span class="vs-badge">{{ coverage_label(day.coverage[0]) }}</span>
+                <div class="vs-soft">{{ reason_label(day.coverage[1]) }}</div>
+              {% endif %}
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if forward %}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Заявки машины в периоде' if is_ru else 'Машинанинг даврдаги буюртмалари' }}</span>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table">
+      <thead>
+        <tr>
+          <th>{{ 'Заявка' if is_ru else 'Буюртма' }}</th>
+          <th>{{ 'Вид работы' if is_ru else 'Иш тури' }}</th>
+          <th>{{ 'Окно' if is_ru else 'Ойна' }}</th>
+          <th>{{ 'Вердикт' if is_ru else 'Ҳукм' }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in forward %}
+        <tr>
+          <td>{{ row.app.number }}<div class="vs-soft">{{ status_label(row.app.status) }}</div></td>
+          <td>{{ row.work_type }}<div class="vs-soft">{{ method_label(row.method) if row.method else ('метод не размечен' if is_ru else 'усул белгиланмаган') }}</div></td>
+          <td>{% if row.window %}{{ row.window[0].strftime('%d.%m') }} — {{ row.window[1].strftime('%d.%m') }}{% else %}—{% endif %}</td>
+          <td>
+            {% if row.verdict == 'rabota_est' %}<span class="vs-badge vs-badge-success">{{ verdict_label(row.verdict) }}</span>
+            {% elif row.verdict == 'rabota_net' %}<span class="vs-badge vs-badge-danger">{{ verdict_label(row.verdict) }}</span>
+            {% else %}<span class="vs-badge">{{ verdict_label(row.verdict) }}</span><div class="vs-soft">{{ reason_label(row.reason) }}</div>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

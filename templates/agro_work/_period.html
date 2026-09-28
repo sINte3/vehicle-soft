@@ -1,0 +1,28 @@
+{# Период и фильтры страницы. Ждёт в контексте date_from, date_to и,
+   необязательно, keep — словарь параметров, которые форма должна сохранить
+   (организация, категория), и choices — выпадающий список фильтра. #}
+<form method="get" class="vs-toolbar vs-mb">
+  <label class="vs-field">
+    <span class="vs-label">{{ 'С' if is_ru else 'Дан' }}</span>
+    <input type="date" name="from" value="{{ date_from.isoformat() }}" class="vs-input">
+  </label>
+  <label class="vs-field">
+    <span class="vs-label">{{ 'По' if is_ru else 'Гача' }}</span>
+    <input type="date" name="to" value="{{ date_to.isoformat() }}" class="vs-input">
+  </label>
+  {% for name, value in (keep or {}).items() if value %}
+  <input type="hidden" name="{{ name }}" value="{{ value }}">
+  {% endfor %}
+  {% for choice in (choices or []) %}
+  <label class="vs-field">
+    <span class="vs-label">{{ choice.title }}</span>
+    <select name="{{ choice.name }}" class="vs-select">
+      <option value="">{{ 'все' if is_ru else 'барчаси' }}</option>
+      {% for key, text in choice['items'] %}
+      <option value="{{ key }}" {% if choice.current == key %}selected{% endif %}>{{ text }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% endfor %}
+  <button type="submit" class="vs-btn vs-btn-primary">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+</form>
