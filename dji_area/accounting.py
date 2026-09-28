@@ -31,7 +31,8 @@ import json
 from dji_area import aggregate as agg
 from dji_area import resolver as rs
 
-ACCOUNTING_CLASSES_VERSION = 'dji-area-accounting-classes-1'
+# -2: причина RETAINED_SCALAR_WITH_NEGLIGIBLE_FOOTPRINT внутри PHANTOM_PROVEN.
+ACCOUNTING_CLASSES_VERSION = 'dji-area-accounting-classes-2'
 
 NORMAL = 'NORMAL'
 PHANTOM_PROVEN = 'PHANTOM_PROVEN'
@@ -49,7 +50,8 @@ R_CANDIDATE_REFUTED = 'STRUCTURAL_CANDIDATE_REFUTED_BY_COUNTER'
 R_RETAINED_VALIDATED = 'COUNTER_VALIDATED_RETAINED'
 R_RETAINED_VALIDATED_NOT_STRUCTURAL = 'COUNTER_VALIDATED_NOT_STRUCTURAL'
 R_STRUCTURAL_NO_INTERVAL = 'STRUCTURAL_MATCH_WITHOUT_VALIDATED_INTERVAL'
-R_APPLICATION_WITH_FLAT_COUNTER = 'APPLICATION_WITH_FLAT_COUNTER'
+R_APPLICATION_WITH_FLAT_COUNTER = rs.F_APPLICATION_WITH_FLAT_COUNTER
+R_RETAINED_NEGLIGIBLE_FOOTPRINT = rs.F_RETAINED_NEGLIGIBLE_FOOTPRINT
 R_OVERSTATEMENT_NOT_CERTIFIED = 'OVERSTATEMENT_NOT_CERTIFIED'
 R_INTERVAL_OVERLAP = 'INTERVAL_OVERLAP'
 R_COUNTER_RELATIONSHIP = 'COUNTER_RELATIONSHIP_OUTLIER'
@@ -154,6 +156,12 @@ def classify(row):
                 and raw is not None:
             out['validated_delta_m2'] = delta if delta is not None else corrected
             out['confirmed_overstatement_m2'] = raw - corrected
+            # [REASON]: запись, доказанная правилом следа, -- своя причина, а не
+            # «повтор» или «контроль»: её число в итогах должно быть видно
+            # отдельно, чтобы правило можно было проверить и откатить.
+            if R_RETAINED_NEGLIGIBLE_FOOTPRINT in _flags(row):
+                return done(PHANTOM_PROVEN, R_RETAINED_NEGLIGIBLE_FOOTPRINT,
+                            corrected)
             return done(PHANTOM_PROVEN,
                         R_RETAINED_VALIDATED if match
                         else R_RETAINED_VALIDATED_NOT_STRUCTURAL, corrected)

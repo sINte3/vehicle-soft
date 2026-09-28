@@ -8489,6 +8489,9 @@ DRONE_AREA_FLAG_LABELS = {
     'APPLICATION_WITH_FLAT_COUNTER': (
         'применение при неподвижном счётчике',
         'ҳисоблагич ўзгармаганда қўллаш'),
+    'RETAINED_SCALAR_WITH_NEGLIGIBLE_FOOTPRINT': (
+        'площадь перенесена, собственный след распыления мал',
+        'майдон кўчирилган, ўз пуркаш изи кичик'),
     'SMALL_POSITIVE_INCREMENT_RETAINED': (
         'малый прирост сохранён', 'кичик ўсиш сақланган'),
     'RAW_COUNTER_MAGNITUDE_MISMATCH': (

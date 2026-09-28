@@ -25,7 +25,10 @@
 """
 
 from dji_area import (AREA_ALGORITHM_VERSION, CHANNEL_CAPABILITY_REVISION,
-                      STRUCTURAL_RULE_VERSION)
+                      RETAINED_FOOTPRINT_RULE_VERSION, STRUCTURAL_RULE_VERSION)
+from dji_area.footprint import (FOOTPRINT_TO_RAW_MAX,
+                                FOOTPRINT_WIDTH_ENVELOPE_M,
+                                negligible_footprint)
 from dji_area.v4 import (
     BASELINE_UNKNOWN as _BASELINE_UNKNOWN_VALUE,
     COUNTER_QUANTUM_M2,
@@ -34,6 +37,7 @@ from dji_area.v4 import (
     WINDOW_GOOD,
     WINDOW_IDENTITY_ERROR,
     WINDOW_INCOMPLETE,
+    WINDOW_MAX_DT_S,
     WINDOW_NONMONOTONE,
     counter_endpoints_at_boundary,
     evaluate_window,
@@ -108,6 +112,13 @@ EK_QUANTITY_ONLY = 'QUANTITY_ONLY'
 EK_MULTIPLE = 'MULTIPLE'
 EK_NONE = 'NONE'
 EK_UNRELIABLE = 'UNRELIABLE'
+
+# Плоский счётчик при наблюдённом применении: спор человеку.
+F_APPLICATION_WITH_FLAT_COUNTER = 'APPLICATION_WITH_FLAT_COUNTER'
+# Перенесённый скаляр + плоский счётчик + пренебрежимо малый собственный след
+# распыления: доказанный ноль. Распыление при этом БЫЛО -- флаг говорит, что
+# оно не объясняет RAW, а не что его не было.
+F_RETAINED_NEGLIGIBLE_FOOTPRINT = 'RETAINED_SCALAR_WITH_NEGLIGIBLE_FOOTPRINT'
 
 # [REASON]: борт `3 Gijduvon` (1581F5742255T0C1L061) не пишет flow/flags даже
 # на длинных нормальных вылетах (B2: четыре нормальных targets без флагов и
@@ -184,6 +195,85 @@ def assess_application(summary, channel_quality):
     return ACT_UNKNOWN, EK_UNRELIABLE, flags
 
 
+# ─── Перенесённый скаляр с пренебрежимым следом (выборочное правило) ─────────
+
+def _structural_match(structural):
+    return (bool(structural) and structural.get('candidate') is True
+            and structural.get('scalar_source_check') is True)
+
+
+def retained_footprint_needed(summary, structural):
+    """Нужен ли записи след: счётчик плоский, применение было, RAW совпал с
+    базой цепочки. Необходимое, а не достаточное условие -- по нему конвейер
+    решает, читать ли тело V4 ещё раз; остальное проверяет резолвер."""
+    return (summary is not None
+            and (summary.get('application_frames') or 0) > 0
+            and is_exactly_flat(summary)
+            and _structural_match(structural))
+
+
+def retained_negligible_footprint(footprint, summary, raw, structural,
+                                  channel_quality, overlap_conflict):
+    """Доказано ли, что запись несёт ПЕРЕНЕСЁННУЮ площадь, а не свою.
+
+    Вызывается только из ветки проверенного плоского счётчика при RAW > 0 и
+    наблюдённом применении (окно GOOD, концы закодированы и равны по битам,
+    личность файла подтверждена). Здесь -- остальное:
+
+    * структурный экран назвал запись кандидатом и RAW точно совпал с базой,
+      выбранной замороженным правилом (``scalar_source_check``);
+    * нет пересечения интервалов; канал применения информативен;
+    * след посчитан тем же правилом по тому же файлу (число кадров
+      применения совпадает со сводкой), каждый нужный шаг наблюдаем, ни одна
+      наблюдённая ширина не выходит за огибающую;
+    * путь при применении x огибающая 12,0 м не больше 0,027 RAW.
+
+    [REASON]: след -- не площадь (повторное распыление по учтённой земле даёт
+    след в десятки раз больше новой площади), поэтому здесь он только третье,
+    независимое доказательство. Первые два -- счётчик DJI (новой площади нет)
+    и точное совпадение RAW с площадью базы цепочки (RAW перенесён). Без
+    структурного совпадения запись остаётся человеку, каким бы малым ни был
+    след: в калибровке у настоящих работ с неполным окном (A2) след доходил до
+    0,008 RAW -- кадры применения там теряли большую часть распыления.
+    """
+    if not footprint or summary is None or raw is None or raw <= 0:
+        return False
+    if overlap_conflict or channel_quality != CH_INFORMATIVE:
+        return False
+    if not _structural_match(structural):
+        return False
+    if footprint.get('rule_version') != RETAINED_FOOTPRINT_RULE_VERSION:
+        return False
+    frames = footprint.get('application_frames') or 0
+    if frames <= 0 or frames != (summary.get('application_frames') or 0):
+        return False
+    if footprint.get('steps_unobserved') != 0 or footprint.get(
+            'width_over_envelope') is not False:
+        return False
+    return negligible_footprint(footprint.get('conservative_footprint_m2'),
+                                raw)
+
+
+def retained_footprint_rule_snapshot():
+    """То, что входит в отпечаток записи, где правило сработало."""
+    return {'rule_version': RETAINED_FOOTPRINT_RULE_VERSION,
+            'footprint_to_raw_max': FOOTPRINT_TO_RAW_MAX,
+            'width_envelope_m': FOOTPRINT_WIDTH_ENVELOPE_M,
+            'step_max_dt_s': WINDOW_MAX_DT_S}
+
+
+# Выборочные правила: (флаг строки, ключ в отпечатке, снимок правила).
+# [REASON]: это реестр контракта версий из `dji_area/__init__.py`. Правило
+# сюда попадает, только если оно ДОБАВЛЯЕТ исход своим флагом и без флага
+# строка остаётся той же, что до него; тогда `pipeline.selective_rule_marks`
+# кладёт его снимок в отпечаток ровно тех строк, где флаг стоит. Правка смысла
+# такого правила поднимает ЕГО версию, а не `impl-N`.
+SELECTIVE_RULES = (
+    (F_RETAINED_NEGLIGIBLE_FOOTPRINT, 'retained_footprint_rule',
+     retained_footprint_rule_snapshot),
+)
+
+
 # ─── Результат ───────────────────────────────────────────────────────────────
 
 class AreaDecision(object):
@@ -226,7 +316,10 @@ def resolve_area(evidence):
     """Таблица решений. ``evidence`` -- словарь, см. ``EVIDENCE_KEYS``.
 
     Обязательные ключи: ``raw_area_m2`` (float или None), ``raw_area_source``.
-    Необязательные: ``v4`` ({'summary': dict, 'identity_ok': bool}),
+    Необязательные: ``v4`` ({'summary': dict, 'identity_ok': bool,
+    'retained_footprint': dict | None} -- последнее из
+    ``footprint.application_footprint`` того же файла; конвейер кладёт его
+    только записи с плоским счётчиком, применением и структурным совпадением),
     ``route`` ({'identity_status': str}), ``structural`` (результат
     ``structural.screen``), ``overlap`` ({'group_id', 'conflict'}),
     ``channel_quality`` (INFORMATIVE/UNRELIABLE/UNKNOWN), ``hardware_id``.
@@ -302,6 +395,9 @@ def resolve_area(evidence):
         None if identity_conflict else summary, channel_quality)
     for name in app_flags:
         _flag(flags, name)
+    # След чужого файла -- о чужом вылете, как и его флаги применения.
+    footprint = (v4.get('retained_footprint')
+                 if summary is not None and not identity_conflict else None)
 
     controller_delta = None
     corrected = None
@@ -382,7 +478,12 @@ def resolve_area(evidence):
                         COUNTER_FLAT_RAW_OVERSTATED, 0.0,
                         M_VALIDATED_COUNTER_DELTA, C_HIGH)
                     if activity == ACT_PRESENT:
-                        _flag(flags, 'APPLICATION_WITH_FLAT_COUNTER')
+                        if retained_negligible_footprint(
+                                footprint, summary, raw, structural,
+                                channel_quality, overlap_conflict):
+                            _flag(flags, F_RETAINED_NEGLIGIBLE_FOOTPRINT)
+                        else:
+                            _flag(flags, F_APPLICATION_WITH_FLAT_COUNTER)
                 elif raw_and_counter_agree(controller_delta, raw):
                     status, corrected, method, confidence = (
                         RAW_CORROBORATED, raw, M_RAW_WITH_VALIDATED_COUNTER,
@@ -484,7 +585,7 @@ def resolve_area(evidence):
         method = M_UNRESOLVED_INTERVAL_OWNERSHIP
         confidence = C_LOW
         eligibility = AGG_EXCLUDED_OVERLAP
-    elif 'APPLICATION_WITH_FLAT_COUNTER' in flags:
+    elif F_APPLICATION_WITH_FLAT_COUNTER in flags:
         # [REASON]: жёсткий ноль здесь -- корректное утверждение о СЧЁТЧИКЕ
         # DJI, но не о земле. Счётчик не вырос, а применение наблюдалось: либо
         # площадь перенесена из прошлой записи, либо это повторный проход по
@@ -492,6 +593,10 @@ def resolve_area(evidence):
         # независимый footprint, поэтому запись не имеет права попасть в
         # ПРОВЕРЕННЫЙ подытог наравне с доказанным нулём: она уходит в
         # «недостаточно данных» вместе со своей RAW-экспозицией.
+        # Подкласс, где RAW доказанно перенесён из базы цепочки, а собственный
+        # след пренебрежимо мал, получает F_RETAINED_NEGLIGIBLE_FOOTPRINT
+        # вместо этого флага и проходит в проверенный подытог по общему
+        # правилу ниже.
         eligibility = AGG_UNRESOLVED
     elif status in CERTIFIED_STATUSES:
         eligibility = AGG_CERTIFIED

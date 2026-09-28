@@ -24,6 +24,7 @@ FAIL по доле, FAIL по контрольным воротам в двух 
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import shutil
@@ -48,6 +49,7 @@ TOOL = os.path.join(ROOT, 'tools', 'dji_area_holdout.py')
 MIGRATION = os.path.join(ROOT, 'migrate_dji_area_evidence_001.py')
 HW1, HW2 = 'SYNTHETIC-HW-1-NOT-REAL', 'SYNTHETIC-HW-2-NOT-REAL'
 MU = 2000.0 / 3.0
+M_PER_DEG_LAT = math.pi * 6371000.0 / 180.0
 
 # Идентификаторы сценария. День отчёта -- 2026-09-02 (UTC+5).
 A1, B1, C1 = 1001, 1002, 1003          # база -> ручной мостик -> КАНДИДАТ
@@ -119,15 +121,19 @@ def build(db_path):
     con.close()
 
 
-def add_v4(db_path, fid, first_mu, last_mu, spray=False):
-    """Тело V4 с кадром в секунду на весь интервал записи (окно GOOD)."""
+def add_v4(db_path, fid, first_mu, last_mu, spray=False, speed=0.0):
+    """Тело V4 с кадром в секунду на весь интервал записи (окно GOOD).
+
+    ``speed`` -- м/с на север; по умолчанию борт стоит на месте.
+    """
     _fid, _unit, start, end = BY_ID[fid][:4]
     t0, t1 = ts(start), ts(end)
     n = t1 - t0
     frames = [frame((t0 + i) * 1000,
                     area=first_mu + (last_mu - first_mu) * i / float(n),
                     spray_flag=1 if spray else None,
-                    flow=100 if spray else None)
+                    flow=100 if spray else None,
+                    lat=39.9 + speed * i / M_PER_DEG_LAT)
               for i in range(n + 1)]
     con = store.connect(db_path)
     root = store.source_root(os.path.abspath(db_path))
@@ -334,6 +340,27 @@ class AcceptanceHasFourReachableOutcomes(Base):
         self.assertEqual(t['confirmed_overstatement_m2'], 0.0)
 
     def test_flat_counter_with_application_is_a_hit_but_not_proven(self):
+        # Распыление на ходу: 70 с x 5 м/с -- след 350 м x 12 м = 0,42 RAW.
+        # RAW он не объясняет, но и не пренебрежим: ноль здесь -- утверждение
+        # о счётчике, а не о земле, и запись остаётся человеку.
+        self.plan()
+        self.capture_everything_normal(skip=(C1,))
+        add_v4(self.db, C1, 17.15, 17.15, spray=True, speed=5.0)
+        code, _text, data = self.report()
+        self.assertEqual(code, tool.EXIT_OK)
+        line = [r for r in data['candidate_records']
+                if r['flight_id'] == C1][0]
+        self.assertEqual(line['outcome'], 'HIT')
+        self.assertEqual(line['accounting_class'], acc.REVIEW)
+        self.assertEqual(line['accounting_reason'],
+                         acc.R_APPLICATION_WITH_FLAT_COUNTER)
+        self.assertEqual(
+            data['period_totals']['class_records'][acc.PHANTOM_PROVEN], 0)
+
+    def test_flat_counter_with_a_negligible_footprint_is_proven(self):
+        # DJI-AREA-RETAINED-FOOTPRINT-001: тот же кандидат распыляет на месте,
+        # след 0. Перенесённый скаляр + плоский счётчик + пренебрежимый след
+        # -- доказанный ноль со своей причиной; исход holdout тот же, HIT.
         self.plan()
         self.capture_everything_normal(skip=(C1,))
         add_v4(self.db, C1, 17.15, 17.15, spray=True)
@@ -342,9 +369,11 @@ class AcceptanceHasFourReachableOutcomes(Base):
         line = [r for r in data['candidate_records']
                 if r['flight_id'] == C1][0]
         self.assertEqual(line['outcome'], 'HIT')
-        self.assertEqual(line['accounting_class'], acc.REVIEW)
+        self.assertEqual(line['accounting_class'], acc.PHANTOM_PROVEN)
+        self.assertEqual(line['accounting_reason'],
+                         acc.R_RETAINED_NEGLIGIBLE_FOOTPRINT)
         self.assertEqual(
-            data['period_totals']['class_records'][acc.PHANTOM_PROVEN], 0)
+            data['period_totals']['class_records'][acc.PHANTOM_PROVEN], 1)
 
 
 class TheControlFindsWhatTheRuleMisses(Base):

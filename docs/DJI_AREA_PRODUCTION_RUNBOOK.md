@@ -544,7 +544,7 @@ production у дрона № 9 есть `hardware_id` и оба ника, «9 Ga
 строки не останавливает.
 
 Все три блока доказывают ревизию до первого действия: аннотированный тег
-`dji-area-productionization-001-rc1` плюс отпечаток кода — та же пара, что в
+`dji-area-retained-footprint-001-rc1` плюс отпечаток кода — та же пара, что в
 `docs/DJI_AREA_SIMPLIFY_001_RUNBOOK.md`.
 
 Пин называет ревизию, которая прошла квалификацию. Закрывающие коммиты — раздел
@@ -552,6 +552,27 @@ production у дрона № 9 есть `hardware_id` и оба ника, «9 Ga
 следующим прогоном блоков пин обновляется на тег той ревизии, которую и будут
 запускать. Иначе откажет собственный гейт блока, и это правильно: он для того и
 стоит.
+
+28.09.2026 тройка «ветка, тег, отпечаток» переведена вместе с кодом
+DJI-AREA-RETAINED-FOOTPRINT-001 (изменились замороженные файлы модели, в
+замороженный набор добавлен `dji_area/footprint.py`):
+`claude/dji-area-retained-footprint-rule` / `dji-area-retained-footprint-001-rc1`
+/ `8bc0ecdf…` вместо `claude/dji-area-productionization-001` /
+`dji-area-productionization-001-rc1` / `7c01a131…`. Квалификация 21.09 и раздел
+выше остаются историей `rc1` прежней задачи. Тег новой ревизии владелец
+создаёт на проверенном коммите ветки после ревью, до любого прогона блоков;
+без тега каждый блок останавливается на проверке ревизии, до первого действия.
+
+Правило этой ревизии меняет сентябрь намеренно: оценка production 28.09.2026
+нашла в 01–18.09.2026 шесть записей с плоским счётчиком, пять из них правило
+доказывает. Блоки A и S принимают по ИСТОРИЧЕСКОМУ оракулу
+(`docs/DJI_AREA_SEPTEMBER_2026_ORACLE.json`, алгоритм до правила, не
+меняется) и требуют, чтобы сухой пересчёт не хотел писать ничего, — поэтому
+эту ревизию они не примут, и это правильно: блок A остановится на приёмке,
+ничего не развернув. Выпуск этой ревизии — отдельный ранбук
+`docs/DJI_AREA_RETAINED_FOOTPRINT_RELEASE_RUNBOOK.md`: приёмка по оракулу
+перехода `docs/DJI_AREA_SEPTEMBER_2026_RETAINED_FOOTPRINT_ORACLE.json` в две
+явные фазы, PRE-APPLY и POST-APPLY.
 
 Чем блоки проверены. `tools/test_dji_area_production_runbook.py` держит их
 свойства в CI (порядок шагов, гейты, обращение с унаследованным токеном,
@@ -568,7 +589,7 @@ PowerShell 5.1 и 7 без ошибок. Главное же — **все три
 
 ### Что именно разрешает владелец
 
-> Разрешаю развернуть `dji-area-productionization-001-rc1` на площадке и один
+> Разрешаю развернуть `dji-area-retained-footprint-001-rc1` на площадке и один
 > адресный сбор из кабинета DJI сохранённой сессией: список вылетов за три дня и
 > источники по манифесту за один вчерашний день (ожидается 6–42 записи, порог
 > остановки 50), с отправкой **только на площадку**; и запись пересчёта окна в
@@ -604,9 +625,9 @@ $memo    = 'C:\VehicleSoft_Area_Staging\before_head.txt'
 $rawSnap = 'C:\VehicleSoft_Area_Staging\raw_before.json'
 $backup  = 'C:\transport-report-staging\backups\dji-area'
 $py      = 'C:\Program Files\Python314\python.exe'
-$branch  = 'claude/dji-area-productionization-001'
-$ExpectedTag = 'dji-area-productionization-001-rc1'
-$ExpectedFingerprint = '7c01a13148410b494d725984b2725618f3ef096535e52dfdd75305eb3d10edb6'
+$branch  = 'claude/dji-area-retained-footprint-rule'
+$ExpectedTag = 'dji-area-retained-footprint-001-rc1'
+$ExpectedFingerprint = '8bc0ecdf65311479e9b932ba6a5a6800a510a6be38ede70f31d7b0784dc38122'
 $from    = '2026-09-01'
 $to      = '2026-09-18'
 if ((hostname) -ne $expectedHost) { throw "STEP FAILED: host is $(hostname), expected $expectedHost" }
@@ -800,9 +821,9 @@ $browsers = 'C:\VehicleSoft_Holdout\playwright-browsers'
 $cpy      = 'C:\VehicleSoft_Holdout\session_venv\Scripts\python.exe'
 $py       = 'C:\Program Files\Python314\python.exe'
 $daily    = 'C:\VehicleSoft_AreaDaily\src\drone_collector\data\area_daily'
-$branch   = 'claude/dji-area-productionization-001'
-$ExpectedTag = 'dji-area-productionization-001-rc1'
-$ExpectedFingerprint = '7c01a13148410b494d725984b2725618f3ef096535e52dfdd75305eb3d10edb6'
+$branch   = 'claude/dji-area-retained-footprint-rule'
+$ExpectedTag = 'dji-area-retained-footprint-001-rc1'
+$ExpectedFingerprint = '8bc0ecdf65311479e9b932ba6a5a6800a510a6be38ede70f31d7b0784dc38122'
 $StopAbove = 50
 if (-not (Test-Path -LiteralPath $py)) { throw "STEP FAILED: python not found: $py" }
 if (-not (Test-Path -LiteralPath $cpy)) { throw "STEP FAILED: collector python not found: $cpy" }
@@ -910,8 +931,8 @@ $out     = 'C:\VehicleSoft_Area_Staging\smoke'
 $rawSnap = 'C:\VehicleSoft_Area_Staging\raw_before.json'
 $backup  = 'C:\transport-report-staging\backups\dji-area'
 $py      = 'C:\Program Files\Python314\python.exe'
-$ExpectedTag = 'dji-area-productionization-001-rc1'
-$ExpectedFingerprint = '7c01a13148410b494d725984b2725618f3ef096535e52dfdd75305eb3d10edb6'
+$ExpectedTag = 'dji-area-retained-footprint-001-rc1'
+$ExpectedFingerprint = '8bc0ecdf65311479e9b932ba6a5a6800a510a6be38ede70f31d7b0784dc38122'
 if ((hostname) -ne $expectedHost) { throw "STEP FAILED: host is $(hostname), expected $expectedHost" }
 if ($staging -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a root that is not the staging checkout" }
 if ($db -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a database outside the staging checkout" }
@@ -1016,7 +1037,10 @@ CODE`, слово `unchanged` во второй сводке пересчёта,
 
 ## Production: что НЕ сделано и что понадобится
 
-Ничего из этого ранбука на production не исполняется. Чтобы функция заработала
+Ничего из этого ранбука на production не исполняется. Выпуск правила
+DJI-AREA-RETAINED-FOOTPRINT-001 на production — отдельный ранбук
+`docs/DJI_AREA_RETAINED_FOOTPRINT_RELEASE_RUNBOOK.md` со своими блоками и
+проверками. Чтобы функция заработала
 там, нужны три отдельных решения владельца, и ни одно из них этой веткой не
 принимается:
 

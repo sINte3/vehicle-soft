@@ -44,7 +44,7 @@ RUNBOOK = os.path.join(REPO_ROOT, 'docs', 'DJI_AREA_PRODUCTION_RUNBOOK.md')
 HOLDOUT_RUNBOOK = os.path.join(REPO_ROOT, 'docs',
                                'DJI_AREA_SIMPLIFY_001_RUNBOOK.md')
 ORACLE = os.path.join(REPO_ROOT, 'docs', 'DJI_AREA_SEPTEMBER_2026_ORACLE.json')
-BRANCH = 'claude/dji-area-productionization-001'
+BRANCH = 'claude/dji-area-retained-footprint-rule'
 PY_PATH = r'C:\Program Files\Python314\python.exe'
 
 

@@ -245,6 +245,31 @@ jobs:
       - name: Idempotence gate (a second apply that writes anything stops the run)
         run: python tools/test_dji_area_idempotence_gate.py
 
+      # DJI-AREA-FOOTPRINT-CALIBRATION-001. A read-only research tool. Held
+      # here: the footprint is path x width on APPLICATION frames only (a
+      # whole-route footprint would make a phantom look like work), a step
+      # across a gap over 1 s is not a step, the width falls back frame ->
+      # record -> list -> undefined, and a run writes nothing (sha256 before
+      # and after; a missing database is refused, not created). Its
+      # --evaluate-rule mode (DJI-AREA-RETAINED-FOOTPRINT-001) dry-runs the
+      # real pipeline read-only; a negative control that fires and a rewrite
+      # where the rule did not fire must each exit 4, and both are proven to.
+      - name: DJI area footprint calibration self-test (read-only)
+        run: python tools/test_dji_area_footprint_calibration.py
+
+      # DJI-AREA-RETAINED-FOOTPRINT-001. The first rule that turns a flat
+      # counter WITH observed spraying into a proven zero, so every gate is
+      # held by a pair: the case that must fire beside the case that would
+      # fire only if that gate were missing (no structural match, a scalar
+      # mismatch, an unobservable step, a width over the 12 m envelope, a
+      # ratio a hair above 0.027, an identity conflict, an overlap). Through
+      # the pipeline it holds the version contract: only the fired row gets
+      # a new fingerprint, a second apply writes nothing, a rollback
+      # reactivates the old row, and decisions on untouched rows do not go
+      # stale. Stdlib only, synthetic V4, no network.
+      - name: DJI area retained scalar with negligible footprint (gates, versions)
+        run: python -m unittest tests.test_dji_area_retained_footprint_001
+
       # The Block 1B evidence document quotes numbers that live in the CSV
       # tables next to it. A report is not proof -- the artifact is -- so the
       # two are bound here: a typo in either the prose or the tables fails.
@@ -307,7 +332,13 @@ jobs:
       #     phantom keeps its small real growth instead of being zeroed, and
       #     PHANTOM_STRUCTURAL / REVIEW stay at RAW;
       #   * the September oracle adds up by itself and the acceptance tool can
-      #     FAIL -- an acceptance that cannot fail accepts nothing;
+      #     FAIL -- an acceptance that cannot fail accepts nothing. With
+      #     DJI-AREA-RETAINED-FOOTPRINT-001 the historical oracle is pinned by
+      #     content hash, and the transition oracle is accepted only in an
+      #     explicit phase: pre-apply must see exactly the named rewrites (one
+      #     extra, one missing, a phantom where none may be, RAW, billable, a
+      #     bridge -- each fails by name), post-apply a fully unchanged second
+      #     dry run;
       #   * the daily cycle stops BEFORE DJI when the manifest is too large, and
       #     a second run over the same evidence must write nothing.
       #
@@ -362,6 +393,19 @@ jobs:
       # figures in the text are the oracle's own.
       - name: DJI area production runbook (owner blocks)
         run: python tools/test_dji_area_production_runbook.py
+
+      # DJI-AREA-RETAINED-FOOTPRINT-001. The first owner blocks that stop the
+      # PRODUCTION services and write to its database, so the staging rule
+      # above is inverted, not relaxed: host, root, services and port must be
+      # production's and staging is named nowhere. Held: the pin is the real
+      # fingerprint and the other runbooks' tag, proven before a service
+      # stops; R1 writes nothing and proves it by hash; R2 applies exactly the
+      # oracle's rewrites (ids read from the oracle file) only after a fresh
+      # PRE-APPLY, then a second dry run, POST-APPLY and the RAW guard; R3
+      # applies only the approved list, only if a fresh evaluation names
+      # exactly it, never a whole period; the text quotes the oracle's figures.
+      - name: DJI area retained-footprint release runbook (production blocks)
+        run: python tools/test_dji_area_retained_footprint_release_runbook.py
 
       # The recomputation itself, on a temporary SQLite database built with
       # the migration's own DDL. Stdlib only: drone_coverage_recalc.py and
