@@ -14,20 +14,23 @@ import json
 import math
 import os
 import shutil
+import sqlite3
 import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from dji_area import pipeline as pl  # noqa: E402
+from dji_area import resolver as rs  # noqa: E402
 from dji_area import store  # noqa: E402
 from tests.test_dji_area_core import MS, frame, v4_bytes  # noqa: E402
 from tests.test_dji_area_identity_001 import (  # noqa: E402
-    BY_ID, DAY, LONE, MU, TARGET, Fixture, ts)
+    BASE, BY_ID, DAY, LONE, MU, TARGET, Fixture, ts)
 from tools import dji_area_footprint_calibration as tool  # noqa: E402
 
 M_PER_DEG_LAT = math.pi * 6371000.0 / 180.0
@@ -171,9 +174,118 @@ class ReadOnlyCalibration(unittest.TestCase):
 
     def test_a_missing_database_is_refused_and_not_created(self):
         missing = os.path.join(self.out, 'nope', 'transport.db')
-        code, _text = self.run_tool('--db', missing)
-        self.assertEqual(code, tool.EXIT_NO_DATABASE)
-        self.assertFalse(os.path.exists(missing))
+        for extra in ((), ('--evaluate-rule',)):
+            code, _text = self.run_tool('--db', missing, *extra)
+            self.assertEqual(code, tool.EXIT_NO_DATABASE)
+            self.assertFalse(os.path.exists(missing))
+
+
+class ReadOnlyRuleEvaluation(unittest.TestCase):
+    """--evaluate-rule (DJI-AREA-RETAINED-FOOTPRINT-001): сухой прогон
+    настоящего конвейера по группе B и контрольным; база не меняется.
+
+    TARGET -- перенесённый скаляр (RAW = RAW базы цепочки), плоский счётчик,
+    2 м распыления. LONE -- такой же плоский счётчик и такой же малый след, но
+    без цепочки: «ниже порога, структурного совпадения нет». Строки записаны
+    кодом БЕЗ правила -- так выглядит production до слияния.
+    """
+
+    def setUp(self):
+        self.fx = Fixture()
+        self.addCleanup(self.fx.close)
+        add_v4(self.fx, BASE, 0.0, 10000.0 / MU, spray_seconds=400)
+        add_v4(self.fx, TARGET, 15.0, 15.0, spray_seconds=2, speed=1.0)
+        add_v4(self.fx, LONE, 13.5, 13.5, spray_seconds=2, speed=1.0)
+        self.baseline(rule=False)
+        self.out = tempfile.mkdtemp(prefix='footprint_rule_')
+        self.addCleanup(shutil.rmtree, self.out, True)
+
+    def baseline(self, rule):
+        if rule:
+            pl.recalculate(self.fx.db, DAY, DAY, apply=True)
+            return
+        with mock.patch.object(rs, 'retained_negligible_footprint',
+                               return_value=False):
+            pl.recalculate(self.fx.db, DAY, DAY, apply=True)
+
+    def evaluate(self, *extra):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = tool.main(['--db', self.fx.db, '--out', self.out,
+                              '--evaluate-rule'] + list(extra))
+        with open(os.path.join(self.out, 'retained_footprint_evaluation.json'),
+                  encoding='utf-8') as fh:
+            return code, buf.getvalue(), json.load(fh)
+
+    def test_candidates_mismatches_and_invariants(self):
+        before = sha256(self.fx.db)
+        code, text, ev = self.evaluate()
+        self.assertEqual(code, tool.EXIT_OK, text)
+        self.assertEqual(sha256(self.fx.db), before)
+        self.assertTrue(text.isascii())
+        self.assertNotIn('--apply', text)
+        self.assertEqual(ev['b_total'], 2)
+        self.assertEqual(ev['b_passes_footprint'], 2)
+        self.assertEqual(ev['b_passes_footprint_structural_match'], 1)
+        self.assertEqual(ev['below_cut_structural_mismatch'], [LONE])
+        self.assertEqual(ev['final_candidates'], [TARGET])
+        self.assertAlmostEqual(ev['final_candidates_raw_ha'], 1.0, 6)
+        self.assertEqual(ev['remaining_review_b'], [LONE])
+        self.assertEqual(ev['review_total_after'],
+                         ev['review_total_before'] - 1)
+        # Переписалась бы только строка, где правило сработало.
+        self.assertEqual(ev['dry_run_calc_writes'],
+                         {'unchanged': 1, 'would_write': 1})
+        self.assertEqual(ev['raw_changed'], 0)
+        self.assertEqual(ev['billable_non_null_table'], 0)
+        self.assertEqual(ev['billable_non_null_dry_run'], 0)
+        self.assertEqual(ev['violations'], [])
+        target = {r['flight_id']: r for r in ev['records']}[TARGET]
+        self.assertAlmostEqual(target['conservative_footprint_to_raw'],
+                               2.0 * 12.0 / 10000.0, 4)
+        self.assertEqual(target['dry_reason'],
+                         'RETAINED_SCALAR_WITH_NEGLIGIBLE_FOOTPRINT')
+        self.assertEqual(target['accepted_after_m2'], 0.0)
+        # День фикстуры (02.09) внутри периода сентябрьского оракула: такая
+        # запись заранее остановит блок A ранбука, и оценка её называет.
+        self.assertEqual(ev['oracle_period'], ['2026-09-01', '2026-09-18'])
+        self.assertEqual(ev['oracle_period_candidates'], [TARGET])
+        self.assertIn('inside the September oracle period', text)
+        self.assertIsNone(tool.oracle_period(os.path.join(self.out, 'no.json')))
+        # Контрольные production в синтетике отсутствуют -- и так и названы.
+        self.assertTrue(all(r.get('absent') for r in ev['named']))
+        self.assertTrue(all(r.get('absent') for r in ev['negative_controls']))
+        self.assertTrue(os.path.exists(os.path.join(
+            self.out, 'retained_footprint_evaluation.csv')))
+
+    def test_a_negative_control_that_fires_is_a_violation(self):
+        code, text, ev = self.evaluate('--negative-control', str(TARGET))
+        self.assertEqual(code, tool.EXIT_CONTROL_VIOLATED, text)
+        self.assertIn('NEGATIVE_CONTROL_FIRED:%d' % TARGET, ev['violations'])
+        self.assertIn('VIOLATION NEGATIVE_CONTROL_FIRED', text)
+        # Та же запись, названная просто для отчёта, нарушением не является.
+        code, text, ev = self.evaluate('--flight-id', str(TARGET))
+        self.assertEqual(code, tool.EXIT_OK, text)
+
+    def test_after_apply_the_evaluation_repeats_without_rewrites(self):
+        self.baseline(rule=True)
+        code, text, ev = self.evaluate()
+        self.assertEqual(code, tool.EXIT_OK, text)
+        self.assertEqual(ev['final_candidates'], [TARGET])
+        self.assertEqual(ev['dry_run_calc_writes'], {'unchanged': 2})
+
+    def test_a_rewrite_where_the_rule_does_not_fire_is_a_violation(self):
+        # Отрицательный контроль самой проверки: строка LONE посчитана «не
+        # этим кодом» -- её отпечаток другой, и применение переписало бы её.
+        con = sqlite3.connect(self.fx.db)
+        con.execute("UPDATE dji_area_calculations SET calculation_input_hash="
+                    "'stale' WHERE flight_id=? AND superseded_at IS NULL",
+                    (LONE,))
+        con.commit()
+        con.close()
+        code, text, ev = self.evaluate()
+        self.assertEqual(code, tool.EXIT_CONTROL_VIOLATED, text)
+        self.assertEqual(ev['violations'], ['UNEXPECTED_REWRITE:%d' % LONE])
 
 
 if __name__ == '__main__':
