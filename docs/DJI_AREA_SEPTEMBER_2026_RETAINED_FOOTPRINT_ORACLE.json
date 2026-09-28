@@ -1,0 +1,235 @@
+{
+  "database": "production",
+  "evaluated_on": "2026-09-28",
+  "expected": {
+    "after_ha": 4511.3342,
+    "bridges_excluded": 0,
+    "by_drone": {
+      "10 Kogon": {
+        "after_ha": 547.9501,
+        "excluded_ha": 40.1556,
+        "pending_ha": 0.0,
+        "raw_ha": 588.1057,
+        "records": 489,
+        "review_ha": 1.45
+      },
+      "11 Kogon": {
+        "after_ha": 151.2577,
+        "excluded_ha": 0.0,
+        "pending_ha": 0.0,
+        "raw_ha": 151.2577,
+        "records": 147,
+        "review_ha": 0.0
+      },
+      "12 Servis": {
+        "after_ha": 579.4539,
+        "excluded_ha": 14.7186,
+        "pending_ha": 0.0,
+        "raw_ha": 594.1725,
+        "records": 671,
+        "review_ha": 0.0
+      },
+      "13 Peshku": {
+        "after_ha": 544.7736,
+        "excluded_ha": 3.6205,
+        "pending_ha": 0.0,
+        "raw_ha": 548.3941,
+        "records": 436,
+        "review_ha": 0.0
+      },
+      "14 Servis": {
+        "after_ha": 708.5522,
+        "excluded_ha": 31.2207,
+        "pending_ha": 0.0,
+        "raw_ha": 739.7729,
+        "records": 814,
+        "review_ha": 2.7186
+      },
+      "15 Servis": {
+        "after_ha": 353.9608,
+        "excluded_ha": 12.9455,
+        "pending_ha": 0.0,
+        "raw_ha": 366.9063,
+        "records": 412,
+        "review_ha": 0.024
+      },
+      "3 Gijduvon": {
+        "after_ha": 594.6119,
+        "excluded_ha": 19.0538,
+        "pending_ha": 0.0,
+        "raw_ha": 613.6657,
+        "records": 676,
+        "review_ha": 0.0
+      },
+      "5 Shofirko": {
+        "after_ha": 184.8411,
+        "excluded_ha": 21.1424,
+        "pending_ha": 0.0,
+        "raw_ha": 205.9835,
+        "records": 274,
+        "review_ha": 0.0
+      },
+      "6 Shofirko": {
+        "after_ha": 244.5814,
+        "excluded_ha": 7.0845,
+        "pending_ha": 0.0,
+        "raw_ha": 251.6659,
+        "records": 328,
+        "review_ha": 0.572
+      },
+      "8 GardenU": {
+        "after_ha": 480.7319,
+        "excluded_ha": 25.8916,
+        "pending_ha": 0.0,
+        "raw_ha": 506.6235,
+        "records": 530,
+        "review_ha": 0.0
+      },
+      "9 Garden": {
+        "after_ha": 120.6197,
+        "excluded_ha": 0.0,
+        "pending_ha": 0.0,
+        "raw_ha": 120.6197,
+        "records": 110,
+        "review_ha": 0.0
+      }
+    },
+    "chains_shown": 240,
+    "excluded_ha": 175.8333,
+    "excluded_records": 241,
+    "links_ok": true,
+    "partition_holds": true,
+    "pending_ha": 0.0,
+    "pending_records": 0,
+    "proven_by_control_only": 1,
+    "proven_structural": 235,
+    "raw_ha": 4687.1675,
+    "raw_missing_records": 0,
+    "records": 4887,
+    "review_application_with_flat_counter": 1,
+    "review_ha": 4.7646,
+    "review_records": 7,
+    "structural_candidates": 240
+  },
+  "historical_oracle": "docs/DJI_AREA_SEPTEMBER_2026_ORACLE.json",
+  "notes": [
+    "Six group-B records lie in the period. Five fire the rule and move from REVIEW to PHANTOM_PROVEN (RAW 3.4106 ha); 714181711 has a very low footprint but no structural scalar match and must stay REVIEW: a small footprint alone is never enough.",
+    "Before the first apply the new code must want to rewrite exactly the expected_rewrites (pre-apply); after the apply a second dry run must want to write nothing (post-apply). The acceptance tool refuses this oracle without an explicit --phase.",
+    "The four negative controls are production A2 records whose footprint is below the cut; only those inside the period can be checked here, all four are checked by --evaluate-rule over the whole database.",
+    "No flight id is hard-coded in the product code: the ids live here."
+  ],
+  "oracle": "september-2026-retained-footprint",
+  "period": [
+    "2026-09-01",
+    "2026-09-18"
+  ],
+  "production_evaluation": {
+    "b_footprint_unreadable": 0,
+    "b_passes_footprint": 31,
+    "b_passes_footprint_structural_match": 28,
+    "b_steps_unobserved": 0,
+    "b_total": 44,
+    "b_width_over_envelope": 0,
+    "below_cut_structural_mismatch": [
+      646731005,
+      696203208,
+      714181711
+    ],
+    "billable_non_null": 0,
+    "current_rows": 36351,
+    "database_sha256_unchanged": true,
+    "exit_code": 0,
+    "final_candidates": [
+      567468930,
+      579492311,
+      589911352,
+      593926297,
+      622804207,
+      628111487,
+      653169760,
+      655626159,
+      660151343,
+      674438091,
+      677116076,
+      679813767,
+      683607628,
+      690137315,
+      692568940,
+      693319955,
+      695314135,
+      695707045,
+      695759434,
+      695784399,
+      697634191,
+      698068932,
+      698354474,
+      701661028,
+      702797709,
+      703830892,
+      703847599,
+      714181794
+    ],
+    "final_candidates_raw_ha": 19.274,
+    "named_controls": {
+      "679813767": "PHANTOM_PROVEN",
+      "687610350": "REVIEW",
+      "693319955": "PHANTOM_PROVEN",
+      "698068932": "PHANTOM_PROVEN"
+    },
+    "negative_controls": {
+      "668794098": "NORMAL",
+      "669810485": "NORMAL",
+      "685273720": "NORMAL",
+      "706410605": "NORMAL"
+    },
+    "raw_changed": 0,
+    "remaining_review_b": [
+      646731005,
+      657506121,
+      667238169,
+      677423238,
+      682509232,
+      687610350,
+      690898982,
+      692706956,
+      693787188,
+      694113032,
+      694249136,
+      695755764,
+      696203208,
+      698642705,
+      714181711,
+      714484527
+    ],
+    "review_total_after": 60,
+    "review_total_before": 88
+  },
+  "provenance": "Post-rule projection of the September 2026 acceptance period on the PRODUCTION database, 2026-09-28, read-only (database sha256 unchanged): the code of DJI-AREA-RETAINED-FOOTPRINT-001 dry-run over 2026-09-01..2026-09-18 and projected through dji_area.control_report. It follows the production read-only rule evaluation of the same day (tools/dji_area_footprint_calibration.py --evaluate-rule, exit 0; see production_evaluation). The historical oracle september-2026 (blind holdout 233/233 HIT and the live Block R on staging 2026-09-20, 4623 records, the algorithm BEFORE the rule) is kept byte for byte in docs/DJI_AREA_SEPTEMBER_2026_ORACLE.json; this file does not replace it.",
+  "rule": {
+    "area_algorithm": "dji-area-evidence-2026-09-08-final-1-impl-4",
+    "footprint_to_raw_max": 0.027,
+    "formula": "application path x 12.0 m / RAW <= 0.027; exact flat counter in a full validated V4 window; structural candidate with scalar_source_check",
+    "rule_version": "retained-scalar-negligible-footprint-1",
+    "width_envelope_m": 12.0
+  },
+  "transition": {
+    "expected_rewrites": [
+      701661028,
+      702797709,
+      703830892,
+      703847599,
+      714181794
+    ],
+    "expected_rewrites_raw_ha": 3.4106,
+    "must_stay_review": [
+      714181711
+    ],
+    "negative_controls": [
+      668794098,
+      669810485,
+      685273720,
+      706410605
+    ],
+    "rule_flag": "RETAINED_SCALAR_WITH_NEGLIGIBLE_FOOTPRINT"
+  }
+}
