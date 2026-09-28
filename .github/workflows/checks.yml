@@ -407,6 +407,24 @@ jobs:
       - name: DJI area retained-footprint release runbook (production blocks)
         run: python tools/test_dji_area_retained_footprint_release_runbook.py
 
+      # DJI-AREA-RETAINED-RELEASE-CLOSEOUT-002. The first write into the
+      # production database that is not a recalculation by a new rule but a
+      # realignment of provenance: rows whose fingerprint moved only because
+      # a newer immutable DJI source revision arrived (own, or a chain
+      # neighbour's). Every gate is held by a pair -- a row that must pass
+      # beside a row that must stop: a changed decision, a changed RAW,
+      # billable, an unexplained input change (the same decision on another
+      # machine), a live admin decision and a moved field attribution each
+      # stop by name. The cause is proven by a counterfactual run of the real
+      # pipeline with the source pointers rolled back to the stored
+      # calculation; the suite shows the proof is not decoration by rolling
+      # back to the CURRENT pointers and watching it fail. R1 and R2 run end to
+      # end on a synthetic database: after the normalization exactly the named
+      # transition, the record that must stay in review stays, a second run
+      # writes nothing. Stdlib + openpyxl, synthetic V4, no network.
+      - name: DJI area retained release closeout (proven normalization, R1/R2)
+        run: python tools/test_dji_area_retained_release_closeout.py
+
       # The recomputation itself, on a temporary SQLite database built with
       # the migration's own DDL. Stdlib only: drone_coverage_recalc.py and
       # drone_useful_area.py are deliberately free of Flask, and this suite
