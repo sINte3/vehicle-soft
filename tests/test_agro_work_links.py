@@ -152,6 +152,23 @@ class DryRunAndApply(LinksCase):
                          [(None, '50'), ('50', None)])
 
 
+class EquipmentList(LinksCase):
+    def test_our_equipment_list_is_written_and_nothing_else_changes(self):
+        import csv
+        before = sha(self.db)
+        path = os.path.join(self.folder, 'equipment.csv')
+        code, out, err = self.main('--equipment-csv', path, '--set',
+                                   'ALFAKLAS12=50', '--apply')
+        self.assertEqual(code, 0, err)
+        self.assertIn('our equipment: 3 row(s)', out)
+        self.assertEqual(sha(self.db), before)       # --set не исполнялся
+        with open(path, encoding='utf-8-sig') as fh:
+            rows = list(csv.DictReader(fh, delimiter=';'))
+        self.assertEqual([r['equipment_id'] for r in rows], ['11', '12', '50'])
+        self.assertEqual(rows[2]['name'], 'Экскаватор Hyundai')
+        self.assertEqual(rows[0]['organization'], 'Buxoro')
+
+
 class FromCsv(LinksCase):
     HEADER = ('status;agro_transport_id;plate_number;brand;model;category;'
               'company;in_registry;applications;last_application_day;'

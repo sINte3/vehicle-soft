@@ -33,6 +33,12 @@ agro-work с таким номером нет или их несколько; у
 две машины их реестра на одном нашем треке значат, что одна связь неверна, и
 сверка отдала бы работу не той заявке.
 
+Откуда брать id нашей машины, если подсказки нет: `--equipment-csv FILE`
+выгружает наш справочник техники -- id, название, госномер, организация,
+категория -- и больше ничего не делает.
+
+  & "C:\\Program Files\\Python314\\python.exe" tools\\agro_work_links.py --equipment-csv agro_work_equipment.csv
+
 Сеть не нужна: инструмент работает только с базой. Вывод в консоль -- ASCII.
 """
 
@@ -210,9 +216,27 @@ def apply(con, to_link, to_unlink, note):
         raise
 
 
+def write_equipment_csv(con, path):
+    """Наш справочник техники -- чтобы было откуда взять equipment_id."""
+    rows = con.execute(
+        'SELECT e.id, e.name, e.plate, o.name, e.category, e.is_active '
+        'FROM equipment e LEFT JOIN organizations o ON o.id = e.organization_id '
+        'ORDER BY o.name, e.name, e.id').fetchall()
+    with open(path, 'w', encoding='utf-8-sig', newline='') as fh:
+        writer = csv.writer(fh, delimiter=';')
+        writer.writerow(('equipment_id', 'name', 'plate', 'organization',
+                         'category', 'is_active'))
+        for row in rows:
+            writer.writerow(['' if value is None else value for value in row])
+    return len(rows)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--db', default=config.DB_PATH)
+    parser.add_argument('--equipment-csv', default=None, metavar='FILE',
+                        help='write our equipment list (id, name, plate) and '
+                             'stop')
     parser.add_argument('--from-csv', default=None, metavar='FILE',
                         help='the unmatched CSV with equipment_id filled in')
     parser.add_argument('--set', action='append', default=[],
@@ -236,6 +260,11 @@ def main(argv=None):
                              'migrate_agro_work_001.py first\n'
                              % ', '.join(missing))
             return 2
+        if args.equipment_csv:
+            count = write_equipment_csv(con, args.equipment_csv)
+            print('our equipment: %d row(s) written to %s'
+                  % (count, config.ascii_only(args.equipment_csv)))
+            return 0
         try:
             sets = parse_pairs(args.set)
             if args.from_csv:

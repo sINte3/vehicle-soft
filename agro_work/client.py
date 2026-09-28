@@ -64,6 +64,11 @@ AUTH_PATHS = (AUTH_LOGIN, AUTH_REFRESH)
 # Ответы, после которых запрос повторяется: сервер занят или прокси упал.
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 
+# [REASON]: своё имя в каждом запросе. Администратор agro-work видит в журнале,
+# чей это трафик и что он только читает; а фильтр, режущий безымянный
+# «Python-urllib», не остановит первый же прогон владельца.
+USER_AGENT = 'VehicleSoft-agro-work-import/1 (read-only)'
+
 
 class RefusedRequest(Exception):
     """Запрос не входит в разрешённые и не отправлен."""
@@ -253,7 +258,7 @@ class Client:
         url = self.base_url + path
         if params:
             url += '?' + urllib.parse.urlencode(sorted(params.items()))
-        headers = {'Accept': 'application/json'}
+        headers = {'Accept': 'application/json', 'User-Agent': USER_AGENT}
         data = None
         if body is not None:
             data = json.dumps(body).encode('utf-8')

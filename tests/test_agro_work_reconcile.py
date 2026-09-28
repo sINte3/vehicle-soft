@@ -109,7 +109,8 @@ class Fixture:
         return app_id
 
     def run(self, date_from=10, date_to=20, **kwargs):
-        con = sqlite3.connect('file:%s?mode=ro' % self.path, uri=True)
+        con = sqlite3.connect('file:%s?mode=ro' % self.path.replace('\\', '/'),
+                              uri=True)
         try:
             return rc.Reconciliation(con, D(date_from), D(date_to),
                                      today=TODAY, **kwargs)

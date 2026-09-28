@@ -161,6 +161,9 @@ class AuthFlow(unittest.TestCase):
         self.assertNotIn('Authorization', login['headers'])
         self.assertEqual(read['headers']['Authorization'],
                          'Bearer ' + fake_api.ACCESS)
+        for request in (login, read):
+            self.assertEqual(request['headers']['User-Agent'],
+                             'VehicleSoft-agro-work-import/1 (read-only)')
         self.assertEqual(client.logins, 1)
 
     def test_login_field_is_configurable_and_a_wrong_one_names_the_right_one(self):

@@ -177,5 +177,6 @@ instance/dji_sources/
 agro_work_credentials.txt
 agro_work_unmatched.csv
 agro_work_link_plan.csv
+agro_work_equipment.csv
 agro_work_methods*.xlsx
 agro_work_reconcile*.xlsx
