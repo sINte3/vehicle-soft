@@ -47,7 +47,8 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from tests.harness import app, db, reset_db, create_admin, create_org, login
-from models import (CAT_MTZ, CAT_PASSENGER, CATEGORIES, Equipment,
+from models import (CAT_MOTORCYCLE, CAT_MTZ, CAT_PASSENGER, CAT_SPECIAL,
+                    CAT_YUK_TRANSPORT, CATEGORIES, Equipment,
                     GpsDailyAggregate, User, VialonMapping)
 
 import gps_routes                                                   # noqa: E402
@@ -178,8 +179,34 @@ class Rule(unittest.TestCase):
 class CategorySlug(unittest.TestCase):
     """Пункт 4: дубль слага закреплён против models.py."""
 
-    def test_the_non_field_slug_is_the_one_models_uses(self):
-        self.assertEqual(NON_FIELD_CATEGORIES, frozenset({CAT_PASSENGER}))
+    def test_a_truck_is_excluded_and_keeps_its_machine_and_mothours(self):
+        """Главный контроль решения 28.09 про грузовые.
+
+        [REASON]: молоковоз HYUNDAI 80 555 UBA дал 354,4 га за 13 суток при
+        4287 км пробега -- крупнейший ложный гектар парка. Убирать его надо
+        КАТЕГОРИЕЙ, а не галочкой «нет в системе»: владельцу нужна связь
+        объекта с карточкой машины под будущий отчёт по пробегу с геозонами, а
+        галочка эту связь обнуляет. Тест держит обе стороны сразу.
+        """
+        rule = Rule("test_an_empty_database_excludes_nothing")
+        rule.setUp()
+        try:
+            truck = rule.equipment("Hyundai", CAT_YUK_TRANSPORT)
+            row = rule.mapping("HYUNDAI 80 555 UBA", wialon_id=8780,
+                               equipment_id=truck)
+            self.assertEqual(excluded_units(rule.con),
+                             {8780: EXCLUDED_NON_FIELD})
+            skip, equipment_id = rule.con.execute(
+                "SELECT skip, equipment_id FROM vialon_mappings WHERE id = ?",
+                (row,)).fetchone()
+            self.assertEqual(skip, 0)          # моточасы пишутся как прежде
+            self.assertEqual(equipment_id, truck)   # связь с машиной цела
+        finally:
+            rule.tearDown()
+
+    def test_the_non_field_slugs_are_the_ones_models_uses(self):
+        self.assertEqual(NON_FIELD_CATEGORIES,
+                         frozenset({CAT_PASSENGER, CAT_YUK_TRANSPORT}))
 
     def test_every_non_field_slug_is_a_real_category(self):
         self.assertTrue(NON_FIELD_CATEGORIES.issubset(set(CATEGORIES)))
@@ -187,11 +214,19 @@ class CategorySlug(unittest.TestCase):
     def test_the_screen_and_the_engine_name_the_same_categories(self):
         self.assertEqual(gps_routes.NON_FIELD_CATEGORIES, NON_FIELD_CATEGORIES)
 
-    def test_motorcycles_and_trucks_are_deliberately_not_excluded(self):
-        # [REASON]: владелец назвал легковые и только их. Появится решение про
-        # мотоциклы (8) и грузовые (7) -- этот тест упадёт и потребует внести
-        # его сознательно, а не заметить через месяц по пропавшим гектарам.
-        self.assertEqual(len(NON_FIELD_CATEGORIES), 1)
+    def test_only_the_two_categories_the_owner_named_are_excluded(self):
+        """Заменяет test_motorcycles_and_trucks_are_deliberately_not_excluded.
+
+        [REASON]: растяжка сработала ровно как задумано. 28.09 владелец решил
+        внести грузовые -- прежний тест упал и потребовал внести их СОЗНАТЕЛЬНО,
+        а не заметить через месяц по пропавшим гектарам. Растяжка остаётся на
+        месте, только с новым числом: мотоциклы (8) и спецтехника (6) не
+        внесены, и следующее их внесение снова придётся сделать руками.
+        """
+        self.assertEqual(NON_FIELD_CATEGORIES,
+                         frozenset({CAT_PASSENGER, CAT_YUK_TRANSPORT}))
+        self.assertNotIn(CAT_SPECIAL, NON_FIELD_CATEGORIES)
+        self.assertNotIn(CAT_MOTORCYCLE, NON_FIELD_CATEGORIES)
 
 
 class TwoImplementationsAgree(unittest.TestCase):
