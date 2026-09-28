@@ -245,6 +245,15 @@ jobs:
       - name: Idempotence gate (a second apply that writes anything stops the run)
         run: python tools/test_dji_area_idempotence_gate.py
 
+      # DJI-AREA-FOOTPRINT-CALIBRATION-001. A read-only research tool. Held
+      # here: the footprint is path x width on APPLICATION frames only (a
+      # whole-route footprint would make a phantom look like work), a step
+      # across a gap over 1 s is not a step, the width falls back frame ->
+      # record -> list -> undefined, and a run writes nothing (sha256 before
+      # and after; a missing database is refused, not created).
+      - name: DJI area footprint calibration self-test (read-only)
+        run: python tools/test_dji_area_footprint_calibration.py
+
       # The Block 1B evidence document quotes numbers that live in the CSV
       # tables next to it. A report is not proof -- the artifact is -- so the
       # two are bound here: a typo in either the prose or the tables fails.
