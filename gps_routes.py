@@ -37,6 +37,7 @@ from flask_login import current_user, login_required
 from models import (
     db,
     CAT_PASSENGER,
+    CAT_YUK_TRANSPORT,
     Equipment,
     GPS_DECISION_DISPUTED,
     GPS_DECISIONS,
@@ -110,7 +111,7 @@ def _machine_names(wialon_ids):
 # в своём venv с numpy, а служба Flask этот стек не тянет. Чтобы реализации не
 # разъехались, их ответы закреплены общим тестом на одной и той же базе
 # (tests/test_gps_fact_excluded.py).
-NON_FIELD_CATEGORIES = frozenset({CAT_PASSENGER})
+NON_FIELD_CATEGORIES = frozenset({CAT_PASSENGER, CAT_YUK_TRANSPORT})
 
 
 def _excluded_units():
