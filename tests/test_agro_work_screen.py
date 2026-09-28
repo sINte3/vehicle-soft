@@ -131,7 +131,7 @@ class ScreenCase(unittest.TestCase):
         # T3 (организация 2): работа 15-го и заявка 15..15.
         for number, transport, created, completed in (
                 (1, 'T1', 10, 11), (2, 'T1', 12, 13), (3, 'T8', 10, 11),
-                (4, 'T3', 15, 15)):
+                (4, 'T3', 15, 15), (5, 'T1', 16, 16)):
             _sql(["INSERT INTO agro_work_applications (id, application_number, "
                   "transport_id, work_type_id, work_type_name, unit, status, "
                   "created_at, updated_at, created_day, first_seen_run_id, "
@@ -143,6 +143,9 @@ class ScreenCase(unittest.TestCase):
                   '2026-09-%02dT08:00:00+05:00' % created,
                   '2026-09-%02d' % created, '2026-09-%02d' % completed,
                   'P' + transport))
+        # A5 удалена в agro-work (ответ владельца 11).
+        _sql(["UPDATE agro_work_applications SET gone_at = "
+              "'2026-09-21 03:00:00' WHERE id = 'A5'"])
         con = sqlite3.connect(TEST_DB_PATH)
         try:
             for unit, day, area in ((1001, 10, 2.5), (1002, 13, 3.0),
@@ -223,6 +226,8 @@ class Numbers(ScreenCase):
         self.assertEqual(order[0], 'APP-TEST-002')
         self.assertIn('Работы по GPS не было', html)
         self.assertIn('Машина agro-work не связана с нашей техникой', html)
+        self.assertIn('удалена в agro-work', html)
+        self.assertIn('Заявка удалена в agro-work — работу не покрывает', html)
         only = self.get('/agro-work/applications', verdict='rabota_net')
         self.assertEqual(re.findall(r'APP-TEST-\d{3}', only.get_data(as_text=True)),
                          ['APP-TEST-002'])

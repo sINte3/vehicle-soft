@@ -53,7 +53,7 @@
         <tr>
           <td>{{ app.number }}
             <div class="vs-soft">{{ app.row.company_name or '' }}</div>
-            {% if app.row.gone_at %}<div><span class="vs-badge vs-badge-warning">{{ 'нет в последней выгрузке' if is_ru else 'охирги юкламада йўқ' }}</span></div>{% endif %}
+            {% if app.row.gone_at %}<div><span class="vs-badge vs-badge-warning">{{ 'удалена в agro-work' if is_ru else 'agro-work да ўчирилган' }}</span></div>{% endif %}
           </td>
           <td>{{ status_label(app.status) }}
             <div class="vs-soft">{{ 'создана ' if is_ru else 'яратилган ' }}{{ app.created_day.strftime('%d.%m') }}{% if app.completed_day and app.status == 'COMPLETED' %}, {{ 'выполнена ' if is_ru else 'бажарилган ' }}{{ app.completed_day.strftime('%d.%m') }}{% endif %}</div>

@@ -15,6 +15,10 @@
   * отменённые работу не покрывают; «в ожидании» и «в процессе» -- без
     вердикта до закрытия.
 
+ЗАЯВКА, УДАЛЁННАЯ В AGRO-WORK (пропала из полной выгрузки, `gone_at`), --
+ответ владельца на вопрос 11, 28.09: работу не покрывает, как отменённая, и
+остаётся в сверке с пометкой «удалена в agro-work».
+
 СУТКИ МАШИНЫ ПО GPS -- три состояния, и третье не сводится ко второму:
   * работа -- площадь опубликована и есть участок, который человек не назвал
     проездом (порог участка 0,3 га -- решение владельца, трек GPS);
@@ -43,7 +47,7 @@
 """
 
 from collections import Counter, defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from gps.exclusion import excluded_units
 
@@ -79,6 +83,7 @@ C_NONE = 'bez_verdikta'
 # Причины «без вердикта». Слаги ASCII, подписи -- на экране и в отчёте.
 R_OPEN = 'otkryta'
 R_CANCELLED = 'otmenena'
+R_GONE = 'udalena_v_agro_work'
 R_BACKDATED = 'zadnim_chislom'
 R_NO_HISTORY = 'istoriya_ne_zagruzhena'
 R_NO_CLOSE_DATE = 'net_daty_zakrytiya'
@@ -99,7 +104,7 @@ R_WINDOW_UNKNOWN = 'okno_zayavki_neizvestno'
 R_NOT_IN_AGRO = 'net_v_agro_work'
 R_MANY_AGRO = 'neodnoznachnaya_svyaz'
 
-FORWARD_REASONS = (R_OPEN, R_CANCELLED, R_BACKDATED, R_NO_HISTORY,
+FORWARD_REASONS = (R_OPEN, R_CANCELLED, R_GONE, R_BACKDATED, R_NO_HISTORY,
                    R_NO_CLOSE_DATE, R_BAD_WINDOW, R_UNKNOWN_STATUS,
                    R_METHOD_UNMARKED, R_METHOD_NONE, R_METHOD_TIME,
                    R_METHOD_TRIPS, R_NOT_MATCHED, R_NO_WIALON, R_MANY_OBJECTS,
@@ -120,6 +125,17 @@ def parse_day(value):
     if not value:
         return None
     return datetime.strptime(str(value)[:10], '%Y-%m-%d').date()
+
+
+def stamp_day(value):
+    """Местные сутки нашей UTC-метки 'YYYY-MM-DD HH:MM:SS' (gone_at)."""
+    if not value:
+        return None
+    try:
+        moment = datetime.strptime(str(value)[:19], '%Y-%m-%d %H:%M:%S')
+    except ValueError:
+        return None
+    return records.local_day(moment.replace(tzinfo=timezone.utc))
 
 
 def days_between(first, last):
@@ -149,7 +165,8 @@ class Application:
 
     __slots__ = ('row', 'id', 'number', 'status', 'transport_id',
                  'work_type_id', 'created_day', 'completed_day',
-                 'has_history', 'backdated', 'window', 'window_reason')
+                 'has_history', 'backdated', 'window', 'window_reason',
+                 'gone', 'gone_day', 'alive_window')
 
     def __init__(self, row, lookback):
         self.row = row
@@ -164,7 +181,19 @@ class Application:
         self.backdated = (self.status == records.STATUS_COMPLETED
                           and self.has_history
                           and row['initial_status'] == records.STATUS_COMPLETED)
-        self.window, self.window_reason = self._window(lookback)
+        self.gone = bool(row.get('gone_at'))
+        self.gone_day = stamp_day(row.get('gone_at'))
+        alive_window, alive_reason = self._window(lookback)
+        # Окно, которое было бы у заявки, не удали её agro-work: по нему
+        # удалённая заявка остаётся в списке своего периода.
+        self.alive_window = alive_window
+        if self.gone:
+            # [REASON]: ответ владельца на вопрос 11 (28.09) -- удалённая в
+            # agro-work заявка работу не покрывает, как отменённая. Окна у
+            # неё нет, вердикта нет, причина названа.
+            self.window, self.window_reason = None, R_GONE
+        else:
+            self.window, self.window_reason = alive_window, alive_reason
 
     def _window(self, lookback):
         """(окно (первые сутки, последние сутки) или None, причина)."""
@@ -192,6 +221,11 @@ class Application:
         """Какие сутки заявка «занимает» в списке периода."""
         if self.window:
             return self.window
+        if self.gone:
+            if self.alive_window:
+                return self.alive_window
+            return self.created_day, max(self.gone_day or self.created_day,
+                                         self.created_day)
         if self.status in records.OPEN_STATUSES:
             return self.created_day, date.max
         moment = records.parse_moment(self.row.get('cancelled_at'))
@@ -396,8 +430,10 @@ class Reconciliation:
             return C_NONE, R_NOT_IN_AGRO, []
         if len(transports) > 1:
             return C_NONE, R_MANY_AGRO, []
+        # Ни отменённая, ни удалённая в agro-work заявка работу не покрывает
+        # (ответ 4 и ответ 11 владельца) -- и не откладывает вердикт.
         apps = [a for a in self.apps_by_transport.get(transports[0], [])
-                if a.status != records.STATUS_CANCELLED]
+                if a.status != records.STATUS_CANCELLED and not a.gone]
         covering = [a for a in apps if a.window
                     and a.window[0] <= day <= a.window[1]]
         if covering:

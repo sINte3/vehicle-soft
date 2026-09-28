@@ -90,21 +90,22 @@ class Fixture:
 
     def app(self, transport='T1', status='COMPLETED', created=10, completed=11,
             initial='IN_PROGRESS', history=True, work_type=W_GA,
-            cancelled=None):
+            cancelled=None, gone_at=None):
         self.number += 1
         app_id = 'app-%03d' % self.number
         self.con.execute(
             "INSERT INTO agro_work_applications (id, application_number, "
             "transport_id, work_type_id, unit, status, created_at, updated_at, "
             "created_day, first_seen_run_id, last_seen_run_id, "
-            "history_updated_at, initial_status, completed_day, cancelled_at) "
-            "VALUES (?, ?, ?, ?, 'HECTARE', ?, ?, 'u', ?, 1, 1, ?, ?, ?, ?)",
+            "history_updated_at, initial_status, completed_day, cancelled_at, "
+            "gone_at) "
+            "VALUES (?, ?, ?, ?, 'HECTARE', ?, ?, 'u', ?, 1, 1, ?, ?, ?, ?, ?)",
             (app_id, 'N-%03d' % self.number, transport, work_type, status,
              '2026-09-%02dT08:00:00+05:00' % created,
              '2026-09-%02d' % created, 'u' if history else None,
              initial if history else None,
              ('2026-09-%02d' % completed) if (history and completed) else None,
-             cancelled))
+             cancelled, gone_at))
         self.con.commit()
         return app_id
 
@@ -221,6 +222,31 @@ class Forward(unittest.TestCase):
             self.assertEqual((row['verdict'], row['reason']), (rc.V_NONE, reason),
                              app_id)
 
+    def test_deleted_in_agro_work_has_no_verdict_and_keeps_its_period(self):
+        # Ответ владельца 11: удалённая заявка -- как отменённая, но в сверке
+        # остаётся с пометкой. Без удаления у неё была бы «работа была».
+        app = self.fx.app(created=10, completed=11,
+                          gone_at='2026-09-21 03:00:00')
+        row = self.fx.forward(app)
+        self.assertEqual((row['verdict'], row['reason'], row['window']),
+                         (rc.V_NONE, rc.R_GONE, None))
+        ids = {r['app'].id for r in self.fx.run(date_from=10, date_to=11)
+               .forward_rows()}
+        self.assertIn(app, ids)
+        ids = {r['app'].id for r in self.fx.run(date_from=12, date_to=20)
+               .forward_rows()}
+        self.assertNotIn(app, ids)
+
+    def test_a_deleted_open_application_is_listed_until_its_deletion(self):
+        app = self.fx.app(status='IN_PROGRESS', created=10, completed=None,
+                          gone_at='2026-09-14 20:00:00')       # 15.09 по UTC+5
+        in_range = {r['app'].id for r in self.fx.run(date_from=15, date_to=15)
+                    .forward_rows()}
+        after = {r['app'].id for r in self.fx.run(date_from=16, date_to=20)
+                 .forward_rows()}
+        self.assertIn(app, in_range)
+        self.assertNotIn(app, after)
+
     def test_only_the_hectare_method_is_judged(self):
         for work_type, reason in ((W_TIME, rc.R_METHOD_TIME),
                                   (W_TRIPS, rc.R_METHOD_TRIPS),
@@ -277,6 +303,19 @@ class Reverse(unittest.TestCase):
     def test_a_cancelled_application_covers_nothing(self):
         self.fx.app(transport='T2', status='CANCELLED', created=12, completed=None,
                     cancelled='2026-09-14T09:00:00+05:00')
+        self.assertEqual(self.rows()[(12, D(13))]['coverage'], rc.C_UNCOVERED)
+
+    def test_a_deleted_application_covers_nothing(self):
+        # Без удаления заявка 12..13 покрыла бы работу 13-го.
+        self.fx.app(transport='T2', created=12, completed=13,
+                    gone_at='2026-09-20 03:00:00')
+        row = self.rows()[(12, D(13))]
+        self.assertEqual((row['coverage'], row['reason']),
+                         (rc.C_UNCOVERED, None))
+
+    def test_a_deleted_open_application_does_not_suspend_the_verdict(self):
+        self.fx.app(transport='T2', status='IN_PROGRESS', created=12,
+                    completed=None, gone_at='2026-09-20 03:00:00')
         self.assertEqual(self.rows()[(12, D(13))]['coverage'], rc.C_UNCOVERED)
 
     def test_an_open_application_suspends_the_verdict(self):

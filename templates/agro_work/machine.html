@@ -58,7 +58,7 @@
           </td>
           <td>
             {% for app in day.apps %}
-              <div>{{ app.number }} <span class="vs-soft">· {{ status_label(app.status) }}{% if app.backdated %} · {{ 'задним числом' if is_ru else 'орқа сана билан' }}{% endif %}</span></div>
+              <div>{{ app.number }} <span class="vs-soft">· {{ status_label(app.status) }}{% if app.backdated %} · {{ 'задним числом' if is_ru else 'орқа сана билан' }}{% endif %}{% if app.gone %} · {{ 'удалена в agro-work' if is_ru else 'agro-work да ўчирилган' }}{% endif %}</span></div>
             {% else %}
               <span class="vs-soft">—</span>
             {% endfor %}
