@@ -397,13 +397,16 @@ jobs:
       # DJI-AREA-RETAINED-FOOTPRINT-001. The first owner blocks that stop the
       # PRODUCTION services and write to its database, so the staging rule
       # above is inverted, not relaxed: host, root, services and port must be
-      # production's and staging is named nowhere. Held: the pin is the real
-      # fingerprint and the other runbooks' tag, proven before a service
-      # stops; R1 writes nothing and proves it by hash; R2 applies exactly the
-      # oracle's rewrites (ids read from the oracle file) only after a fresh
-      # PRE-APPLY, then a second dry run, POST-APPLY and the RAW guard; R3
-      # applies only the approved list, only if a fresh evaluation names
-      # exactly it, never a whole period; the text quotes the oracle's figures.
+      # production's and staging is named nowhere. Held: the model pin is the
+      # real fingerprint and the other runbooks' tag, proven before a service
+      # stops; R1 and R2 run exactly the release tag, which must contain the
+      # model tag (DJI-AREA-RETAINED-RELEASE-CLOSEOUT-002); R1 and R2 write
+      # only through the closeout tool, R1 never applies the transition; R2
+      # moves production code only by `merge --ff-only` onto that commit --
+      # no pull, reset, clean or checkout, the old HEAD an ancestor, the tree
+      # clean, no migration in the delta, no untracked file lost; R3 applies
+      # only the approved list, only if a fresh evaluation names exactly it,
+      # never a whole period; the text quotes the oracle's figures.
       - name: DJI area retained-footprint release runbook (production blocks)
         run: python tools/test_dji_area_retained_footprint_release_runbook.py
 
