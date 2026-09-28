@@ -506,7 +506,7 @@ schtasks /delete /tn "GpsDaily" /f
 | Подложка | Что это | Свежесть | Чёткость | Условие |
 |---|---|---|---|---|
 | Спутник (чёткий, Esri) | World Imagery | раз в месяцы–год: Esri обновляет у Maxar раз в год | до 30–60 см | ключ Esri, бесплатно 2 000 000 плиток в месяц |
-| Свежий снимок (Sentinel-2, 10 м) | Copernicus Data Space Ecosystem | снимок раз в 2–5 суток; под картой — дата | 10 м на пиксель | идентификатор конфигурации, бесплатно 10 000 единиц обработки в месяц |
+| Свежий снимок (Sentinel-2, 10 м) | Copernicus Data Space Ecosystem | снимок раз в 2–5 суток; под картой — дата | 10 м на пиксель | идентификатор конфигурации, бесплатная квота — ниже |
 | Карта | OpenStreetMap | — | — | ничего не нужно |
 
 Свежих и одновременно чётких снимков бесплатно не бывает ни у кого: чёткие
@@ -521,6 +521,18 @@ Sentinel-2. Поэтому обе на одной карте. По умолча�
 Google; Esri без ключа — вне условий Esri; сервис EOX Sentinel-2 — только
 некоммерческий.
 
+**Квота Copernicus.** Бесплатно — 10 000 единиц обработки в месяц, остаток
+сгорает 1-го числа. Лимит запросов в месяц у бесплатного тарифа тоже есть;
+его число из среды сессии не проверено (сайт документации Copernicus
+закрыт) — оно видно в панели после регистрации. Плитка 256×256 истинных
+цветов — около 0,25 единицы и один запрос. Свежий слой просит плитки не
+мельче 14-го уровня (7 м на пиксель на широте Бухары — мельче самого
+снимка) и ближе растягивает их сам: на стенде поле на уровне 17 — 2 плитки
+Sentinel-2 против 21 плитки Esri, приближение новых плиток не просит. Дата
+снимка — один запрос WFS на каждое открытие экрана с картой. Квота
+кончилась — свежий слой и его дата не грузятся до 1-го числа; чёткий Esri,
+карта, трек и участки работают.
+
 ### Подключить (владелец)
 
 Регистрации — в браузере; сайты Esri и Copernicus из среды сессии Claude
@@ -528,15 +540,16 @@ Google; Esri без ключа — вне условий Esri; сервис EOX 
 
 1. **Esri.** Бесплатная учётная запись ArcGIS Location Platform
    (`https://location.arcgis.com`). В ней — API-ключ с правом на базовые карты
-   (Basemaps); в ограничениях ключа по адресу (Referrers) —
-   `http://10.103.25.14:5050`. Ключ показывается один раз — сразу к шагу 3.
+   (Basemaps); в ограничениях ключа по адресу (Referrers) — две строки:
+   `http://10.103.25.14:5050` (боевой) и `http://10.103.25.14:5051`
+   (площадка). Ключ показывается один раз — сразу к шагу 3.
 2. **Copernicus.** Бесплатная учётная запись Copernicus Data Space
    Ecosystem (`https://dataspace.copernicus.eu`). В панели Sentinel Hub
    (`https://shapps.dataspace.copernicus.eu/dashboard`) — «Configuration
    Utility», новая конфигурация по шаблону Sentinel-2 L2A, где есть слой
    истинных цветов. Скопировать идентификатор конфигурации (ID). Если слой
-   истинных цветов называется не `TRUE_COLOR` — записать его идентификатор
-   второй строкой файла в шаге 4.
+   истинных цветов называется не `TRUE_COLOR` (например, `1_TRUE_COLOR`) —
+   записать его идентификатор второй строкой файла в шаге 4.
 3. Ключ Esri — в файл (Блокнот создаст его; вставить ключ первой строкой,
    сохранить, закрыть; ключ не пересылать и в отчёты не вставлять):
 
@@ -551,12 +564,26 @@ notepad C:\transport-report\instance\copernicus_instance_id.txt
 ```
 
 Служба читает оба файла при каждом открытии экрана — перезапуск не нужен.
-Действуют файлы с релиза, в котором есть A2; выключить — удалить файл.
+Действуют файлы с релиза, в котором есть A2; до него программа их не
+читает. Выключить подложку — удалить её файл.
+
+**Площадка.** Перед проверкой экрана на площадке — те же два файла в её
+каталог (сейчас площадка за Дронами: делать, когда на неё выйдет GPS):
+
+```
+Copy-Item C:\transport-report\instance\esri_api_key.txt C:\transport-report-staging\instance\esri_api_key.txt
+```
+
+```
+Copy-Item C:\transport-report\instance\copernicus_instance_id.txt C:\transport-report-staging\instance\copernicus_instance_id.txt
+```
 
 ### Проверить ключи до релиза (сервер, PowerShell)
 
-Команды берут ключи из файлов сами — вставлять ничего не нужно, и ключ на
-экран не выводится. Сначала — доступ с сервера:
+Все команды — в одном окне PowerShell, по порядку. Ключи читаются из файлов
+так же, как их читает программа: первая непустая строка, у Copernicus вторая
+строка — имя слоя, если есть. Вставлять ничего не нужно, на экран ключи не
+выводятся. Сначала — доступ с сервера:
 
 ```
 Test-NetConnection ibasemaps-api.arcgis.com -Port 443
@@ -566,9 +593,9 @@ Test-NetConnection ibasemaps-api.arcgis.com -Port 443
 Test-NetConnection sh.dataspace.copernicus.eu -Port 443
 ```
 
-Ожидается `TcpTestSucceeded : True` у обоих. Если `False` — те же три
-проверки ниже не пройдут с сервера, это не значит, что ключи плохие:
-операторам нужен доступ со своих компьютеров, и его там проверить так же.
+Ожидается `TcpTestSucceeded : True` у обоих. Если `False` — проверки ниже
+не пройдут с сервера, и это не значит, что ключи плохие: операторам нужен
+доступ со своих компьютеров, и его там проверить так же.
 
 Каталог для результатов:
 
@@ -576,42 +603,80 @@ Test-NetConnection sh.dataspace.copernicus.eu -Port 443
 New-Item -ItemType Directory -Force C:\gps-tools\check
 ```
 
-**Esri — одна плитка над полем 3208 (Бухара):**
+Windows PowerShell 5.1 не всегда включает TLS 1.2, без которого оба сервиса
+отвечают ошибкой «Could not create SSL/TLS secure channel». Эта команда
+включает его только в этом окне, на систему не влияет:
 
 ```
-Invoke-WebRequest ("https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/16/24810/44519?token=" + (Get-Content C:\transport-report\instance\esri_api_key.txt -First 1).Trim()) -OutFile C:\gps-tools\check\esri_tile.jpg -UseBasicParsing
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+```
+
+**Esri — одна плитка над полем 3208 (Бухара).** Заголовок `Referer` — тот
+же, что шлёт браузер оператора с боевого адреса: так проверяется и
+ограничение ключа по адресу из шага 1.
+
+```
+$esri = @(Get-Content C:\transport-report\instance\esri_api_key.txt | ForEach-Object { $_.Trim() } | Where-Object { $_ })[0]
+```
+
+```
+Invoke-WebRequest ("https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/16/24810/44519?token=" + $esri) -Headers @{ Referer = 'http://10.103.25.14:5050/' } -OutFile C:\gps-tools\check\esri_tile.jpg -UseBasicParsing
 ```
 
 ```
 (Get-Item C:\gps-tools\check\esri_tile.jpg).Length
 ```
 
-Ожидается число больше 5 000 (байт) и никакой красной ошибки. Ошибка с
-кодом 498 или 499 — ключ не принят (не тот ключ, нет права Basemaps).
-Посмотреть снимок: `Start-Process C:\gps-tools\check\esri_tile.jpg`.
+Ожидается число больше 5 000 (байт) и никакой красной ошибки. Красная
+ошибка — ключ не принят: не тот ключ, нет права Basemaps или адрес в
+ограничении ключа записан не так (шаг 1). Число меньше 1 000 — в файле
+текст ответа, а не снимок: `Get-Content C:\gps-tools\check\esri_tile.jpg`
+покажет его, ключа в нём нет.
 
-**Copernicus — какие снимки есть над полем за сентябрь** (одна строка на
-дату; это тот же запрос, которым карта узнаёт дату снимка):
-
-```
-(Invoke-WebRequest ("https://sh.dataspace.copernicus.eu/ogc/wfs/" + (Get-Content C:\transport-report\instance\copernicus_instance_id.txt -First 1).Trim() + "?SERVICE=WFS&REQUEST=GetFeature&VERSION=2.0.0&TYPENAMES=DSS2&OUTPUTFORMAT=application/json&SRSNAME=EPSG:3857&BBOX=7184828,4865014,7186828,4867014&TIME=2026-09-01/2026-09-28&MAXCC=30&MAXFEATURES=100") -UseBasicParsing).Content | ConvertFrom-Json | Select-Object -ExpandProperty features | ForEach-Object { $_.properties.date } | Sort-Object -Unique
-```
-
-Ожидается несколько дат сентября 2026 (снимок раз в 2–5 суток, без облаков).
-Пусто без ошибки — ответ пришёл, но дат в нём нет под тем именем, которое
-ждёт карта: прислать вывод, это правится в `vs-map.js`.
-
-**Copernicus — сам снимок поля** (одна картинка 512×512, стоит одну единицу
-обработки из 10 000):
+**Copernicus — идентификатор и слой из файла:**
 
 ```
-Invoke-WebRequest ("https://sh.dataspace.copernicus.eu/ogc/wms/" + (Get-Content C:\transport-report\instance\copernicus_instance_id.txt -First 1).Trim() + "?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=TRUE_COLOR&CRS=EPSG:3857&BBOX=7184828,4865014,7186828,4867014&WIDTH=512&HEIGHT=512&FORMAT=image/jpeg&TIME=2026-09-01/2026-09-28&MAXCC=30&PRIORITY=mostRecent&SHOWLOGO=false") -OutFile C:\gps-tools\check\sentinel_field.jpg -UseBasicParsing
+$copernicus = @(Get-Content C:\transport-report\instance\copernicus_instance_id.txt | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 ```
 
 ```
-Start-Process C:\gps-tools\check\sentinel_field.jpg
+$layer = if ($copernicus.Count -gt 1) { $copernicus[1] } else { 'TRUE_COLOR' }
 ```
 
-Ожидается снимок местности 2×2 км вокруг поля 3208 в естественных цветах.
-Если в файле текст ошибки, а не картинка — чаще всего слой называется не
-`TRUE_COLOR` (шаг 2).
+**Copernicus — какие снимки есть над полем за сентябрь** (это тот же
+запрос, которым карта узнаёт дату снимка):
+
+```
+$answer = (Invoke-WebRequest ("https://sh.dataspace.copernicus.eu/ogc/wfs/" + $copernicus[0] + "?SERVICE=WFS&REQUEST=GetFeature&VERSION=2.0.0&TYPENAMES=DSS2&OUTPUTFORMAT=application/json&SRSNAME=EPSG:3857&BBOX=7184828,4865014,7186828,4867014&TIME=2026-09-01/2026-09-28&MAXCC=30&MAXFEATURES=100") -UseBasicParsing).Content
+```
+
+```
+$answer | ConvertFrom-Json | Select-Object -ExpandProperty features | ForEach-Object { $_.properties.date } | Sort-Object -Unique
+```
+
+Ожидается несколько дат сентября 2026 вида `2026-09-24`, по одной в строке
+(снимок раз в 2–5 суток, без облаков). Пусто или красная ошибка — показать
+начало ответа (идентификатора в нём нет):
+
+```
+$answer.Substring(0, [Math]::Min(600, $answer.Length))
+```
+
+**Copernicus — сам снимок поля** (одна картинка 512×512 — около одной
+единицы обработки из 10 000):
+
+```
+Invoke-WebRequest ("https://sh.dataspace.copernicus.eu/ogc/wms/" + $copernicus[0] + "?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=" + $layer + "&CRS=EPSG:3857&BBOX=7184828,4865014,7186828,4867014&WIDTH=512&HEIGHT=512&FORMAT=image/jpeg&TIME=2026-09-01/2026-09-28&MAXCC=30&PRIORITY=mostRecent&SHOWLOGO=false") -OutFile C:\gps-tools\check\sentinel_field.jpg -UseBasicParsing
+```
+
+```
+(Get-Item C:\gps-tools\check\sentinel_field.jpg).Length
+```
+
+Ожидается число больше 10 000 (байт); в файле — снимок местности 2×2 км
+вокруг поля 3208 в естественных цветах (`Start-Process
+C:\gps-tools\check\sentinel_field.jpg` откроет его). Красная ошибка —
+чаще всего слой называется не так (шаг 2): его имя из «Configuration
+Utility» — второй строкой файла, и повторить с команды `$copernicus = ...`.
+Оба снимка (`esri_tile.jpg`, `sentinel_field.jpg`) ключей не содержат, их
+можно пересылать.
