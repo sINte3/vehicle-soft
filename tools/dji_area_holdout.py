@@ -122,10 +122,16 @@ TOOL_FILE = 'tools/dji_area_holdout.py'
 # между plan и report прошла бы с пометкой в углу отчёта. Стоимость повторного
 # прогона -- не довод против целостности: отчёт можно перестроить из того же
 # плана, вернув файл, а вот незамеченную подгонку вернуть нельзя.
+#
+# [REASON]: `footprint.py` (DJI-AREA-RETAINED-FOOTPRINT-001) -- здесь же: в нём
+# замороженные порог 0,027 и огибающая 12,0 м, по которым запись становится
+# доказанным нулём. Без него правка порога не сдвинула бы отпечаток, и ранбук
+# «подтвердил» бы непроверенное правило.
 FROZEN_FILES = (
     'dji_area/__init__.py', 'dji_area/structural.py', 'dji_area/resolver.py',
     'dji_area/v4.py', 'dji_area/pipeline.py', 'dji_area/evidence.py',
-    'dji_area/store.py', 'dji_area/accounting.py', TOOL_FILE,
+    'dji_area/store.py', 'dji_area/accounting.py', 'dji_area/footprint.py',
+    TOOL_FILE,
 )
 # [REASON]: тесты сюда НЕ входят намеренно. Они не участвуют ни в отборе, ни в
 # оценке; заморозив их, отпечаток ломался бы от любой новой проверки и перестал
@@ -175,6 +181,8 @@ def frozen_state():
             'v4_parser': dji_area.V4_PARSER_VERSION,
             'channel_capability': dji_area.CHANNEL_CAPABILITY_REVISION,
             'accounting_classes': acc.ACCOUNTING_CLASSES_VERSION,
+            'retained_footprint_rule':
+                dji_area.RETAINED_FOOTPRINT_RULE_VERSION,
         },
         'files': {rel: lf_sha256(os.path.join(ROOT, rel.replace('/', os.sep)))
                   for rel in FROZEN_FILES},
@@ -209,7 +217,7 @@ def strata_constants(random_n, contiguous_n):
 
 
 def code_fingerprint():
-    """Одно значение вместо девяти хешей: SHA-256 канонического JSON
+    """Одно значение вместо десяти хешей: SHA-256 канонического JSON
     ``frozen_state()``.
 
     [REASON]: ранбук обязан доказать, что на машине лежит ПРОВЕРЕННАЯ ревизия,
