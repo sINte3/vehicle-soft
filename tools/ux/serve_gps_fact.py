@@ -13,8 +13,10 @@ temp, генеральный засев), плюс то, чего генерал
 * подписанные сессии ux_admin (RU) и ux_admin_uz (UZ) -- файлы storageState
   для Playwright. Пароль не вводится и не печатается.
 
-Ключа Esri здесь нет и быть не должно: подложка -- OSM, как у владельца до
-того, как он положит ключ. Плитки из интернета в песочнице могут не
+Без ключа `--imagery` подложка -- OSM, как у владельца до того, как он
+положит ключи. С `--imagery` стенд кладёт НЕНАСТОЯЩИЕ ключ Esri и
+идентификатор Copernicus: проверка карты подменяет ответы этих сервисов в
+браузере и в сеть с ними не ходит. Плитки из интернета в песочнице могут не
 грузиться -- карта при этом обязана встать: векторные слои от плиток не
 зависят.
 
@@ -51,6 +53,13 @@ app.jinja_env.auto_reload = True
 POINTS_DIR = os.path.join(se._TMP, 'gps_points')
 app.config['GPS_POINTS_DIR'] = POINTS_DIR
 app.config['MAP_ESRI_KEY_FILE'] = os.path.join(se._TMP, 'esri_api_key.txt')
+app.config['MAP_COPERNICUS_INSTANCE_FILE'] = os.path.join(
+    se._TMP, 'copernicus_instance_id.txt')
+
+# Ненастоящие ключ и идентификатор для --imagery: браузерная проверка
+# подменяет ответы Esri и Copernicus сама и в сеть с ними не ходит.
+FAKE_ESRI_KEY = 'AAPK-ux-stand-not-a-real-key'
+FAKE_INSTANCE = '00000000-0000-4000-8000-00000000ux01'
 
 FIXTURES = os.path.join(se.REPO_ROOT, 'gps', 'tests', 'fixtures')
 TZ = timezone(timedelta(hours=5))
@@ -145,10 +154,18 @@ def main():
     parser.add_argument('--port', type=int, default=5099)
     parser.add_argument('--state-dir', required=True,
                         help='where ux_admin.json / ux_admin_uz.json go')
+    parser.add_argument('--imagery', action='store_true',
+                        help='write FAKE Esri key and Copernicus instance id')
     args = parser.parse_args()
     se.seed_ux_fixtures.guard_disposable(se.DB_PATH)
     os.makedirs(args.state_dir, exist_ok=True)
     os.makedirs(POINTS_DIR, exist_ok=True)
+    if args.imagery:
+        with open(app.config['MAP_ESRI_KEY_FILE'], 'w', encoding='utf-8') as handle:
+            handle.write(FAKE_ESRI_KEY + '\n')
+        with open(app.config['MAP_COPERNICUS_INSTANCE_FILE'], 'w',
+                  encoding='utf-8') as handle:
+            handle.write(FAKE_INSTANCE + '\n')
 
     with app.app_context():
         db.create_all()

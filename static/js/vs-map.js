@@ -15,6 +15,9 @@
  *
  * JSON:
  *   base:   [{key, title, url, attribution, maxZoom}]  -- pervaya vklyuchena
+ *           kind: 'wms' -- sloy WMS (svezhiy snimok Sentinel-2): parametry v
+ *           `wms`, zapros dat snimkov v `dates` (WFS), podpisi v `notes`;
+ *           podpis s datoy kladyotsya v element [data-vs-map-note=KEY].
  *   layers: [{kind, title, group, ...}], v poryadke snizu vverh:
  *     outline  {geojson}                     kontur polya, bez zalivki
  *     track    {segments: [[[lat, lon], ...], ...]}
@@ -102,6 +105,61 @@
     return layer;
   }
 
+  function baseLayer(base) {
+    var common = { attribution: base.attribution || '', maxZoom: base.maxZoom || 19 };
+    if (base.kind !== 'wms') return L.tileLayer(base.url, common);
+    // [REASON]: vse klyuchi `wms` idut v adres zaprosa (tak ustroen
+    // L.TileLayer.WMS), zaglavnymi bukvami -- tak ih zhdyot Sentinel Hub:
+    // TIME, MAXCC, PRIORITY, SHOWLOGO.
+    return L.tileLayer.wms(base.url, L.Util.extend({ uppercase: true }, common, base.wms));
+  }
+
+  function shownDate(iso) {
+    var parts = iso.split('-');
+    return parts[2] + '.' + parts[1] + '.' + parts[0];
+  }
+
+  // Svezhiy snimok: kakaya data realno pokazana. [REASON]: WMS skleivaet
+  // mozaiku iz samyh svezhih snimkov okna i datu ne soobshchaet; bez nee
+  // "svezhiy snimok" -- obeshchanie, a ne fakt. WFS otdayot spisok snimkov nad
+  // uchastkom -- beryotsya samyy svezhiy, sloy prosit rovno ego, i data
+  // pishetsya pod kartoy. Ne otvetil WFS -- sloy ostayotsya s oknom dat, a
+  // pod kartoy tak i napisano.
+  function lookUpDate(base, tiles, bounds, host) {
+    var note = document.querySelector('[data-vs-map-note="' + base.key + '"]');
+    var say = function (text) {
+      if (!note || !text) return;
+      note.textContent = text;
+      note.hidden = false;
+    };
+    if (!base.dates || !bounds || !window.fetch) { say(base.notes && base.notes.unknown); return; }
+    var sw = L.CRS.EPSG3857.project(bounds.getSouthWest());
+    var ne = L.CRS.EPSG3857.project(bounds.getNorthEast());
+    var url = base.dates.url + L.Util.getParamString({
+      SERVICE: 'WFS', REQUEST: 'GetFeature', VERSION: '2.0.0',
+      TYPENAMES: base.dates.typename, OUTPUTFORMAT: 'application/json',
+      SRSNAME: 'EPSG:3857', BBOX: [sw.x, sw.y, ne.x, ne.y].join(','),
+      TIME: base.dates.time, MAXCC: base.dates.maxcc, MAXFEATURES: 100
+    });
+    fetch(url, { credentials: 'omit' }).then(function (response) {
+      if (!response.ok) throw new Error('WFS ' + response.status);
+      return response.json();
+    }).then(function (json) {
+      var dates = ((json && json.features) || []).map(function (f) {
+        return f && f.properties && f.properties.date;
+      }).filter(function (d) {
+        return typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d);
+      }).sort();
+      if (!dates.length) { say(base.notes && base.notes.none); return; }
+      var latest = dates[dates.length - 1];
+      tiles.setParams({ time: latest + '/' + latest });
+      host.setAttribute('data-vs-map-date-' + base.key, latest);
+      say(base.notes && base.notes.found && base.notes.found.replace('{date}', shownDate(latest)));
+    }).catch(function () {
+      say(base.notes && base.notes.unknown);
+    });
+  }
+
   function extend(bounds, layer) {
     var b = layer.getBounds && layer.getBounds();
     if (!b || !b.isValid()) return bounds;
@@ -131,13 +189,12 @@
     map.once('click', function () { map.scrollWheelZoom.enable(); });
 
     var bases = {};
+    var dated = [];
     data.base.forEach(function (base, index) {
-      var tiles = L.tileLayer(base.url, {
-        attribution: base.attribution || '',
-        maxZoom: base.maxZoom || 19
-      });
+      var tiles = baseLayer(base);
       bases[escapeHtml(base.title)] = tiles;
       if (index === 0) tiles.addTo(map);
+      if (base.kind === 'wms') dated.push({ base: base, tiles: tiles });
     });
 
     var overlays = {};
@@ -168,6 +225,9 @@
     } else {
       map.setView([39.77, 64.42], 10);
     }
+    dated.forEach(function (entry) {
+      lookUpDate(entry.base, entry.tiles, bounds || map.getBounds(), host);
+    });
   }
 
   function mountAll() {

@@ -802,7 +802,9 @@ def fact():
                 .order_by(FieldContour.id).all() if contour_ids else [])
     layers = map_layers(points, sites, contours, is_ru)
     key_file = current_app.config.get('MAP_ESRI_KEY_FILE')
-    map_data = ({'base': vs_map.base_layers(is_ru, key_file),
+    instance_file = current_app.config.get('MAP_COPERNICUS_INSTANCE_FILE')
+    map_data = ({'base': vs_map.base_layers(is_ru, key_file, instance_file,
+                                            day=day),
                  'layers': layers} if layers else None)
 
     return render_template(
@@ -815,7 +817,9 @@ def fact():
         total_ha=round(sum(s.area_ha or 0 for s in sites), 2),
         map_data=map_data,
         has_track=any(layer['kind'] == 'track' for layer in layers),
-        satellite=vs_map.satellite_configured(key_file),
+        satellite=vs_map.satellite_configured(key_file, instance_file),
+        sharp_on=bool(vs_map.esri_key(key_file)),
+        fresh_on=bool(vs_map.copernicus_instance(instance_file)[0]),
         summary=track_summary(points) if points else None,
     )
 

@@ -146,8 +146,12 @@
       {% endif %}
       {% if sites|selectattr('contour_id')|list %}<span class="vs-map-legend-item"><span class="vs-map-swatch is-outline"></span>{{ 'контур поля из справочника' if is_ru else 'маълумотномадаги дала контури' }}</span>{% endif %}
     </div>
+    {# Дату свежего снимка сюда пишет vs-map.js: на сервере её не знают. #}
+    {% if fresh_on %}<div class="vs-soft vs-mt-sm" data-vs-map-note="fresh" hidden></div>{% endif %}
     {% if not satellite %}
-    <div class="vs-soft vs-mt-sm">{{ 'Спутниковая подложка не подключена — показана карта OpenStreetMap.' if is_ru else 'Спутник қатлами уланмаган — OpenStreetMap харитаси кўрсатилган.' }}{% if current_user.is_admin %} {{ 'Спутник включается ключом Esri в файле instance\\esri_api_key.txt; порядок — docs/GPS_ROLLOUT_RUNBOOK.md, раздел 11.' if is_ru else 'Спутник instance\\esri_api_key.txt файлидаги Esri калити билан ёқилади; тартиб — docs/GPS_ROLLOUT_RUNBOOK.md, 11-бўлим.' }}{% endif %}</div>
+    <div class="vs-soft vs-mt-sm">{{ 'Спутниковая подложка не подключена — показана карта OpenStreetMap.' if is_ru else 'Спутник қатлами уланмаган — OpenStreetMap харитаси кўрсатилган.' }}{% if current_user.is_admin %} {{ 'Чёткий спутник включается ключом Esri в instance\\esri_api_key.txt, свежие снимки Sentinel-2 — идентификатором Copernicus в instance\\copernicus_instance_id.txt; порядок — docs/GPS_ROLLOUT_RUNBOOK.md, раздел 11.' if is_ru else 'Тиниқ спутник instance\\esri_api_key.txt даги Esri калити билан, янги Sentinel-2 суратлари instance\\copernicus_instance_id.txt даги Copernicus идентификатори билан ёқилади; тартиб — docs/GPS_ROLLOUT_RUNBOOK.md, 11-бўлим.' }}{% endif %}</div>
+    {% elif current_user.is_admin and not (sharp_on and fresh_on) %}
+    <div class="vs-soft vs-mt-sm">{% if not fresh_on %}{{ 'Свежие снимки Sentinel-2 не подключены — instance\\copernicus_instance_id.txt, ранбук, раздел 11.' if is_ru else 'Янги Sentinel-2 суратлари уланмаган — instance\\copernicus_instance_id.txt, ранбук, 11-бўлим.' }}{% else %}{{ 'Чёткий спутник Esri не подключён — instance\\esri_api_key.txt, ранбук, раздел 11.' if is_ru else 'Тиниқ Esri спутниги уланмаган — instance\\esri_api_key.txt, ранбук, 11-бўлим.' }}{% endif %}</div>
     {% endif %}
   </div>
 </div>

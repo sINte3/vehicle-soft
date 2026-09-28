@@ -88,8 +88,10 @@ class Base(unittest.TestCase):
         shutil.rmtree(self.folder, ignore_errors=True)
         os.makedirs(self.folder)
         self.key_file = app.config['MAP_ESRI_KEY_FILE']
-        if os.path.exists(self.key_file):
-            os.remove(self.key_file)
+        self.instance_file = app.config['MAP_COPERNICUS_INSTANCE_FILE']
+        for path in (self.key_file, self.instance_file):
+            if os.path.exists(path):
+                os.remove(path)
         self.addCleanup(shutil.rmtree, self.folder, True)
 
     def write_track(self, rows, unit=UNIT):
@@ -434,6 +436,114 @@ class BaseLayers(Base):
 
     def test_no_file_at_all_is_no_key(self):
         self.assertEqual(vs_map.esri_key(self.key_file + '.missing'), '')
+
+
+INSTANCE = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d'
+
+
+class FreshImagery(Base):
+    """Свежий снимок Sentinel-2: по идентификатору Copernicus и с датой.
+
+    [REASON]: владелец 28.09 -- «спутник нужен обязательно, желательно с
+    самыми свежими снимками». Чёткие подложки обновляются раз в месяцы-годы;
+    свежесть в днях бесплатно даёт только Sentinel-2 (10 м). Проверяется, что
+    слой появляется ровно по файлу идентификатора, просит окно дат вокруг
+    суток работы, не становится первым, пока есть чёткий, и что
+    идентификатор не утекает из блока данных карты.
+    """
+
+    def write(self, path, text):
+        with open(path, 'w', encoding='utf-8-sig') as fh:
+            fh.write(text)
+
+    def page_data(self):
+        self.write_track(run(9 * 3600, 5))
+        with app.app_context():
+            db.session.add(aggregate())
+            db.session.commit()
+        html = self.page()
+        return html, self.map_data(html)
+
+    def test_the_instance_file_is_read_like_the_key_file(self):
+        self.write(self.instance_file, '\n' + INSTANCE + '\n')
+        self.assertEqual(vs_map.copernicus_instance(self.instance_file),
+                         (INSTANCE, 'TRUE_COLOR'))
+        self.write(self.instance_file, INSTANCE + '\nS2L2A_TRUE-COLOR\n')
+        self.assertEqual(vs_map.copernicus_instance(self.instance_file),
+                         (INSTANCE, 'S2L2A_TRUE-COLOR'))
+        for garbage in ('два слова', 'id with spaces', 'short', '',
+                        INSTANCE + '\nplохой слой'):
+            with self.subTest(garbage=garbage):
+                self.write(self.instance_file, garbage)
+                self.assertEqual(vs_map.copernicus_instance(self.instance_file),
+                                 ('', ''))
+        self.assertEqual(vs_map.copernicus_instance(self.instance_file + '.x'),
+                         ('', ''))
+
+    def test_the_window_is_a_month_before_and_two_weeks_after(self):
+        start, end = vs_map.sentinel_window(date(2026, 7, 27),
+                                            today=date(2026, 9, 28))
+        self.assertEqual((start, end), (date(2026, 6, 27), date(2026, 8, 11)))
+
+    def test_for_yesterday_the_window_ends_today(self):
+        # «самый свежий снимок» для вчерашней работы -- это снимок до сегодня
+        start, end = vs_map.sentinel_window(date(2026, 9, 27),
+                                            today=date(2026, 9, 28))
+        self.assertEqual((start, end), (date(2026, 8, 28), date(2026, 9, 28)))
+
+    def test_with_the_instance_only_the_fresh_layer_comes_first(self):
+        self.write(self.instance_file, INSTANCE)
+        html, data = self.page_data()
+        self.assertEqual([b['key'] for b in data['base']], ['fresh', 'map'])
+        fresh = data['base'][0]
+        self.assertEqual(fresh['kind'], 'wms')
+        self.assertEqual(fresh['url'],
+                         'https://sh.dataspace.copernicus.eu/ogc/wms/' + INSTANCE)
+        self.assertEqual(fresh['wms']['layers'], 'TRUE_COLOR')
+        self.assertEqual(fresh['wms']['time'], '2026-06-27/2026-08-11')
+        self.assertEqual(fresh['wms']['maxcc'], 30)
+        self.assertEqual(fresh['wms']['priority'], 'mostRecent')
+        self.assertEqual(fresh['dates']['typename'], 'DSS2')
+        self.assertEqual(fresh['dates']['time'], fresh['wms']['time'])
+        self.assertTrue(fresh['dates']['url'].endswith('/ogc/wfs/' + INSTANCE))
+        self.assertIn('{date}', fresh['notes']['found'])
+        self.assertIn('Copernicus Sentinel data 2026', fresh['attribution'])
+        # подпись с датой -- пустое место под картой, его заполнит скрипт
+        self.assertIn('data-vs-map-note="fresh" hidden', html)
+        # администратору сказано, чего ещё не хватает
+        self.assertIn('Чёткий спутник Esri не подключён', html)
+        self.assertNotIn('Спутниковая подложка не подключена', html)
+        # идентификатор -- только в блоке данных карты
+        block = re.search(r'id="gps-fact-map">(.*?)</script>', html, re.S)
+        self.assertEqual(html.count(INSTANCE), block.group(1).count(INSTANCE))
+
+    def test_with_both_the_sharp_one_opens_first(self):
+        self.write(self.key_file, 'AAPK-test-key-0123456789')
+        self.write(self.instance_file, INSTANCE)
+        html, data = self.page_data()
+        self.assertEqual([b['key'] for b in data['base']],
+                         ['satellite', 'fresh', 'map'])
+        self.assertNotIn('не подключ', html)
+
+    def test_without_the_instance_there_is_no_fresh_layer_and_no_note(self):
+        """Отрицательный контроль: слой появляется только по файлу."""
+        self.write(self.key_file, 'AAPK-test-key-0123456789')
+        html, data = self.page_data()
+        self.assertEqual([b['key'] for b in data['base']], ['satellite', 'map'])
+        self.assertNotIn('data-vs-map-note', html)
+        self.assertIn('Свежие снимки Sentinel-2 не подключены', html)
+
+    def test_the_uzbek_interface_names_the_fresh_layer_in_uzbek(self):
+        self.write(self.instance_file, INSTANCE)
+        with app.app_context():
+            User.query.get(self.admin_id).language = 'uz'
+            db.session.commit()
+        _html, data = self.page_data()
+        fresh = data['base'][0]
+        self.assertEqual(fresh['title'], 'Янги сурат (Sentinel-2, 10 м)')
+        self.assertIn('санадаги', fresh['notes']['found'])
+        self.assertIn('булутсиз', fresh['notes']['none'])
+        self.assertNotIn('снимок', fresh['notes']['unknown'])
 
 
 if __name__ == '__main__':
