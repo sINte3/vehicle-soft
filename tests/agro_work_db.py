@@ -51,6 +51,17 @@ def make_db(folder=None, gps=True):
     return path
 
 
+def readonly_connect(db_path):
+    """Как `store.connect`, но только на чтение -- то, что видит обычное окно.
+
+    Копию базы на сервере создаёт окно от имени администратора; окно без
+    повышения прав открывает её только на чтение (шаг 10, 29.09).
+    """
+    con = sqlite3.connect('file:%s?mode=ro' % db_path, uri=True, timeout=30)
+    con.row_factory = sqlite3.Row
+    return con
+
+
 def add_org(con, org_id, name):
     con.execute('INSERT INTO organizations (id, name) VALUES (?, ?)',
                 (org_id, name))

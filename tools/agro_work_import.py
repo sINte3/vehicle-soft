@@ -54,6 +54,7 @@ docs/AGRO_WORK_B1_RUNBOOK.md):
 import argparse
 import csv
 import os
+import sqlite3
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -301,6 +302,14 @@ def main(argv=None, client_factory=Client):
         except AuthFailed as exc:
             sys.stderr.write('ERROR: login failed: %s\n' % exc)
             return 3
+        except sqlite3.OperationalError as exc:
+            # Первая запись прогона -- его строка в журнале, до первого
+            # запроса к agro-work: база только на чтение ломается на ней.
+            if not store.is_readonly(exc):
+                raise
+            sys.stderr.write('ERROR: %s; nothing was requested from '
+                             'agro-work\n' % store.READONLY_HINT)
+            return 2
         except (ApiError, RefusedRequest) as exc:
             sys.stderr.write('ERROR: the run stopped: %s\n' % exc)
             sys.stderr.write('everything read before the stop is saved; the '

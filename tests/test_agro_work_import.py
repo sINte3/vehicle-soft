@@ -21,12 +21,14 @@
 """
 
 import csv
+import hashlib
 import io
 import os
 import sqlite3
 import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -472,6 +474,22 @@ class Tool(ImportCase):
                                  self.credentials, '--pause', '0.2')
         self.assertEqual(code, 2)
         self.assertEqual(self.server.requests, [])
+
+    def test_a_read_only_database_stops_before_any_request(self):
+        # Окно без прав администратора открывает копию только на чтение.
+        # Первая запись прогона -- его строка в журнале, до первого запроса.
+        def digest():
+            with open(self.db, 'rb') as fh:
+                return hashlib.sha256(fh.read()).hexdigest()
+        before = digest()
+        with mock.patch.object(store, 'connect', dbh.readonly_connect):
+            code, out, err = self.main('--db', self.db, '--credentials',
+                                       self.credentials)
+        self.assertEqual(code, 2, out + err)
+        self.assertIn('read-only for this window', err)
+        self.assertIn('nothing was requested from agro-work', err)
+        self.assertEqual(self.server.requests, [])
+        self.assertEqual(digest(), before)
 
     def test_wrong_password_exits_3(self):
         with open(self.credentials, 'w', encoding='utf-8') as fh:

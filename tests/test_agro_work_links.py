@@ -22,6 +22,7 @@ import sqlite3
 import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -248,6 +249,16 @@ class Refusals(LinksCase):
     def test_a_csv_without_the_columns(self):
         path = self.write_csv('cols.csv', 'plate;id\nALFAKLAS12;50\n', 'utf-8')
         self.assert_refused('--from-csv', path, expect='column agro_transport_id')
+
+    def test_a_read_only_database_is_named_not_traced(self):
+        # Окно без прав администратора: копия базы только на чтение.
+        before = sha(self.db)
+        with mock.patch.object(store, 'connect', dbh.readonly_connect):
+            code, out, err = self.main('--set', 'ALFAKLAS12=50', '--apply')
+        self.assertEqual(code, 2, out + err)
+        self.assertIn('read-only for this window', err)
+        self.assertTrue(err.isascii())
+        self.assertEqual(sha(self.db), before)
 
     def test_a_database_without_the_migration(self):
         bare = os.path.join(self.folder, 'bare.db')

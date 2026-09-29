@@ -68,6 +68,24 @@ def connect(db_path):
     return con
 
 
+READONLY_HINT = ('the database is read-only for this window - open PowerShell '
+                 'as administrator, cd C:\\VehicleSoft_AgroWork and repeat; '
+                 'nothing was written')
+
+
+def is_readonly(exc):
+    """Отказ SQLite писать в базу, которую этому процессу можно только читать.
+
+    [REASON]: копию базы создаёт окно PowerShell от имени администратора, и
+    обычное окно того же пользователя открывает её только на чтение: SQLite
+    молча опускается в чтение, пробный прогон проходит, а запись падает
+    трассировкой «attempt to write a readonly database» (шаг 10, 29.09).
+    Человеку нужны причина и действие, а не трассировка.
+    """
+    return (isinstance(exc, sqlite3.OperationalError)
+            and 'readonly database' in str(exc))
+
+
 def missing_tables(con):
     have = {row[0] for row in con.execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}

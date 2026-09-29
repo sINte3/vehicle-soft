@@ -26,10 +26,11 @@
 Все команды — в **PowerShell от имени администратора**, по одной строке,
 как есть: плейсхолдеров в них нет. Длинный прогон пишет вывод в файл
 (`*> файл.log`): консоль Windows в режиме выделения останавливает процесс на
-первом выводе. Каждый шаг, который запускает скрипт, начинается с
-`cd C:\VehicleSoft_AgroWork`: новое окно открывается в
-`C:\Windows\system32`, а скрипты ищутся от текущей папки. Шаг можно начать и
-в новом окне.
+первом выводе. Окно администратора открывается в `C:\Windows\system32`;
+приглашение `PS C:\Users\...` значит окно без прав администратора — в нём
+копию базы можно только читать. Каждый шаг, который запускает скрипт,
+начинается с `cd C:\VehicleSoft_AgroWork`: скрипты ищутся от текущей папки.
+Шаг можно начать и в новом окне.
 
 ---
 
@@ -81,7 +82,7 @@ cd C:\VehicleSoft_AgroWork
 & "C:\Program Files\Python314\python.exe" -m unittest tests.test_agro_work_client tests.test_agro_work_migration tests.test_agro_work_import tests.test_agro_work_links tests.test_agro_work_methods tests.test_agro_work_reconcile tests.test_agro_work_reconcile_tool tests.test_agro_work_copy_db
 ```
 
-**Ожидается:** в конце `Ran 115 tests` и `OK`.
+**Ожидается:** в конце `Ran 118 tests` и `OK`.
 **Прислать:** две последние строки; если не `OK` — весь вывод. Дальше не
 идти.
 
@@ -379,6 +380,7 @@ $env:PORT = '5098'
 
 | Сообщение | Что это | Что делать |
 |---|---|---|
+| `the database is read-only for this window` (прежде — трассировка `attempt to write a readonly database`) | окно PowerShell открыто не от имени администратора, приглашение `PS C:\Users\...` | открыть PowerShell от имени администратора, `cd C:\VehicleSoft_AgroWork`, повторить команду; ничего не записано |
 | `can't open file 'C:\\Windows\\system32\\tools\\...'` | окно PowerShell открыто не в папке проверки | выполнить `cd C:\VehicleSoft_AgroWork` и повторить команду; ничего не записано |
 | `credentials file not found` | инструмент не нашёл файл | проверить путь в шаге 3; прислать строку |
 | `login failed: POST /auth/token/ -> 400 (keys: ...)` | сервер ждёт логин под другим именем поля — оно названо после `keys:` | в файл учётных данных третьей строкой `login_field=` и имя из сообщения, например `login_field=phone`; повторить шаг 4 |

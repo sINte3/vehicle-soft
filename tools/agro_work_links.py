@@ -322,6 +322,11 @@ def main(argv=None):
         except Refused as exc:
             sys.stderr.write('ERROR: %s\n' % exc)
             return 1
+        except sqlite3.OperationalError as exc:
+            if not store.is_readonly(exc):
+                raise
+            sys.stderr.write('ERROR: %s\n' % store.READONLY_HINT)
+            return 2
         print('\nwritten: %d link(s), %d unlink(s)' % (len(to_link),
                                                        len(to_unlink)))
         summary = store.match_summary(con)

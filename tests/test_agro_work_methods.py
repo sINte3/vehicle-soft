@@ -23,6 +23,7 @@ import sqlite3
 import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -219,6 +220,21 @@ class Markup(MethodsCase):
         self.assertIn('set 0 | change 0 | clear 1 | same 1', out)
         self.assertEqual(self.methods_now(), {WT_GA: None, WT_HOURS: 'vremya',
                                               WT_TRIPS: None})
+
+    def test_a_read_only_database_is_named_not_traced(self):
+        # 29.09, шаг 10: окно без прав администратора открыло копию только
+        # на чтение; пробный прогон прошёл, запись упала трассировкой.
+        path = self.exported()
+        self.fill(path, {WT_GA: 'гектары'})
+        before = sha(self.db)
+        with mock.patch.object(store, 'connect', dbh.readonly_connect):
+            code, out, err = self.main('--import', path, '--apply')
+        self.assertEqual(code, 2, out + err)
+        self.assertIn('read-only for this window', err)
+        self.assertIn('as administrator', err)
+        self.assertTrue(err.isascii())
+        self.assertEqual(sha(self.db), before)
+        self.assertEqual(self.methods_now()[WT_GA], None)
 
     def test_renamed_headers_are_refused(self):
         path = self.exported()

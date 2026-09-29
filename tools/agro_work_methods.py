@@ -35,6 +35,7 @@
 
 import argparse
 import os
+import sqlite3
 import sys
 from collections import Counter
 
@@ -227,8 +228,14 @@ def main(argv=None):
         if not args.apply:
             print('dry run: nothing was written. Re-run with --apply.')
             return 0
-        written = methods.apply(con, changes,
-                                'xlsx:%s' % os.path.basename(args.import_path))
+        try:
+            written = methods.apply(
+                con, changes, 'xlsx:%s' % os.path.basename(args.import_path))
+        except sqlite3.OperationalError as exc:
+            if not store.is_readonly(exc):
+                raise
+            sys.stderr.write('ERROR: %s\n' % store.READONLY_HINT)
+            return 2
         print('written: %d' % written)
         return 0
     finally:
