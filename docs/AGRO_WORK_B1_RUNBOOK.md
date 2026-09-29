@@ -78,7 +78,7 @@ cd C:\VehicleSoft_AgroWork
 & "C:\Program Files\Python314\python.exe" -m unittest tests.test_agro_work_client tests.test_agro_work_migration tests.test_agro_work_import tests.test_agro_work_links tests.test_agro_work_methods tests.test_agro_work_reconcile tests.test_agro_work_reconcile_tool tests.test_agro_work_copy_db
 ```
 
-**Ожидается:** в конце `Ran 113 tests` и `OK`.
+**Ожидается:** в конце `Ran 115 tests` и `OK`.
 **Прислать:** две последние строки; если не `OK` — весь вывод. Дальше не
 идти.
 
@@ -214,17 +214,28 @@ Get-Content agro_import_2.log -Tail 25
 
 ## Шаг 9. Ручные связки машин (вопрос 7)
 
-Наш справочник техники — чтобы было откуда взять номер нашей машины:
+`equipment_id` — номер машины в нашей программе, id строки справочника
+«Техника». Не Wialon и не IMEI: связь нашей машины с трекером в программе
+уже есть, и сверка находит трек через неё. На экране этот номер не виден:
+колонка «№» в «Справочник → Техника» — порядковый номер строки, он меняется
+от фильтра. Поэтому справочник сначала выгружается в файл, где id — первая
+колонка (база не меняется):
 
 ```powershell
 & "C:\Program Files\Python314\python.exe" tools\agro_work_links.py --equipment-csv agro_work_equipment.csv
 ```
 
-Откройте `C:\VehicleSoft_AgroWork\agro_work_unmatched.csv` в Excel. В
-последней колонке `equipment_id` у каждой машины, которую знаете, впишите
-номер нашей машины: первое число из колонки `candidates`, если подсказка
-верна, или `equipment_id` из `agro_work_equipment.csv`. Незнакомые оставьте
-пустыми. Сохраните как CSV под тем же именем.
+Откройте в Excel `C:\VehicleSoft_AgroWork\agro_work_unmatched.csv` и
+`C:\VehicleSoft_AgroWork\agro_work_equipment.csv`. Заполнять нужно строки,
+у которых в колонке `applications` не ноль: файл отсортирован по ней. В
+колонку `equipment_id` впишите id нашей машины — найдите её в
+`agro_work_equipment.csv` через Ctrl+F по цифрам номера и сверьте название
+и хозяйство. Колонка `candidates` — только подсказка: первое число в ней —
+id, но машина может оказаться другой. 29.09 у тракторов Мирзачула `25 2xx HA`
+подсказка указала на МТЗ другого хозяйства с номерами `80 2xx НА`, а
+настоящие тракторы записаны у нас как `25 HA 290`. Не нашли или сомневаетесь
+— оставьте пустым. Сохраните как CSV под тем же именем. Можно в несколько
+заходов: уже записанные строки при повторе пропускаются.
 
 План — ничего не пишет:
 
@@ -232,8 +243,10 @@ Get-Content agro_import_2.log -Tail 25
 & "C:\Program Files\Python314\python.exe" tools\agro_work_links.py --from-csv agro_work_unmatched.csv
 ```
 
-**Ожидается:** строки `link   ... -> equipment ...` и `dry run: nothing was
-written`. Если `ERROR` — прислать его, ничего не записано.
+**Ожидается:** строки `link   ... -> equipment ... (название / госномер /
+хозяйство)` и `dry run: nothing was written`. Сверьте каждую строку глазами:
+замки ловят несуществующий и уже занятый номер, но не опечатку в номер другой
+существующей машины. Если `ERROR` — ничего не записано; прислать строку.
 
 Запись:
 
@@ -345,6 +358,9 @@ $env:PORT = '5098'
 | `tables missing ... run migrate_agro_work_001.py first` | пропущен шаг 6 | выполнить шаг 6 |
 | `database not found` | нет копии базы | выполнить шаг 5 |
 | `target already exists` в шаге 5 | копия уже есть, в ней может быть импорт | ничего не делать; копия нужна одна |
+| `line N: equipment_id must be a number` в шаге 9 | в колонку `equipment_id` строки N попал текст | вписать число или очистить ячейку; повторить план |
+| `our equipment N does not exist` в шаге 9 | такого id в нашем справочнике нет — опечатка | исправить по `agro_work_equipment.csv`; повторить план |
+| `equipment N already belongs to agro-work machine ...` в шаге 9 | наша машина уже досталась другой машине agro-work (в скобках — id её карточки) | одно из двух решений неверно: оставить одно, у второй строки очистить `equipment_id` |
 
 ## Откат
 

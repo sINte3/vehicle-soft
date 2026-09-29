@@ -12,7 +12,10 @@ agro-work записана нестандартным номером (B0, раз
 КАК
 Импорт пишет `agro_work_unmatched.csv`: машины без связи, число их заявок и
 подсказки из нашего справочника. Владелец вписывает в колонку `equipment_id`
-номер нашей машины (первое число в подсказке) и отдаёт файл сюда:
+номер нашей машины -- id строки справочника «Техника», не Wialon и не IMEI --
+и отдаёт файл сюда. Подсказка -- только подсказка: 29.09 у тракторов
+Мирзачула `25290HA` она указала на МТЗ другого хозяйства с номером
+`80 290 НА`, а настоящий трактор записан у нас как `25 HA 290`.
 
   & "C:\\Program Files\\Python314\\python.exe" tools\\agro_work_links.py --from-csv agro_work_unmatched.csv
 
@@ -25,7 +28,9 @@ agro-work записана нестандартным номером (B0, раз
   & "C:\\Program Files\\Python314\\python.exe" tools\\agro_work_links.py --set "ALFAKLAS12=512" --apply
 
 СУХОЙ ПРОГОН ПО УМОЛЧАНИЮ. Без `--apply` ничего не пишется. С `--apply` --
-одна транзакция: либо записаны все решения, либо ни одного.
+одна транзакция: либо записаны все решения, либо ни одного. В каждой строке
+плана рядом с номером нашей машины -- её название, госномер и хозяйство:
+опечатку в номер другой существующей машины замки не ловят, её ловит глаз.
 
 ЗАМКИ. Отказ, а не догадка, если: нашей машины с таким id нет; машины
 agro-work с таким номером нет или их несколько; у машины уже есть связка
@@ -170,17 +175,39 @@ def plan(con, sets, unsets):
         others = holders.get(equipment_id, set()) - {transport_id}
         others -= {t for t, _, _ in to_unlink}
         if others:
-            other_plates = [row['plate_number'] for row in con.execute(
-                'SELECT plate_number FROM agro_work_transports WHERE id IN (%s)'
-                % ','.join('?' * len(others)), sorted(others))]
-            raise Refused('%s: equipment %d already belongs to agro-work '
+            # [REASON]: у agro-work бывают две карточки с одним госномером
+            # (80765NBA, шаг 9, 29.09) -- по номеру отказ тогда называет одну
+            # и ту же машину дважды. id карточки -- то, что есть в CSV.
+            other_machines = ['%s [%s]' % (config.ascii_only(row['plate_number']),
+                                           row['id']) for row in con.execute(
+                'SELECT id, plate_number FROM agro_work_transports WHERE id IN '
+                '(%s) ORDER BY id' % ','.join('?' * len(others)), sorted(others))]
+            raise Refused('%s [%s]: equipment %d already belongs to agro-work '
                           'machine %s - two of their machines on one track of '
                           'ours means one link is wrong'
-                          % (config.ascii_only(plate), equipment_id,
-                             ', '.join(config.ascii_only(p) for p in other_plates)))
+                          % (config.ascii_only(plate), transport_id, equipment_id,
+                             ', '.join(other_machines)))
         holders.setdefault(equipment_id, set()).add(transport_id)
         to_link.append((transport_id, plate, equipment_id))
     return to_link, to_unlink
+
+
+def describe_equipment(con, equipment_id):
+    """«название / госномер / хозяйство» нашей машины для строки плана. ASCII.
+
+    [REASON]: номер нашей машины владелец вписывает руками, а замки ловят
+    только несуществующий или уже занятый номер. Опечатка в номер другой
+    существующей машины прошла бы молча -- её видно только глазами, когда
+    рядом с номером написано, что это за машина.
+    """
+    row = con.execute('SELECT e.name, e.plate, o.name FROM equipment e '
+                      'LEFT JOIN organizations o ON o.id = e.organization_id '
+                      'WHERE e.id = ?', (equipment_id,)).fetchone()
+    if row is None:
+        return '?'
+    parts = [str(value).strip() for value in row
+             if value is not None and str(value).strip()]
+    return config.ascii_only(' / '.join(parts))
 
 
 def apply(con, to_link, to_unlink, note):
@@ -275,11 +302,13 @@ def main(argv=None):
             print('nothing written')
             return 2
         for transport_id, plate, equipment_id in to_unlink:
-            print('unlink %s (was equipment %d)'
-                  % (config.ascii_only(plate), equipment_id))
+            print('unlink %s (was equipment %d: %s)'
+                  % (config.ascii_only(plate), equipment_id,
+                     describe_equipment(con, equipment_id)))
         for transport_id, plate, equipment_id in to_link:
-            print('link   %s -> equipment %d' % (config.ascii_only(plate),
-                                                 equipment_id))
+            print('link   %s -> equipment %d (%s)'
+                  % (config.ascii_only(plate), equipment_id,
+                     describe_equipment(con, equipment_id)))
         if not to_link and not to_unlink:
             print('nothing to write')
             return 0

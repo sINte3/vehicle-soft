@@ -109,7 +109,10 @@ class DryRunAndApply(LinksCase):
         before = sha(self.db)
         code, out, _ = self.main('--set', 'ALFAKLAS12=50')
         self.assertEqual(code, 0)
-        self.assertIn('link   ALFAKLAS12 -> equipment 50', out)
+        # Рядом с номером -- что это за машина: опечатку в номер другой
+        # существующей машины замки не ловят, её видно только так.
+        self.assertIn('link   ALFAKLAS12 -> equipment 50 '
+                      '(Ekskavator Hyundai / Buxoro)', out)
         self.assertIn('dry run: nothing was written', out)
         self.assertEqual(sha(self.db), before)
 
@@ -141,6 +144,8 @@ class DryRunAndApply(LinksCase):
         self.main('--set', 'ALFAKLAS12=50', '--apply')
         code, out, err = self.main('--unset', 'ALFAKLAS12', '--apply')
         self.assertEqual(code, 0, err)
+        self.assertIn('unlink ALFAKLAS12 (was equipment 50: '
+                      'Ekskavator Hyundai / Buxoro)', out)
         links = self.rows('SELECT unlinked_at FROM agro_work_transport_links')
         self.assertEqual(len(links), 1)
         self.assertIsNotNone(links[0]['unlinked_at'])
@@ -215,6 +220,17 @@ class Refusals(LinksCase):
     def test_our_machine_already_held_by_another_agro_machine(self):
         # 11 уже держит машина 1 (точное совпадение номера).
         self.assert_refused('--set', 'ALFAKLAS12=11', expect='already belongs')
+
+    def test_two_cards_with_one_plate_are_told_apart_by_id(self):
+        # Как 80765NBA 29.09: у agro-work две карточки с одним госномером, и
+        # отказ по номеру назвал бы одну и ту же машину дважды.
+        twin = fake_api.uuid_for(0xB, 11)
+        self.server.transports.append(fake_api.transport(11, plate='ALFAKLAS12'))
+        self.import_once()
+        self.assert_refused('--set', '%s=50' % T_ODD, '--set', '%s=50' % twin,
+                            expect='ALFAKLAS12 [%s]: equipment 50 already belongs '
+                                   'to agro-work machine ALFAKLAS12 [%s]'
+                                   % (twin, T_ODD))
 
     def test_a_second_link_needs_an_unset_first(self):
         self.main('--set', 'ALFAKLAS12=50', '--apply')

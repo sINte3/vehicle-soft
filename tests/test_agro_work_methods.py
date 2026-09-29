@@ -46,6 +46,17 @@ def sha(path):
         return hashlib.sha256(fh.read()).hexdigest()
 
 
+def open_book(path):
+    """Книга из байтов файла: сам файл не остаётся открытым.
+
+    `load_workbook(path)` держит файл до сборки мусора -- на 3.11 это
+    ResourceWarning в выводе самопроверки, на Windows ещё и файл, занятый
+    для следующей записи той же книги.
+    """
+    with open(path, 'rb') as fh:
+        return load_workbook(io.BytesIO(fh.read()))
+
+
 class MethodsCase(unittest.TestCase):
     def setUp(self):
         self.server = fake_api.FakeAgroWork()
@@ -101,7 +112,7 @@ class MethodsCase(unittest.TestCase):
 
     def fill(self, path, values):
         """values -- {id: значение ячейки метода}; None -- пустая ячейка."""
-        book = load_workbook(path)
+        book = open_book(path)
         sheet = book[tool.SHEET]
         header = [c.value for c in sheet[1]]
         id_col = header.index(tool.H_ID) + 1
@@ -130,7 +141,7 @@ class NothingIsGuessed(MethodsCase):
 class Workbook(MethodsCase):
     def test_every_work_type_with_its_unit_count_and_a_four_value_list(self):
         path = self.exported()
-        book = load_workbook(path)
+        book = open_book(path)
         sheet = book[tool.SHEET]
         self.assertEqual([c.value for c in sheet[1]], list(tool.HEADERS))
         rows = [[c.value for c in r] for r in sheet.iter_rows(min_row=2)]
@@ -192,7 +203,7 @@ class Markup(MethodsCase):
         self.main('--import', path, '--apply')
         # Новая книга: у ГА ячейка пустая, строку ВРЕМЕНИ удалили вовсе.
         path2 = self.exported()
-        book = load_workbook(path2)
+        book = open_book(path2)
         sheet = book[tool.SHEET]
         header = [c.value for c in sheet[1]]
         method_col = header.index(tool.H_METHOD) + 1
@@ -211,7 +222,7 @@ class Markup(MethodsCase):
 
     def test_renamed_headers_are_refused(self):
         path = self.exported()
-        book = load_workbook(path)
+        book = open_book(path)
         book[tool.SHEET].cell(row=1, column=8).value = 'Метод'
         book.save(path)
         code, _, err = self.main('--import', path)

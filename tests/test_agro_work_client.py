@@ -17,6 +17,7 @@ import os
 import sys
 import tempfile
 import unittest
+import urllib.error
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -279,6 +280,73 @@ class TransportSafety(unittest.TestCase):
             client.get('/transports/')
         self.assertEqual(caught.exception.status, 502)
         self.assertEqual(client.requests, 1 + config.RETRIES)
+
+
+class RecordingOpener:
+    """Настоящий opener; каждый HTTPError запоминается вместе с тем, закрыт ли он."""
+
+    def __init__(self):
+        self.inner = build_opener(proxies={})
+        self.errors = []
+
+    def open(self, request, timeout=None):
+        try:
+            return self.inner.open(request, timeout=timeout)
+        except urllib.error.HTTPError as exc:
+            error = exc          # имя `exc` Python стирает на выходе из except
+            error.closed_by_client = False
+            original = error.close
+
+            def close():
+                error.closed_by_client = True
+                original()
+            error.close = close
+            self.errors.append(error)
+            raise
+
+
+class ErrorAnswersAreClosed(unittest.TestCase):
+    """Ответ с ошибкой -- тоже открытый ответ сервера, и закрывает его клиент.
+
+    Python 3.14 на сервере напомнил об этом в самопроверке шага 2 (29.09):
+    «Implicitly cleaning up <HTTPError 401 ...>» -- ответы 302, 400, 401 и 403
+    закрывал сборщик мусора. На 3.11 предупреждения нет, поэтому здесь
+    проверяется сам факт закрытия, а не текст предупреждения.
+    """
+
+    def setUp(self):
+        self.server = fake_api.FakeAgroWork()
+        self.server.transports = [fake_api.transport(1)]
+        self.opener = RecordingOpener()
+
+    def tearDown(self):
+        self.server.close()
+
+    def client(self, **credentials):
+        creds = {'login': fake_api.LOGIN, 'password': fake_api.PASSWORD}
+        creds.update(credentials)
+        clock = FakeClock()
+        return Client(creds, base_url=self.server.base_url, pause=0,
+                      log=lambda text: None, opener=self.opener,
+                      sleep=clock.sleep, clock=clock.clock)
+
+    def test_every_error_answer_is_closed(self):
+        client = self.client()
+        client.login()
+        self.server.fail_next = [503, 403]              # повтор, затем отказ
+        with self.assertRaises(ApiError):
+            client.get('/transports/')
+        self.server.redirect_paths = {'/transports/'}
+        with self.assertRaises(ApiError):
+            client.get('/transports/')
+        with self.assertRaises(AuthFailed):
+            self.client(password='not-the-password').login()
+        with self.assertRaises(AuthFailed):
+            self.client(login_field='phone').login()
+        self.assertEqual(sorted(e.code for e in self.opener.errors),
+                         [302, 400, 401, 403, 503])
+        self.assertEqual([e.code for e in self.opener.errors
+                          if not e.closed_by_client], [])
 
 
 class Credentials(unittest.TestCase):

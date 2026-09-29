@@ -229,6 +229,12 @@ class Client:
                 box['raw'] = exc.read(64 * 1024)
             except Exception:                                      # noqa: BLE001
                 box['raw'] = b''
+            finally:
+                # [REASON]: HTTPError -- это открытый ответ сервера. Не закрытый
+                # здесь, он закрывается сборщиком мусора, и Python 3.14 на
+                # сервере печатает «Implicitly cleaning up <HTTPError 401 ...>»
+                # (самопроверка шага 2, 29.09).
+                exc.close()
         except Exception as exc:                                   # noqa: BLE001
             box['error'] = exc
 
