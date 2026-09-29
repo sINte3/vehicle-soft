@@ -46,6 +46,7 @@ from spare_parts import spare_parts_bp
 from work_orders import work_orders_bp
 from drones import drones_bp
 from gps_routes import gps_bp
+from agro_work_routes import agro_work_bp
 # BOT001: Telegram foundation blueprint
 from bot_api import bot_api_bp
 from bot_security import generate_link_code, hash_secret, utcnow
@@ -2988,6 +2989,14 @@ def create_app():
     # @module_required('wialon') -- same data, same permission as /wialon, so
     # no new module code and no permission migration.
     app.register_blueprint(gps_bp)
+
+    # ─── agro-work B3: сверка заявок agro-work с фактом GPS ──────────────────
+    # [REASON]: read-only. The agro_work_* tables are read through a separate
+    # sqlite3 connection with mode=ro (single writer: the stdlib importer), so
+    # no ORM model and no db.create_all() drift. Guarded by
+    # @module_required('wialon') like the GPS screens -- same data, same
+    # permission, no permission migration.
+    app.register_blueprint(agro_work_bp)
 
     # ─── BOT001: Telegram Bot API ─────────────────────────────────────────────
     # [REASON]: bot_api_bp provides /api/bot/* endpoints. Registered after spare_parts_bp.

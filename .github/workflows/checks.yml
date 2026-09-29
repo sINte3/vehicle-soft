@@ -487,6 +487,21 @@ jobs:
       #
       #   python -m unittest discover -s tests
 
+      # agro-work B1-B3. Stdlib plus openpyxl, no network: the agro-work API
+      # is a fake HTTP server on 127.0.0.1 inside the suite. Held here
+      # because the owner imports under his ADMIN account of agro-work, so
+      # "read-only" is a property of our client, not of their role -- a
+      # refusal of every write BEFORE a socket opens is exactly the kind of
+      # thing a later edit breaks without any screen noticing. Also held: the
+      # migration's four paths and append-only journal, no personal value in
+      # the database, history fetched only for new and changed applications,
+      # the owner's links surviving a re-import, and the pasteable runbook.
+      # The screen (tests/test_agro_work_screen.py) needs Flask and runs
+      # locally with the discover command above.
+      - name: agro-work import, markup, reconciliation, runbook (stdlib + openpyxl)
+        run: |
+          python -m unittest tests.test_agro_work_client tests.test_agro_work_migration tests.test_agro_work_import tests.test_agro_work_links tests.test_agro_work_methods tests.test_agro_work_reconcile tests.test_agro_work_reconcile_tool tests.test_agro_work_copy_db tests.test_agro_work_runbook
+
   # DRONE-USEFUL-AREA-PILOT-001. The operator console on the server is
   # WINDOWS POWERSHELL 5.1, not pwsh 7, and the two differ exactly where this
   # kit writes files: 5.1 has no `utf8NoBOM`, and its native `>` redirection
