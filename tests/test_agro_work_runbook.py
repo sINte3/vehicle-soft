@@ -37,12 +37,26 @@ def text():
         return fh.read()
 
 
-def commands():
+def commands(body=None):
     """Строки из блоков ```powershell."""
     out = []
-    for block in re.findall(r'```powershell\n(.*?)```', text(), re.S):
+    for block in re.findall(r'```powershell\n(.*?)```', text() if body is None
+                            else body, re.S):
         out.extend(line for line in block.splitlines() if line.strip())
     return out
+
+
+def steps():
+    """{заголовок шага: его текст} -- от «## Шаг» до следующего «## »."""
+    return {match.group(1): match.group(2) for match in re.finditer(
+        r'^## (Шаг [^\n]*)\n(.*?)(?=^## |\Z)', text(), re.S | re.M)}
+
+
+# Скрипт, названный относительно текущей папки: `tools\...`, `migrate_...`,
+# `run_server.py`, `-m unittest`. Абсолютный путь сюда не попадает.
+RELATIVE_SCRIPT = re.compile(r'(?<![\\A-Za-z:])(tools\\|migrate_[A-Za-z0-9_]+\.py'
+                             r'|run_server\.py|-m unittest)')
+CD_CLONE = 'cd C:\\VehicleSoft_AgroWork'
 
 
 class Runbook(unittest.TestCase):
@@ -82,6 +96,22 @@ class Runbook(unittest.TestCase):
         for name in names:
             path = os.path.join(REPO_ROOT, name.replace('\\', os.sep))
             self.assertTrue(os.path.isfile(path), name)
+
+    def test_every_step_that_runs_a_script_first_goes_to_the_clone(self):
+        # 29.09: новое окно PowerShell от имени администратора открылось в
+        # C:\Windows\system32, и шаг 10 ответил «can't open file
+        # 'C:\\Windows\\system32\\tools\\agro_work_methods.py'». Шаг начинают
+        # и в новом окне, поэтому в клон он переходит сам, до первого скрипта.
+        found = steps()
+        self.assertGreaterEqual(len(found), 12)
+        for title, section in found.items():
+            lines = commands(section)
+            first = next((i for i, line in enumerate(lines)
+                          if RELATIVE_SCRIPT.search(line)), None)
+            if first is None:
+                continue
+            with self.subTest(step=title):
+                self.assertIn(CD_CLONE, lines[:first])
 
     def test_python_is_called_by_its_full_quoted_path(self):
         for line in commands():

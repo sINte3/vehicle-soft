@@ -26,7 +26,10 @@
 Все команды — в **PowerShell от имени администратора**, по одной строке,
 как есть: плейсхолдеров в них нет. Длинный прогон пишет вывод в файл
 (`*> файл.log`): консоль Windows в режиме выделения останавливает процесс на
-первом выводе.
+первом выводе. Каждый шаг, который запускает скрипт, начинается с
+`cd C:\VehicleSoft_AgroWork`: новое окно открывается в
+`C:\Windows\system32`, а скрипты ищутся от текущей папки. Шаг можно начать и
+в новом окне.
 
 ---
 
@@ -145,6 +148,10 @@ cd C:\VehicleSoft_AgroWork
 перезапишет уже сделанную копию.
 
 ```powershell
+cd C:\VehicleSoft_AgroWork
+```
+
+```powershell
 & "C:\Program Files\Python314\python.exe" tools\agro_work_copy_db.py --from C:\transport-report\instance\transport.db --to C:\VehicleSoft_AgroWork\instance\transport.db
 ```
 
@@ -154,6 +161,10 @@ cd C:\VehicleSoft_AgroWork
 ## Шаг 6. Миграция на копии
 
 Дважды: второй прогон обязан ничего не сделать.
+
+```powershell
+cd C:\VehicleSoft_AgroWork
+```
 
 ```powershell
 & "C:\Program Files\Python314\python.exe" migrate_agro_work_001.py
@@ -178,6 +189,10 @@ Done. 7 agro_work tables (100 columns), 7 indexes and 4 triggers are in place.
 статусов (новейшие заявки первыми).
 
 ```powershell
+cd C:\VehicleSoft_AgroWork
+```
+
+```powershell
 & "C:\Program Files\Python314\python.exe" tools\agro_work_import.py --credentials C:\VehicleSoft_Secrets\agro_work_credentials.txt *> agro_import_1.log
 ```
 
@@ -200,6 +215,10 @@ agro_work_unmatched.csv`.
 Остальное догрузится после релиза уже на боевой базе.
 
 ```powershell
+cd C:\VehicleSoft_AgroWork
+```
+
+```powershell
 & "C:\Program Files\Python314\python.exe" tools\agro_work_import.py --credentials C:\VehicleSoft_Secrets\agro_work_credentials.txt --max-history 1000 *> agro_import_2.log
 ```
 
@@ -220,6 +239,10 @@ Get-Content agro_import_2.log -Tail 25
 колонка «№» в «Справочник → Техника» — порядковый номер строки, он меняется
 от фильтра. Поэтому справочник сначала выгружается в файл, где id — первая
 колонка (база не меняется):
+
+```powershell
+cd C:\VehicleSoft_AgroWork
+```
 
 ```powershell
 & "C:\Program Files\Python314\python.exe" tools\agro_work_links.py --equipment-csv agro_work_equipment.csv
@@ -260,6 +283,10 @@ id, но машина может оказаться другой. 29.09 у тр�
 ## Шаг 10. Метод сверки видов работ (B2)
 
 ```powershell
+cd C:\VehicleSoft_AgroWork
+```
+
+```powershell
 & "C:\Program Files\Python314\python.exe" tools\agro_work_methods.py --export agro_work_methods.xlsx
 ```
 
@@ -289,6 +316,10 @@ id, но машина может оказаться другой. 29.09 у тр�
 Сверка сентября в обе стороны и замер: сколько суток проходит от последнего
 дня работы по GPS до отметки «Выполнено» на обычных заявках. По нему
 предлагается N для заявок, заведённых задним числом.
+
+```powershell
+cd C:\VehicleSoft_AgroWork
+```
 
 ```powershell
 & "C:\Program Files\Python314\python.exe" tools\agro_work_reconcile.py --from 2026-09-01 --to 2026-09-27 *> agro_reconcile.log
@@ -348,6 +379,7 @@ $env:PORT = '5098'
 
 | Сообщение | Что это | Что делать |
 |---|---|---|
+| `can't open file 'C:\\Windows\\system32\\tools\\...'` | окно PowerShell открыто не в папке проверки | выполнить `cd C:\VehicleSoft_AgroWork` и повторить команду; ничего не записано |
 | `credentials file not found` | инструмент не нашёл файл | проверить путь в шаге 3; прислать строку |
 | `login failed: POST /auth/token/ -> 400 (keys: ...)` | сервер ждёт логин под другим именем поля — оно названо после `keys:` | в файл учётных данных третьей строкой `login_field=` и имя из сообщения, например `login_field=phone`; повторить шаг 4 |
 | `login failed: ... -> 401 (detail: No active account ...)` | неверный логин или пароль | исправить в Блокноте, повторить шаг 4 |
