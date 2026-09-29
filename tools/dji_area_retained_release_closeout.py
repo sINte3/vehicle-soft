@@ -45,7 +45,15 @@ DJI-AREA-RETAINED-RELEASE-CLOSEOUT-002. Блок R1 28.09.2026 останови�
              оценщик правила, PRE-APPLY, сторож RAW;
   r2         после деплоя: вердикт r1, копия, нормализация дрейфа после r1,
              PRE-APPLY, применение ровно `expected_rewrites`, повтор по ним
-             (`unchanged`), второй прогон периода, POST-APPLY, сторож RAW.
+             (`unchanged`), второй прогон периода, POST-APPLY, сторож RAW;
+  r3         отдельное решение владельца (DJI-AREA-R3-HISTORICAL-CLOSEOUT-001):
+             вердикт r2, копия, снимок RAW, свежий оценщик и сверка по двум
+             когортам с утверждённым списком оракула
+             (`production_evaluation.final_candidates`), применение ровно
+             утверждённых минус уже применённых r2, повтор по ним, оценщик
+             после, сторож RAW. Когорты -- `r3_cohort_problems`; решение
+             ACCEPT_AUTO_RESULT на любой из этих записей -- остановка до
+             записи (`decision_problems`).
 
 Шаги r1/r2 -- существующие инструменты (`dji_area_recalc`, оценщик
 `dji_area_footprint_calibration`, `dji_area_control_acceptance`,
@@ -55,11 +63,12 @@ DJI-AREA-RETAINED-RELEASE-CLOSEOUT-002. Блок R1 28.09.2026 останови�
 пишет, делается под блокировкой цикла площади (`dji_area_cycle.lock`):
 цикл по расписанию или backfill в это время не стартует.
 
-Запуск (службы остановлены; корень -- клон тега выпуска для r1 и
-production для r2):
+Запуск (службы остановлены; корень -- клон тега выпуска для r1, production
+для r2, клон тега `dji-area-r3-historical-closeout-001` для r3):
 
   & "C:\\Program Files\\Python314\\python.exe" tools\\dji_area_retained_release_closeout.py inspect --db C:\\transport-report\\instance\\transport.db --oracle docs\\DJI_AREA_SEPTEMBER_2026_RETAINED_FOOTPRINT_ORACLE.json --out C:\\VehicleSoft_Retained_Footprint_Release\\inspect
   & "C:\\Program Files\\Python314\\python.exe" tools\\dji_area_retained_release_closeout.py r1 --db C:\\transport-report\\instance\\transport.db --oracle docs\\DJI_AREA_SEPTEMBER_2026_RETAINED_FOOTPRINT_ORACLE.json --out C:\\VehicleSoft_Retained_Footprint_Release\\closeout_r1 --backup-dir C:\\transport-report\\backups\\dji-area --raw-snapshot C:\\VehicleSoft_Retained_Footprint_Release\\raw_before.json --baseline-root C:\\transport-report
+  & "C:\\Program Files\\Python314\\python.exe" tools\\dji_area_retained_release_closeout.py r3 --db C:\\transport-report\\instance\\transport.db --oracle docs\\DJI_AREA_SEPTEMBER_2026_RETAINED_FOOTPRINT_ORACLE.json --out C:\\VehicleSoft_Retained_Footprint_Release\\closeout_r3 --backup-dir C:\\transport-report\\backups\\dji-area --r2-verdict C:\\VehicleSoft_Retained_Footprint_Release\\closeout_r2\\closeout_verdict.json --historical-through 2026-09-27
 
 Коды возврата: 0 PASS; 1 ошибка аргументов или данных; 2 база не найдена
 (файл НЕ создаётся); 3 STOP -- ворота не пройдены, причины напечатаны и
@@ -117,6 +126,8 @@ PHASE_INSPECT = 'inspect'
 PHASE_NORMALIZE = 'normalize'
 PHASE_R1 = 'r1'
 PHASE_R2 = 'r2'
+PHASE_R3 = 'r3'
+EVALUATION_FILE = 'retained_footprint_evaluation.json'
 
 # ─── Классы строк периода ────────────────────────────────────────────────────
 
@@ -1435,6 +1446,268 @@ def cmd_r2(args, oracle, period, transition):
     return finish(verdict, out)
 
 
+# ─── R3: исторические кандидаты ──────────────────────────────────────────────
+
+def approved_candidates(oracle):
+    """Утверждённый владельцем список R3 -- кандидаты оценки production в
+    оракуле перехода. ValueError, если его нет."""
+    found = (oracle.get('production_evaluation') or {}).get('final_candidates')
+    if not isinstance(found, list) or not found:
+        raise ValueError('the oracle names no production_evaluation.'
+                         'final_candidates -- there is no approved list')
+    return sorted(int(f) for f in found)
+
+
+def _is_materialized(record):
+    """Правило на записи уже применено штатным циклом и ничего не меняет."""
+    return (not record.get('would_write')
+            and record.get('stored_reason') == acc.R_RETAINED_NEGLIGIBLE_FOOTPRINT
+            and record.get('stored_class') == acc.PHANTOM_PROVEN
+            and not record.get('raw_changed')
+            and record.get('dry_billable_m2') is None)
+
+
+def r3_cohort_problems(evaluation, approved, historical_through):
+    """(problems, summary): свежая оценка против утверждённого списка.
+
+    [REASON]: список утверждён по оценке production 28.09.2026, а с деплоя
+    29.09.2026 то же правило работает в ежедневном цикле. Оценщик считает
+    кандидатами ВСЕ записи группы B, где правило срабатывает, включая уже
+    применённые, -- поэтому каждый новый фантом после утверждения добавлял бы
+    имя в список, и прежняя проверка «ровно утверждённые» останавливала бы R3
+    на естественном росте базы. Проверка разделена на две когорты:
+
+    * по `historical_through` включительно -- ровно утверждённые: пропавший
+      утверждённый или новый старый кандидат -- остановка до нового ревью;
+    * позже -- в утверждённый список не входят и R3 не блокируют, только если
+      ежедневный цикл их уже применил: причина правила сохранена, класс
+      PHANTOM_PROVEN, переписывать нечего, RAW и billable не тронуты. Кандидат,
+      которого цикл ещё не записал, -- остановка: так R3 не прячет сбой цикла.
+    """
+    problems = []
+    cut = historical_through.isoformat()
+    candidates = [r for r in evaluation.get('records') or []
+                  if r.get('group') == evaluator.GROUP_B and r.get('fires')]
+    named = sorted(int(f) for f in evaluation.get('final_candidates') or [])
+    if named != sorted(r['flight_id'] for r in candidates):
+        problems.append('the evaluation is inconsistent: final_candidates %s '
+                        'differ from the firing records of group B'
+                        % _ids(named))
+    if evaluation.get('violations'):
+        problems.append('the evaluator reports violations: %s'
+                        % ', '.join(evaluation['violations'][:SHOW_AT_MOST]))
+
+    def day(record):
+        return str(record.get('report_start_date'))[:10]
+
+    historical = sorted(r['flight_id'] for r in candidates if day(r) <= cut)
+    later = sorted((r for r in candidates if day(r) > cut),
+                   key=lambda r: r['flight_id'])
+    missing = sorted(set(approved) - set(historical))
+    extra = sorted(set(historical) - set(approved))
+    if missing:
+        problems.append('approved candidate(s) no longer fire on or before %s: '
+                        '%s -- a new owner review is needed' % (cut,
+                                                               _ids(missing)))
+    if extra:
+        problems.append('candidate(s) on or before %s the owner never '
+                        'reviewed: %s -- a new owner review is needed'
+                        % (cut, _ids(extra)))
+    applied = [r['flight_id'] for r in later if _is_materialized(r)]
+    pending = [r['flight_id'] for r in later if not _is_materialized(r)]
+    if pending:
+        problems.append('candidate(s) after %s are not applied by the daily '
+                        'cycle yet: %s -- let the next DroneAreaDaily run and '
+                        'repeat; if they stay, the daily cycle needs a look'
+                        % (cut, _ids(pending)))
+    return problems, {'historical_through': cut, 'historical': historical,
+                      'later_applied_by_the_cycle': applied,
+                      'later_not_applied': pending}
+
+
+def _r2_problems(path, verdict):
+    try:
+        r2 = read_json(path)
+    except (IOError, OSError, ValueError) as exc:
+        return ['cannot read the r2 verdict: %s' % exc]
+    # [REASON]: исторические записи переводятся тем же правилом и тем же
+    # оракулом, что прошли R2 на production; иначе R3 применил бы модель,
+    # которую никто не выпускал.
+    return ['r2 verdict: %s is %r, expected %r' % (key, r2.get(key), want)
+            for key, want in (('verdict', 'PASS'), ('phase', PHASE_R2),
+                              ('oracle_sha256', verdict['oracle_sha256']),
+                              ('code_fingerprint',
+                               verdict['code_fingerprint']))
+            if r2.get(key) != want]
+
+
+def decision_problems(verdict, db_path, todo):
+    """Решения администратора на записях R3: ACCEPT_AUTO_RESULT -- STOP.
+
+    [REASON]: на спорной записи ACCEPT_AUTO_RESULT значит «принято RAW,
+    спор закрыт». Решение привязано к отпечатку строки: после пересчёта оно
+    перестаёт действовать (`decisions.effective`), а новый автомат даёт
+    PHANTOM_PROVEN, принято 0 -- площадь сменилась бы с RAW на 0 поверх
+    решения человека. Поэтому такая запись останавливает R3 до любой записи,
+    даже если решение уже устарело: последнее слово человека по вылету --
+    «принять», и пересматривать его должен владелец. Три других решения от
+    автомата не зависят (0, RAW, RAW) и продолжают действовать -- их R3
+    только называет.
+    """
+    con = connect_ro(db_path)
+    try:
+        decided = active_decisions(con, todo)
+    finally:
+        con.close()
+    blocking = sorted(f for f, d in decided.items()
+                      if d.get('decision_type') == dec.ACCEPT_AUTO_RESULT)
+    others = sorted(f for f in decided if f not in set(blocking))
+    verdict['admin_decisions'] = {str(f): decided[f].get('decision_type')
+                                  for f in sorted(decided)}
+    if others:
+        verdict['notes'].append(
+            'live admin decisions on %d record(s) keep acting and will read '
+            '"calculation changed" after the apply: %s'
+            % (len(others), ', '.join('%d %s' % (f, decided[f].get(
+                'decision_type')) for f in others)))
+    if blocking:
+        verdict['problems'].append(
+            'ACCEPT_AUTO_RESULT on %s: after the apply this decision would '
+            'lapse and the accepted area would change from RAW to 0 -- the '
+            'owner reviews these records first' % _ids(blocking))
+        raise CloseoutError('an admin decision blocks R3 -- NOTHING WAS '
+                            'WRITTEN')
+
+
+def _evaluate(verdict, db_path, out_dir, name):
+    if run_step(verdict, 'retained-footprint evaluator (%s)' % name,
+                evaluator.main, ['--db', db_path, '--out', out_dir,
+                                 '--evaluate-rule']) != 0:
+        raise CloseoutError('the retained-footprint evaluator (%s) did not '
+                            'pass' % name)
+    return read_json(os.path.join(out_dir, EVALUATION_FILE))
+
+
+def _targeted(verdict, name, db_path, span, ids, mode, path):
+    if run_step(verdict, name, recalc.main,
+                _period_args(db_path, span)
+                + [mode, '--quiet', '--json', path] + _id_args(ids)) != 0:
+        raise CloseoutError('%s failed' % name)
+    return read_json(path)
+
+
+def cmd_r3(args, oracle, period, transition):
+    """Исторические кандидаты: ровно утверждённые, не тронутые R2."""
+    verdict = new_verdict(PHASE_R3, args.db_path, args.oracle_path, oracle,
+                          period)
+    out = args.out_dir
+    try:
+        cutoff = date.fromisoformat(args.historical_through)
+        approved = approved_candidates(oracle)
+    except ValueError as exc:
+        verdict['problems'].append(str(exc))
+        return finish(verdict, out)
+    september = acceptance.transition_ids(transition, 'expected_rewrites')
+    todo = sorted(set(approved) - set(september))
+    verdict['r3'] = {'approved': approved, 'applied_by_r2': september,
+                     'to_apply': todo,
+                     'historical_through': cutoff.isoformat()}
+    if not set(september) <= set(approved):
+        verdict['problems'].append('the rewrites of R2 %s are not all among '
+                                   'the approved candidates' % _ids(september))
+    if not todo:
+        verdict['problems'].append('nothing is left to apply after R2')
+    verdict['problems'] += _r2_problems(args.r2_verdict, verdict)
+    if verdict['problems']:
+        return finish(verdict, out)
+    say('== R3: %d approved, %d applied by R2, %d to apply, historical '
+        'cohort through %s' % (len(approved), len(september), len(todo),
+                               cutoff.isoformat()))
+    try:
+        with cycle_lock(args.db_path):
+            decision_problems(verdict, args.db_path, todo)
+            say('== BACKUP before any write')
+            verdict['backup'] = make_backup(args.db_path, args.backup_dir,
+                                            'r3', out)
+            say('  %s  %d bytes, integrity ok, matches the live database'
+                % (verdict['backup']['path'], verdict['backup']['size_bytes']))
+            raw_snapshot = os.path.join(out, 'raw_before_r3.json')
+            if run_step(verdict, 'RAW snapshot', raw_guard.main,
+                        ['--db', args.db_path, '--save', raw_snapshot]) != 0:
+                raise CloseoutError('the RAW snapshot was not written')
+            before = _evaluate(verdict, args.db_path,
+                               os.path.join(out, 'evaluation'), 'before')
+            problems, verdict['cohorts_before'] = r3_cohort_problems(
+                before, approved, cutoff)
+            if problems:
+                verdict['problems'] += problems
+                raise CloseoutError('the fresh evaluation does not match the '
+                                    'approved list -- NOTHING WAS WRITTEN')
+            days = {r['flight_id']: str(r['report_start_date'])[:10]
+                    for r in before['records']}
+            span = (date.fromisoformat(min(days[f] for f in todo)),
+                    date.fromisoformat(max(days[f] for f in todo)))
+            verdict['r3']['report_days'] = [span[0].isoformat(),
+                                            span[1].isoformat()]
+            dry = _targeted(verdict, 'targeted dry-run of the approved',
+                            args.db_path, span, todo, '--dry-run',
+                            os.path.join(out, 'dry.json'))
+            verdict['dry_calc_writes'] = dry.get('calc_writes')
+            if dry.get('flights_in_period') != len(todo) or \
+                    dry.get('calc_writes') != {'would_write': len(todo)}:
+                raise CloseoutError(
+                    'the dry run is %s over %r flight(s), expected would_write '
+                    '%d -- NOTHING WAS WRITTEN' % (
+                        json.dumps(dry.get('calc_writes'), sort_keys=True),
+                        dry.get('flights_in_period'), len(todo)))
+            applied = _targeted(verdict, 'apply the approved', args.db_path,
+                                span, todo, '--apply',
+                                os.path.join(out, 'apply.json'))
+            verdict['apply_calc_writes'] = applied.get('calc_writes')
+            if applied.get('calc_writes') != {'new': len(todo)}:
+                raise CloseoutError('the apply wrote %s, expected new %d -- the '
+                                    'backup holds the database before it'
+                                    % (json.dumps(applied.get('calc_writes'),
+                                                  sort_keys=True), len(todo)))
+            second = _targeted(verdict, 'second dry-run of the approved',
+                               args.db_path, span, todo, '--dry-run',
+                               os.path.join(out, 'second.json'))
+            verdict['second_calc_writes'] = second.get('calc_writes')
+            if second.get('calc_writes') != {'unchanged': len(todo)}:
+                raise CloseoutError('the second dry run is %s, expected '
+                                    'unchanged %d' % (json.dumps(
+                                        second.get('calc_writes'),
+                                        sort_keys=True), len(todo)))
+            after = _evaluate(verdict, args.db_path,
+                              os.path.join(out, 'evaluation_after'), 'after')
+            problems, verdict['cohorts_after'] = r3_cohort_problems(
+                after, approved, cutoff)
+            still = sorted(r['flight_id'] for r in after['records']
+                           if r['flight_id'] in set(approved)
+                           and not _is_materialized(r))
+            if still:
+                problems.append('approved record(s) not applied after the '
+                                'apply: %s' % _ids(still))
+            if problems:
+                verdict['problems'] += problems
+                raise CloseoutError('the evaluation after the apply does not '
+                                    'hold -- the backup holds the database '
+                                    'before it')
+            if run_step(verdict, 'RAW guard', raw_guard.main,
+                        ['--db', args.db_path, '--compare',
+                         raw_snapshot]) != 0:
+                raise CloseoutError('the RAW guard found RAW or billable '
+                                    'touched')
+    except CloseoutError as exc:
+        verdict['problems'].append(str(exc))
+    except Exception as exc:  # noqa: BLE001 -- вердикт пишется всегда
+        verdict['problems'].append('error: %s: %s' % (type(exc).__name__, exc))
+        verdict['traceback'] = traceback.format_exc()
+    for note in verdict['notes']:
+        say('  NOTE: %s' % note)
+    return finish(verdict, out)
+
+
 # ─── Командная строка ────────────────────────────────────────────────────────
 
 def build_parser():
@@ -1476,11 +1749,21 @@ def build_parser():
                     metavar='FILE')
     r2.add_argument('--r1-verdict', dest='r1_verdict', required=True,
                     metavar='FILE')
+    r3 = sub.add_parser(PHASE_R3, parents=[common],
+                        help='owner decision: apply exactly the approved '
+                        'historical candidates')
+    r3.add_argument('--backup-dir', dest='backup_dir', required=True,
+                    metavar='DIR')
+    r3.add_argument('--r2-verdict', dest='r2_verdict', required=True,
+                    metavar='FILE')
+    r3.add_argument('--historical-through', dest='historical_through',
+                    required=True, metavar='YYYY-MM-DD',
+                    help='last report day the approved list covers')
     return parser
 
 
 COMMANDS = {PHASE_INSPECT: cmd_inspect, PHASE_NORMALIZE: cmd_normalize,
-            PHASE_R1: cmd_r1, PHASE_R2: cmd_r2}
+            PHASE_R1: cmd_r1, PHASE_R2: cmd_r2, PHASE_R3: cmd_r3}
 
 
 def main(argv=None):

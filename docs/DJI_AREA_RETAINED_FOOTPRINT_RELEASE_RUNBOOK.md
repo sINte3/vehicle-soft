@@ -74,8 +74,10 @@ Control 01–18.09 — RAW 4687.17, исключено 175.83, принято 45
 `docs/DEPLOYED.md`.
 
 **Блок R3 не выполнялся и в выпуск не входит.** 23 исторических кандидата вне
-сентября не применены; решение — за владельцем, порядок — блок R3 ниже, без
-изменений.
+сентября не применены; решение — за владельцем, порядок — блок R3 ниже. Его
+сверка переделана 29.09.2026 (DJI-AREA-R3-HISTORICAL-CLOSEOUT-001):
+прежняя проверка «свежий оценщик называет ровно 28» остановила бы блок на
+первом новом фантоме, которого ежедневный цикл уже записал.
 
 ## Почему переход, а не прежняя приёмка
 
@@ -215,10 +217,13 @@ RAW, принятое, статусы, учётный класс, допуск �
    `closeout_r2\post_apply\area_control_report.xlsx`. Релиз записывается в
    `docs/DEPLOYED.md` той сессией, которой поручен релиз.
 4. **Блок R3 — отдельное решение владельца.** Исторические кандидаты вне
-   сентября (23 из 28). Страж: свежий оценщик называет ровно утверждённый
-   список 28.09.2026, иначе остановка до нового ревью. Сухой прогон по
-   названным строкам обязан хотеть переписать ровно их; применение; второй
-   сухой прогон `unchanged`; оценщик после; сторож RAW. Массового прохода нет.
+   сентября (23 из 28). Код — клон тега `dji-area-r3-historical-closeout-001`,
+   подкоманда `r3`. Страж — сверка по двум когортам: по 27.09 включительно
+   свежий оценщик называет ровно утверждённый список 28.09.2026, иначе
+   остановка до нового ревью; позже — только кандидаты, уже записанные
+   ежедневным циклом, иначе остановка. Сухой прогон по названным строкам
+   обязан хотеть переписать ровно их; применение; второй сухой прогон
+   `unchanged`; оценщик после; сторож RAW. Массового прохода нет.
 
 ## Ожидаемые числа (оракул перехода)
 
@@ -537,11 +542,40 @@ PASS`; дымовые проверки; `POST-APPLY PASS`.
 
 Не часть выпуска: вставляется только по отдельному решению владельца и только
 после PASS блока R2. Утверждённый список — 28 кандидатов оценки production
-28.09.2026 (тот же список — `production_evaluation.final_candidates` оракула
-перехода); пять сентябрьских уже применены блоком R2, остаются 23. Свежий
-оценщик обязан назвать РОВНО этот список — иначе остановка до нового ревью:
-новая запись, ставшая кандидатом, не применяется молча. Пересчитываются только
-названные строки (`--flight-id`), периода целиком здесь нет.
+28.09.2026 (`production_evaluation.final_candidates` оракула перехода); пять
+сентябрьских уже применены блоком R2, остаются 23. Всё делает подкоманда
+`r3` инструмента закрытия под блокировкой цикла площади: копия базы, снимок
+RAW, свежий оценщик, сверка по когортам, сухой прогон, применение ровно 23
+по номерам (`--flight-id`), повтор, оценщик после, сторож RAW. Пересчёта
+периода целиком здесь нет.
+
+**Сверка по двум когортам** (DJI-AREA-R3-HISTORICAL-CLOSEOUT-001). С
+29.09.2026 правило работает и в ежедневном цикле. Оценщик считает
+кандидатами все записи группы B, где правило срабатывает, включая уже
+применённые, — поэтому каждый новый фантом добавляет имя, и прежняя проверка
+«ровно 28» остановила бы блок на естественном росте базы. Теперь:
+
+- вылеты по `2026-09-27` включительно — последний день, полностью
+  посчитанный к оценке 28.09 (сборщик — 06:00, цикл — около 07:30), — обязаны
+  дать ровно утверждённые 28. Пропавший утверждённый или новый старый
+  кандидат — остановка до нового ревью, ничего не записано;
+- вылеты позже в список не входят и блок не останавливают, только если
+  ежедневный цикл уже применил правило: причина правила, PHANTOM_PROVEN,
+  переписывать нечего, RAW и billable не тронуты. Кандидат, которого цикл не
+  записал, — остановка: блок не прячет сбой цикла.
+
+**Когда запускать.** Не раньше, чем `DroneAreaDaily` хотя бы раз отработал
+на коде `eb7d003`, — после его утреннего прогона 30.09.2026 или позже, и не
+в окне 06:00–08:30. Утренний цикл 29.09 шёл ещё на `436e890`: если среди
+вылетов 28–29.09 есть фантомы, до следующего цикла они не записаны, и вторая
+когорта законно остановит блок. Цикл, идущий в момент запуска, держит
+блокировку — инструмент остановится до первой записи.
+
+**Код** — клон тега `dji-area-r3-historical-closeout-001`: владелец ставит
+аннотированный тег на мерж-коммит PR DJI-AREA-R3-HISTORICAL-CLOSEOUT-001 и
+отправляет его в origin. Тег содержит тег модели, отпечаток прежний. Код
+production этим блоком не меняется и не деплоится: блок только проверяет,
+что production исполняет ту же модель.
 
 ```powershell
 & {
@@ -550,52 +584,77 @@ $expectedHost = 'srv-yoqsh'
 $prod     = 'C:\transport-report'
 $db       = 'C:\transport-report\instance\transport.db'
 $services = @('TransportReport', 'TransportBot', 'TransportBot003')
+$site     = 'http://10.103.25.14:5050'
 $base     = 'C:\VehicleSoft_Retained_Footprint_Release'
-$out      = 'C:\VehicleSoft_Retained_Footprint_Release\r3'
-$r2Verdict = 'C:\VehicleSoft_Retained_Footprint_Release\closeout_r2\post_apply\area_control_acceptance.json'
-$rawSnap3 = 'C:\VehicleSoft_Retained_Footprint_Release\raw_before_r3.json'
+$src      = 'C:\VehicleSoft_Retained_Footprint_Release\src_r3'
+$out      = 'C:\VehicleSoft_Retained_Footprint_Release\closeout_r3'
+$r2Verdict = 'C:\VehicleSoft_Retained_Footprint_Release\closeout_r2\closeout_verdict.json'
 $backup   = 'C:\transport-report\backups\dji-area'
 $py       = 'C:\Program Files\Python314\python.exe'
 $ExpectedTag = 'dji-area-retained-footprint-001-rc1'
+$ReleaseTag  = 'dji-area-r3-historical-closeout-001'
 $ExpectedFingerprint = '8bc0ecdf65311479e9b932ba6a5a6800a510a6be38ede70f31d7b0784dc38122'
 $oracle   = 'docs\DJI_AREA_SEPTEMBER_2026_RETAINED_FOOTPRINT_ORACLE.json'
-$approved = @(567468930, 579492311, 589911352, 593926297, 622804207, 628111487, 653169760, 655626159, 660151343, 674438091, 677116076, 679813767, 683607628, 690137315, 692568940, 693319955, 695314135, 695707045, 695759434, 695784399, 697634191, 698068932, 698354474, 701661028, 702797709, 703830892, 703847599, 714181794)
+$historicalThrough = '2026-09-27'
 if ((hostname) -ne $expectedHost) { throw "STEP FAILED: host is $(hostname), expected $expectedHost" }
 if ($prod -ne 'C:\transport-report') { throw "STEP FAILED: refusing a root that is not the production checkout" }
 if ($db -ne (Join-Path $prod 'instance\transport.db')) { throw "STEP FAILED: refusing a database outside the production checkout" }
+if ($site -notmatch ':5050$') { throw "STEP FAILED: refusing a site that is not the production port 5050" }
 if (-not (Test-Path -LiteralPath $db)) { throw "STEP FAILED: database not found: $db" }
 if (-not (Test-Path -LiteralPath $py)) { throw "STEP FAILED: python not found: $py" }
 $missing = @($services | Where-Object { -not (Get-Service -Name $_ -ErrorAction SilentlyContinue) })
 if ($missing.Count -gt 0) { throw "STEP FAILED: service(s) not found: $($missing -join ', ')" }
 if (-not (Test-Path -LiteralPath $r2Verdict)) { throw "STEP FAILED: $r2Verdict not found -- run block R2 first" }
-$r2v = Get-Content -LiteralPath $r2Verdict -Raw | ConvertFrom-Json
-if (($r2v.verdict -ne 'PASS') -or ($r2v.phase -ne 'post-apply')) { throw "STEP FAILED: block R2 did not pass POST-APPLY" }
-& git -C $prod fetch --quiet origin "refs/tags/${ExpectedTag}:refs/tags/${ExpectedTag}"
-if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: git fetch of the tag exit $LASTEXITCODE" }
-$pinned = (& git -C $prod rev-parse --verify --quiet "$ExpectedTag^{commit}")
+$r2 = Get-Content -LiteralPath $r2Verdict -Raw | ConvertFrom-Json
+if (($r2.verdict -ne 'PASS') -or ($r2.phase -ne 'r2')) { throw "STEP FAILED: block R2 did not pass -- R3 goes only after it" }
+if ($r2.code_fingerprint -ne $ExpectedFingerprint) { throw "STEP FAILED: block R2 ran the model $($r2.code_fingerprint), the reviewed one is $ExpectedFingerprint" }
+$origin = (& git -C $prod config --get remote.origin.url)
+if (-not $origin) { throw "STEP FAILED: cannot read origin url from $prod" }
+New-Item -ItemType Directory -Force -Path $base | Out-Null
+$stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+if (Test-Path -LiteralPath $out) { Move-Item -LiteralPath $out -Destination ($out + '_before_' + $stamp) }
+if (Test-Path -LiteralPath $src) { Remove-Item -LiteralPath $src -Recurse -Force }
+& git clone --quiet --no-checkout $origin $src
+if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: git clone exit $LASTEXITCODE" }
+& git -C $src fetch --quiet origin "refs/tags/${ExpectedTag}:refs/tags/${ExpectedTag}"
+if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: tag $ExpectedTag is not on origin" }
+& git -C $src fetch --quiet origin "refs/tags/${ReleaseTag}:refs/tags/${ReleaseTag}"
+if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: tag $ReleaseTag is not on origin -- the owner creates and pushes it after the review" }
+$pinned = (& git -C $src rev-parse --verify --quiet "$ExpectedTag^{commit}")
 if (-not $pinned) { throw "STEP FAILED: tag $ExpectedTag does not resolve to a commit" }
-$headSha = (& git -C $prod rev-parse HEAD)
-& git -C $prod merge-base --is-ancestor $pinned $headSha
-if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: production HEAD $headSha does not contain the reviewed revision $pinned" }
+$release = (& git -C $src rev-parse --verify --quiet "$ReleaseTag^{commit}")
+if (-not $release) { throw "STEP FAILED: tag $ReleaseTag does not resolve to a commit" }
+& git -C $src merge-base --is-ancestor $pinned $release
+if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: the release $release does not contain the reviewed model $pinned" }
+& git -C $src checkout --quiet --detach $release
+if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: git checkout $release exit $LASTEXITCODE" }
+$headSha = (& git -C $src rev-parse HEAD)
+if ($headSha -ne $release) { throw "STEP FAILED: HEAD is $headSha, the release is $release" }
+$dirty = @(& git -C $src status --porcelain)
+if ($dirty.Count -gt 0) { throw "STEP FAILED: the clone has local modifications -- refusing to run an unreviewed working tree" }
+$headProd = (& git -C $prod rev-parse HEAD)
+& git -C $prod merge-base --is-ancestor $pinned $headProd
+if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: production HEAD $headProd does not run the reviewed model $pinned" }
 $changed = @(& git -C $prod status --porcelain --untracked-files=no)
 if ($changed.Count -gt 0) { throw "STEP FAILED: the production checkout has modified tracked files -- refusing to run over them" }
-Set-Location $prod
+& git -C $src --no-pager log --oneline -1
+Write-Host "R3 PIN: $headSha (model $pinned, production $headProd)"
+Set-Location $src
 $fpFound = @(& $py tools\dji_area_holdout.py fingerprint | Select-String -Pattern '^\s*CODE FINGERPRINT\s*:\s*([0-9a-f]{64})\s*$' | ForEach-Object { $_.Matches[0].Groups[1].Value })
 if ($fpFound.Count -ne 1) { throw "STEP FAILED: expected exactly one CODE FINGERPRINT line, got $($fpFound.Count)" }
 $fp = $fpFound[0]
 if ($fp -ne $ExpectedFingerprint) { throw "STEP FAILED: code fingerprint is $fp, the reviewed one is $ExpectedFingerprint" }
-$september = @((Get-Content -LiteralPath $oracle -Raw | ConvertFrom-Json).transition.expected_rewrites)
-$todo = @($approved | Where-Object { $september -notcontains $_ })
-if ($todo.Count -ne ($approved.Count - $september.Count)) { throw "STEP FAILED: the September rewrites are not all among the approved candidates" }
-Write-Host ("HISTORICAL CANDIDATES TO APPLY: " + $todo.Count)
-$idArgs = @()
-foreach ($id in $todo) { $idArgs += '--flight-id'; $idArgs += [string]$id }
+Write-Host "CODE FINGERPRINT: $fp"
+& $py -m compileall -q .
+if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: compileall exit $LASTEXITCODE" }
+& $py -m unittest tests.test_dji_area_retained_footprint_001
+if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: rule self-test exit $LASTEXITCODE" }
+& $py tools\test_dji_area_footprint_calibration.py
+if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: evaluator self-test exit $LASTEXITCODE" }
+& $py tools\test_dji_area_retained_release_closeout.py
+if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: closeout tool self-test exit $LASTEXITCODE" }
 New-Item -ItemType Directory -Force -Path $backup | Out-Null
-if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force }
-New-Item -ItemType Directory -Force -Path $out | Out-Null
-$stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-$ev2 = -1
-$raw = -1
+$r3 = -1
 try {
   foreach ($name in $services) { Stop-Service -Name $name }
   $deadline = (Get-Date).AddSeconds(90)
@@ -607,45 +666,11 @@ try {
   & $py tools\check_db_lock.py --db $db
   $lock = $LASTEXITCODE
   if ($lock -eq 2) { throw "STEP FAILED: another process holds the database (exit 2)" }
-  $dest = Join-Path $backup ("transport.db.pre_retained_footprint_r3_" + $stamp + ".bak")
-  Copy-Item -LiteralPath $db -Destination $dest -Force
-  foreach ($sfx in @('-wal','-shm')) { if (Test-Path -LiteralPath ($db + $sfx)) { Copy-Item -LiteralPath ($db + $sfx) -Destination ($dest + $sfx) -Force } }
-  if (-not (Test-Path -LiteralPath $dest)) { throw "STEP FAILED: backup was not created" }
-  Write-Host ("BACKUP: " + $dest + "  " + (Get-Item -LiteralPath $dest).Length + " bytes")
-  if (Test-Path -LiteralPath $rawSnap3) { Remove-Item -LiteralPath $rawSnap3 -Force }
-  & $py tools\dji_area_raw_guard.py --db $db --save $rawSnap3
-  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: RAW snapshot exit $LASTEXITCODE" }
-  & $py tools\dji_area_footprint_calibration.py --db $db --out (Join-Path $out 'evaluation') --evaluate-rule
-  if ($LASTEXITCODE -ne 0) { throw "STOP: the evaluator did not pass (exit $LASTEXITCODE) -- nothing applied" }
-  $evaluation = Get-Content -LiteralPath (Join-Path $out 'evaluation\retained_footprint_evaluation.json') -Raw | ConvertFrom-Json
-  $fresh = @($evaluation.final_candidates)
-  $drift = @(Compare-Object -ReferenceObject @($approved | Sort-Object) -DifferenceObject @($fresh | Sort-Object))
-  if ($drift.Count -gt 0) { throw "STOP: the fresh candidates differ from the approved list -- a new owner review is needed, nothing applied" }
-  $days = @($evaluation.records | Where-Object { $todo -contains $_.flight_id } | ForEach-Object { [string]$_.report_start_date } | Sort-Object)
-  if ($days.Count -ne $todo.Count) { throw "STEP FAILED: report days found for $($days.Count) of $($todo.Count) candidates" }
-  $from3 = $days[0]
-  $to3 = $days[$days.Count - 1]
-  Write-Host "REPORT DAYS: $from3 .. $to3"
-  & $py tools\dji_area_recalc.py --db $db --from $from3 --to $to3 --dry-run --quiet --json (Join-Path $out 'dry.json') @idArgs
-  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: targeted dry-run exit $LASTEXITCODE" }
-  $dry = Get-Content -LiteralPath (Join-Path $out 'dry.json') -Raw | ConvertFrom-Json
-  if (($dry.flights_in_period -ne $todo.Count) -or ($dry.calc_writes.would_write -ne $todo.Count)) { throw "STOP: the dry run does not want to rewrite exactly the $($todo.Count) approved records -- nothing applied" }
-  & $py tools\dji_area_recalc.py --db $db --from $from3 --to $to3 --apply --quiet --json (Join-Path $out 'apply.json') @idArgs
-  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: targeted apply exit $LASTEXITCODE -- the backup printed above holds the database before it" }
-  $applied = Get-Content -LiteralPath (Join-Path $out 'apply.json') -Raw | ConvertFrom-Json
-  if ($applied.calc_writes.new -ne $todo.Count) { throw "STOP: the apply wrote $($applied.calc_writes.new) new rows, expected $($todo.Count)" }
-  & $py tools\dji_area_recalc.py --db $db --from $from3 --to $to3 --dry-run --quiet --json (Join-Path $out 'second.json') @idArgs
-  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: second targeted dry-run exit $LASTEXITCODE" }
-  $second = Get-Content -LiteralPath (Join-Path $out 'second.json') -Raw | ConvertFrom-Json
-  if ($second.calc_writes.unchanged -ne $todo.Count) { throw "STOP: the second dry run is not unchanged for the applied records" }
-  & $py tools\dji_area_footprint_calibration.py --db $db --out (Join-Path $out 'evaluation_after') --evaluate-rule
-  $ev2 = $LASTEXITCODE
-  Write-Host "EVALUATOR AFTER EXIT CODE: $ev2  (0 PASS, 4 a control violated)"
-  & $py tools\dji_area_raw_guard.py --db $db --compare $rawSnap3
-  $raw = $LASTEXITCODE
-  Write-Host "RAW GUARD EXIT CODE: $raw  (0 RAW and billable untouched, 3 violated)"
-  if ($ev2 -ne 0) { throw "STOP: the evaluator after the apply did not pass (exit $ev2) -- send back $out" }
-  if ($raw -ne 0) { throw "STOP: the RAW guard exit $raw -- send back $out" }
+  Write-Host "DB_LOCK_EXIT: $lock  (0 clean, 3 stale WAL is expected on this project)"
+  & $py tools\dji_area_retained_release_closeout.py r3 --db $db --oracle $oracle --out $out --backup-dir $backup --r2-verdict $r2Verdict --historical-through $historicalThrough
+  $r3 = $LASTEXITCODE
+  Write-Host "CLOSEOUT R3 EXIT CODE: $r3  (0 PASS, 3 STOP)"
+  if ($r3 -ne 0) { throw "STOP: closeout R3 did not pass (exit $r3) -- send back $out and the console text" }
 } finally {
   foreach ($name in $services) { Restart-Service -Name $name }
   $deadline2 = (Get-Date).AddSeconds(90)
@@ -655,11 +680,35 @@ try {
   }
   Write-Host 'SERVICES RUNNING'
 }
-Compress-Archive -Path "$out\*" -DestinationPath (Join-Path $base 'r3.zip') -Force
+Start-Sleep -Seconds 8
+$login = Invoke-WebRequest -Uri ($site + '/login') -UseBasicParsing -TimeoutSec 30
+if ($login.StatusCode -ne 200) { throw "STEP FAILED: smoke /login returned $($login.StatusCode)" }
+if ($login.Content -notmatch 'vs-login-form') { throw "STEP FAILED: smoke /login did not render the login form" }
+Write-Host 'SMOKE LOGIN: 200'
+$anon = -1
+$anonBody = ''
+try { $page = Invoke-WebRequest -Uri ($site + '/drones/area-control') -UseBasicParsing -TimeoutSec 30; $anon = [int]$page.StatusCode; $anonBody = $page.Content } catch { if ($_.Exception.Response) { $anon = [int]$_.Exception.Response.StatusCode } }
+Write-Host "SMOKE SCREEN FOR AN ANONYMOUS VISITOR: $anon  (200 with the login form expected)"
+if ($anon -ne 200) { throw "STEP FAILED: /drones/area-control answered $anon for an anonymous visitor" }
+if ($anonBody -notmatch 'vs-login-form') { throw "STEP FAILED: an anonymous visitor was NOT sent to the login form" }
+Compress-Archive -Path "$out\*" -DestinationPath (Join-Path $base ('closeout_r3_' + $stamp + '.zip')) -Force
 Write-Host 'HISTORICAL APPLY PASS'
-Write-Host 'SEND BACK: C:\VehicleSoft_Retained_Footprint_Release\r3.zip and the console text above'
+Write-Host "SEND BACK: $base\closeout_r3_$stamp.zip and the console text above"
 }
 ```
+
+Смотреть: `R3: 28 approved, 5 applied by R2, 23 to apply`; сухой прогон
+`{"would_write": 23}`, применение `{"new": 23}`, повтор `{"unchanged": 23}`;
+строку `NOTE: live admin decisions ... keep acting` — записи с действующим
+решением администратора. По handoff 28.09 это три записи с решением «полный
+фантом» (679813767, 693319955, 698068932): итог у них не меняется, но экран
+пометит решение «расчёт изменился». Фактический список называет инструмент.
+Решение «принять автоматический результат» на любой из 23 записей
+останавливает блок до записи: на спорной записи оно значит «принято RAW», а
+после пересчёта перестало бы действовать, и площадь стала бы 0 поверх
+решения человека. Дальше —
+`RAW UNTOUCHED`, `CLOSEOUT R3 VERDICT: PASS`, дымовые проверки,
+`HISTORICAL APPLY PASS`.
 
 ## Если блок остановился
 
@@ -679,8 +728,16 @@ Write-Host 'SEND BACK: C:\VehicleSoft_Retained_Footprint_Release\r3.zip and the 
   `finally`, строки расчёта append-only; копия базы до записи —
   `backup.path` в `closeout_r2\closeout_verdict.json`; восстанавливать её
   только решением владельца при остановленных службах.
-- R3 — как прежде: до применения только сухой прогон и чтение; после — копия
-  из строки `BACKUP:`.
+- R3: до `== BACKUP` и везде со словами `NOTHING WAS WRITTEN` база не
+  записывалась. `not applied by the daily cycle` — дождаться следующего
+  `DroneAreaDaily` и повторить блок; если имена остались — разбирать цикл, а
+  не блок. `never reviewed` или `no longer fire` — утверждённый список
+  разошёлся с базой по дням до 27.09: нужен новый просмотр владельцем, блок
+  не обходить. `ACCEPT_AUTO_RESULT on ...` — владелец пересматривает
+  названные записи: отменяет решение либо заменяет его другим, затем блок
+  повторяется. `cycle lock` — идёт цикл, повторить после него. Остановка
+  после применения — службы подняты в `finally`, строки append-only; копия
+  базы до записи — `backup.path` в `closeout_r3\closeout_verdict.json`.
 - Оценщик в R1 с `UNEXPECTED_REWRITE` и номером записи группы B вне
   сентября — у этой записи тоже сдвинулся отпечаток (оценщик 28.09 таких не
   видел). Нормализует инструмент только период оракула; такую запись не
@@ -703,4 +760,7 @@ production на коммит отката — вперёд, не `reset`. Пра
 нормализации откатывать не нужно: результат у них прежний, а код и до, и
 после выпуска видит их `unchanged`. Полный возврат базы — копия из
 `backup.path` вердикта соответствующего блока (R1 — до нормализации, R2 — до
-деплоя и перехода).
+деплоя и перехода, R3 — до исторических записей). После отката правила
+кодом прежние строки 23 исторических записей возвращает пересчёт по их
+номерам: ежедневный цикл старые дни не пересчитывает. Откатить только R3,
+оставив правило, можно лишь копией базы — решение владельца.
