@@ -1170,5 +1170,279 @@ class Contract(Base):
             self.assertNotIn(str(fid), source)
 
 
+# ─── R3 (DJI-AREA-R3-HISTORICAL-CLOSEOUT-001) ────────────────────────────────
+
+def evaluation_of(db):
+    """Свежая оценка правила в том виде, в каком R3 читает её из файла."""
+    with redirect_stdout(io.StringIO()):
+        found = tool.evaluator.evaluate_rule(db)
+    return json.loads(json.dumps(found, default=str))
+
+
+class R3Cohorts(Base):
+    """Сверка по когортам на НАСТОЯЩЕЙ оценке фикстуры.
+
+    День фикстуры -- 2026-09-02, TARGET на нём -- кандидат правила. Граница
+    когорты перед этим днём делает его «поздним», граница в этот день или
+    позже -- историческим. Каждая пара тестов различается ровно одним
+    фактом: записал ли правило штатный цикл.
+    """
+
+    LATER = date(2026, 9, 1)
+    HISTORY = date(2026, 9, 27)
+
+    def daily_cycle(self):
+        """Ежедневный цикл на коде с правилом -- штатное применение дня."""
+        pl.recalculate(self.fx.db, DAY, DAY, apply=True)
+
+    def test_the_approved_history_passes(self):
+        problems, summary = tool.r3_cohort_problems(
+            evaluation_of(self.fx.db), [TARGET], self.HISTORY)
+        self.assertEqual(problems, [])
+        self.assertEqual(summary['historical'], [TARGET])
+        self.assertEqual(summary['later_applied_by_the_cycle'], [])
+
+    def test_a_later_candidate_the_cycle_applied_does_not_block(self):
+        self.daily_cycle()
+        problems, summary = tool.r3_cohort_problems(
+            evaluation_of(self.fx.db), [], self.LATER)
+        self.assertEqual(problems, [])
+        self.assertEqual(summary['later_applied_by_the_cycle'], [TARGET])
+
+    def test_a_later_candidate_the_cycle_did_not_apply_stops(self):
+        problems, summary = tool.r3_cohort_problems(
+            evaluation_of(self.fx.db), [], self.LATER)
+        self.assertEqual(summary['later_not_applied'], [TARGET])
+        self.assertTrue(any('not applied by the daily cycle' in p
+                            for p in problems), problems)
+
+    def test_a_later_candidate_with_raw_or_billable_touched_stops(self):
+        self.daily_cycle()
+        for key, value in (('raw_changed', True), ('dry_billable_m2', 1.0),
+                           ('stored_reason', acc.R_APPLICATION_WITH_FLAT_COUNTER)):
+            ev = evaluation_of(self.fx.db)
+            for rec in ev['records']:
+                if rec['flight_id'] == TARGET:
+                    rec[key] = value
+            problems, summary = tool.r3_cohort_problems(ev, [], self.LATER)
+            self.assertEqual(summary['later_not_applied'], [TARGET], key)
+            self.assertTrue(problems, key)
+
+    def test_the_cut_day_itself_is_history(self):
+        _problems, summary = tool.r3_cohort_problems(
+            evaluation_of(self.fx.db), [TARGET], DAY)
+        self.assertEqual(summary['historical'], [TARGET])
+
+    def test_an_approved_record_that_stopped_firing_stops(self):
+        problems, _summary = tool.r3_cohort_problems(
+            evaluation_of(self.fx.db), [TARGET, LONE], self.HISTORY)
+        self.assertTrue(any('no longer fire' in p and str(LONE) in p
+                            for p in problems), problems)
+
+    def test_a_historical_candidate_nobody_reviewed_stops(self):
+        problems, _summary = tool.r3_cohort_problems(
+            evaluation_of(self.fx.db), [], self.HISTORY)
+        self.assertTrue(any('never reviewed' in p and str(TARGET) in p
+                            for p in problems), problems)
+
+    def test_an_inconsistent_evaluation_stops(self):
+        ev = evaluation_of(self.fx.db)
+        ev['final_candidates'] = []
+        problems, _summary = tool.r3_cohort_problems(ev, [TARGET],
+                                                     self.HISTORY)
+        self.assertTrue(any('inconsistent' in p for p in problems), problems)
+
+
+class ReleaseR3(Base):
+    """R3 целиком: утверждённые исторические записи и ничего больше."""
+
+    def setUp(self):
+        super(ReleaseR3, self).setUp()
+        self.approve([TARGET])
+
+    def approve(self, approved, rewrites=(), with_list=True):
+        make_oracle(self.fx, self.oracle_path, expected_rewrites=rewrites)
+        with io.open(self.oracle_path, encoding='utf-8') as fh:
+            doc = json.load(fh)
+        if with_list:
+            doc['production_evaluation'] = {'final_candidates': list(approved)}
+        with io.open(self.oracle_path, 'w', encoding='utf-8') as fh:
+            json.dump(doc, fh)
+        self.r2_path = self.fake_r2()
+
+    def fake_r2(self, **changes):
+        """Вердикт r2 той же модели и того же оракула (сам r2 -- ReleaseR2)."""
+        doc = {'phase': tool.PHASE_R2, 'verdict': 'PASS',
+               'oracle_sha256': tool.lf_sha256(self.oracle_path),
+               'code_fingerprint': tool.holdout.code_fingerprint()}
+        doc.update(changes)
+        path = self.out('r2_verdict') + '.json'
+        tool.write_json(path, doc)
+        return path
+
+    def r3(self, through='2026-09-27', r2=None):
+        out = self.out('r3')
+        code, text = self.run_tool(*(self.common('r3', out) + [
+            '--backup-dir', self.backups, '--r2-verdict', r2 or self.r2_path,
+            '--historical-through', through]))
+        return code, text, out
+
+    def reason(self, row):
+        return acc.classify(row)['reason']
+
+    def test_r3_applies_exactly_the_approved_records(self):
+        before = self.fx.current()
+        code, text, out = self.r3()
+        self.assertEqual(code, tool.EXIT_PASS, text)
+        self.assertIn('CLOSEOUT R3 VERDICT: PASS', text)
+        v = self.verdict(out)
+        self.assertEqual(v['r3']['to_apply'], [TARGET])
+        self.assertEqual(v['cohorts_before']['historical'], [TARGET])
+        self.assertEqual(v['dry_calc_writes'], {'would_write': 1})
+        self.assertEqual(v['apply_calc_writes'], {'new': 1})
+        self.assertEqual(v['second_calc_writes'], {'unchanged': 1})
+        self.assertTrue(os.path.exists(v['backup']['path']))
+        after = self.fx.current()
+        self.assertEqual(self.reason(after[TARGET]),
+                         acc.R_RETAINED_NEGLIGIBLE_FOOTPRINT)
+        self.assertEqual(after[TARGET]['raw_area_m2'],
+                         before[TARGET]['raw_area_m2'])
+        for fid in BY_ID:
+            if fid != TARGET:
+                self.assertEqual(after[fid]['calculation_input_hash'],
+                                 before[fid]['calculation_input_hash'], fid)
+
+    def test_a_second_r3_writes_nothing(self):
+        self.assertEqual(self.r3()[0], tool.EXIT_PASS)
+        digest = self.fx.digest()
+        result = self.r3()
+        self.assert_stopped(result, 'NOTHING WAS WRITTEN')
+        self.assertEqual(self.fx.digest(), digest)
+
+    def test_what_r2_applied_is_not_applied_again(self):
+        # TARGET утверждён и уже записан «r2»: применять больше нечего.
+        pl.recalculate(self.fx.db, DAY, DAY, apply=True)
+        self.approve([TARGET], rewrites=(TARGET,))
+        digest = self.fx.digest()
+        self.assert_stopped(self.r3(), 'nothing is left to apply')
+        self.assertEqual(self.fx.digest(), digest)
+        self.assertFalse(os.path.exists(self.backups))
+
+    def test_a_list_that_differs_from_the_evaluation_stops_before_a_write(self):
+        self.approve([LONE])
+        digest = self.fx.digest()
+        result = self.r3()
+        self.assert_stopped(result, 'NOTHING WAS WRITTEN')
+        self.assertIn('never reviewed', result[1])
+        self.assertEqual(self.fx.digest(), digest)
+
+    def test_a_later_candidate_the_cycle_did_not_apply_stops(self):
+        # Граница когорты до дня фикстуры: TARGET -- «поздний» и не записан.
+        digest = self.fx.digest()
+        result = self.r3(through='2026-09-01')
+        self.assert_stopped(result, 'not applied by the daily cycle')
+        self.assertEqual(self.fx.digest(), digest)
+
+    def test_it_needs_a_passed_r2_of_the_same_model_and_oracle(self):
+        digest = self.fx.digest()
+        for change in ({'verdict': 'STOP'}, {'phase': tool.PHASE_R1},
+                       {'oracle_sha256': '0' * 64},
+                       {'code_fingerprint': '0' * 64}):
+            result = self.r3(r2=self.fake_r2(**change))
+            self.assert_stopped(result, 'r2 verdict')
+        self.assert_stopped(self.r3(r2=os.path.join(self.work, 'absent.json')),
+                            'cannot read the r2 verdict')
+        self.assertEqual(self.fx.digest(), digest)
+        self.assertFalse(os.path.exists(self.backups))
+
+    def test_the_r2_rewrites_must_be_approved(self):
+        self.approve([TARGET], rewrites=(LONE,))
+        self.assert_stopped(self.r3(), 'not all among the approved')
+        self.assertFalse(os.path.exists(self.backups))
+
+    def test_an_oracle_without_the_approved_list_is_refused(self):
+        self.approve([], with_list=False)
+        self.assert_stopped(self.r3(), 'no production_evaluation')
+
+    def test_a_running_cycle_stops_it_before_anything(self):
+        lock = runlock.RunLock(runlock.cycle_lock_path(self.fx.db),
+                               purpose='dji-area-cycle')
+        self.assertTrue(lock.acquire())
+        self.addCleanup(lock.release)
+        digest = self.fx.digest()
+        self.assert_stopped(self.r3(), 'cycle lock')
+        self.assertEqual(self.fx.digest(), digest)
+        self.assertFalse(os.path.exists(self.backups))
+
+    def effective_accepted(self, fid):
+        """Принятая площадь записи с учётом решения -- как в отчёте."""
+        con = store.connect(self.fx.db)
+        try:
+            row = cs.current_calculation(con, fid)
+            decision = cs.active_decisions(con, [fid]).get(fid)
+        finally:
+            con.close()
+        cls, _reason, raw, accepted, excluded = cs._auto_figures(row)
+        return dec.effective(cls, raw, accepted, excluded, decision,
+                             stale=dec.decision_is_stale(decision, row))[1]
+
+    def calc_rows(self):
+        return self.fx.query('SELECT COUNT(*) AS n FROM '
+                             'dji_area_calculations')[0]['n']
+
+    def test_accept_auto_result_on_an_approved_record_stops_before_a_write(self):
+        # Спорная запись, администратор принял автомат -- то есть RAW.
+        self.decide(TARGET, dec.ACCEPT_AUTO_RESULT)
+        self.assertEqual(self.effective_accepted(TARGET), BY_ID[TARGET][5])
+        rows, digest = self.calc_rows(), self.fx.digest()
+        code, text, out = self.r3()
+        self.assert_stopped((code, text), 'NOTHING WAS WRITTEN')
+        self.assertIn('ACCEPT_AUTO_RESULT on %d' % TARGET, text)
+        self.assertEqual(self.calc_rows(), rows)
+        self.assertEqual(self.fx.digest(), digest)
+        self.assertEqual(self.effective_accepted(TARGET), BY_ID[TARGET][5])
+        self.assertEqual(self.verdict(out)['admin_decisions'],
+                         {str(TARGET): dec.ACCEPT_AUTO_RESULT})
+
+    def test_a_stale_accept_auto_result_stops_too(self):
+        self.fx.execute(
+            'INSERT INTO drone_area_decisions (flight_id, chain_seq, '
+            'decision_type, area_algorithm_version, calculation_input_hash, '
+            'is_override, comment, performed_at, decisions_version) VALUES '
+            '(?,?,?,?,?,?,?,?,?)',
+            (TARGET, 1, dec.ACCEPT_AUTO_RESULT,
+             dji_area.AREA_ALGORITHM_VERSION, 'f' * 64, 0,
+             'decided against an older calculation', '2026-09-21 10:00:00',
+             dec.DECISIONS_VERSION))
+        rows = self.calc_rows()
+        self.assert_stopped(self.r3(), 'ACCEPT_AUTO_RESULT on %d' % TARGET)
+        self.assertEqual(self.calc_rows(), rows)
+
+    def test_decisions_that_do_not_depend_on_the_automat_keep_acting(self):
+        # Каждое из трёх решений -- своя фикстура: после PASS второй r3
+        # писать уже нечего.
+        for action, accepted in ((dec.CONFIRM_FULL_PHANTOM, 0.0),
+                                 (dec.KEEP_DJI_RAW, BY_ID[TARGET][5]),
+                                 (dec.NEEDS_MORE_EVIDENCE, BY_ID[TARGET][5])):
+            with self.subTest(action=action):
+                if action != dec.CONFIRM_FULL_PHANTOM:
+                    self.fx = Fixture().build()
+                    self.addCleanup(self.fx.close)
+                    self.approve([TARGET])
+                self.decide(TARGET, action)
+                self.assertEqual(self.effective_accepted(TARGET), accepted)
+                code, text, out = self.r3()
+                self.assertEqual(code, tool.EXIT_PASS, text)
+                self.assertIn('keep acting', text)
+                self.assertTrue(any(str(TARGET) in n and action in n
+                                    for n in self.verdict(out)['notes']))
+                self.assertEqual(self.reason(self.fx.current()[TARGET]),
+                                 acc.R_RETAINED_NEGLIGIBLE_FOOTPRINT)
+                self.assertEqual(self.effective_accepted(TARGET), accepted)
+
+    def test_a_bad_cut_date_is_refused(self):
+        self.assert_stopped(self.r3(through='27.09.2026'), 'STOP')
+
+
 if __name__ == '__main__':
     unittest.main()
