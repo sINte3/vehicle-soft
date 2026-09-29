@@ -49,7 +49,7 @@ production попутно с релизом трека АЗС `c548c71`, мин�
 
 | Трек | Что влито | Коммиты / PR | Что не проверено | Кто снимает |
 |---|---|---|---|---|
-| Дроны | `DJI-AREA-RETAINED-FOOTPRINT-001` — выборочное правило `retained-scalar-negligible-footprint-1`: перенесённый скаляр (замороженный экран + точное совпадение RAW с базой цепочки) + плоский счётчик в полном окне V4 + собственный след ≤ 0,027 RAW при огибающей 12 м → `PHANTOM_PROVEN`, принято 0; `impl-4` не поднят, RAW и `billable_area_m2` не меняются, миграций нет. Приёмка перехода: оракул `docs/DJI_AREA_SEPTEMBER_2026_RETAINED_FOOTPRINT_ORACLE.json`, фазы PRE-APPLY/POST-APPLY, ранбук `docs/DJI_AREA_RETAINED_FOOTPRINT_RELEASE_RUNBOOK.md`; исторический оракул не тронут. Закрытие выпуска `DJI-AREA-RETAINED-RELEASE-CLOSEOUT-002`: доказанная нормализация дрейфа отпечатка и блоки R1/R2 одним инструментом `tools/dji_area_retained_release_closeout.py` | PR #140 (`00f2fdc`), этот PR | Оценка production 28.09.2026 — **PASS** (28 кандидатов, 19,2740 га; в B на проверке 16). Тег `dji-area-retained-footprint-001-rc1` создан (`1e9ca17`). Первый R1 28.09.2026 — **FAIL**: сухой прогон сентября хотел 362 перезаписи вместо 5 (357 — дрейф отпечатка при том же решении, разбор владельца); ничего не применено, код не развёрнут. **Открыто:** CI этого PR; тег `dji-area-retained-release-closeout-002` на его мерж-коммите; повтор блока R1 (нормализация + PRE-APPLY) | трек Дронов, владелец: строку снимает PASS нового блока R1 до деплоя; блок R2 (деплой fast-forward, применение пяти, POST-APPLY) — после снятия |
+
 **Прод-деплой закрыт, пока таблица не пуста.**
 
 ---
@@ -59,8 +59,9 @@ production попутно с релизом трека АЗС `c548c71`, мин�
 | Что | Значение |
 |---|---|
 | Production baseline | `436e890b8275d058d0e775057c8d37cb12ff8e8b` — `C:\transport-report`, ветка `main`, отслеживаемое дерево чистое, неотслеживаемых 107 (инвентаризация владельца 28.09.2026; прежняя запись — `54a875d`, 25.09.2026) |
-| `main` | после PR `DJI-AREA-RETAINED-RELEASE-CLOSEOUT-002`; пин выпуска — тег `dji-area-retained-release-closeout-002` на его мерж-коммите |
-| Дельта деплоя | PR #140 `DJI-AREA-RETAINED-FOOTPRINT-001` (код правила), PR #141–#144 (документы), PR `DJI-AREA-RETAINED-RELEASE-CLOSEOUT-002` (инструмент выпуска); деплой — блок R2 `docs/DJI_AREA_RETAINED_FOOTPRINT_RELEASE_RUNBOOK.md`, `git merge --ff-only` ровно на коммит тега |
+| `main` | содержит PR #145 `DJI-AREA-RETAINED-RELEASE-CLOSEOUT-002` (мерж `eb7d003`); пин выпуска — аннотированный тег `dji-area-retained-release-closeout-002` → `eb7d0034333e996258232e6e254806c656a99b47`, тег модели `dji-area-retained-footprint-001-rc1` → `1e9ca17`, отпечаток `8bc0ecdf…` |
+| Статус выпуска | R1 (до деплоя) — **PASS 29.09.2026**, строка гейта снята (журнал ниже). На production база уже несёт 517 доказанных нормализаций отпечатка (append-only, результат строк прежний); код выпуска **не развёрнут**, пять переходов **не применены**. **R2 — PENDING:** деплой `merge --ff-only` на коммит тега, применение пяти, POST-APPLY, сторож RAW, smoke — блок R2 ранбука. После PASS R2 — `docs/DEPLOYED.md` |
+| Дельта деплоя | PR #140 `DJI-AREA-RETAINED-FOOTPRINT-001` (код правила), PR #141–#144 (документы), PR #145 `DJI-AREA-RETAINED-RELEASE-CLOSEOUT-002` (инструмент выпуска); деплой — блок R2 `docs/DJI_AREA_RETAINED_FOOTPRINT_RELEASE_RUNBOOK.md`, `git merge --ff-only` ровно на коммит тега |
 | Миграции дельты | нет; блок R2 проверяет это по дельте до остановки служб |
 | Деплой V2 на production | выполнен: HEAD `436e890` содержит PR #133, миграция `DRONE_AREA_CONTROL_V2_001` применена (инвентаризация владельца 28.09.2026) |
 
@@ -194,6 +195,33 @@ staging; реестр `schema_migrations` на обеих площадках —
 ## Журнал закрытых пунктов
 
 Короткая история, чтобы не спорить потом о том, что здесь висело.
+
+- **2026-09-29 — снято, трек Дронов. Retained-footprint: R1 до деплоя
+  пройден.** `DJI-AREA-RETAINED-FOOTPRINT-001` (PR #140, `00f2fdc`) +
+  `DJI-AREA-RETAINED-RELEASE-CLOSEOUT-002` (PR #145, `eb7d003`, тег
+  `dji-area-retained-release-closeout-002`). Блок R1 выполнен владельцем на
+  `SRV-YOQSH` из клона тега выпуска, отпечаток `8bc0ecdf…`; результат
+  независимо сверен ChatGPT. Копия базы до записи —
+  `retained_closeout_r1_20260929_102209\transport_20260929_102209_retained_closeout_r1.db`,
+  483 979 264 байт, integrity ok, совпала с живой базой. Классификация
+  01–18.09: 4887 вылетов, сухой прогон 4365 `unchanged` / 522 `would_write`;
+  `HASH_ONLY` 517 (своя ревизия 499, сосед 4, оба 14), переход 5, **отказов
+  0**. Нормализация: 517 строк, `calc_writes {"new": 517}`, append-only; после
+  — 4882 `unchanged` + 5 `would_write`, дрейфа 0; код production (`436e890`)
+  видит все 517 `unchanged`. Оценщик: B 44, кандидатов 28 (19,2740 га), в
+  сентябре те же 5, на проверке в B 16, RAW 0, billable 0, код 0. PRE-APPLY:
+  `{"unchanged": 4882, "would_write": 5}`, перезаписи ровно 701661028,
+  702797709, 703830892, 703847599, 714181794; 714181711 остаётся REVIEW
+  (`APPLICATION_WITH_FLAT_COUNTER`); итоги равны оракулу (4687.1675 /
+  175.8333 / 4511.3342 га), `VERDICT: PASS`. Сторож RAW: 44 230 вылетов
+  снимка, изменено 0, пропало 0, новых 156 (цикл), billable 0. `CLOSEOUT R1
+  VERDICT: PASS`, код 0; три службы Running; `/login` 200,
+  `/drones/area-control` анонимно — форма входа. Архив
+  `closeout_r1_20260929_102119.zip`, SHA-256
+  `06c55aecf35954c2db549b203b40503f43ac74c47355b0b11ad4d938d4210ab1`. **Не
+  выполнено и в строку не входило:** деплой кода выпуска, применение пяти
+  переходов, POST-APPLY — это блок R2, он **PENDING** (раздел «Текущий
+  релиз»); R3 — отдельное решение владельца.
 
 - **2026-09-25 — снято, трек Дронов. Контроль площади DJI V2.**
   `DRONE-AREA-CONTROL-V2-MEGA` (PR #133, ветка до мержа; площадка на
