@@ -51,7 +51,9 @@ DJI-AREA-RETAINED-RELEASE-CLOSEOUT-002. Блок R1 28.09.2026 останови�
              когортам с утверждённым списком оракула
              (`production_evaluation.final_candidates`), применение ровно
              утверждённых минус уже применённых r2, повтор по ним, оценщик
-             после, сторож RAW. Когорты -- `r3_cohort_problems`.
+             после, сторож RAW. Когорты -- `r3_cohort_problems`; решение
+             ACCEPT_AUTO_RESULT на любой из этих записей -- остановка до
+             записи (`decision_problems`).
 
 Шаги r1/r2 -- существующие инструменты (`dji_area_recalc`, оценщик
 `dji_area_footprint_calibration`, `dji_area_control_acceptance`,
@@ -1539,6 +1541,44 @@ def _r2_problems(path, verdict):
             if r2.get(key) != want]
 
 
+def decision_problems(verdict, db_path, todo):
+    """Решения администратора на записях R3: ACCEPT_AUTO_RESULT -- STOP.
+
+    [REASON]: на спорной записи ACCEPT_AUTO_RESULT значит «принято RAW,
+    спор закрыт». Решение привязано к отпечатку строки: после пересчёта оно
+    перестаёт действовать (`decisions.effective`), а новый автомат даёт
+    PHANTOM_PROVEN, принято 0 -- площадь сменилась бы с RAW на 0 поверх
+    решения человека. Поэтому такая запись останавливает R3 до любой записи,
+    даже если решение уже устарело: последнее слово человека по вылету --
+    «принять», и пересматривать его должен владелец. Три других решения от
+    автомата не зависят (0, RAW, RAW) и продолжают действовать -- их R3
+    только называет.
+    """
+    con = connect_ro(db_path)
+    try:
+        decided = active_decisions(con, todo)
+    finally:
+        con.close()
+    blocking = sorted(f for f, d in decided.items()
+                      if d.get('decision_type') == dec.ACCEPT_AUTO_RESULT)
+    others = sorted(f for f in decided if f not in set(blocking))
+    verdict['admin_decisions'] = {str(f): decided[f].get('decision_type')
+                                  for f in sorted(decided)}
+    if others:
+        verdict['notes'].append(
+            'live admin decisions on %d record(s) keep acting and will read '
+            '"calculation changed" after the apply: %s'
+            % (len(others), ', '.join('%d %s' % (f, decided[f].get(
+                'decision_type')) for f in others)))
+    if blocking:
+        verdict['problems'].append(
+            'ACCEPT_AUTO_RESULT on %s: after the apply this decision would '
+            'lapse and the accepted area would change from RAW to 0 -- the '
+            'owner reviews these records first' % _ids(blocking))
+        raise CloseoutError('an admin decision blocks R3 -- NOTHING WAS '
+                            'WRITTEN')
+
+
 def _evaluate(verdict, db_path, out_dir, name):
     if run_step(verdict, 'retained-footprint evaluator (%s)' % name,
                 evaluator.main, ['--db', db_path, '--out', out_dir,
@@ -1585,6 +1625,7 @@ def cmd_r3(args, oracle, period, transition):
                                cutoff.isoformat()))
     try:
         with cycle_lock(args.db_path):
+            decision_problems(verdict, args.db_path, todo)
             say('== BACKUP before any write')
             verdict['backup'] = make_backup(args.db_path, args.backup_dir,
                                             'r3', out)
@@ -1608,22 +1649,6 @@ def cmd_r3(args, oracle, period, transition):
                     date.fromisoformat(max(days[f] for f in todo)))
             verdict['r3']['report_days'] = [span[0].isoformat(),
                                             span[1].isoformat()]
-            con = connect_ro(args.db_path)
-            try:
-                decided = active_decisions(con, todo)
-            finally:
-                con.close()
-            if decided:
-                # [REASON]: решение привязано к отпечатку строки. После
-                # применения экран пометит эти решения «расчёт изменился»:
-                # «принять автоматический результат» перестанет действовать,
-                # остальные продолжат -- владелец должен знать заранее.
-                verdict['notes'].append(
-                    'live admin decisions on %d record(s) will read '
-                    '"calculation changed" after the apply: %s'
-                    % (len(decided), ', '.join(
-                        '%d %s' % (f, decided[f].get('decision_type'))
-                        for f in sorted(decided))))
             dry = _targeted(verdict, 'targeted dry-run of the approved',
                             args.db_path, span, todo, '--dry-run',
                             os.path.join(out, 'dry.json'))

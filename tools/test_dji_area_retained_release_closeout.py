@@ -1374,13 +1374,71 @@ class ReleaseR3(Base):
         self.assertEqual(self.fx.digest(), digest)
         self.assertFalse(os.path.exists(self.backups))
 
-    def test_a_live_decision_on_an_approved_record_is_named(self):
-        self.decide(TARGET, dec.CONFIRM_FULL_PHANTOM)
+    def effective_accepted(self, fid):
+        """Принятая площадь записи с учётом решения -- как в отчёте."""
+        con = store.connect(self.fx.db)
+        try:
+            row = cs.current_calculation(con, fid)
+            decision = cs.active_decisions(con, [fid]).get(fid)
+        finally:
+            con.close()
+        cls, _reason, raw, accepted, excluded = cs._auto_figures(row)
+        return dec.effective(cls, raw, accepted, excluded, decision,
+                             stale=dec.decision_is_stale(decision, row))[1]
+
+    def calc_rows(self):
+        return self.fx.query('SELECT COUNT(*) AS n FROM '
+                             'dji_area_calculations')[0]['n']
+
+    def test_accept_auto_result_on_an_approved_record_stops_before_a_write(self):
+        # Спорная запись, администратор принял автомат -- то есть RAW.
+        self.decide(TARGET, dec.ACCEPT_AUTO_RESULT)
+        self.assertEqual(self.effective_accepted(TARGET), BY_ID[TARGET][5])
+        rows, digest = self.calc_rows(), self.fx.digest()
         code, text, out = self.r3()
-        self.assertEqual(code, tool.EXIT_PASS, text)
-        self.assertIn('live admin decisions on 1 record(s)', text)
-        self.assertTrue(any(str(TARGET) in n and dec.CONFIRM_FULL_PHANTOM in n
-                            for n in self.verdict(out)['notes']))
+        self.assert_stopped((code, text), 'NOTHING WAS WRITTEN')
+        self.assertIn('ACCEPT_AUTO_RESULT on %d' % TARGET, text)
+        self.assertEqual(self.calc_rows(), rows)
+        self.assertEqual(self.fx.digest(), digest)
+        self.assertEqual(self.effective_accepted(TARGET), BY_ID[TARGET][5])
+        self.assertEqual(self.verdict(out)['admin_decisions'],
+                         {str(TARGET): dec.ACCEPT_AUTO_RESULT})
+
+    def test_a_stale_accept_auto_result_stops_too(self):
+        self.fx.execute(
+            'INSERT INTO drone_area_decisions (flight_id, chain_seq, '
+            'decision_type, area_algorithm_version, calculation_input_hash, '
+            'is_override, comment, performed_at, decisions_version) VALUES '
+            '(?,?,?,?,?,?,?,?,?)',
+            (TARGET, 1, dec.ACCEPT_AUTO_RESULT,
+             dji_area.AREA_ALGORITHM_VERSION, 'f' * 64, 0,
+             'decided against an older calculation', '2026-09-21 10:00:00',
+             dec.DECISIONS_VERSION))
+        rows = self.calc_rows()
+        self.assert_stopped(self.r3(), 'ACCEPT_AUTO_RESULT on %d' % TARGET)
+        self.assertEqual(self.calc_rows(), rows)
+
+    def test_decisions_that_do_not_depend_on_the_automat_keep_acting(self):
+        # Каждое из трёх решений -- своя фикстура: после PASS второй r3
+        # писать уже нечего.
+        for action, accepted in ((dec.CONFIRM_FULL_PHANTOM, 0.0),
+                                 (dec.KEEP_DJI_RAW, BY_ID[TARGET][5]),
+                                 (dec.NEEDS_MORE_EVIDENCE, BY_ID[TARGET][5])):
+            with self.subTest(action=action):
+                if action != dec.CONFIRM_FULL_PHANTOM:
+                    self.fx = Fixture().build()
+                    self.addCleanup(self.fx.close)
+                    self.approve([TARGET])
+                self.decide(TARGET, action)
+                self.assertEqual(self.effective_accepted(TARGET), accepted)
+                code, text, out = self.r3()
+                self.assertEqual(code, tool.EXIT_PASS, text)
+                self.assertIn('keep acting', text)
+                self.assertTrue(any(str(TARGET) in n and action in n
+                                    for n in self.verdict(out)['notes']))
+                self.assertEqual(self.reason(self.fx.current()[TARGET]),
+                                 acc.R_RETAINED_NEGLIGIBLE_FOOTPRINT)
+                self.assertEqual(self.effective_accepted(TARGET), accepted)
 
     def test_a_bad_cut_date_is_refused(self):
         self.assert_stopped(self.r3(through='27.09.2026'), 'STOP')
