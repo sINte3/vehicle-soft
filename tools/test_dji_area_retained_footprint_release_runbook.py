@@ -22,9 +22,10 @@
     тега выпуска: без pull, reset, clean и checkout, прежний HEAD -- предок,
     дерево чистое, миграций в дельте нет, ни один неотслеживаемый файл не
     пропал; службы поднимаются в `finally`;
-  * R3 применяет только утверждённый список -- тот же, что в оракуле, -- и
-    только если свежий оценщик называет ровно его; пересчёта периода целиком
-    в нём нет;
+  * R3 исполняет свой тег (DJI-AREA-R3-HISTORICAL-CLOSEOUT-001), пишет только
+    через подкоманду `r3` и номеров не несёт: утверждённый список -- в
+    оракуле, сверка по когортам и применение -- в инструменте; код production
+    не двигает;
   * числа и коды возврата в тексте равны оракулу и константам инструментов;
     названные файлы, подкоманды и флаги существуют.
 
@@ -60,6 +61,9 @@ PY_PATH = r'C:\Program Files\Python314\python.exe'
 SERVICES = "$services = @('TransportReport', 'TransportBot', 'TransportBot003')"
 CLOSEOUT = 'tools\\dji_area_retained_release_closeout.py'
 RELEASE_TAG = 'dji-area-retained-release-closeout-002'
+R3_TAG = 'dji-area-r3-historical-closeout-001'
+# День оценки production, по которой владелец утвердил список R3.
+APPROVAL_DAY = '2026-09-28'
 
 
 def read(path=RUNBOOK):
@@ -284,7 +288,7 @@ class EveryBlock(unittest.TestCase):
                     continue
                 for flag in flags:
                     self.assertIn(flag, known[match.group(1)], line)
-        self.assertEqual(seen, 2)
+        self.assertEqual(seen, 3)
 
 
 class ThePin(unittest.TestCase):
@@ -334,12 +338,24 @@ class ThePin(unittest.TestCase):
         self.assertNotEqual(RELEASE_TAG, re.search(
             r"\$ExpectedTag = '([\w.-]+)'", block_r1()).group(1))
 
-    def test_r3_runs_a_production_tree_that_contains_the_model(self):
+    def test_r3_runs_its_own_tag_that_holds_the_model(self):
+        # [REASON]: на production стоит код выпуска без подкоманды r3. R3
+        # не деплоит: исполняет клон своего тега, а production обязан лишь
+        # исполнять ту же модель.
         block = block_r3()
-        self.assertIn('merge-base --is-ancestor $pinned $headSha', block)
-        self.assertIn('if ($changed.Count -gt 0) { throw', block)
-        self.assertLess(pos(block, 'merge-base --is-ancestor'),
-                        pos(block, 'Stop-Service'))
+        self.assertIn("$ReleaseTag  = '%s'" % R3_TAG, block)
+        self.assertNotIn(RELEASE_TAG, block)
+        for guard in ('"refs/tags/${ReleaseTag}:refs/tags/${ReleaseTag}"',
+                      'if (-not $release) { throw',
+                      'merge-base --is-ancestor $pinned $release',
+                      'if ($headSha -ne $release) { throw',
+                      'if ($dirty.Count -gt 0) { throw',
+                      'merge-base --is-ancestor $pinned $headProd',
+                      'if ($changed.Count -gt 0) { throw',
+                      'Set-Location $src'):
+            self.assertLess(pos(block, guard), pos(block, 'Stop-Service'),
+                            guard)
+        self.assertNotIn('Set-Location $prod', block)
 
 
 class BlockR1(unittest.TestCase):
@@ -359,7 +375,7 @@ class BlockR1(unittest.TestCase):
             "($site + '/drones/area-control')", "Write-Host 'PRE-APPLY PASS'"])
 
     def test_the_tool_is_tested_before_a_service_stops(self):
-        for block in (block_r1(), block_r2()):
+        for block in (block_r1(), block_r2(), block_r3()):
             self.assertLess(pos(block, '& $py tools\\test_dji_area_retained_'
                                        'release_closeout.py'),
                             pos(block, 'Stop-Service'))
@@ -379,7 +395,7 @@ class BlockR1(unittest.TestCase):
             self.assertIn('--raw-snapshot $rawSnap', block)
 
     def test_an_earlier_run_is_kept_not_removed(self):
-        for block in (block_r1(), block_r2()):
+        for block in (block_r1(), block_r2(), block_r3()):
             self.assertIn("if (Test-Path -LiteralPath $out) { Move-Item "
                           "-LiteralPath $out -Destination ($out + '_before_' "
                           "+ $stamp) }", block)
@@ -455,42 +471,66 @@ class BlockR2(unittest.TestCase):
 
 class BlockR3(unittest.TestCase):
 
-    def test_the_approved_list_is_the_production_evaluation(self):
-        block = block_r3()
-        literal = re.search(r'\$approved = @\(([\d, ]+)\)', block).group(1)
-        approved = [int(x) for x in literal.split(',')]
-        self.assertEqual(sorted(approved), sorted(
-            oracle()['production_evaluation']['final_candidates']))
+    def test_the_approved_list_lives_only_in_the_oracle(self):
+        # [REASON]: второй копии списка в блоке нет -- расходиться не с чем.
+        doc = oracle()
+        approved = closeout.approved_candidates(doc)
         self.assertEqual(len(approved), 28)
-
-    def test_it_needs_the_post_apply_verdict_of_r2(self):
+        rewrites = doc['transition']['expected_rewrites']
+        self.assertTrue(set(rewrites) <= set(approved))
+        self.assertEqual(len(set(approved) - set(rewrites)), 23)
         block = block_r3()
+        self.assertNotIn('$approved', block)
+        for fid in approved:
+            self.assertNotIn(str(fid), block)
+
+    def test_it_needs_a_passed_r2_of_the_same_model(self):
+        block = block_r3()
+        for guard in ('if (-not (Test-Path -LiteralPath $r2Verdict)) { throw',
+                      "if (($r2.verdict -ne 'PASS') -or ($r2.phase -ne "
+                      "'r2')) { throw",
+                      'if ($r2.code_fingerprint -ne $ExpectedFingerprint) '
+                      '{ throw'):
+            self.assertLess(pos(block, guard), pos(block, 'Stop-Service'),
+                            guard)
         self.assertIn("$r2Verdict = 'C:\\VehicleSoft_Retained_Footprint_"
-                      "Release\\closeout_r2\\post_apply\\"
-                      "area_control_acceptance.json'", block)
+                      "Release\\closeout_r2\\closeout_verdict.json'", block)
 
-    def test_nothing_is_recalculated_before_the_list_is_proven(self):
+    def test_it_writes_only_through_the_tool_and_moves_no_code(self):
         block = block_r3()
-        self.assertLess(pos(block, 'if (($r2v.verdict -ne \'PASS\')'),
-                        pos(block, 'Stop-Service'))
+        self.assertNotIn('--apply', block)
+        self.assertNotIn('tools\\dji_area_recalc.py', block)
+        self.assertNotIn('merge --ff-only', block)
+        self.assertIsNone(re.search(
+            r'git -C \$prod (checkout|merge |pull|reset|clean|stash|fetch)',
+            block))
         assert_order(self, block, [
-            '--evaluate-rule', 'Compare-Object',
-            'if ($drift.Count -gt 0) { throw',
-            'tools\\dji_area_recalc.py --db $db --from $from3 --to $to3 '
-            '--dry-run',
-            'calc_writes.would_write -ne $todo.Count)) { throw',
-            '--apply --quiet', 'calc_writes.new -ne $todo.Count) { throw',
-            "--json (Join-Path $out 'second.json') @idArgs",
-            'calc_writes.unchanged -ne $todo.Count) { throw',
-            "--out (Join-Path $out 'evaluation_after') --evaluate-rule",
-            'tools\\dji_area_raw_guard.py --db $db --compare $rawSnap3',
-            'if ($ev2 -ne 0) { throw', 'if ($raw -ne 0) { throw',
-            '} finally {'])
+            'Stop-Service', 'tools\\check_db_lock.py',
+            CLOSEOUT + ' r3 --db $db --oracle $oracle --out $out '
+            '--backup-dir $backup --r2-verdict $r2Verdict '
+            '--historical-through $historicalThrough',
+            '$r3 = $LASTEXITCODE', 'if ($r3 -ne 0) { throw',
+            '} finally {', 'Restart-Service', "($site + '/login')",
+            "($site + '/drones/area-control')",
+            "Write-Host 'HISTORICAL APPLY PASS'"])
 
-    def test_there_is_no_period_wide_recalculation(self):
-        for line in block_r3().splitlines():
-            if 'tools\\dji_area_recalc.py' in line:
-                self.assertIn('@idArgs', line)
+    def test_the_historical_cohort_ends_before_the_approval_day(self):
+        # Последний полностью посчитанный к оценке день -- накануне её; он же
+        # не раньше конца периода оракула, где лежат пять записей R2.
+        cut = re.search(r"\$historicalThrough = '(\d{4}-\d{2}-\d{2})'",
+                        block_r3()).group(1)
+        self.assertLess(cut, APPROVAL_DAY)
+        self.assertGreaterEqual(cut, oracle()['period'][1])
+        text = ' '.join(read().split())
+        self.assertIn('вылеты по `%s` включительно' % cut, text)
+        self.assertIn('оценки production %s.%s.%s' % (
+            APPROVAL_DAY[8:], APPROVAL_DAY[5:7], APPROVAL_DAY[:4]), text)
+
+    def test_the_text_says_when_to_run_it(self):
+        text = ' '.join(read().split())
+        self.assertIn('`DroneAreaDaily` хотя бы раз отработал на коде `eb7d003`',
+                      text)
+        self.assertIn('`%s`' % R3_TAG, text)
 
 
 class TheTextAgreesWithTheOracle(unittest.TestCase):
