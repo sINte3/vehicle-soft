@@ -700,3 +700,259 @@ C:\gps-tools\check\sentinel_field.jpg` откроет его). Красная о
 Utility» — второй строкой файла, и повторить с команды `$copernicus = ...`.
 Оба снимка (`esri_tile.jpg`, `sentinel_field.jpg`) ключей не содержат, их
 можно пересылать.
+
+## 12. Площадка: экран «Факт по технике» до мержа (A1+A2)
+
+Решение владельца 30.09 (путь 2): экран проверяется на площадке **до**
+мержа, чтобы строка GPS в `docs/RELEASE_GATE.md` не закрывала прод-деплой
+остальным трекам. Площадка — `C:\transport-report-staging`, служба
+`TransportReportStaging`, порт 5051.
+
+**Ревизия кода:** `4a5d16ac2b9ba0c29a1582b0e1b7c78cfd2d3aed` (ветка
+`claude/gps-plan-fakt-vehicle-9nt03a`, `main` на 30.09 влит). Следом в
+ветке идут только документы и тесты ранбука — кода они не меняют.
+
+**Данные.** Экран имеет смысл только на настоящих данных, поэтому база
+площадки на время проверки заменяется согласованной копией боевой (снимок
+SQLite online backup, боевые файлы только читаются), а рядом кладутся копии
+помесячных файлов точек за окно догона — 30 суток до вчера. Собственная база
+площадки и её файлы точек сохраняются и возвращаются блоком «Вернуть
+площадку». Миграция, которой нет на проде, одна — `migrate_agro_work_001.py`
+(agro-work, #149, в `main`); у GPS миграций нет.
+
+**Почему блок требует остановленных ботов площадки.** Уведомления в Telegram
+отправляют отдельные службы ботов (очередь `bot003_notification_outbox`), не
+сайт. Запущенный бот площадки на копии боевой базы разослал бы настоящим
+людям то, что лежит в боевой очереди. Поэтому блок останавливается, если
+любая другая служба `*Staging*` работает, а после проверки база площадки
+возвращается.
+
+### Выложить (владелец, SRV-YOQSH, PowerShell от администратора)
+
+Скопировать целиком и вставить. Блок останавливается на первой неудаче;
+`STEP=PASS` последней строкой — только когда прошли все шаги. Займёт около
+15 минут: копии баз и догон A1 (около 8 минут) — самое долгое.
+
+```powershell
+& {
+  $ErrorActionPreference = 'Stop'
+  $expectedHost = 'srv-yoqsh'
+  $root         = 'C:\transport-report-staging'
+  $prodInstance = 'C:\transport-report\instance'
+  $service      = 'TransportReportStaging'
+  $python       = 'C:\Program Files\Python314\python.exe'
+  $geoPython    = 'C:\gps_venv\Scripts\python.exe'
+  $branch       = 'claude/gps-plan-fakt-vehicle-9nt03a'
+  $sha          = '4a5d16ac2b9ba0c29a1582b0e1b7c78cfd2d3aed'
+  $runRoot      = 'D:\transport-report-backups\staging\gps_a1a2'
+  $backupDir    = Join-Path $runRoot (Get-Date -Format 'yyyyMMdd_HHmmss')
+
+  $open = @(Get-ChildItem $runRoot -Directory -ErrorAction SilentlyContinue | Where-Object { -not (Test-Path (Join-Path $_.FullName 'returned.txt')) })
+  if ($open.Count -gt 0) { throw "STEP FAILED: run $($open[0].Name) was not returned -- run the block 'Vernut ploshchadku' first" }
+
+  if ((hostname) -ne $expectedHost) { throw "STEP FAILED: host is $(hostname), expected $expectedHost" }
+  if ($root -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a root that is not the staging checkout" }
+  if (-not (Test-Path "$root\instance\transport.db")) { throw "STEP FAILED: staging database not found under $root" }
+  if (-not (Test-Path "$prodInstance\transport.db")) { throw "STEP FAILED: production database not found under $prodInstance" }
+  if (-not (Test-Path $geoPython)) { throw "STEP FAILED: geo python not found at $geoPython" }
+  $svc = Get-Service -Name $service
+  if ($svc.Name -eq 'TransportReport') { throw "STEP FAILED: that is the production service" }
+  $others = @(Get-Service | Where-Object { $_.Name -like '*Staging*' -and $_.Name -ne $service })
+  foreach ($o in $others) { Write-Output ("OTHER_STAGING_SERVICE=" + $o.Name + " " + $o.Status + " " + $o.StartType) }
+  $running = @($others | Where-Object { $_.Status -ne 'Stopped' })
+  if ($running.Count -gt 0) { throw "STEP FAILED: stop these staging services first, they would read the production copy: $(($running | ForEach-Object { $_.Name }) -join ', ')" }
+  Write-Output ("SERVICE_BEFORE=" + $svc.Status)
+
+  Set-Location $root
+  $before = (git rev-parse HEAD)
+  Write-Output ("BEFORE_HEAD=" + $before)
+  $changed = @(git status --porcelain --untracked-files=no)
+  if ($changed.Count -gt 0) { throw "STEP FAILED: $($changed.Count) tracked file(s) changed in the staging checkout -- send the output of git status" }
+  git fetch origin
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: git fetch" }
+  git merge-base --is-ancestor $before origin/main
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: staging runs $before, which is not in main (on: $((git branch -r --contains $before) -join ', ')) -- someone may still use staging; send this line" }
+  git cat-file -e "$sha^{commit}"
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: commit $sha not found after fetch" }
+  git merge-base --is-ancestor $sha "origin/$branch"
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: $sha is not on origin/$branch" }
+
+  $yesterday = (Get-Date).Date.AddDays(-1)
+  $months = @($yesterday.AddDays(-29).ToString('yyyyMM'), $yesterday.ToString('yyyyMM')) | Select-Object -Unique
+  $points = @($months | ForEach-Object { "$prodInstance\gps_points_$_.db" } | Where-Object { Test-Path $_ })
+  if ($points.Count -eq 0) { throw "STEP FAILED: no point files for $($months -join ', ') in $prodInstance" }
+  Write-Output ("POINT_FILES=" + (($points | ForEach-Object { Split-Path $_ -Leaf }) -join ', '))
+  $prodBytes = (Get-Item "$prodInstance\transport.db").Length
+  $stagingBytes = (Get-Item "$root\instance\transport.db").Length
+  $pointBytes = ($points | ForEach-Object { (Get-Item $_).Length } | Measure-Object -Sum).Sum
+  $freeC = (Get-PSDrive -Name C).Free
+  $freeD = (Get-PSDrive -Name D).Free
+  Write-Output ("SIZES_MB prod=" + [math]::Round($prodBytes / 1MB) + " staging=" + [math]::Round($stagingBytes / 1MB) + " points=" + [math]::Round($pointBytes / 1MB) + " freeC=" + [math]::Round($freeC / 1MB) + " freeD=" + [math]::Round($freeD / 1MB))
+  if ($freeD -lt 1.2 * ($prodBytes + $stagingBytes + 2 * $pointBytes)) { throw "STEP FAILED: not enough free space on D:" }
+  if ($freeC -lt 1.2 * ($prodBytes + $pointBytes)) { throw "STEP FAILED: not enough free space on C:" }
+
+  New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
+  Set-Content -Path "$backupDir\before_head.txt" -Value $before -Encoding ASCII
+  $copies = @(
+    @{ Name = 'staging_before'; Source = "$root\instance\transport.db" },
+    @{ Name = 'prod_copy'; Source = "$prodInstance\transport.db" }
+  ) + @($points | ForEach-Object { @{ Name = ((Split-Path $_ -Leaf) -replace '\.db$', ''); Source = $_ } })
+  foreach ($c in $copies) {
+    $dir = Join-Path $backupDir $c.Name
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $out = & $python backup_transport_db.py --source $c.Source --dest-dir $dir --suffix $c.Name | Out-String
+    if (($LASTEXITCODE -ne 0) -or ($out -notmatch 'Integrity check : ok')) { throw "STEP FAILED: copy of $($c.Source)" }
+    $file = Get-ChildItem $dir -Filter '*.db' | Select-Object -First 1
+    Write-Output ("COPY " + $c.Name + " = " + $file.FullName + " MB=" + [math]::Round($file.Length / 1MB) + " integrity=ok")
+  }
+
+  git checkout --detach $sha
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: git checkout" }
+  Write-Output ("AFTER_HEAD=" + (git rev-parse HEAD))
+  & $python -m compileall -q .
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: compileall" }
+  & $python -m unittest tests.test_gps_fact_map tests.test_gps_fact_screen tests.test_gps_exclusion tests.test_gps_track_only_days
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: GPS tests" }
+
+  Stop-Service -Name $service -Force
+  (Get-Service -Name $service).WaitForStatus('Stopped', (New-TimeSpan -Seconds 90))
+  Write-Output ("SERVICE_STOPPED=" + (Get-Service -Name $service).Status)
+  & $python tools\check_db_lock.py --db "$root\instance\transport.db"
+  $lock = $LASTEXITCODE
+  if ($lock -eq 2) { throw "STEP FAILED: another process holds the staging database (exit 2)" }
+  Write-Output ("DB_LOCK_EXIT=$lock (0 clean, 3 stale WAL -- both fine: the file is replaced)")
+
+  Set-Content -Path "$backupDir\swapped.txt" -Value 'staging database and point files replaced' -Encoding ASCII
+  $keep = Join-Path $backupDir 'staging_points_before'
+  New-Item -ItemType Directory -Force -Path $keep | Out-Null
+  foreach ($c in $copies) {
+    if ($c.Name -eq 'staging_before') { continue }
+    $target = if ($c.Name -eq 'prod_copy') { "$root\instance\transport.db" } else { "$root\instance\$($c.Name).db" }
+    if (($c.Name -ne 'prod_copy') -and (Test-Path $target)) { Move-Item $target $keep -Force }
+    foreach ($side in @("$target-wal", "$target-shm")) { if (Test-Path $side) { Remove-Item $side -Force } }
+    $file = Get-ChildItem (Join-Path $backupDir $c.Name) -Filter '*.db' | Select-Object -First 1
+    Copy-Item $file.FullName $target -Force
+    Write-Output ("PLACED " + $target)
+  }
+  foreach ($k in @('esri_api_key.txt', 'copernicus_instance_id.txt')) {
+    if (Test-Path "$prodInstance\$k") { Copy-Item "$prodInstance\$k" "$root\instance\$k" -Force; Write-Output "KEY_FILE_COPIED=$k" }
+    else { Write-Output "KEY_FILE_MISSING=$k" }
+  }
+
+  & $python migrate_agro_work_001.py
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: migrate_agro_work_001" }
+  & $python migrate_agro_work_001.py
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: migrate_agro_work_001 second run (must print 'Already applied. Nothing to do.')" }
+  $ErrorActionPreference = 'Continue'
+  & $python tools\check_migration_drift.py --db "$root\instance\transport.db" > "$backupDir\drift.log" 2>&1
+  $driftExit = $LASTEXITCODE
+  $ErrorActionPreference = 'Stop'
+  Write-Output ("DRIFT_EXIT=$driftExit (not judged here; the report is drift.log in the run folder)")
+
+  $ErrorActionPreference = 'Continue'
+  & $geoPython -m gps.daily --catch-up --db "$root\instance\transport.db" --dir "$root\instance" > "$backupDir\catchup_out.log" 2> "$backupDir\catchup_err.log"
+  $catchExit = $LASTEXITCODE
+  $ErrorActionPreference = 'Stop'
+  Get-Content "$backupDir\catchup_out.log" | Select-String -Pattern 'catch-up|category rule|NE POSCHITANO' | ForEach-Object { Write-Output ("CATCHUP: " + $_.Line) }
+  if ($catchExit -ne 0) { throw "STEP FAILED: catch-up exit $catchExit -- send $backupDir\catchup_out.log and catchup_err.log" }
+
+  Start-Service -Name $service
+  (Get-Service -Name $service).WaitForStatus('Running', (New-TimeSpan -Seconds 90))
+  Start-Sleep -Seconds 8
+  $login = Invoke-WebRequest -Uri 'http://10.103.25.14:5051/login' -UseBasicParsing -TimeoutSec 30
+  if ($login.StatusCode -ne 200) { throw "STEP FAILED: smoke /login returned $($login.StatusCode)" }
+  if ($login.Content -notmatch 'vs-login-form') { throw "STEP FAILED: smoke /login did not render the login form" }
+  Write-Output "SMOKE_LOGIN=200"
+  Write-Output ("FINAL_HEAD=" + (git rev-parse HEAD))
+  Write-Output ("SERVICE_FINAL=" + (Get-Service -Name $service).Status)
+  Write-Output "STEP=PASS"
+}
+```
+
+**Прислать:** весь вывод блока. Ключевые строки: `BEFORE_HEAD`, `POINT_FILES`,
+`SIZES_MB`, четыре-пять строк `COPY ... integrity=ok`, `AFTER_HEAD`,
+`DB_LOCK_EXIT`, `DRIFT_EXIT`, строки `CATCHUP:` (среди них `category rule --
+N day(s) now track only`), `SMOKE_LOGIN=200`, `STEP=PASS`.
+
+**Если блок остановился.** До строки `SERVICE_STOPPED` база и файлы площадки
+не менялись (после `AFTER_HEAD` переключена только ревизия кода); после неё
+служба остаётся остановленной намеренно. В обоих случаях — прислать вывод и
+вернуть площадку блоком «Вернуть площадку»; выкладку можно повторить только
+после него.
+
+### Проверить экран (владелец, браузер)
+
+1. `http://10.103.25.14:5051` — войти своей обычной (боевой) учётной
+   записью: база площадки — копия боевой.
+2. «Факт по технике» за **вчерашний** день, в списке — полевой трактор с
+   гектарами. Ожидается: карта с треком, номерами участков (те же, что в
+   таблице) и контуром поля; справа вверху переключатель слоёв — «Спутник
+   (чёткий, Esri)» (открыт), «Свежий снимок (Sentinel-2, 10 м)», «Карта»;
+   под картой строка «Свежий снимок Sentinel-2 — от ДД.ММ.ГГГГ…». Включить
+   свежий снимок — появляется 10-метровый снимок той же местности.
+3. В списке — спецтехника, например Isuzu 260 JAA. Ожидается: «Спецтехника
+   — гектары не считаются», пробег и время в движении есть, участков нет,
+   трек на карте есть.
+4. В выпадающем списке машины названы вместе с госномером.
+
+**Прислать:** по каждому пункту — да или нет; строку под картой из пункта 2
+целиком; два снимка экрана (пункты 2 и 3).
+
+### Вернуть площадку (после проверки или после остановки блока)
+
+Возвращает то, что заменил незакрытый прогон в
+`D:\transport-report-backups\staging\gps_a1a2`: базу площадки и её файлы
+точек (если прогон дошёл до замены — метка `swapped.txt`) и ревизию кода.
+Прогон помечается `returned.txt`; пока метки нет, блок выкладки второй раз
+не запустится — иначе его «база до выкладки» была бы уже копией боевой.
+Файлы ключей подложек остаются.
+
+```powershell
+& {
+  $ErrorActionPreference = 'Stop'
+  $root    = 'C:\transport-report-staging'
+  $service = 'TransportReportStaging'
+  $runRoot = 'D:\transport-report-backups\staging\gps_a1a2'
+  $open = @(Get-ChildItem $runRoot -Directory -ErrorAction SilentlyContinue | Where-Object { -not (Test-Path (Join-Path $_.FullName 'returned.txt')) } | Sort-Object Name)
+  if ($open.Count -eq 0) { throw "STEP FAILED: no run to return under $runRoot" }
+  if ($open.Count -gt 1) { throw "STEP FAILED: $($open.Count) runs are open ($(($open | ForEach-Object { $_.Name }) -join ', ')) -- send this line" }
+  $run = $open[0]
+  Write-Output ("RUN=" + $run.Name)
+  if ((Get-Service -Name $service).Status -ne 'Stopped') {
+    Stop-Service -Name $service -Force
+    (Get-Service -Name $service).WaitForStatus('Stopped', (New-TimeSpan -Seconds 90))
+  }
+  Set-Location $root
+  if (Test-Path (Join-Path $run.FullName 'swapped.txt')) {
+    $backup = Get-ChildItem (Join-Path $run.FullName 'staging_before') -Filter '*.db' | Select-Object -First 1
+    if (-not $backup) { throw "STEP FAILED: the run replaced the database but has no staging backup -- send this line" }
+    foreach ($side in @("$root\instance\transport.db-wal", "$root\instance\transport.db-shm")) { if (Test-Path $side) { Remove-Item $side -Force } }
+    Copy-Item $backup.FullName "$root\instance\transport.db" -Force
+    Write-Output ("DATABASE_RETURNED=" + $backup.Name)
+    foreach ($d in @(Get-ChildItem $run.FullName -Directory | Where-Object { $_.Name -like 'gps_points_*' })) {
+      $target = "$root\instance\$($d.Name).db"
+      foreach ($f in @($target, "$target-wal", "$target-shm")) { if (Test-Path $f) { Remove-Item $f -Force } }
+      Write-Output ("REMOVED " + $target)
+    }
+    $kept = Join-Path $run.FullName 'staging_points_before'
+    if (Test-Path $kept) { Get-ChildItem $kept -Filter '*.db' | ForEach-Object { Move-Item $_.FullName "$root\instance" -Force; Write-Output ("RESTORED " + $_.Name) } }
+  } else {
+    Write-Output "DATABASE_UNTOUCHED (the run stopped before the swap)"
+  }
+  $headFile = Join-Path $run.FullName 'before_head.txt'
+  if (Test-Path $headFile) {
+    $before = (Get-Content $headFile -TotalCount 1).Trim()
+    git checkout --detach $before
+    if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: git checkout $before" }
+  }
+  Start-Service -Name $service
+  (Get-Service -Name $service).WaitForStatus('Running', (New-TimeSpan -Seconds 90))
+  Set-Content -Path (Join-Path $run.FullName 'returned.txt') -Value ((Get-Date -Format s) + ' ' + (git rev-parse HEAD)) -Encoding ASCII
+  Write-Output ("RESTORED_HEAD=" + (git rev-parse HEAD))
+  Write-Output "STEP=PASS"
+}
+```
+
+**Прислать:** вывод блока; ключевые строки `RUN=`, `RESTORED_HEAD` (равна
+`BEFORE_HEAD` выкладки), `STEP=PASS`. Копии в прогоне на `D:` остаются —
+удалить их можно вручную, когда проверка закрыта.
