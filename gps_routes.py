@@ -13,6 +13,12 @@
 посчитанного экран не правит -- пересчёт суток всё равно заменит эти строки,
 и правка молча исчезла бы.
 
+С A2 (карта) экран ещё ЧИТАЕТ трек одной машины за одни сутки из помесячного
+файла точек (`instance/gps_points_YYYYMM.db`) -- только `mode=ro`, запись
+отвергает сам SQLite -- и контуры участков из `field_contours`. Решение G3 это
+не нарушает: оно запрещает класть точки В `transport.db`, а здесь одна машина
+за одни сутки читается на время запроса и никуда не копируется.
+
 [REASON]: маршруты закрыты @module_required('wialon'), а не новым кодом
 модуля. Это те же данные Wialon, что и существующий раздел /wialon, право на
 них уже роздано, а новый код модуля потребовал бы миграции прав, строки в
@@ -26,22 +32,34 @@
 """
 
 import json
+import math
+import os
+import sqlite3
 
 from collections import Counter, defaultdict
 from datetime import date as date_cls, datetime, timedelta
 
-from flask import (Blueprint, abort, flash, g, redirect, render_template,
-                   request, url_for)
+from flask import (Blueprint, abort, current_app, flash, g, redirect,
+                   render_template, request, url_for)
 from flask_login import current_user, login_required
 
+import vs_map
+from gps.exclusion import REASON_TRACK_ONLY
+# [REASON]: коллектор -- чистый stdlib (gps_collector/requirements.txt пуст
+# намеренно), поэтому служба Flask берёт у него путь к файлам точек и их
+# местные сутки, а не заводит вторую копию. Стрелка обратно не идёт никогда.
+from gps_collector import storage as point_storage
+from gps_collector.config import TZ as LOCAL_TZ, points_dir
 from models import (
     db,
     CAT_PASSENGER,
     CAT_YUK_TRANSPORT,
     Equipment,
+    FieldContour,
     GPS_DECISION_DISPUTED,
     GPS_DECISIONS,
     GPS_LABEL_PASSAGE,
+    GPS_LABEL_WORK,
     GPS_OPERATOR_LABELS,
     GpsDailyAggregate,
     GpsSyncLog,
@@ -73,6 +91,11 @@ REASON_LABELS = {
     # публикуется; gps.daily --catch-up досчитает сутки, когда точки доедут.
     'sbor_nepolnyy': ('Сбор точек за эти сутки не завершён — площадь не публикуется',
                       'Бу кун учун нуқталар йиғиш тугалланмаган — майдон эълон қилинмайди'),
+    # [REASON]: A1, решение владельца 28.09.2026 -- по спецтехнике след есть,
+    # гектаров нет. Слово пишет gps/daily.py, берётся из gps/exclusion.py:
+    # импорт стоит на stdlib-модуль, а не на расчёт с numpy.
+    REASON_TRACK_ONLY: ('Спецтехника — гектары не считаются',
+                        'Махсус техника — гектар ҳисобланмайди'),
 }
 
 
@@ -91,17 +114,51 @@ def _machine_names(wialon_ids):
     отсутствовать. Тогда показывается сам wialon_id: подставить сюда имя по
     похожести номера нельзя -- шесть номеров указывают на несколько объектов,
     и у одной машины их три.
+
+    [REASON]: имя машины -- это `Equipment.name` ВМЕСТЕ с госномером. Одно
+    `name` -- это модель («МТЗ-80.1»), и владелец 28.09 увидел в списке дюжину
+    одинаковых строк, среди которых свою машину не найти. Формат «модель —
+    номер» тот же, что в выборе техники наряда и отчёта по запчастям. Строка
+    сопоставления без машины показывает имя объекта в Wialon -- в нём номер
+    обычно уже есть.
+
+    Несколько строк на один id (сменённые трекеры) дают одно имя, и всегда
+    одно и то же: сначала строка с машиной, при равенстве -- меньший номер
+    строки. Иначе имя в списке зависело бы от порядка, в котором база вернула
+    строки.
     """
     if not wialon_ids:
         return {}
     rows = (db.session.query(VialonMapping.wialon_id, VialonMapping.vialon_name,
-                             Equipment.name)
+                             Equipment.name, Equipment.plate)
             .outerjoin(Equipment, VialonMapping.equipment_id == Equipment.id)
-            .filter(VialonMapping.wialon_id.in_(list(wialon_ids))).all())
-    names = {}
-    for wialon_id, wialon_name, equipment_name in rows:
-        names[wialon_id] = equipment_name or wialon_name
+            .filter(VialonMapping.wialon_id.in_(list(wialon_ids)))
+            .order_by(VialonMapping.id).all())
+    names, from_machine = {}, set()
+    for wialon_id, wialon_name, equipment_name, plate in rows:
+        if equipment_name:
+            if wialon_id in from_machine:
+                continue
+            plate = (plate or '').strip()
+            names[wialon_id] = ('%s — %s' % (equipment_name, plate) if plate
+                                else equipment_name)
+            from_machine.add(wialon_id)
+        elif wialon_name and wialon_id not in names:
+            names[wialon_id] = wialon_name
     return names
+
+
+def _by_machine_name(aggregates, names):
+    """Строки суток в порядке имён: сначала названные, потом голые номера.
+
+    [REASON]: список машин читает человек, который ищет СВОЮ машину. В порядке
+    номеров объектов Wialon «МТЗ-80.1 — 80 248 HA» стоит между комбайном и
+    погрузчиком, а соседние номера одной модели разбросаны по всему списку.
+    """
+    return sorted(aggregates, key=lambda a: (
+        a.wialon_id not in names,
+        (names.get(a.wialon_id) or '').casefold(),
+        a.wialon_id))
 
 
 # [REASON]: слаг категории «Йўловчи ташиш техникаси» (`CAT_PASSENGER`). Взят
@@ -198,6 +255,180 @@ def _svg_shapes(sites):
                  for x, y in points]
         shapes.append({'site': site, 'points': ' '.join(pairs)})
     return shapes, width, height
+
+
+# ── Трек суток для карты (A2) ────────────────────────────────────────────────
+
+# [REASON]: те же пороги, что в gps/area.py (SPEED_MIN_KMH, MOTION_GAP_SECONDS):
+# «в движении» -- от 1 км/ч, молчание дольше 5 минут на ходу -- разрыв, а не
+# езда. Продублированы, потому что служба Flask не импортирует numpy, а
+# gps/area.py импортирует его первой строкой; совпадение закреплено тестом,
+# который читает gps/area.py как текст (tests/test_gps_fact_map.py).
+MOTION_MIN_KMH = 1.0
+MOTION_GAP_S = 300.0
+
+# [REASON]: плотный трекер пишет до 50 000 точек в сутки (FMB 140, 04.09), и
+# все они в странице -- мегабайт текста ради линии, которую на экране не
+# различить. Точки ближе 3 м к предыдущей (стоянка, дрожание) не рисуются, а
+# сверх 8 000 вершин берётся каждая k-я -- на масштабе поля это та же линия.
+TRACK_MIN_STEP_M = 3.0
+TRACK_MAX_VERTICES = 8000
+
+
+def _day_points(unit_id, day, folder=None):
+    """[(t, lon, lat, speed)] одного объекта за местные сутки. Только чтение.
+
+    [REASON]: `mode=ro` -- запрет SQLite, а не обещание кода: экран не может
+    ни дописать в файл коллектора, ни создать пустой вместо отсутствующего.
+    Нет файла, файл занят или испорчен -- трека нет, а страница открывается:
+    карта без трека лучше экрана с ошибкой вместо показателей суток.
+    """
+    folder = folder or current_app.config.get('GPS_POINTS_DIR') or points_dir()
+    path = point_storage.points_path(folder, day.strftime('%Y%m'))
+    if not os.path.exists(path):
+        return []
+    start = int(datetime(day.year, day.month, day.day,
+                         tzinfo=LOCAL_TZ).timestamp())
+    try:
+        con = sqlite3.connect('file:%s?mode=ro' % path, uri=True, timeout=5)
+    except sqlite3.Error:
+        return []
+    try:
+        return [(int(t), float(lon), float(lat), float(speed))
+                for t, lon, lat, speed in con.execute(
+                    'SELECT t, lon, lat, speed FROM points '
+                    'WHERE unit_id = ? AND t >= ? AND t < ? ORDER BY t',
+                    (int(unit_id), start, start + 86400))]
+    except sqlite3.Error:
+        return []
+    finally:
+        con.close()
+
+
+def _metres(a, b):
+    """Расстояние между (lon, lat) в метрах -- равнопромежуточное приближение.
+
+    На расстояниях в метры и десятки метров ошибка ничтожна; точнее здесь не
+    нужно: это решает, рисовать ли точку, а не сколько гектаров.
+    """
+    lat = math.radians((a[1] + b[1]) / 2.0)
+    dx = (b[0] - a[0]) * 111320.0 * math.cos(lat)
+    dy = (b[1] - a[1]) * 110540.0
+    return math.hypot(dx, dy)
+
+
+def track_segments(points, min_step_m=TRACK_MIN_STEP_M,
+                   max_vertices=TRACK_MAX_VERTICES):
+    """Трек для карты: куски [[lat, lon], ...], разрезанные по молчанию.
+
+    [REASON]: разрез -- где между двумя СОСЕДНИМИ сообщениями больше 5 минут.
+    Одна линия через разрыв нарисовала бы прямую поперёк поля, по которой
+    машина не ездила, и на разметке «работа/проезд» человек принял бы её за
+    проход.
+    """
+    segments, current, last, previous_t = [], [], None, None
+    for t, lon, lat, _speed in points:
+        if not (-180.0 <= lon <= 180.0 and -90.0 <= lat <= 90.0):
+            continue
+        if previous_t is not None and t - previous_t > MOTION_GAP_S:
+            if len(current) > 1:
+                segments.append(current)
+            current, last = [], None
+        previous_t = t
+        if last is not None and _metres(last, (lon, lat)) < min_step_m:
+            continue
+        current.append([round(lat, 5), round(lon, 5)])
+        last = (lon, lat)
+    if len(current) > 1:
+        segments.append(current)
+    total = sum(len(segment) for segment in segments)
+    if total > max_vertices:
+        step = int(math.ceil(total / float(max_vertices)))
+        segments = [segment[::step] + ([segment[-1]]
+                                       if (len(segment) - 1) % step else [])
+                    for segment in segments]
+    return segments
+
+
+def track_summary(points):
+    """Время в движении и первое/последнее движение за сутки.
+
+    [REASON]: «след» спецтехники -- это точки, километры, ВРЕМЯ и качество
+    (прочтение, подтверждённое владельцем 28.09). Время в агрегате не лежит,
+    а точки для карты уже прочитаны: сумма промежутков между соседними
+    сообщениями, где машина ехала (от 1 км/ч в начале промежутка), без
+    разрывов длиннее 5 минут -- их расчёт считает потерянным временем, а не
+    ездой. Те же определения, что у показателей качества в gps/area.py.
+    """
+    moving = 0.0
+    first = last = None
+    for (t0, _lon0, _lat0, v0), (t1, _lon1, _lat1, _v1) in zip(points,
+                                                              points[1:]):
+        if v0 >= MOTION_MIN_KMH and t1 - t0 <= MOTION_GAP_S:
+            moving += t1 - t0
+    for t, _lon, _lat, speed in points:
+        if speed >= MOTION_MIN_KMH:
+            first = t if first is None else first
+            last = t
+    return {'moving_s': moving,
+            'first_move': (datetime.fromtimestamp(first, LOCAL_TZ)
+                           if first is not None else None),
+            'last_move': (datetime.fromtimestamp(last, LOCAL_TZ)
+                          if last is not None else None)}
+
+
+def _geometry(text):
+    try:
+        geometry = json.loads(text or '')
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(geometry, dict) or geometry.get('type') not in (
+            'Polygon', 'MultiPolygon'):
+        return None
+    return geometry
+
+
+SITE_TONES = {GPS_LABEL_WORK: 'success', GPS_LABEL_PASSAGE: 'danger'}
+
+
+def map_layers(points, sites, contours, is_ru):
+    """Слои карты суток снизу вверх: контуры полей, трек, участки.
+
+    Подписи готовятся здесь, на языке интерфейса: vs-map.js вставляет их
+    текстом и сам ничего не переводит.
+    """
+    layers = []
+    group_contours = 'Контуры полей' if is_ru else 'Дала контурлари'
+    group_track = 'Трек' if is_ru else 'Трек'
+    group_sites = 'Участки' if is_ru else 'Участкалар'
+    for contour in contours:
+        geometry = _geometry(contour.geometry_geojson)
+        if geometry is not None:
+            layers.append({'kind': 'outline', 'group': group_contours,
+                           'title': contour.name, 'geojson': geometry})
+    segments = track_segments(points)
+    if segments:
+        layers.append({'kind': 'track', 'group': group_track,
+                       'title': 'Трек за сутки' if is_ru else 'Кунлик трек',
+                       'segments': segments})
+    answers = {GPS_LABEL_WORK: 'работа' if is_ru else 'иш',
+               GPS_LABEL_PASSAGE: 'проезд' if is_ru else 'ўтиш'}
+    for site in sites:
+        geometry = _geometry(site.polygon_geojson)
+        if geometry is None:
+            continue
+        parts = ['№%d' % site.site_number,
+                 '%.2f %s' % (site.area_ha or 0, 'га'),
+                 '%d %s' % (round(site.minutes or 0),
+                            'мин' if is_ru else 'дақ')]
+        if site.operator_label in answers:
+            parts.append(answers[site.operator_label])
+        layers.append({'kind': 'area', 'group': group_sites,
+                       'label': str(site.site_number),
+                       'title': ' · '.join(parts),
+                       'tone': SITE_TONES.get(site.operator_label, 'primary'),
+                       'geojson': geometry})
+    return layers
 
 
 # ── Сверка наряда: план против факта GPS ─────────────────────────────────────
@@ -537,6 +768,7 @@ def fact():
     aggregates = (aggregate_query.filter_by(work_date=day)
                   .order_by(GpsDailyAggregate.wialon_id).all())
     names = _machine_names({a.wialon_id for a in aggregates})
+    aggregates = _by_machine_name(aggregates, names)
 
     unit_id = None
     asked_unit = (request.args.get('unit') or '').strip()
@@ -551,11 +783,29 @@ def fact():
 
     aggregate = next((a for a in aggregates if a.wialon_id == unit_id), None)
     sites = []
-    if aggregate is not None:
+    # [REASON]: у спецтехники участков нет по правилу, а не по случаю. Полигоны,
+    # оставшиеся от расчёта до решения 28.09, расчёт намеренно не удаляет
+    # (gps/daily.py, write_track_only: на них могут быть ответы оператора), и
+    # показать их значило бы вернуть на экран те самые гектары, которые
+    # владелец велел не считать.
+    if aggregate is not None and aggregate.reason != REASON_TRACK_ONLY:
         sites = (GpsWorkPolygon.query
                  .filter_by(work_date=day, wialon_id=unit_id)
                  .order_by(GpsWorkPolygon.site_number).all())
     shapes, svg_width, svg_height = _svg_shapes(sites)
+
+    # ── A2: карта суток -- трек, участки, контуры их полей ──
+    is_ru = getattr(g, 'lang', 'uz') == 'ru'
+    points = _day_points(unit_id, day) if aggregate is not None else []
+    contour_ids = sorted({s.contour_id for s in sites if s.contour_id})
+    contours = (FieldContour.query.filter(FieldContour.id.in_(contour_ids))
+                .order_by(FieldContour.id).all() if contour_ids else [])
+    layers = map_layers(points, sites, contours, is_ru)
+    key_file = current_app.config.get('MAP_ESRI_KEY_FILE')
+    instance_file = current_app.config.get('MAP_COPERNICUS_INSTANCE_FILE')
+    map_data = ({'base': vs_map.base_layers(is_ru, key_file, instance_file,
+                                            day=day),
+                 'layers': layers} if layers else None)
 
     return render_template(
         'gps/fact.html',
@@ -565,6 +815,12 @@ def fact():
         reason_labels=REASON_LABELS,
         answered=sum(1 for s in sites if s.operator_label),
         total_ha=round(sum(s.area_ha or 0 for s in sites), 2),
+        map_data=map_data,
+        has_track=any(layer['kind'] == 'track' for layer in layers),
+        satellite=vs_map.satellite_configured(key_file, instance_file),
+        sharp_on=bool(vs_map.esri_key(key_file)),
+        fresh_on=bool(vs_map.copernicus_instance(instance_file)[0]),
+        summary=track_summary(points) if points else None,
     )
 
 

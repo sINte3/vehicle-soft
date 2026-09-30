@@ -294,6 +294,20 @@ class Statuses(Base):
         self.assertEqual(row['status'], inv.GONE)
         self.assertEqual(row['wialon_name'], '')
 
+    def test_a_special_row_next_to_a_field_row_is_a_contradiction(self):
+        # Строка на погрузчик и строка на трактор у одного id: расчёт считает
+        # гектары (противоречие не решается за человека), и инвентарь обязан
+        # это назвать, а не показать «полевая».
+        server = self.world()
+        loader = self.equipment('Pogruzchik', 'special')
+        tractor = self.equipment('MTZ 80', 'mtz')
+        self.mapping('Pogruzchik 373 HA', wialon_id=ORPHAN, equipment_id=loader)
+        self.mapping('MTZ 80 373 HA', wialon_id=ORPHAN, equipment_id=tractor)
+        self.run_tool(server)
+        row = self.by_id()[ORPHAN]
+        self.assertEqual(row['status'], inv.CONTRADICTION)
+        self.assertEqual(row['v_plan_fakte'], 'da')
+
     def test_the_column_agrees_with_the_shared_rule(self):
         """Пункт 2: колонка не пересказывает правило, а берёт его."""
         self.run_tool(self.world())
@@ -353,6 +367,35 @@ class Activity(Base):
         row = self.by_id()[TRACTOR]
         self.assertEqual(row['days_computed'], '0')
         self.assertEqual(float(row['km_total']), 0.0)
+
+    def test_a_special_machine_counts_its_track_days_and_no_hectares(self):
+        """A1: у спецтехники сутки со следом посчитаны, гектаров ноль.
+
+        [REASON]: полигон с 2,0 га лежит в базе нарочно -- расчёт не удаляет
+        полигоны, оставшиеся от счёта до решения 28.09. Сумма по всем полигонам
+        показала бы владельцу 2,0 га, которых нет ни на экране, ни в сверке.
+        """
+        server = self.world()
+        loader = self.equipment('Pogruzchik', 'special', '80 373 HA')
+        self.mapping('Pogruzchik 373 HA', wialon_id=ORPHAN, equipment_id=loader)
+        self.aggregate(ORPHAN, 2, reason='spetstekhnika', km=4.5, area=2.0)
+        self.run_tool(server)
+        row = self.by_id()[ORPHAN]
+        self.assertEqual(row['status'], inv.TRACK_ONLY)
+        self.assertEqual(row['v_plan_fakte'], 'da')
+        self.assertEqual(row['pochemu_net'], '')
+        self.assertEqual(row['days_computed'], '1')
+        self.assertEqual(float(row['km_total']), 4.5)
+        self.assertEqual(float(row['ha_total']), 0.0)
+
+    def test_hectares_of_a_day_with_a_reason_are_not_summed(self):
+        # sbor_nepolnyy тоже оставляет старые полигоны. Отрицательный контроль
+        # рядом: опубликованные сутки того же объекта свои гектары дают.
+        server = self.world()
+        self.aggregate(TRACTOR, 2, reason='sbor_nepolnyy', area=9.0)
+        self.aggregate(TRACTOR, 3, km=7.5, area=1.75)
+        self.run_tool(server)
+        self.assertEqual(float(self.by_id()[TRACTOR]['ha_total']), 1.75)
 
     def test_an_object_with_no_history_shows_zeroes_not_blanks(self):
         self.run_tool(self.world())
@@ -452,6 +495,16 @@ class Console(Base):
         self.assertIn('motorcycle', log)
         # и мотоцикл ПОСЧИТАН: его никто не исключал
         self.assertEqual(self.by_id()[ORPHAN]['v_plan_fakte'], 'da')
+
+    def test_the_special_category_is_marked_track_only_in_the_summary(self):
+        loader = self.equipment('Pogruzchik', 'special')
+        server = self.world()
+        self.mapping('Pogruzchik 373 HA', wialon_id=ORPHAN, equipment_id=loader)
+        code, log = self.run_tool(server)
+        self.assertEqual(code, 0, log)
+        self.assertIn('bez_ga', log)
+        self.assertIn('track only, no hectares', log)
+        log.encode('ascii')
 
 
 if __name__ == '__main__':

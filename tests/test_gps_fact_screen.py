@@ -31,7 +31,7 @@ import unittest
 from datetime import date, datetime
 
 from tests.harness import app, db, reset_db, create_admin, create_org, login, CSRF
-from models import (GpsDailyAggregate, GpsWorkPolygon, Organization, User,
+from models import (Equipment, GpsDailyAggregate, GpsWorkPolygon, Organization, User,
                     UserModulePermission, VialonMapping, ROLE_OPERATOR)
 
 import migrate_gps_daily_001 as gps_mig
@@ -200,6 +200,112 @@ class FactScreen(unittest.TestCase):
         # [REASON]: экран без входа не сделан наполовину -- он не сделан.
         # Ссылка добавлена в base_next.html (общий файл, объявлено в PR).
         self.assertIn('/gps/fact', self._get('/'))
+
+    def test_the_track_length_is_shown(self):
+        # A1: «след» -- это точки, километры, запись и качество. Километры
+        # лежали в агрегате с GPS-2, а на экран не выводились.
+        with app.app_context():
+            db.session.add(_aggregate(track_km=32.14))
+            db.session.commit()
+        html = self._get()
+        self.assertIn('Пробег по треку, км', html)
+        self.assertIn('32.1', html)
+
+    def test_a_special_machine_shows_its_track_and_no_hectares(self):
+        """A1: след без гектаров -- причина словами, участков нет.
+
+        [REASON]: полигон кладётся в базу нарочно. Расчёт не удаляет полигоны,
+        оставшиеся от счёта до решения 28.09 (на них могут быть ответы
+        оператора), и экран обязан не показать их сам -- иначе гектары, которые
+        владелец велел не считать, вернулись бы на экран через старую строку.
+        """
+        with app.app_context():
+            db.session.add(_aggregate(reason='spetstekhnika', track_km=12.34))
+            db.session.add(_site(area=0.77))
+            db.session.commit()
+        html = self._get()
+        self.assertIn('Спецтехника — гектары не считаются', html)
+        self.assertIn('поменяйте ей категорию', html)
+        self.assertIn('12.3', html)                # след на месте
+        self.assertIn('1598 / 990', html)
+        self.assertNotIn('0.77', html)             # гектаров нет
+        self.assertNotIn('<polygon', html)
+        self.assertNotIn('Участки за сутки', html)
+        self.assertNotIn('Работы за эти сутки не найдено', html)
+
+    def test_the_same_leftover_site_is_shown_on_a_field_machine(self):
+        """Отрицательный контроль к тесту выше: без причины участок виден."""
+        with app.app_context():
+            db.session.add(_aggregate())
+            db.session.add(_site(area=0.77))
+            db.session.commit()
+        html = self._get()
+        self.assertIn('0.77', html)
+        self.assertIn('Участки за сутки', html)
+
+    def test_the_special_reason_speaks_uzbek_in_the_uzbek_interface(self):
+        with app.app_context():
+            User.query.get(self.admin_id).language = 'uz'
+            db.session.add(_aggregate(reason='spetstekhnika'))
+            db.session.commit()
+        html = self._get()
+        self.assertIn('Махсус техника — гектар ҳисобланмайди', html)
+        self.assertIn('категориясини ўзгартиринг', html)
+        self.assertNotIn('Спецтехника', html)
+        self.assertNotIn('поменяйте', html)
+
+    def _machine(self, wialon_id, name, plate, vialon_name=None):
+        with app.app_context():
+            equipment = Equipment(name=name, plate=plate, category='mtz',
+                                  organization_id=self.org_id)
+            db.session.add(equipment)
+            db.session.flush()
+            db.session.add(VialonMapping(
+                vialon_name=vialon_name or 'obj %d' % wialon_id,
+                wialon_id=wialon_id, equipment_id=equipment.id, skip=False))
+            db.session.add(_aggregate(wialon_id=wialon_id))
+            db.session.commit()
+
+    def test_two_machines_of_one_model_are_told_apart_by_the_plate(self):
+        """Отзыв владельца 28.09: дюжина одинаковых «МТЗ-80.1» в списке."""
+        self._machine(5001, 'МТЗ-80.1', '80 248 HA')
+        self._machine(5002, 'МТЗ-80.1', '80 249 HA')
+        html = self._get('/gps/fact?date=2026-07-27')
+        self.assertIn('МТЗ-80.1 — 80 248 HA', html)
+        self.assertIn('МТЗ-80.1 — 80 249 HA', html)
+        # и имя объекта Wialon не подменяет машину, когда машина известна
+        self.assertNotIn('obj 5001', html)
+
+    def test_a_machine_without_a_plate_is_shown_by_its_name_alone(self):
+        self._machine(5001, 'Doosan 225', '')
+        html = self._get('/gps/fact?date=2026-07-27')
+        self.assertIn('>Doosan 225<', html)
+        self.assertNotIn('Doosan 225 —', html)
+
+    def test_the_list_of_machines_is_in_name_order(self):
+        # Номера объектов нарочно в обратном порядке имён: сортировка по id
+        # поставила бы «John Deere» раньше «Case» и голый номер между ними.
+        self._machine(5003, 'Case 3230', '80 101 HA')
+        self._machine(5002, 'John Deere 8R', '80 202 HA')
+        with app.app_context():
+            db.session.add(_aggregate(wialon_id=5000))    # без строки
+            db.session.commit()
+        html = self._get('/gps/fact?date=2026-07-27')
+        options = re.findall(r'<option value="(\d+)"', html.split('name="unit"')[1])
+        self.assertEqual(options, ['5003', '5002', '5000'])
+
+    def test_several_rows_of_one_object_give_one_stable_name(self):
+        # Сменённые трекеры: две строки на один id. Имя берётся из строки с
+        # машиной, как бы база ни вернула строки.
+        with app.app_context():
+            db.session.add(VialonMapping(vialon_name='NH 80 605 EA (Bitrek)',
+                                         wialon_id=2982, skip=False))
+            db.session.commit()
+        self._machine(2982, 'New Holland 7060', '80 605 EA',
+                      vialon_name='NH 80 605 EA (FMB 140)')
+        with app.app_context():
+            names = gps_routes._machine_names({2982})
+        self.assertEqual(names, {2982: 'New Holland 7060 — 80 605 EA'})
 
     def test_a_named_machine_can_still_be_asked_for(self):
         with app.app_context():

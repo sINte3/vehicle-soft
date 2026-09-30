@@ -30,6 +30,15 @@ and published as a fact. Now such a day gets the reason `sbor_nepolnyy`, its
 earlier polygons and the operator's answers on them stay untouched, and
 `--catch-up` recomputes it once the watermark has passed.
 
+SPECIAL MACHINERY: THE TRACK WITHOUT THE HECTARES (A1, 28.09.2026)
+A machine in a category of gps.exclusion.TRACK_ONLY_CATEGORIES -- loaders,
+excavators -- gets its day measured exactly like any other (points, km,
+interval, satellites, gaps, jumps) and the reason `spetstekhnika` instead of
+sites. Polygons an earlier computation left for that day are NOT touched, for
+the same reason as under sbor_nepolnyy: an operator may have answered on them,
+and the category is a decision a person can reverse. `--catch-up` brings the
+window in line with the category in both directions.
+
 Run (PowerShell, one command per line; needs the geo venv, see gps/README.md):
 
   cd C:\\transport-report
@@ -64,7 +73,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from gps.area import (METHOD_VERSION, SPEED_MAX_KMH, SPEED_MIN_KMH,  # noqa: E402
                       UTM_41N, repair_polygon, to_utm, track_quality,
                       work_sites)
-from gps.exclusion import excluded_units                            # noqa: E402
+from gps.exclusion import (REASON_TRACK_ONLY, excluded_units,       # noqa: E402
+                           track_only_units)
 # [REASON]: the reader takes the writer's definition of where the points are
 # and what shape they are in, instead of keeping a second copy of the path and
 # the schema. gps_collector is standard library only, so importing it here
@@ -100,6 +110,8 @@ REASON_NO_POINTS = "net_tochek"
 REASON_NO_MOTION = "net_dvizheniya"
 REASON_RARE = "redkaya_zapis"
 REASON_INCOMPLETE = "sbor_nepolnyy"
+# REASON_TRACK_ONLY ("spetstekhnika") is imported from gps.exclusion above:
+# the Flask screen needs the same word and cannot import this module.
 
 # [REASON]: how much two polygons must share before a human answer given about
 # one is carried onto the other. Half of EACH area, in both directions: a small
@@ -214,8 +226,12 @@ class DayResult:
         return self.aggregate["reason"]
 
 
-def compute_day(points, contours=None):
-    """points: [(t, lon, lat, speed, sats)] of one object, one local day."""
+def compute_day(points, contours=None, track_only=False):
+    """points: [(t, lon, lat, speed, sats)] of one object, one local day.
+
+    `track_only` -- the machine's category takes no hectares (special
+    machinery): every measurement of the track is made, no site is sought.
+    """
     aggregate = {"points_total": len(points), "points_work": 0, "track_km": 0.0,
                  "interval_median_s": None, "sats_median": None,
                  "motion_gaps": 0, "lost_seconds": 0.0, "gps_jumps": 0,
@@ -240,6 +256,15 @@ def compute_day(points, contours=None):
         "lost_seconds": round(quality.lost_seconds, 1),
         "gps_jumps": quality.gps_jumps})
 
+    if track_only:
+        # [REASON]: the category decides before the measurements do. A loader
+        # that stood all day and one that drove all day show the same reason,
+        # because neither would have had hectares -- "no motion" or "rare
+        # recording" next to special machinery would suggest that more motion
+        # or a denser tracker would have produced some. The measurements above
+        # are complete either way: they are the track the owner asked to see.
+        aggregate["reason"] = REASON_TRACK_ONLY
+        return DayResult(aggregate, [])
     if aggregate["points_work"] == 0:
         # "We looked and the machine did not move" -- a fact worth a row.
         aggregate["reason"] = REASON_NO_MOTION
@@ -408,35 +433,60 @@ def write_day(con, day, unit_id, result, computed_at=None):
                  site["alpha_used_m"], site["pass_spacing_m"],
                  site["quality_flag"], site["suggested_label"], label, decided))
 
-        aggregate = result.aggregate
-        con.execute(
-            "INSERT INTO gps_daily_aggregates (work_date, wialon_id, "
-            "points_total, points_work, track_km, interval_median_s, "
-            "sats_median, motion_gaps, lost_seconds, gps_jumps, reason, "
-            "method_version, computed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(work_date, wialon_id) DO UPDATE SET "
-            "points_total = excluded.points_total, "
-            "points_work = excluded.points_work, "
-            "track_km = excluded.track_km, "
-            "interval_median_s = excluded.interval_median_s, "
-            "sats_median = excluded.sats_median, "
-            "motion_gaps = excluded.motion_gaps, "
-            "lost_seconds = excluded.lost_seconds, "
-            "gps_jumps = excluded.gps_jumps, reason = excluded.reason, "
-            "method_version = excluded.method_version, "
-            "computed_at = excluded.computed_at",
-            (day, int(unit_id), aggregate["points_total"],
-             aggregate["points_work"], aggregate["track_km"],
-             aggregate["interval_median_s"], aggregate["sats_median"],
-             aggregate["motion_gaps"], aggregate["lost_seconds"],
-             aggregate["gps_jumps"], aggregate["reason"],
-             aggregate["method_version"], computed_at))
+        _upsert_aggregate(con, day, unit_id, result.aggregate, computed_at)
         con.commit()
     except Exception:
         con.rollback()
         raise
     return len(carried), len(existing) - len(carried)
+
+
+def _upsert_aggregate(con, day, unit_id, aggregate, computed_at):
+    """The day's aggregate row, inserted or replaced. No transaction of its own."""
+    con.execute(
+        "INSERT INTO gps_daily_aggregates (work_date, wialon_id, "
+        "points_total, points_work, track_km, interval_median_s, "
+        "sats_median, motion_gaps, lost_seconds, gps_jumps, reason, "
+        "method_version, computed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(work_date, wialon_id) DO UPDATE SET "
+        "points_total = excluded.points_total, "
+        "points_work = excluded.points_work, "
+        "track_km = excluded.track_km, "
+        "interval_median_s = excluded.interval_median_s, "
+        "sats_median = excluded.sats_median, "
+        "motion_gaps = excluded.motion_gaps, "
+        "lost_seconds = excluded.lost_seconds, "
+        "gps_jumps = excluded.gps_jumps, reason = excluded.reason, "
+        "method_version = excluded.method_version, "
+        "computed_at = excluded.computed_at",
+        (day, int(unit_id), aggregate["points_total"],
+         aggregate["points_work"], aggregate["track_km"],
+         aggregate["interval_median_s"], aggregate["sats_median"],
+         aggregate["motion_gaps"], aggregate["lost_seconds"],
+         aggregate["gps_jumps"], aggregate["reason"],
+         aggregate["method_version"], computed_at))
+
+
+def write_track_only(con, day, unit_id, aggregate, computed_at=None):
+    """The aggregate of a track-only day; the day's polygons are NOT touched.
+
+    [REASON]: write_day() with zero sites would delete the polygons an earlier
+    computation left and report every operator answer on them as lost. For
+    special machinery that loss buys nothing: the screen does not show those
+    polygons under this reason, and the day they are wanted again -- the owner
+    moves the machine to a field category -- write_day() carries the answers
+    onto the new sites by overlap, as any recomputation does. The same choice
+    mark_incomplete() makes for sbor_nepolnyy, for the same reason.
+    """
+    computed_at = computed_at or datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
+    con.execute("BEGIN")
+    try:
+        _upsert_aggregate(con, day, unit_id, aggregate, computed_at)
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
 
 
 # --- completeness of the collection (GPS-11) ---------------------------------
@@ -505,8 +555,13 @@ def mark_incomplete(con, day, unit_id, points_total, computed_at=None):
         raise
 
 
-def run_day(day, unit_id, folder=None, db_path=None, contours=None, log=print):
-    """Compute and store one object-day. Returns the DayResult."""
+def run_day(day, unit_id, folder=None, db_path=None, contours=None, log=print,
+            track_only=None):
+    """Compute and store one object-day. Returns the DayResult.
+
+    `track_only` -- whether the object's category takes no hectares; None
+    means "look it up", which the loops avoid by asking once per run.
+    """
     folder = folder or points_dir()
     db_path = db_path or DB_PATH
     points = storage.read_day(folder, unit_id, day)
@@ -517,6 +572,12 @@ def run_day(day, unit_id, folder=None, db_path=None, contours=None, log=print):
             mark_incomplete(con, day, unit_id, len(points))
             return DayResult(_reason_only_aggregate(len(points),
                                                     REASON_INCOMPLETE), [])
+        if track_only is None:
+            track_only = int(unit_id) in track_only_units(con)
+        if track_only:
+            result = compute_day(points, track_only=True)
+            write_track_only(con, day, unit_id, result.aggregate)
+            return result
         if contours is None:
             contours = load_contours(con)
         result = compute_day(points, contours=contours or None)
@@ -588,7 +649,55 @@ def days_without_a_row(con, folder, days):
 EXIT_SOME_DAYS_FAILED = 5
 
 
-def _guarded_day(day, unit_id, folder, db_path, contours, log, failures):
+def area_rule_drift(con, folder, days, track_only):
+    """Days of the window whose stored row disagrees with the category rule.
+
+    Returns (drift, no_points): (day, unit_id) to recompute, and how many such
+    days were left alone because their points are no longer on disk.
+
+    [REASON]: the category of a machine is the switch between "track only" and
+    "track and hectares", and a person flips it on the equipment card -- after
+    the days were computed. Without this pass a loader moved to special
+    machinery would keep its old hectares on screen for as long as the rows
+    live, and a machine moved out of it would never get its hectares at all:
+    the nightly job computes only yesterday. Both directions are the same
+    disagreement and are mended the same way.
+
+    Left alone: sbor_nepolnyy (the pending pass owns those days), net_tochek
+    (a day without points computes to the same row under either rule), the
+    excluded objects (the screen hides them, nothing is recomputed behind the
+    owner's back) -- and any day whose points are gone. Recomputing a day from
+    an empty file would overwrite a measured track with net_tochek; the points
+    are deleted by retention after 90 days, and a --window-days wider than
+    that must not turn history into "no points".
+    """
+    if not days:
+        return [], 0
+    excluded = excluded_units(con)
+    rows = con.execute(
+        "SELECT work_date, wialon_id, reason FROM gps_daily_aggregates "
+        "WHERE work_date >= ? AND work_date <= ? "
+        "AND (reason IS NULL OR reason NOT IN (?, ?)) "
+        "ORDER BY work_date, wialon_id",
+        (days[0], days[-1], REASON_INCOMPLETE, REASON_NO_POINTS)).fetchall()
+    drift, no_points, with_points = [], 0, {}
+    for day, unit_id, reason in rows:
+        unit_id = int(unit_id)
+        if unit_id in excluded:
+            continue
+        if (unit_id in track_only) == (reason == REASON_TRACK_ONLY):
+            continue
+        if day not in with_points:
+            with_points[day] = set(storage.units_with_points(folder, day))
+        if unit_id not in with_points[day]:
+            no_points += 1
+            continue
+        drift.append((day, unit_id))
+    return drift, no_points
+
+
+def _guarded_day(day, unit_id, folder, db_path, contours, log, failures,
+                 track_only=None):
     """run_day, но сбой ОДНИХ суток не уносит весь прогон. None при сбое.
 
     [REASON]: дважды за два дня одна кривая строка убивала прогон по 400+
@@ -605,7 +714,7 @@ def _guarded_day(day, unit_id, folder, db_path, contours, log, failures):
     """
     try:
         return run_day(day, unit_id, folder=folder, db_path=db_path,
-                       contours=contours, log=log)
+                       contours=contours, log=log, track_only=track_only)
     except Exception as problem:                                   # noqa: BLE001
         failures.append((day, unit_id, type(problem).__name__,
                          ascii_only(str(problem))[:160]))
@@ -634,6 +743,9 @@ def catch_up(folder, db_path, log=print, window=CATCH_UP_WINDOW_DAYS,
     that took several runs to fetch is published the night it completes, not
     never. Days whose watermark still stands short are left exactly as they
     are (or marked, if they had no row) and counted.
+
+    A third pass brings the window in line with the category rule (special
+    machinery: track, no hectares) -- see area_rule_drift().
     """
     until = until or (datetime.now(TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
     days = window_days(until, window)
@@ -641,11 +753,17 @@ def catch_up(folder, db_path, log=print, window=CATCH_UP_WINDOW_DAYS,
     try:
         pending = pending_days(con)
         missing = days_without_a_row(con, folder, days)
-        contours = load_contours(con, log=log) if (pending or missing) else {}
+        track_only = track_only_units(con)
+        drift, drift_no_points = area_rule_drift(con, folder, days, track_only)
+        contours = (load_contours(con, log=log)
+                    if (pending or missing or drift) else {})
     finally:
         con.close()
-    if not pending and not missing:
+    if not pending and not missing and not drift:
         log("catch-up: nothing is waiting for the collector")
+        if drift_no_points:
+            log("catch-up: category rule not applied to %d day(s) -- their "
+                "points are no longer on disk" % drift_no_points)
         return 0
     failures = []
     recomputed = waiting = 0
@@ -655,7 +773,7 @@ def catch_up(folder, db_path, log=print, window=CATCH_UP_WINDOW_DAYS,
             waiting += 1
             continue
         result = _guarded_day(day, unit_id, folder, db_path, contours, log,
-                              failures)
+                              failures, track_only=unit_id in track_only)
         if result is None:
             continue
         recomputed += 1
@@ -671,7 +789,7 @@ def catch_up(folder, db_path, log=print, window=CATCH_UP_WINDOW_DAYS,
     filled = marked = 0
     for day, unit_id in missing:
         result = _guarded_day(day, unit_id, folder, db_path, contours, log,
-                              failures)
+                              failures, track_only=unit_id in track_only)
         if result is None:
             continue
         if result.reason == REASON_INCOMPLETE:
@@ -683,6 +801,26 @@ def catch_up(folder, db_path, log=print, window=CATCH_UP_WINDOW_DAYS,
     log("catch-up window %s..%s: days without a row: %d -- computed %d, "
         "marked %s %d" % (days[0], days[-1], len(missing), filled,
                           REASON_INCOMPLETE, marked))
+
+    to_track = to_area = 0
+    for day, unit_id in drift:
+        result = _guarded_day(day, unit_id, folder, db_path, contours, log,
+                              failures, track_only=unit_id in track_only)
+        if result is None:
+            continue
+        if unit_id in track_only:
+            to_track += 1
+        else:
+            to_area += 1
+        log("  %s %-8s %s" % (day, unit_id, result.reason or
+                              "%d site(s), %.2f ha" % (
+                                  len(result.sites),
+                                  sum(s["area_ha"] for s in result.sites))))
+    if drift or drift_no_points:
+        log("catch-up window %s..%s: category rule -- %d day(s) now track "
+            "only (%s), %d day(s) back to hectares, %d left alone: points no "
+            "longer on disk" % (days[0], days[-1], to_track, REASON_TRACK_ONLY,
+                                to_area, drift_no_points))
     return _report_failures(failures, log)
 
 
@@ -757,6 +895,7 @@ def main(argv=None):
     try:
         contours = load_contours(con, log=print)
         excluded = excluded_units(con)
+        track_only = track_only_units(con)
     finally:
         con.close()
     # [REASON]: an explicit --unit is a request from a person and is honoured
@@ -779,15 +918,18 @@ def main(argv=None):
         print("no objects left for %s -- every one is excluded (%s)"
               % (day, reasons))
         return 0
-    print("%s: %d object(s), %d contour(s) in the directory%s"
+    tracks_only = sum(1 for unit_id in units if unit_id in track_only)
+    print("%s: %d object(s), %d contour(s) in the directory%s%s"
           % (day, len(units), len(contours),
-             ", left out -- %s" % reasons if reasons else ""))
+             ", left out -- %s" % reasons if reasons else "",
+             ", track only (%s): %d" % (REASON_TRACK_ONLY, tracks_only)
+             if tracks_only else ""))
 
     published = refused = incomplete = sites_total = 0
     failures = []
     for unit_id in units:
         result = _guarded_day(day, unit_id, folder, db_path, contours, print,
-                              failures)
+                              failures, track_only=unit_id in track_only)
         if result is None:
             continue
         if result.reason:

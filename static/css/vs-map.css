@@ -1,0 +1,100 @@
+/* vs-map.css -- stili obshchey karty (static/js/vs-map.js).
+ *
+ * Tolko tokeny dizayn-sistemy: cveta zadayutsya klassami, a ne atributami
+ * Leaflet. [REASON]: Leaflet stavit SVG-atributy stroke/fill so svoim sinim
+ * po umolchaniyu; pravilo stilya ih perekryvaet, a tokeny ostayutsya
+ * edinstvennym mestom, gde zhivut cveta programmy.
+ *
+ * Otdelnyy fayl, a ne dopisannyy design-system.css: tot -- obshchiy fayl
+ * proekta, i pravka v nyom vyhodit za granicy treka. Etot podklyuchayut
+ * tolko stranicy s kartoy.
+ */
+
+.vs-map {
+  position: relative;
+}
+
+.vs-map-canvas {
+  height: 460px;
+  border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r);
+  overflow: hidden;
+  background: var(--vs-surface-2);
+}
+
+@media (max-width: 768px) {
+  .vs-map-canvas {
+    height: 320px;
+  }
+}
+
+.vs-map-fallback[hidden] {
+  display: none;
+}
+
+/* Trek: odna liniya, bez zalivki. */
+.vs-map-track {
+  stroke: var(--vs-purple);
+  stroke-width: 2.5px;
+  stroke-opacity: 0.9;
+  fill: none;
+}
+
+/* Kontur polya iz spravochnika: punktir, bez zalivki -- pod uchastkami. */
+.vs-map-outline {
+  stroke: var(--vs-warning);
+  stroke-width: 2px;
+  stroke-dasharray: 6 4;
+  fill: none;
+}
+
+/* Uchastki: cvet -- otvet operatora. Bez otveta -- primary. */
+.vs-map-area {
+  stroke-width: 2px;
+  fill-opacity: 0.35;
+}
+.vs-map-area.is-primary { stroke: var(--vs-primary); fill: var(--vs-primary); }
+.vs-map-area.is-success { stroke: var(--vs-success); fill: var(--vs-success); }
+.vs-map-area.is-danger  { stroke: var(--vs-danger);  fill: var(--vs-danger); }
+
+/* Nomer uchastka na karte. */
+.leaflet-tooltip.vs-map-label {
+  background: var(--vs-surface);
+  border: 1px solid var(--vs-border-2);
+  border-radius: var(--vs-r-pill);
+  box-shadow: var(--vs-shadow-sm);
+  color: var(--vs-text);
+  font: 600 var(--vs-fs-sm) var(--vs-font);
+  padding: 1px 7px;
+}
+.leaflet-tooltip.vs-map-label::before {
+  display: none;
+}
+
+/* Legenda pod kartoy. */
+.vs-map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 8px;
+  color: var(--vs-text-muted);
+  font-size: var(--vs-fs-sm);
+}
+.vs-map-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.vs-map-swatch {
+  display: inline-block;
+  width: 18px;
+  height: 10px;
+  border-radius: 2px;
+  border: 2px solid var(--vs-primary);
+  background: transparent;
+}
+.vs-map-swatch.is-track   { height: 0; border-width: 2px 0 0; border-color: var(--vs-purple); }
+.vs-map-swatch.is-outline { border-style: dashed; border-color: var(--vs-warning); }
+.vs-map-swatch.is-primary { border-color: var(--vs-primary); background: var(--vs-primary-soft); }
+.vs-map-swatch.is-success { border-color: var(--vs-success); background: var(--vs-success-bg); }
+.vs-map-swatch.is-danger  { border-color: var(--vs-danger);  background: var(--vs-danger-bg); }

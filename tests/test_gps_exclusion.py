@@ -53,7 +53,9 @@ from models import (CAT_MOTORCYCLE, CAT_MTZ, CAT_PASSENGER, CAT_SPECIAL,
 
 import gps_routes                                                   # noqa: E402
 from gps.exclusion import (EXCLUDED_NON_FIELD, EXCLUDED_NOT_OURS,   # noqa: E402
-                           NON_FIELD_CATEGORIES, excluded_units)
+                           NON_FIELD_CATEGORIES, REASON_TRACK_ONLY,
+                           TRACK_ONLY_CATEGORIES, excluded_units,
+                           track_only_units)
 
 DDL = (
     'CREATE TABLE vialon_mappings (id INTEGER PRIMARY KEY AUTOINCREMENT, '
@@ -174,6 +176,85 @@ class Rule(unittest.TestCase):
                      skip=1)
         self.assertEqual(excluded_units(self.con),
                          {6001: EXCLUDED_NOT_OURS})
+
+
+class TrackOnly(Rule):
+    """A1: спецтехника -- след без гектаров. То же правило явного решения.
+
+    Наследует базу Rule; тесты Rule при этом прогоняются второй раз -- так же,
+    как в gps/tests/test_daily.py, и это дешевле второй копии фикстуры.
+    """
+
+    def test_a_special_machine_is_track_only_and_not_excluded(self):
+        loader = self.equipment('Pogruzchik', CAT_SPECIAL)
+        row = self.mapping('Pogruzchik 373 HA', wialon_id=4001,
+                           equipment_id=loader)
+        self.assertEqual(track_only_units(self.con), {4001})
+        # «без гектаров» -- не «исключён»: объект считается, моточасы целы
+        self.assertEqual(excluded_units(self.con), {})
+        skip, equipment_id = self.con.execute(
+            'SELECT skip, equipment_id FROM vialon_mappings WHERE id = ?',
+            (row,)).fetchone()
+        self.assertEqual((skip, equipment_id), (0, loader))
+
+    def test_an_empty_database_and_a_bare_one_give_nothing(self):
+        self.assertEqual(track_only_units(self.con), set())
+        bare = sqlite3.connect(':memory:')
+        try:
+            self.assertEqual(track_only_units(bare), set())
+        finally:
+            bare.close()
+
+    def test_a_tractor_and_a_row_without_a_machine_are_not_track_only(self):
+        tractor = self.equipment('MTZ 892', CAT_MTZ)
+        self.mapping('MTZ 292 HA', wialon_id=387, equipment_id=tractor)
+        self.mapping('Neizvestnyy obekt', wialon_id=7001)
+        self.assertEqual(track_only_units(self.con), set())
+
+    def test_a_special_row_next_to_a_field_row_keeps_the_hectares(self):
+        """Противоречие не решается за человека: гектары остаются."""
+        loader = self.equipment('Pogruzchik', CAT_SPECIAL)
+        tractor = self.equipment('MTZ 892', CAT_MTZ)
+        self.mapping('Staryy treker', wialon_id=4001, equipment_id=loader)
+        self.mapping('Novyy treker', wialon_id=4001, equipment_id=tractor)
+        self.assertEqual(track_only_units(self.con), set())
+
+    def test_a_row_without_a_machine_does_not_undo_the_category(self):
+        # Строка без машины о категории не говорит ничего: второй трекер той же
+        # машины без привязки не должен возвращать погрузчику гектары.
+        loader = self.equipment('Pogruzchik', CAT_SPECIAL)
+        self.mapping('Pogruzchik 373 HA', wialon_id=4001, equipment_id=loader)
+        self.mapping('Pogruzchik bez privyazki', wialon_id=4001)
+        self.assertEqual(track_only_units(self.con), {4001})
+
+
+class TrackOnlySlug(unittest.TestCase):
+    """Пункт 4 для спецтехники: дубль слага закреплён против models.py.
+
+    [REASON]: отдельный класс, а не продолжение CategorySlug ниже: второе
+    определение класса с тем же именем молча заслонило бы первое, и его тесты
+    перестали бы запускаться без единой ошибки.
+    """
+
+    def test_the_track_only_slug_is_the_one_models_uses(self):
+        self.assertEqual(TRACK_ONLY_CATEGORIES, frozenset({CAT_SPECIAL}))
+        self.assertTrue(TRACK_ONLY_CATEGORIES.issubset(set(CATEGORIES)))
+
+    def test_track_only_and_excluded_never_share_a_category(self):
+        # Категория в обоих множествах дала бы объект, который одновременно
+        # исключён и считается со следом, -- и какой ответ победит, решал бы
+        # порядок проверок, а не владелец.
+        self.assertEqual(TRACK_ONLY_CATEGORIES & NON_FIELD_CATEGORIES,
+                         frozenset())
+
+    def test_the_screen_knows_the_reason_word(self):
+        # Слово пишет расчёт, подпись к нему -- экран. Без подписи экран
+        # показал бы человеку «spetstekhnika».
+        self.assertEqual(REASON_TRACK_ONLY, 'spetstekhnika')
+        self.assertIn(REASON_TRACK_ONLY, gps_routes.REASON_LABELS)
+        ru, uz = gps_routes.REASON_LABELS[REASON_TRACK_ONLY]
+        self.assertIn('Спецтехника', ru)
+        self.assertIn('Махсус техника', uz)
 
 
 class CategorySlug(unittest.TestCase):
