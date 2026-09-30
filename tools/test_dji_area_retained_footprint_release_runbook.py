@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Проверка блоков docs/DJI_AREA_RETAINED_FOOTPRINT_RELEASE_RUNBOOK.md.
 
-[REASON]: это первые блоки проекта, которые останавливают службы PRODUCTION и
-пишут в его базу. Свойства ниже ломаются молча -- ни `py_compile`, ни глаз при
-чтении диффа их не ловят:
+[REASON]: это первые блоки проекта, которые останавливают службы PRODUCTION,
+пишут в его базу и двигают его код. Свойства ниже ломаются молча -- ни
+`py_compile`, ни глаз при чтении диффа их не ловят:
 
   * блок вставляется вербатим: `& { ... }`, только ASCII, плейсхолдеров и `&&`
     нет, python с пробелом в пути зовётся через `&`, каждый `throw` стоит за
@@ -12,19 +12,22 @@
   * хост, каталог, база, службы и порт -- ровно production, и площадка не
     названа нигде: блок, перепутавший окружение, должен остановиться, а не
     работать «почти правильно»;
-  * пин (тег и отпечаток) тот же, что в остальных ранбуках, отпечаток равен
-    настоящему, и ревизия доказана до первой остановки службы;
-  * R1 ничего не пишет и доказывает это хешем; PRE-APPLY идёт по НОВОМУ
-    оракулу, исторический оракул блоками не читается;
-  * R2 применяет ровно `expected_rewrites` оракула (`--flight-id`, номера из
-    файла, а не из текста блока) и только после повторного PRE-APPLY; затем
-    второй прогон, POST-APPLY с `--apply-summary`, сторож RAW; службы
-    поднимаются в `finally`;
-  * R3 применяет только утверждённый список -- тот же, что в оракуле, -- и
-    только если свежий оценщик называет ровно его; пересчёта периода целиком
-    в нём нет;
+  * пин модели (тег rc1 и отпечаток) тот же, что в остальных ранбуках,
+    отпечаток равен настоящему, и ревизия доказана до первой остановки
+    службы; R1 и R2 исполняют ровно тег ВЫПУСКА, и он содержит тег модели;
+  * R1 и R2 пишут только через `tools/dji_area_retained_release_closeout.py`
+    (он сам не пишет без проверенной копии), R1 никогда не применяет переход;
+    исторический оракул блоками не читается;
+  * R2 двигает код production только `git merge --ff-only` ровно на коммит
+    тега выпуска: без pull, reset, clean и checkout, прежний HEAD -- предок,
+    дерево чистое, миграций в дельте нет, ни один неотслеживаемый файл не
+    пропал; службы поднимаются в `finally`;
+  * R3 исполняет свой тег (DJI-AREA-R3-HISTORICAL-CLOSEOUT-001), пишет только
+    через подкоманду `r3` и номеров не несёт: утверждённый список -- в
+    оракуле, сверка по когортам и применение -- в инструменте; код production
+    не двигает;
   * числа и коды возврата в тексте равны оракулу и константам инструментов;
-    названные файлы и флаги существуют.
+    названные файлы, подкоманды и флаги существуют.
 
 Stdlib. Запуск:  python tools\\test_dji_area_retained_footprint_release_runbook.py
 """
@@ -46,6 +49,7 @@ from tools import dji_area_footprint_calibration as evaluator  # noqa: E402
 from tools import dji_area_holdout as holdout  # noqa: E402
 from tools import dji_area_raw_guard as raw_guard  # noqa: E402
 from tools import dji_area_recalc as recalc  # noqa: E402
+from tools import dji_area_retained_release_closeout as closeout  # noqa: E402
 
 RUNBOOK = os.path.join(REPO_ROOT, 'docs',
                        'DJI_AREA_RETAINED_FOOTPRINT_RELEASE_RUNBOOK.md')
@@ -55,6 +59,11 @@ ORACLE = os.path.join(REPO_ROOT, 'docs',
                       'DJI_AREA_SEPTEMBER_2026_RETAINED_FOOTPRINT_ORACLE.json')
 PY_PATH = r'C:\Program Files\Python314\python.exe'
 SERVICES = "$services = @('TransportReport', 'TransportBot', 'TransportBot003')"
+CLOSEOUT = 'tools\\dji_area_retained_release_closeout.py'
+RELEASE_TAG = 'dji-area-retained-release-closeout-002'
+R3_TAG = 'dji-area-r3-historical-closeout-001'
+# День оценки production, по которой владелец утвердил список R3.
+APPROVAL_DAY = '2026-09-28'
 
 
 def read(path=RUNBOOK):
@@ -105,6 +114,16 @@ def assert_order(case, block, order):
 def parser_flags(parser):
     return set(opt for action in parser._actions
                for opt in action.option_strings)
+
+
+def subcommand_flags(parser):
+    """{подкоманда: флаги} парсера с подкомандами."""
+    out = {}
+    for action in parser._actions:
+        for name, sub in (getattr(action, 'choices', None) or {}).items():
+            if hasattr(sub, '_actions'):
+                out[name] = parser_flags(sub)
+    return out
 
 
 class EveryBlock(unittest.TestCase):
@@ -194,8 +213,19 @@ class EveryBlock(unittest.TestCase):
                             pos(block, '} finally {'))
             self.assertIn('START THEM BY HAND', block)
             self.assertIn('if ($lock -eq 2) { throw', block)
-            self.assertLess(pos(block, 'Copy-Item -LiteralPath $db'),
-                            pos(block, 'tools\\dji_area_recalc.py'))
+
+    def test_nothing_is_written_without_a_copy_of_the_database(self):
+        # [REASON]: R1 и R2 пишут только через инструмент закрытия, и копию
+        # делает он сам (backup_transport_db.py + integrity_check + сверка с
+        # живой базой, иначе ни одной записи -- это держит его самотест).
+        # Блоку остаётся передать каталог копий и не писать мимо инструмента.
+        for block in blocks():
+            if CLOSEOUT in block:
+                self.assertIn('--backup-dir $backup', block)
+                self.assertNotIn('tools\\dji_area_recalc.py', block)
+            else:
+                self.assertLess(pos(block, 'Copy-Item -LiteralPath $db'),
+                                pos(block, 'tools\\dji_area_recalc.py'))
 
     def test_the_historical_oracle_is_never_read(self):
         for block in blocks():
@@ -238,13 +268,27 @@ class EveryBlock(unittest.TestCase):
             finally:
                 sys.stdout = saved
             known[name] = set(re.findall(r'(--[a-z][a-z-]+)', out.getvalue()))
+        commands = subcommand_flags(closeout.build_parser())
+        seen = 0
         for block in blocks():
             for line in block.splitlines():
                 match = re.search(r'tools\\(\w+\.py)(.*)$', line)
-                if not match or known.get(match.group(1)) is None:
+                if not match:
                     continue
-                for flag in re.findall(r'(--[a-z][a-z-]+)', match.group(2)):
+                flags = re.findall(r'(--[a-z][a-z-]+)', match.group(2))
+                if match.group(1) == 'dji_area_retained_release_closeout.py':
+                    # Подкоманда -- первое слово после имени файла.
+                    command = match.group(2).split()[0]
+                    self.assertIn(command, commands, line)
+                    for flag in flags:
+                        self.assertIn(flag, commands[command], line)
+                    seen += 1
+                    continue
+                if known.get(match.group(1)) is None:
+                    continue
+                for flag in flags:
                     self.assertIn(flag, known[match.group(1)], line)
+        self.assertEqual(seen, 3)
 
 
 class ThePin(unittest.TestCase):
@@ -278,120 +322,215 @@ class ThePin(unittest.TestCase):
                 self.assertLess(pos(block, guard), pos(block, 'Stop-Service'),
                                 guard)
 
-    def test_r1_runs_exactly_the_tag_and_r2_r3_a_tree_that_contains_it(self):
-        r1 = block_r1()
-        self.assertIn('if ($headSha -ne $pinned) { throw', r1)
-        self.assertIn('if ($dirty.Count -gt 0) { throw', r1)
-        for block in (block_r2(), block_r3()):
-            self.assertIn('merge-base --is-ancestor $pinned $headSha', block)
-            self.assertIn('if ($changed.Count -gt 0) { throw', block)
-            self.assertLess(pos(block, 'merge-base --is-ancestor'),
-                            pos(block, 'Stop-Service'))
+    def test_r1_and_r2_run_exactly_the_release_that_holds_the_model(self):
+        # [REASON]: тег rc1 -- пин проверенной МОДЕЛИ, и он не
+        # пересоздаётся. Инструмента закрытия в нём нет, поэтому R1 и R2
+        # исполняют тег ВЫПУСКА -- и только если тот содержит тег модели.
+        for block in (block_r1(), block_r2()):
+            self.assertIn("$ReleaseTag  = '%s'" % RELEASE_TAG, block)
+            for guard in ('"refs/tags/${ReleaseTag}:refs/tags/${ReleaseTag}"',
+                          'if (-not $release) { throw',
+                          'merge-base --is-ancestor $pinned $release',
+                          'if ($headSha -ne $release) { throw',
+                          'if ($dirty.Count -gt 0) { throw'):
+                self.assertLess(pos(block, guard), pos(block, 'Stop-Service'),
+                                guard)
+        self.assertNotEqual(RELEASE_TAG, re.search(
+            r"\$ExpectedTag = '([\w.-]+)'", block_r1()).group(1))
+
+    def test_r3_runs_its_own_tag_that_holds_the_model(self):
+        # [REASON]: на production стоит код выпуска без подкоманды r3. R3
+        # не деплоит: исполняет клон своего тега, а production обязан лишь
+        # исполнять ту же модель.
+        block = block_r3()
+        self.assertIn("$ReleaseTag  = '%s'" % R3_TAG, block)
+        self.assertNotIn(RELEASE_TAG, block)
+        for guard in ('"refs/tags/${ReleaseTag}:refs/tags/${ReleaseTag}"',
+                      'if (-not $release) { throw',
+                      'merge-base --is-ancestor $pinned $release',
+                      'if ($headSha -ne $release) { throw',
+                      'if ($dirty.Count -gt 0) { throw',
+                      'merge-base --is-ancestor $pinned $headProd',
+                      'if ($changed.Count -gt 0) { throw',
+                      'Set-Location $src'):
+            self.assertLess(pos(block, guard), pos(block, 'Stop-Service'),
+                            guard)
+        self.assertNotIn('Set-Location $prod', block)
 
 
 class BlockR1(unittest.TestCase):
 
-    def test_it_writes_nothing_and_proves_it(self):
+    def test_it_writes_only_through_the_tool_and_never_the_transition(self):
         block = block_r1()
         self.assertNotIn('--apply', block)
+        self.assertNotIn('tools\\dji_area_recalc.py', block)
+        self.assertNotIn('merge --ff-only', block)
         assert_order(self, block, [
             'Stop-Service', 'tools\\check_db_lock.py',
-            'Copy-Item -LiteralPath $db', '$before = (Get-FileHash',
-            'tools\\dji_area_raw_guard.py --db $db --save $rawSnap',
-            'tools\\dji_area_footprint_calibration.py --db $db',
-            'tools\\dji_area_recalc.py --db $db --from $from --to $to '
-            '--dry-run',
-            'tools\\dji_area_control_acceptance.py --db $db --oracle $oracle '
-            '--phase pre-apply',
-            '$after = (Get-FileHash',
-            'if ($before -ne $after) { throw',
-            'if ($ev -ne 0) { throw', 'if ($acc -ne 0) { throw',
-            '} finally {', 'Restart-Service'])
+            CLOSEOUT + ' r1 --db $db --oracle $oracle --out $out '
+            '--backup-dir $backup --raw-snapshot $rawSnap '
+            '--baseline-root $prod',
+            '$r1 = $LASTEXITCODE', 'if ($r1 -ne 0) { throw',
+            '} finally {', 'Restart-Service', "($site + '/login')",
+            "($site + '/drones/area-control')", "Write-Host 'PRE-APPLY PASS'"])
 
-    def test_the_dry_run_rows_feed_the_acceptance(self):
-        block = block_r1()
-        self.assertIn("--json (Join-Path $out 'pre.json') --rows (Join-Path "
-                      "$out 'pre_rows.json')", block)
-        self.assertIn("--recalc-summary (Join-Path $out 'pre.json') "
-                      "--recalc-rows (Join-Path $out 'pre_rows.json')", block)
-        self.assertIn('--evaluate-rule', block)
+    def test_the_tool_is_tested_before_a_service_stops(self):
+        for block in (block_r1(), block_r2(), block_r3()):
+            self.assertLess(pos(block, '& $py tools\\test_dji_area_retained_'
+                                       'release_closeout.py'),
+                            pos(block, 'Stop-Service'))
 
-    def test_the_raw_snapshot_is_taken_once(self):
-        self.assertIn('if (-not (Test-Path -LiteralPath $rawSnap)) { & $py '
-                      'tools\\dji_area_raw_guard.py --db $db --save $rawSnap }',
-                      block_r1())
+    def test_the_code_production_runs_now_is_the_baseline(self):
+        # R1 идёт ДО деплоя: нормализованные строки обязан видеть
+        # `unchanged` код, который сейчас стоит на production. В R2 это уже
+        # тот же код, что и у инструмента.
+        self.assertIn('--baseline-root $prod', block_r1())
+        self.assertNotIn('--baseline-root', block_r2())
+
+    def test_one_raw_snapshot_serves_r1_and_r2(self):
+        snap = "$rawSnap  = 'C:\\VehicleSoft_Retained_Footprint_Release\\" \
+               "raw_before.json'"
+        for block in (block_r1(), block_r2()):
+            self.assertIn(snap, block)
+            self.assertIn('--raw-snapshot $rawSnap', block)
+
+    def test_an_earlier_run_is_kept_not_removed(self):
+        for block in (block_r1(), block_r2(), block_r3()):
+            self.assertIn("if (Test-Path -LiteralPath $out) { Move-Item "
+                          "-LiteralPath $out -Destination ($out + '_before_' "
+                          "+ $stamp) }", block)
+            for line in block.splitlines():
+                if 'Remove-Item' in line:
+                    self.assertIn('Remove-Item -LiteralPath $src -Recurse',
+                                  line)
 
 
 class BlockR2(unittest.TestCase):
 
-    def test_it_needs_a_passed_r1(self):
+    def test_it_needs_a_passed_r1_of_the_same_model(self):
         block = block_r2()
         for guard in ('if (-not (Test-Path -LiteralPath $rawSnap)) { throw',
                       'if (-not (Test-Path -LiteralPath $r1Verdict)) { throw',
                       "if (($r1.verdict -ne 'PASS') -or ($r1.phase -ne "
-                      "'pre-apply')) { throw"):
+                      "'r1')) { throw",
+                      'if ($r1.code_fingerprint -ne $ExpectedFingerprint) '
+                      '{ throw'):
+            self.assertLess(pos(block, guard), pos(block, 'Stop-Service'),
+                            guard)
+        self.assertIn("$r1Verdict = 'C:\\VehicleSoft_Retained_Footprint_"
+                      "Release\\closeout_r1\\closeout_verdict.json'", block)
+
+    def test_the_deploy_is_a_controlled_fast_forward(self):
+        block = block_r2()
+        # Ни одна команда, способная потерять файлы или историю production.
+        self.assertIsNone(re.search(
+            r'\bgit\b[^\n]*\b(pull|reset|clean|stash|rebase|push|switch|'
+            r'restore)\b', block))
+        self.assertIsNone(re.search(r'git -C \$prod checkout', block))
+        for line in block.splitlines():
+            if 'Remove-Item' in line or 'Move-Item' in line:
+                self.assertNotIn('$prod', line)
+                self.assertNotIn('$db', line)
+        merges = [ln for ln in block.splitlines() if 'merge --ff-only' in ln
+                  and not ln.strip().startswith('if (')]
+        self.assertEqual([ln.strip() for ln in merges],
+                         ['& git -C $prod merge --ff-only $release'])
+        for guard in ('if ($prodRelease -ne $release) { throw',
+                      'merge-base --is-ancestor $headBefore $release',
+                      'if ($changed.Count -gt 0) { throw',
+                      "Where-Object { $_ -match '^migrate_' }",
+                      'if ($migrations.Count -gt 0) { throw'):
             self.assertLess(pos(block, guard), pos(block, 'Stop-Service'),
                             guard)
 
-    def test_pre_apply_again_then_exactly_the_rewrites_then_post_apply(self):
+    def test_the_deploy_happens_with_the_services_down_and_is_verified(self):
         assert_order(self, block_r2(), [
-            'Stop-Service', 'Copy-Item -LiteralPath $db',
-            '--dry-run --quiet --json (Join-Path $out \'pre.json\')',
-            '--phase pre-apply', 'if ($pre -ne 0) { throw',
-            '--apply --quiet --json (Join-Path $out \'apply.json\') @idArgs',
-            '--dry-run --quiet --json (Join-Path $out \'second.json\')',
-            '--phase post-apply --recalc-summary (Join-Path $out '
-            '\'second.json\') --apply-summary (Join-Path $out '
-            '\'apply.json\')',
-            'tools\\dji_area_raw_guard.py --db $db --compare $rawSnap',
-            'if ($post -ne 0) { throw', 'if ($raw -ne 0) { throw',
+            'Stop-Service', 'tools\\check_db_lock.py', '$untrackedBefore = ',
+            '& git -C $prod merge --ff-only $release',
+            'if ($headAfter -ne $release) { throw',
+            '$untrackedAfter = ', 'if ($lost.Count -gt 0) { throw',
+            'Set-Location $prod', '$fpProd = ',
+            CLOSEOUT + ' r2 --db $db --oracle $oracle --out $out '
+            '--backup-dir $backup --raw-snapshot $rawSnap '
+            '--r1-verdict $r1Verdict',
+            '$r2 = $LASTEXITCODE', 'if ($r2 -ne 0) { throw',
             '} finally {', 'Restart-Service', "($site + '/login')",
-            "($site + '/drones/area-control')"])
+            "($site + '/drones/area-control')",
+            "Write-Host 'POST-APPLY PASS'"])
 
-    def test_the_apply_is_targeted_by_the_oracle_not_by_the_text(self):
+    def test_the_transition_is_applied_by_the_tool_from_the_oracle(self):
+        # Номера перехода блок не несёт: инструмент берёт их из файла
+        # оракула и применяет только после нового PRE-APPLY.
         block = block_r2()
-        applies = [line for line in block.splitlines()
-                   if re.search(r'--apply(?![-\w])', line)]
-        self.assertEqual(len(applies), 1)
-        self.assertIn('@idArgs', applies[0])
-        self.assertIn('ConvertFrom-Json).transition.expected_rewrites)',
-                      block)
-        for fid in oracle()['transition']['expected_rewrites']:
+        self.assertNotIn('--apply', block)
+        doc = oracle()
+        for fid in (doc['transition']['expected_rewrites']
+                    + doc['transition']['must_stay_review']):
             self.assertNotIn(str(fid), block)
 
 
 class BlockR3(unittest.TestCase):
 
-    def test_the_approved_list_is_the_production_evaluation(self):
-        block = block_r3()
-        literal = re.search(r'\$approved = @\(([\d, ]+)\)', block).group(1)
-        approved = [int(x) for x in literal.split(',')]
-        self.assertEqual(sorted(approved), sorted(
-            oracle()['production_evaluation']['final_candidates']))
+    def test_the_approved_list_lives_only_in_the_oracle(self):
+        # [REASON]: второй копии списка в блоке нет -- расходиться не с чем.
+        doc = oracle()
+        approved = closeout.approved_candidates(doc)
         self.assertEqual(len(approved), 28)
-
-    def test_nothing_is_recalculated_before_the_list_is_proven(self):
+        rewrites = doc['transition']['expected_rewrites']
+        self.assertTrue(set(rewrites) <= set(approved))
+        self.assertEqual(len(set(approved) - set(rewrites)), 23)
         block = block_r3()
-        self.assertLess(pos(block, 'if (($r2v.verdict -ne \'PASS\')'),
-                        pos(block, 'Stop-Service'))
-        assert_order(self, block, [
-            '--evaluate-rule', 'Compare-Object',
-            'if ($drift.Count -gt 0) { throw',
-            'tools\\dji_area_recalc.py --db $db --from $from3 --to $to3 '
-            '--dry-run',
-            'calc_writes.would_write -ne $todo.Count)) { throw',
-            '--apply --quiet', 'calc_writes.new -ne $todo.Count) { throw',
-            "--json (Join-Path $out 'second.json') @idArgs",
-            'calc_writes.unchanged -ne $todo.Count) { throw',
-            "--out (Join-Path $out 'evaluation_after') --evaluate-rule",
-            'tools\\dji_area_raw_guard.py --db $db --compare $rawSnap3',
-            'if ($ev2 -ne 0) { throw', 'if ($raw -ne 0) { throw',
-            '} finally {'])
+        self.assertNotIn('$approved', block)
+        for fid in approved:
+            self.assertNotIn(str(fid), block)
 
-    def test_there_is_no_period_wide_recalculation(self):
-        for line in block_r3().splitlines():
-            if 'tools\\dji_area_recalc.py' in line:
-                self.assertIn('@idArgs', line)
+    def test_it_needs_a_passed_r2_of_the_same_model(self):
+        block = block_r3()
+        for guard in ('if (-not (Test-Path -LiteralPath $r2Verdict)) { throw',
+                      "if (($r2.verdict -ne 'PASS') -or ($r2.phase -ne "
+                      "'r2')) { throw",
+                      'if ($r2.code_fingerprint -ne $ExpectedFingerprint) '
+                      '{ throw'):
+            self.assertLess(pos(block, guard), pos(block, 'Stop-Service'),
+                            guard)
+        self.assertIn("$r2Verdict = 'C:\\VehicleSoft_Retained_Footprint_"
+                      "Release\\closeout_r2\\closeout_verdict.json'", block)
+
+    def test_it_writes_only_through_the_tool_and_moves_no_code(self):
+        block = block_r3()
+        self.assertNotIn('--apply', block)
+        self.assertNotIn('tools\\dji_area_recalc.py', block)
+        self.assertNotIn('merge --ff-only', block)
+        self.assertIsNone(re.search(
+            r'git -C \$prod (checkout|merge |pull|reset|clean|stash|fetch)',
+            block))
+        assert_order(self, block, [
+            'Stop-Service', 'tools\\check_db_lock.py',
+            CLOSEOUT + ' r3 --db $db --oracle $oracle --out $out '
+            '--backup-dir $backup --r2-verdict $r2Verdict '
+            '--historical-through $historicalThrough',
+            '$r3 = $LASTEXITCODE', 'if ($r3 -ne 0) { throw',
+            '} finally {', 'Restart-Service', "($site + '/login')",
+            "($site + '/drones/area-control')",
+            "Write-Host 'HISTORICAL APPLY PASS'"])
+
+    def test_the_historical_cohort_ends_before_the_approval_day(self):
+        # Последний полностью посчитанный к оценке день -- накануне её; он же
+        # не раньше конца периода оракула, где лежат пять записей R2.
+        cut = re.search(r"\$historicalThrough = '(\d{4}-\d{2}-\d{2})'",
+                        block_r3()).group(1)
+        self.assertLess(cut, APPROVAL_DAY)
+        self.assertGreaterEqual(cut, oracle()['period'][1])
+        text = ' '.join(read().split())
+        self.assertIn('вылеты по `%s` включительно' % cut, text)
+        self.assertIn('оценки production %s.%s.%s' % (
+            APPROVAL_DAY[8:], APPROVAL_DAY[5:7], APPROVAL_DAY[:4]), text)
+
+    def test_the_text_says_when_to_run_it(self):
+        text = ' '.join(read().split())
+        self.assertIn('`DroneAreaDaily` хотя бы раз отработал на коде `eb7d003`',
+                      text)
+        self.assertIn('`%s`' % R3_TAG, text)
 
 
 class TheTextAgreesWithTheOracle(unittest.TestCase):
@@ -412,6 +551,7 @@ class TheTextAgreesWithTheOracle(unittest.TestCase):
                       % (expected['records'] - writes, writes), text)
         self.assertIn('`{"unchanged": %d}`' % expected['records'], text)
         self.assertIn('`{"new": %d}`' % writes, text)
+        self.assertIn('`{"unchanged": %d}`' % writes, text)
         for fid in doc['transition']['expected_rewrites'] \
                 + doc['transition']['must_stay_review']:
             self.assertIn(str(fid), text)
@@ -424,7 +564,12 @@ class TheTextAgreesWithTheOracle(unittest.TestCase):
         self.assertEqual((evaluator.EXIT_OK, evaluator.EXIT_DB_CHANGED,
                           evaluator.EXIT_CONTROL_VIOLATED), (0, 3, 4))
         self.assertEqual((raw_guard.EXIT_OK, raw_guard.EXIT_VIOLATED), (0, 3))
-        for phrase in ('приёмка — 0 PASS, 1 ошибка аргументов, 2 базы нет, '
+        self.assertEqual((closeout.EXIT_PASS, closeout.EXIT_USAGE,
+                          closeout.EXIT_NO_DATABASE, closeout.EXIT_STOP),
+                         (0, 1, 2, 3))
+        for phrase in ('инструмент закрытия — 0 PASS, 1 ошибка аргументов, '
+                       '2 базы нет, 3 STOP',
+                       'приёмка — 0 PASS, 1 ошибка аргументов, 2 базы нет, '
                        '3 FAIL', 'оценщик — 0, 3 база изменилась во время '
                        'чтения, 4 нарушен контроль', '3 RAW изменён либо '
                        'billable не пуст'):
@@ -434,6 +579,13 @@ class TheTextAgreesWithTheOracle(unittest.TestCase):
         text = read()
         self.assertIn('`docs/DJI_AREA_SEPTEMBER_2026_ORACLE.json`', text)
         self.assertIn('не меняется ни на байт', text)
+
+    def test_the_release_tag_is_the_one_the_order_names(self):
+        text = ' '.join(read().split())
+        self.assertIn('`%s`' % RELEASE_TAG, text)
+        # Тег модели не пересоздаётся: новый тег -- пин выпуска.
+        self.assertIn('`dji-area-retained-footprint-001-rc1` не трогается',
+                      text)
 
 
 if __name__ == '__main__':

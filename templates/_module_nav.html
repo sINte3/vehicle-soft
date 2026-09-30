@@ -113,6 +113,14 @@
     {'ep': 'gps.orders', 'ru': 'Сверка нарядов',  'uz': 'Нарядлар солиштируви', 'show': True},
     {'ep': 'gps.sync',   'ru': 'Приём данных',    'uz': 'Маълумот қабули',      'show': True},
   ],
+
+  'agro_work': [
+    {'ep': 'agro_work.dashboard',     'ru': 'Свод',            'uz': 'Жамланма',     'show': True,
+     'active': ['agro_work.dashboard', 'agro_work.machine']},
+    {'ep': 'agro_work.applications',  'ru': 'Заявка → работа', 'uz': 'Буюртма → иш', 'show': True},
+    {'ep': 'agro_work.work_days',     'ru': 'Работа → заявка', 'uz': 'Иш → буюртма', 'show': True},
+    {'ep': 'agro_work.import_status', 'ru': 'Импорт',          'uz': 'Импорт',       'show': True},
+  ],
 } %}
 {#- Заметки к набору выше. Стоят ПОСЛЕ закрытия {% set %}, а не внутри
     словаря: Jinja не разбирает комментарии внутри выражения, и комментарий в

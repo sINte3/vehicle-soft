@@ -1,0 +1,73 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Работа → заявка — agro-work' if is_ru else 'Иш → буюртма — agro-work' }}{% endblock %}
+{% block content %}
+{% include 'agro_work/_nav.html' %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Работа по GPS → была ли заявка' if is_ru else 'GPS бўйича иш → буюртма бўлганми' }}</div>
+    <div class="vs-hero-sub">{{ 'Каждые сутки периода, в которые машина работала по GPS. Покрыты — в окно попадает закрытая заявка этой машины. Работа без заявки — не может покрыть никакая: ни закрытая, ни открытая, ни заведённая позже задним числом. Если может — сутки без вердикта с причиной.' if is_ru else 'Машина GPS бўйича ишлаган даврнинг ҳар бир куни. Қопланган — ойнага шу машинанинг ёпилган буюртмаси тушади. Буюртмасиз иш — ҳеч бири қоплай олмайди: на ёпилган, на очиқ, на кейин орқа сана билан киритилган. Агар қоплаши мумкин бўлса — кун сабаби билан ҳукмсиз.' }}</div>
+  </div>
+</div>
+
+{% include 'agro_work/_period.html' %}
+{% include 'agro_work/_notices.html' %}
+
+{% if not empty %}
+{% if org_name or unmatched or category %}
+<div class="vs-help vs-mb">
+  {{ 'Показаны: ' if is_ru else 'Кўрсатилган: ' }}{% if org_name %}{{ org_name }}{% endif %}{% if category %} · {{ category_label(category) }}{% endif %}
+  <a class="vs-btn vs-btn-sm vs-btn-ghost" href="{{ url_for('agro_work.work_days', **{'from': date_from.isoformat(), 'to': date_to.isoformat()}) }}">{{ 'Показать все организации' if is_ru else 'Барча ташкилотларни кўрсатиш' }}</a>
+</div>
+{% endif %}
+
+{% if not rows %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ 'Суток с работой по GPS с такими условиями нет' if is_ru else 'Бундай шартли GPS бўйича иш бўлган кунлар йўқ' }}</div>
+    <div class="vs-empty-sub">{{ 'Работой считается участок трека, который человек не назвал проездом. Машины, которых план-факт GPS не считает (грузовые, легковые, помеченные «не наша»), здесь не появляются.' if is_ru else 'Иш деб одам ўтиш деб атамаган трек участкаси ҳисобланади. GPS режа-факти ҳисобламайдиган машиналар (юк, енгил, «бизники эмас» деб белгиланганлар) бу ерда кўринмайди.' }}</div>
+  </div>
+{% else %}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Машино-сутки с работой' if is_ru else 'Иш бўлган машина-кунлар' }}</span>
+    <span class="vs-soft">{{ rows|length }}{% if total > rows|length %} {{ 'из' if is_ru else 'дан' }} {{ total }}{% endif %}</span>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table">
+      <thead>
+        <tr>
+          <th>{{ 'Сутки' if is_ru else 'Кун' }}</th>
+          <th>{{ 'Машина' if is_ru else 'Машина' }}</th>
+          <th>{{ 'Организация' if is_ru else 'Ташкилот' }}</th>
+          <th class="right">{{ 'Га по GPS' if is_ru else 'GPS бўйича га' }}</th>
+          <th>{{ 'Покрытие' if is_ru else 'Қопланиш' }}</th>
+          <th>{{ 'Заявки' if is_ru else 'Буюртмалар' }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>{{ row.day.strftime('%d.%m.%Y') }}
+            {% if row.wialon_id %}<div><a href="{{ url_for('gps.fact', date=row.day.isoformat(), unit=row.wialon_id) }}">{{ 'участки на карте' if is_ru else 'участкалар' }}</a></div>{% endif %}
+          </td>
+          <td><a href="{{ url_for('agro_work.machine', equipment_id=row.equipment_id, **{'from': date_from.isoformat(), 'to': date_to.isoformat()}) }}">{{ row.machine }}</a></td>
+          <td>{{ row.org_name }}</td>
+          <td class="right">{% if row.gps_ha is not none %}{{ row.gps_ha }}{% else %}—{% endif %}</td>
+          <td>
+            {% if row.coverage == 'pokryta' %}<span class="vs-badge vs-badge-success">{{ coverage_label(row.coverage) }}</span>
+            {% elif row.coverage == 'bez_zayavki' %}<span class="vs-badge vs-badge-danger">{{ coverage_label(row.coverage) }}</span>
+            {% else %}<span class="vs-badge">{{ coverage_label(row.coverage) }}</span>
+              <div class="vs-soft">{{ reason_label(row.reason) }}</div>
+            {% endif %}
+          </td>
+          <td>{% for app in row.apps[:5] %}{{ app.number }}{% if not loop.last %}, {% endif %}{% endfor %}{% if row.apps|length > 5 %} …{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

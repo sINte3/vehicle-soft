@@ -397,15 +397,36 @@ jobs:
       # DJI-AREA-RETAINED-FOOTPRINT-001. The first owner blocks that stop the
       # PRODUCTION services and write to its database, so the staging rule
       # above is inverted, not relaxed: host, root, services and port must be
-      # production's and staging is named nowhere. Held: the pin is the real
-      # fingerprint and the other runbooks' tag, proven before a service
-      # stops; R1 writes nothing and proves it by hash; R2 applies exactly the
-      # oracle's rewrites (ids read from the oracle file) only after a fresh
-      # PRE-APPLY, then a second dry run, POST-APPLY and the RAW guard; R3
-      # applies only the approved list, only if a fresh evaluation names
-      # exactly it, never a whole period; the text quotes the oracle's figures.
+      # production's and staging is named nowhere. Held: the model pin is the
+      # real fingerprint and the other runbooks' tag, proven before a service
+      # stops; R1 and R2 run exactly the release tag, which must contain the
+      # model tag (DJI-AREA-RETAINED-RELEASE-CLOSEOUT-002); R1 and R2 write
+      # only through the closeout tool, R1 never applies the transition; R2
+      # moves production code only by `merge --ff-only` onto that commit --
+      # no pull, reset, clean or checkout, the old HEAD an ancestor, the tree
+      # clean, no migration in the delta, no untracked file lost; R3 applies
+      # only the approved list, only if a fresh evaluation names exactly it,
+      # never a whole period; the text quotes the oracle's figures.
       - name: DJI area retained-footprint release runbook (production blocks)
         run: python tools/test_dji_area_retained_footprint_release_runbook.py
+
+      # DJI-AREA-RETAINED-RELEASE-CLOSEOUT-002. The first write into the
+      # production database that is not a recalculation by a new rule but a
+      # realignment of provenance: rows whose fingerprint moved only because
+      # a newer immutable DJI source revision arrived (own, or a chain
+      # neighbour's). Every gate is held by a pair -- a row that must pass
+      # beside a row that must stop: a changed decision, a changed RAW,
+      # billable, an unexplained input change (the same decision on another
+      # machine), a live admin decision and a moved field attribution each
+      # stop by name. The cause is proven by a counterfactual run of the real
+      # pipeline with the source pointers rolled back to the stored
+      # calculation; the suite shows the proof is not decoration by rolling
+      # back to the CURRENT pointers and watching it fail. R1 and R2 run end to
+      # end on a synthetic database: after the normalization exactly the named
+      # transition, the record that must stay in review stays, a second run
+      # writes nothing. Stdlib + openpyxl, synthetic V4, no network.
+      - name: DJI area retained release closeout (proven normalization, R1/R2)
+        run: python tools/test_dji_area_retained_release_closeout.py
 
       # The recomputation itself, on a temporary SQLite database built with
       # the migration's own DDL. Stdlib only: drone_coverage_recalc.py and
@@ -465,6 +486,21 @@ jobs:
       # endpoint and the page -- runs locally and on the server with:
       #
       #   python -m unittest discover -s tests
+
+      # agro-work B1-B3. Stdlib plus openpyxl, no network: the agro-work API
+      # is a fake HTTP server on 127.0.0.1 inside the suite. Held here
+      # because the owner imports under his ADMIN account of agro-work, so
+      # "read-only" is a property of our client, not of their role -- a
+      # refusal of every write BEFORE a socket opens is exactly the kind of
+      # thing a later edit breaks without any screen noticing. Also held: the
+      # migration's four paths and append-only journal, no personal value in
+      # the database, history fetched only for new and changed applications,
+      # the owner's links surviving a re-import, and the pasteable runbook.
+      # The screen (tests/test_agro_work_screen.py) needs Flask and runs
+      # locally with the discover command above.
+      - name: agro-work import, markup, reconciliation, runbook (stdlib + openpyxl)
+        run: |
+          python -m unittest tests.test_agro_work_client tests.test_agro_work_migration tests.test_agro_work_import tests.test_agro_work_links tests.test_agro_work_methods tests.test_agro_work_reconcile tests.test_agro_work_reconcile_tool tests.test_agro_work_copy_db tests.test_agro_work_runbook
 
   # DRONE-USEFUL-AREA-PILOT-001. The operator console on the server is
   # WINDOWS POWERSHELL 5.1, not pwsh 7, and the two differ exactly where this

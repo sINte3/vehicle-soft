@@ -172,6 +172,17 @@
       {% if current and current.startswith('gps.') %}{{ sidebar_nav('gps') }}{% endif %}
       {% endif %}
 
+      {# agro-work B3. Тот же гейт, что у маршрутов: @module_required('wialon'). #}
+      {% if current_user.has_module_access('wialon') %}
+      <a href="{{ url_for('agro_work.dashboard') }}" class="vs-side-link{% if current and current.startswith('agro_work.') %} is-active{% endif %}">
+        <span class="vs-side-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1"/><path d="M9 12l2 2 4-4"/></svg>
+        </span>
+        <span class="vs-side-label">{{ 'Сверка agro-work' if g.lang == 'ru' else 'agro-work солиштируви' }}</span>
+      </a>
+      {% if current and current.startswith('agro_work.') %}{{ sidebar_nav('agro_work') }}{% endif %}
+      {% endif %}
+
       <div class="vs-side-section">{{ 'Справочники' if g.lang == 'ru' else 'Маълумотномалар' }}</div>
 
       <a href="{{ url_for('ref_organizations') }}" class="vs-side-link{% if current == 'ref_organizations' %} is-active{% endif %}">

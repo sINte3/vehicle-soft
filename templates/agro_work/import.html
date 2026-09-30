@@ -1,0 +1,160 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Импорт agro-work' if is_ru else 'agro-work импорти' }}{% endblock %}
+{% block content %}
+{% include 'agro_work/_nav.html' %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Импорт заявок agro-work' if is_ru else 'agro-work буюртмаларини импорт қилиш' }}</div>
+    <div class="vs-hero-sub">{{ 'Что принёс каждый прогон импорта, какие машины agro-work не связаны с нашей техникой и какие виды работ ещё без метода сверки. Импорт только читает agro-work и не хранит имён и телефонов фермеров, водителей и операторов.' if is_ru else 'Импортнинг ҳар бир прогони нима олиб келди, қайси agro-work машиналари бизнинг техника билан боғланмаган ва қайси иш турлари ҳали солиштириш усулисиз. Импорт agro-work ни фақат ўқийди ва фермерлар, ҳайдовчилар ва операторларнинг исм ва телефонларини сақламайди.' }}</div>
+  </div>
+</div>
+
+{% if empty %}
+{% include 'agro_work/_notices.html' %}
+{% else %}
+
+{% if not runs %}
+  <div class="vs-empty vs-mb">
+    <div class="vs-empty-title">{{ 'Импорт ещё не запускался' if is_ru else 'Импорт ҳали ишга туширилмаган' }}</div>
+  </div>
+{% else %}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Прогоны импорта' if is_ru else 'Импорт прогонлари' }}</span>
+    <span class="vs-soft">{{ 'новые сверху' if is_ru else 'янгилари юқорида' }}</span>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table">
+      <thead>
+        <tr>
+          <th>{{ 'Начат' if is_ru else 'Бошланди' }}</th>
+          <th>{{ 'Состояние' if is_ru else 'Ҳолат' }}</th>
+          <th class="right">{{ 'Увидено' if is_ru else 'Кўрилди' }}</th>
+          <th class="right">{{ 'Новых' if is_ru else 'Янги' }}</th>
+          <th class="right">{{ 'Изменилось' if is_ru else 'Ўзгарди' }}</th>
+          <th class="right">{{ 'Без изменений' if is_ru else 'Ўзгаришсиз' }}</th>
+          <th class="right">{{ 'Отвергнуто' if is_ru else 'Рад этилди' }}</th>
+          <th class="right">{{ 'Удалено в agro-work' if is_ru else 'agro-work да ўчирилган' }}</th>
+          <th class="right">{{ 'История: загружено / ждёт' if is_ru else 'Тарих: юкланди / кутмоқда' }}</th>
+          <th class="right">{{ 'Запросов' if is_ru else 'Сўровлар' }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in runs %}
+        <tr>
+          <td>{{ local_time(run.started_at) }}</td>
+          <td>
+            {% if run.status == 'ok' %}<span class="vs-badge vs-badge-success">{{ 'полный' if is_ru else 'тўлиқ' }}</span>
+            {% elif run.status == 'incomplete' %}<span class="vs-badge vs-badge-warning">{{ 'неполный' if is_ru else 'тўлиқ эмас' }}</span>
+            {% elif run.status == 'running' %}<span class="vs-badge vs-badge-info">{{ 'идёт' if is_ru else 'давом этмоқда' }}</span>
+            {% else %}<span class="vs-badge vs-badge-danger">{{ 'прерван' if is_ru else 'узилди' }}</span>{% endif %}
+            {% if run.message %}<div class="vs-soft">{{ run.message }}</div>{% endif %}
+          </td>
+          <td class="right">{{ run.rows_seen }}</td>
+          <td class="right">{{ run.rows_new }}</td>
+          <td class="right">{{ run.rows_updated }}</td>
+          <td class="right">{{ run.rows_unchanged }}</td>
+          <td class="right">{{ run.rows_rejected }}</td>
+          <td class="right">{{ run.rows_gone }}</td>
+          <td class="right">{{ run.history_fetched }} / {{ run.history_pending if run.history_pending is not none else '—' }}</td>
+          <td class="right">{{ run.requests }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="vs-stat-grid vs-mb">
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Машин связано по номеру' if is_ru else 'Рақам бўйича боғланган машиналар' }}</div>
+    <div class="vs-stat-value">{{ links.get('auto', 0) }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Связано владельцем' if is_ru else 'Эгаси боғлаган' }}</div>
+    <div class="vs-stat-value">{{ links.get('manual', 0) }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Не связано, из них с заявками' if is_ru else 'Боғланмаган, шулардан буюртмали' }}</div>
+    <div class="vs-stat-value">{{ links.get('none', 0) + links.get('ambiguous', 0) }} / {{ links.get('unmatched_with_applications', 0) }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Видов работ размечено' if is_ru else 'Белгиланган иш турлари' }}</div>
+    <div class="vs-stat-value">{{ marked }} / {{ work_types|length }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Заявок ждут разметки вида работ' if is_ru else 'Иш тури белгиланишини кутаётган буюртмалар' }}</div>
+    <div class="vs-stat-value">{{ waiting }}</div>
+  </div>
+</div>
+
+{% if unmatched %}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Машины agro-work с заявками, не связанные с нашей техникой' if is_ru else 'Бизнинг техника билан боғланмаган буюртмали agro-work машиналари' }}</span>
+    <span class="vs-soft">{{ 'связываются инструментом tools/agro_work_links.py' if is_ru else 'tools/agro_work_links.py воситаси билан боғланади' }}</span>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table">
+      <thead>
+        <tr>
+          <th>{{ 'Госномер в agro-work' if is_ru else 'agro-work даги давлат рақами' }}</th>
+          <th>{{ 'Марка, модель' if is_ru else 'Марка, модель' }}</th>
+          <th>{{ 'Категория в agro-work' if is_ru else 'agro-work даги тоифа' }}</th>
+          <th>{{ 'Предприятие' if is_ru else 'Корхона' }}</th>
+          <th>{{ 'Почему' if is_ru else 'Нега' }}</th>
+          <th class="right">{{ 'Заявок' if is_ru else 'Буюртмалар' }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in unmatched %}
+        <tr>
+          <td>{{ row.plate_number }}</td>
+          <td>{{ row.brand_name or '' }} {{ row.model or '' }}</td>
+          <td>{{ row.category_name or '' }}</td>
+          <td>{{ row.company_name or '' }}</td>
+          <td>{% if row.match_status == 'ambiguous' %}{{ 'номер неоднозначен' if is_ru else 'рақам бир хил эмас' }}{% else %}{{ 'номер не найден' if is_ru else 'рақам топилмади' }}{% endif %}</td>
+          <td class="right">{{ row.applications }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if work_types %}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Виды работ и метод сверки' if is_ru else 'Иш турлари ва солиштириш усули' }}</span>
+    <span class="vs-soft">{{ 'метод ставит владелец: tools/agro_work_methods.py' if is_ru else 'усулни эгаси қўяди: tools/agro_work_methods.py' }}</span>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table">
+      <thead>
+        <tr>
+          <th>{{ 'Вид работы' if is_ru else 'Иш тури' }}</th>
+          <th>{{ 'Единица' if is_ru else 'Бирлик' }}</th>
+          <th class="right">{{ 'Заявок' if is_ru else 'Буюртмалар' }}</th>
+          <th>{{ 'Метод сверки' if is_ru else 'Солиштириш усули' }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in work_types %}
+        <tr>
+          <td>{{ row.name }}</td>
+          <td>{{ row.unit_display or row.unit or '' }}</td>
+          <td class="right">{{ row.applications }}</td>
+          <td>{% if row.method %}{{ method_label(row.method) }}{% else %}<span class="vs-badge vs-badge-warning">{{ 'не размечен' if is_ru else 'белгиланмаган' }}</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}
