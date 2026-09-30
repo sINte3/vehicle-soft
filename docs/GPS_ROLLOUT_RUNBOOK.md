@@ -727,6 +727,36 @@ SQLite online backup, боевые файлы только читаются), а
 любая другая служба `*Staging*` работает, а после проверки база площадки
 возвращается.
 
+### Перед выкладкой: остановить ботов площадки
+
+На площадке работают две службы ботов — `TransportBot003Staging` и
+`TransportBotStaging` (30.09.2026: обе запущены, запуск «Automatic»). Блок
+выкладки с работающими ботами не идёт. Их нужно остановить и перевести на
+ручной запуск, чтобы перезагрузка сервера не подняла их на копии боевой базы,
+пока идёт проверка:
+
+```
+Set-Service -Name TransportBot003Staging -StartupType Manual
+```
+
+```
+Set-Service -Name TransportBotStaging -StartupType Manual
+```
+
+```
+Stop-Service -Name TransportBot003Staging -Force
+```
+
+```
+Stop-Service -Name TransportBotStaging -Force
+```
+
+```
+Get-Service -Name TransportBot003Staging, TransportBotStaging | Format-Table Name, Status, StartType -AutoSize
+```
+
+Ожидается: у обеих служб `Stopped` и `Manual`.
+
 ### Выложить (владелец, SRV-YOQSH, PowerShell от администратора)
 
 Скопировать целиком и вставить. Блок останавливается на первой неудаче;
@@ -956,3 +986,30 @@ N day(s) now track only`), `SMOKE_LOGIN=200`, `STEP=PASS`.
 **Прислать:** вывод блока; ключевые строки `RUN=`, `RESTORED_HEAD` (равна
 `BEFORE_HEAD` выкладки), `STEP=PASS`. Копии в прогоне на `D:` остаются —
 удалить их можно вручную, когда проверка закрыта.
+
+### После возврата: вернуть ботов площадки
+
+Только после `STEP=PASS` блока «Вернуть площадку» — база площадки снова
+своя:
+
+```
+Set-Service -Name TransportBot003Staging -StartupType Automatic
+```
+
+```
+Set-Service -Name TransportBotStaging -StartupType Automatic
+```
+
+```
+Start-Service -Name TransportBot003Staging
+```
+
+```
+Start-Service -Name TransportBotStaging
+```
+
+```
+Get-Service -Name TransportBot003Staging, TransportBotStaging | Format-Table Name, Status, StartType -AutoSize
+```
+
+Ожидается: у обеих служб `Running` и `Automatic`.
