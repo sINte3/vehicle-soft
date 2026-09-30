@@ -210,6 +210,25 @@ class NotInstalled(ScreenCase):
             self.assertIn('ещё не установлен', response.get_data(as_text=True), url)
 
 
+class AnonymousVisitor(ScreenCase):
+    # Дымовая проверка шага 3 ранбука выпуска (docs/AGRO_WORK_RELEASE_RUNBOOK.md)
+    # открывает /agro-work/ без входа и ждёт форму входа: так видно, что раздел
+    # зарегистрирован (иначе 404), но без входа ничего не показывает.
+    def test_an_anonymous_visitor_is_sent_to_the_login_form(self):
+        client = app.test_client()
+        response = client.get('/agro-work/')
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('/login', response.headers['Location'])
+        page = client.get('/agro-work/', follow_redirects=True)
+        self.assertEqual(page.status_code, 200)
+        self.assertIn('vs-login-form', page.get_data(as_text=True))
+
+    def test_the_login_page_carries_the_marker_the_smoke_check_reads(self):
+        page = app.test_client().get('/login')
+        self.assertEqual(page.status_code, 200)
+        self.assertIn('vs-login-form', page.get_data(as_text=True))
+
+
 class Numbers(ScreenCase):
     def test_dashboard_shows_both_violations_and_links_to_them(self):
         html = self.get('/agro-work/', lang='ru').get_data(as_text=True)

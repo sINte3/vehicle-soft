@@ -491,6 +491,14 @@ class Tool(ImportCase):
         self.assertEqual(self.server.requests, [])
         self.assertEqual(digest(), before)
 
+    def test_the_read_only_hint_names_no_folder(self):
+        # Те же инструменты -- на копии и на боевой базе. Подсказка с папкой
+        # копии отправила бы человека с боевого сервера повторять запись на
+        # копии (было до 30.09: «cd C:\VehicleSoft_AgroWork»).
+        self.assertNotRegex(store.READONLY_HINT, r'[A-Za-z]:\\')
+        self.assertIn('as administrator', store.READONLY_HINT)
+        self.assertIn('nothing was written', store.READONLY_HINT)
+
     def test_wrong_password_exits_3(self):
         with open(self.credentials, 'w', encoding='utf-8') as fh:
             fh.write('login=%s\npassword=wrong-one\n' % fake_api.LOGIN)
