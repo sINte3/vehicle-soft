@@ -213,7 +213,7 @@ class ReleaseRunbook(unittest.TestCase):
 
     def test_git_is_limited_to_the_reviewed_commands(self):
         allowed = {'fetch', 'rev-parse', 'log', 'status', 'merge-base', 'diff',
-                   'reset'}
+                   'show', 'reset'}
         # Вызов git -- `& git ...` или git в начале строки; текст сообщений
         # («git merge --ff-only failed») вызовом не считается.
         invoked = re.compile(r'(?:^|&\s*)git\s+(?:--no-pager\s+|-C\s+\S+\s+)*'
@@ -262,7 +262,7 @@ class ReleaseRunbook(unittest.TestCase):
     def test_the_release_follows_the_procedure_order(self):
         body = release_block('Шаг 3')
         marks = [
-            'if ($parent -ne $mainBefore)',                   # проверки
+            'if ($open -gt 0)',                               # проверки
             'if ($head -ne $baseline)',
             'if (($migrations.Count -ne 1)',
             '$stopped = $true',                               # шаг 2 порядка
@@ -304,14 +304,13 @@ class ReleaseRunbook(unittest.TestCase):
             'services': "@('TransportReport', 'TransportBot', 'TransportBot003')",
             'site': "'http://10.103.25.14:5050'",
             'baseline': "'%s'" % BASELINE,
-            'mainBefore': "'%s'" % MAIN_BEFORE,
             'migration': "'migrate_agro_work_001.py'",
             'pendingId': "'%s (migrate_agro_work_001.py)'" % mig.MIGRATION_ID,
             'doneLine': "'%s'" % done_line(),
             'againLine': "'Already applied. Nothing to do.'",
             'work': "'C:\\VehicleSoft_AgroWork'",
         }
-        subjects = set()
+        reviewed = set()
         for name in ('Шаг 2', 'Шаг 3', 'Откат'):
             found = constants(release_block(name))
             with self.subTest(block=name):
@@ -319,17 +318,20 @@ class ReleaseRunbook(unittest.TestCase):
                     if key in expected:
                         self.assertEqual(value, expected[key], key)
                 self.assertEqual(found['baseline'], expected['baseline'])
-                subjects.add(found['expected'])
+                self.assertRegex(found['reviewed'], r"^'[0-9a-f]{40}'$")
+                reviewed.add(found['reviewed'])
+                # Код выпуска -- код проверенного коммита; после него в main
+                # -- только docs/.
+                self.assertIn("Where-Object { $_ -notlike 'docs/*' }",
+                              release_block(name))
                 if name != 'Откат':
-                    # Выпуск -- «разобранный main + этот PR» и ничего больше.
-                    self.assertEqual(found['mainBefore'], expected['mainBefore'])
-                    self.assertIn('if ($parent -ne $mainBefore)',
+                    self.assertIn('Get-OpenItems @(& git show '
+                                  '"${release}:docs/RELEASE_GATE.md")',
                                   release_block(name))
-        self.assertEqual(len(subjects), 1)
-        subject = subjects.pop().strip("'")
-        self.assertRegex(subject, MERGE_SUBJECT)
-        number = re.search(r'#(\d+) ', subject).group(1)
-        self.assertIn('https://github.com/sINte3/vehicle-soft/pull/%s' % number,
+                    self.assertIn('if ($open -gt 0) { throw',
+                                  release_block(name))
+        self.assertEqual(len(reviewed), 1)
+        self.assertIn('https://github.com/sINte3/vehicle-soft/pull/%s' % PR_NUMBER,
                       text(RELEASE))
         with open(os.path.join(REPO_ROOT, 'backup_production_db.bat'),
                   encoding='ascii') as fh:
@@ -347,19 +349,22 @@ class ReleaseRunbook(unittest.TestCase):
         self.assertEqual(len(production), 1)
         self.assertIn('`%s`' % BASELINE[:7], production[0])
 
-    def test_main_before_is_the_reviewed_state_of_main(self):
-        # Разобранное состояние main: мерж GPS #153 поверх agro-work #151.
-        probe = subprocess.run(['git', 'log', '-1', '--format=%s', MAIN_BEFORE],
-                               cwd=REPO_ROOT, capture_output=True, text=True)
+    def test_the_reviewed_commit_holds_all_the_code_of_this_tree(self):
+        # Блок выкатывает код ровно проверенного коммита: после него -- только
+        # docs/. Держится на дереве, где этот коммит есть (локально; в CI
+        # клон глубиной 1).
+        commit = constants(release_block('Шаг 3'))['reviewed'].strip("'")
+        probe = subprocess.run(['git', 'cat-file', '-e', commit + '^{commit}'],
+                               cwd=REPO_ROOT, capture_output=True)
         if probe.returncode != 0:
-            self.skipTest('the reviewed main is outside this shallow clone')
-        self.assertEqual(probe.stdout.strip(), 'Merge pull request #153 from '
-                         'sINte3/claude/gps-plan-fakt-vehicle-9nt03a')
-        ancestor = subprocess.run(
-            ['git', 'merge-base', '--is-ancestor',
-             '012390c7c43a143b88343e274596793123a5643b', MAIN_BEFORE],
-            cwd=REPO_ROOT)
+            self.skipTest('the reviewed commit is outside this clone')
+        ancestor = subprocess.run(['git', 'merge-base', '--is-ancestor', commit,
+                                   'HEAD'], cwd=REPO_ROOT)
         self.assertEqual(ancestor.returncode, 0)
+        names = subprocess.run(['git', 'diff', '--name-only', commit, 'HEAD'],
+                               cwd=REPO_ROOT, capture_output=True, text=True,
+                               check=True).stdout.split()
+        self.assertEqual([n for n in names if not n.startswith('docs/')], [])
 
     def test_the_delta_carries_exactly_the_one_migration(self):
         probe = subprocess.run(['git', 'cat-file', '-e', BASELINE + '^{commit}'],
@@ -511,6 +516,25 @@ class ReleaseToolFormats(unittest.TestCase):
         self.assertFalse(any('no process holds the database' in line
                              for line in held['lines']), held['lines'])
 
+    def test_gate_lines(self):
+        # Блок читает гейт без кириллицы: первая таблица в пять столбцов --
+        # «Открытые пункты», её строки -- открытые пункты. Сверка с разбором
+        # по заголовку раздела на настоящем файле.
+        with open(os.path.join(REPO_ROOT, 'docs', 'RELEASE_GATE.md'),
+                  encoding='utf-8') as fh:
+            lines = fh.read().splitlines()
+        heading = next(i for i, line in enumerate(lines)
+                       if line.startswith('## Открытые пункты'))
+        after = next(i for i in range(heading + 1, len(lines))
+                     if lines[i].startswith('## '))
+        table = [line for line in lines[heading:after] if line.startswith('|')]
+        self.assertEqual(open_items(lines), len(table) - 2)
+        self.assertEqual(open_items(gate_lines(0)), 0)
+        self.assertEqual(open_items(gate_lines(2)), 2)
+        self.assertEqual(open_items([]), -1)
+        for name in ('Шаг 2', 'Шаг 3'):
+            self.assertIn("-eq '%s'" % GATE_SEPARATOR, release_block(name))
+
     def test_migration_lines(self):
         self.assertEqual(self.out['migrate_done']['code'], 0)
         self.assertIn(done_line(), self.out['migrate_done']['lines'])
@@ -523,6 +547,7 @@ class ReleaseToolFormats(unittest.TestCase):
 
 POWERSHELL = os.environ.get('AGRO_WORK_POWERSHELL')
 RELEASE_HASH = '5e1ea5e0' + 'c0ffee' * 5 + 'ab'
+REVIEWED_HASH = '7e71e3ed' + 'bead00' * 5 + 'cd'
 TEST_SERVICES = ['AgroTestReport', 'AgroTestBot', 'AgroTestBot003']
 LOGIN_BODY = '<form method="post" class="vs-login-form">'
 
@@ -546,12 +571,14 @@ class ReleaseBlocksInPowerShell(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.folder, True)
 
     def scenario(self, **changes):
-        subject = constants(release_block('Шаг 3'))['expected'].strip("'")
         value = {
             'Host': 'SRV-YOQSH', 'Admin': True, 'Head': BASELINE,
-            'Release': RELEASE_HASH, 'ReleaseParent': MAIN_BEFORE,
-            'Top': subject, 'HeadSubject': subject,
-            'FetchCode': 0, 'AncestorCode': 0, 'MergeCode': 0, 'ResetCode': 0,
+            'Release': RELEASE_HASH, 'Reviewed': REVIEWED_HASH,
+            'Ancestry': [[BASELINE, RELEASE_HASH], [REVIEWED_HASH, RELEASE_HASH],
+                         [BASELINE, REVIEWED_HASH]],
+            'ChangedAfterReviewed': ['docs/RELEASE_GATE.md'],
+            'GateLines': gate_lines(0),
+            'FetchCode': 0, 'MergeCode': 0, 'ResetCode': 0,
             'DiffNames': ['agro_work/store.py', 'migrate_agro_work_001.py',
                           'docs/AGRO_WORK_RELEASE_RUNBOOK.md'],
             'Modified': [], 'Services': TEST_SERVICES, 'StopFails': [],
@@ -591,6 +618,7 @@ class ReleaseBlocksInPowerShell(unittest.TestCase):
             'files': '@(%s)' % ', '.join("'%s'" % f for f in files[:3]),
             'site': "'http://agro-test.invalid'", 'work': "'%s'" % work,
             'log': "'%s'" % log, 'admin': '$global:scenario.Admin',
+            'reviewed': "'%s'" % REVIEWED_HASH,
         })
         block_file = os.path.join(folder, 'block.ps1')
         scenario_file = os.path.join(folder, 'scenario.json')
@@ -676,21 +704,25 @@ class ReleaseBlocksInPowerShell(unittest.TestCase):
             'not run as administrator': dict(Admin=False),
             'not SRV-YOQSH': dict(Host='SOME-PC'),
             'git fetch failed': dict(FetchCode=128),
-            'this release expects': dict(Top='Merge pull request #999 from x/y'),
-            'something else was merged into main': dict(ReleaseParent='f' * 40),
+            'not in main yet': dict(Ancestry=[[BASELINE, RELEASE_HASH]]),
+            'changes outside docs/: docs/a.md': None,
+            'the release gate is closed: 1 open item': dict(GateLines=gate_lines(1)),
+            'could not be read': dict(GateLines=[]),
             'already on the server': dict(Head=RELEASE_HASH),
             'this release was prepared for': dict(Head='0' * 40),
             'edited on this server': dict(Modified=[' M app.py']),
-            'does not continue': dict(AncestorCode=1),
+            'does not continue': dict(Ancestry=[[REVIEWED_HASH, RELEASE_HASH]]),
             'expected only migrate_agro_work_001.py': dict(DiffNames=[
                 'migrate_agro_work_001.py', 'migrate_drones_x_001.py']),
         }
+        cases['changes outside docs/: docs/a.md'] = dict(
+            ChangedAfterReviewed=['docs/a.md', 'drones.py'])
         for message, change in cases.items():
             with self.subTest(case=message):
                 result, calls, output, _ = self.run_block(
                     'Шаг 3', self.scenario(**change))
                 self.assertTrue(result.startswith('RESULT: STOP - '), output)
-                self.assertIn(message, result)
+                self.assertIn(message.replace(': docs/a.md', ''), result)
                 self.assertIn('Nothing was changed', output)
                 self.assertUntouched(calls)
 
@@ -773,8 +805,9 @@ class ReleaseBlocksInPowerShell(unittest.TestCase):
 
     def test_the_check_stops_on_what_the_release_would_stop_on(self):
         cases = {
-            'this release expects': dict(Top='Merge pull request #999 from x/y'),
-            'something else was merged into main': dict(ReleaseParent='f' * 40),
+            'the release gate is closed': dict(GateLines=gate_lines(1)),
+            'not in main yet': dict(Ancestry=[[BASELINE, RELEASE_HASH]]),
+            'changes outside docs/': dict(ChangedAfterReviewed=['app.py']),
             'already on the server': dict(Head=RELEASE_HASH),
             'drive D:': dict(FreeBytes=10),
             'drive D: not found': dict(FreeBytes=None),
@@ -802,8 +835,9 @@ class ReleaseBlocksInPowerShell(unittest.TestCase):
     def test_the_rollback_refuses_what_it_did_not_deploy(self):
         cases = {
             'nothing to roll back': dict(Head=BASELINE),
-            'not at this release': dict(Head=RELEASE_HASH,
-                                        HeadSubject='Merge pull request #999'),
+            'not at this release': dict(Head='a' * 40),
+            'past this release': dict(Head=RELEASE_HASH,
+                                      ChangedAfterReviewed=['gps/daily.py']),
         }
         for message, change in cases.items():
             with self.subTest(case=message):
@@ -817,9 +851,8 @@ class ReleaseBlocksInPowerShell(unittest.TestCase):
 
 HARNESS = os.path.join(REPO_ROOT, 'tests', 'agro_work_release_harness.ps1')
 BASELINE = 'eb7d0034333e996258232e6e254806c656a99b47'
-MAIN_BEFORE = '5271d1f7eaa10ad6242f945e1801a42207aef448'      # мерж PR #153
-MERGE_SUBJECT = re.compile(r'^Merge pull request #\d+ from '
-                           r'sINte3/claude/elegant-edison-zgmpbb$')
+PR_NUMBER = 154
+GATE_SEPARATOR = '|---|---|---|---|---|'
 BACKUP_PATTERNS = {
     'source': r'Source size\s*:\s*([\d,]+) bytes',
     'dest': r'Dest size\s*:\s*([\d,]+) bytes',
@@ -831,6 +864,33 @@ DRIFT_PATTERNS = {
     'header': r'^file-but-not-registered: \d+$',
     'item': r'^  - (.+)$',
 }
+
+
+def open_items(lines):
+    """То же, что Get-OpenItems шагов 2 и 3, -- на Python."""
+    for i, line in enumerate(lines):
+        if line.strip() == GATE_SEPARATOR:
+            count = 0
+            for row in lines[i + 1:]:
+                if not row.startswith('|'):
+                    break
+                count += 1
+            return count
+    return -1
+
+
+def gate_lines(rows):
+    """Настоящий docs/RELEASE_GATE.md с `rows` открытыми пунктами."""
+    with open(os.path.join(REPO_ROOT, 'docs', 'RELEASE_GATE.md'),
+              encoding='utf-8') as fh:
+        lines = fh.read().splitlines()
+    at = lines.index(GATE_SEPARATOR) + 1
+    end = at
+    while end < len(lines) and lines[end].startswith('|'):
+        end += 1
+    extra = ['| Трек %d | что | PR | что не проверено | кто |' % n
+             for n in range(rows)]
+    return lines[:at] + extra + lines[end:]
 
 
 def done_line():

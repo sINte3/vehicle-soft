@@ -7,9 +7,10 @@
 ## Что произойдёт — коротко
 
 1. Программа на сервере обновится до новой версии. В ней появится раздел
-   «Сверка agro-work». С этим же выпуском приедет готовая работа трека GPS
-   (PR #153, уже проверена на площадке): карта со спутником на экране «Факт
-   по технике» и спецтехника без гектаров. Всё остальное работает как раньше.
+   «Сверка agro-work». Тем же выпуском приедут уже влитые работы соседних
+   треков: GPS (PR #153, проверен на площадке) — карта со спутником на
+   экране «Факт по технике» и спецтехника без гектаров; Дроны (PR #152) —
+   принятая площадь DJI в отчётах. Всё остальное работает как раньше.
 2. Во время обновления программа и оба Telegram-бота **не работают 5–10
    минут**. Предупредите людей заранее.
 3. Перед обновлением делается резервная копия базы и сразу проверяется. Если
@@ -26,6 +27,14 @@
 **Когда:** в спокойное время, когда программой почти не пользуются.
 **Не с 00:30 до 05:00** — ночью на сервере работают свои задачи: сбор GPS,
 резервная копия, суточный расчёт.
+
+**Сейчас выпуск ждёт приёмки Дронов.** PR #152 Дронов (влит 30.09) положил
+строку в `docs/RELEASE_GATE.md`: «UAT владельца на настоящих данных» по
+`docs/DJI_AREA_ACCEPTED_PROPAGATION_001.md`, §5. Пока строка не снята,
+прод-деплой закрыт для всего проекта — это правило проекта, и шаги 2 и 3 сами
+его проверяют: ответят `RESULT: STOP - the release gate is closed` и ничего
+не тронут. Порядок такой: шаг 1 можно сделать сразу; приёмку Дронов ведёт их
+сессия; когда трек Дронов снимет строку, начинайте с шага 2.
 
 **Почему в этом ранбуке есть обновление кода в `C:\transport-report`.**
 28.09 было решено: обновление рабочей папки в шаги владельцу не ставить.
@@ -78,10 +87,11 @@
 Новая версия лежит на GitHub в запросе PR #154. «Влить» — сделать её
 основной, чтобы сервер мог её забрать. Сам сервер на этом шаге не меняется.
 
-**Важно: до конца шага 4 не вливайте другие PR** — сейчас открыт #152
-(Дроны). Выпуск проверен ровно для «то, что уже в `main` (включая GPS #153),
-плюс этот PR»; если перед ним или после него влито что-то ещё, шаги 2 и 3
-остановятся сами и ничего не тронут — тогда напишите мне.
+**Важно: до конца шага 4 не вливайте другие PR с кодом.** Выпуск проверен
+ровно для кода, который сейчас в `main` (agro-work, GPS #153, Дроны #152),
+плюс этот PR. Документы вливать можно — например, снятие строки гейта. Если
+в `main` появится другой код, шаги 2 и 3 остановятся сами и ничего не
+тронут — тогда напишите мне.
 
 1. Откройте https://github.com/sINte3/vehicle-soft/pull/154
 2. Внизу — зелёная кнопка. Если на ней не написано «Merge pull request»,
@@ -94,10 +104,10 @@
 
 ## Шаг 2. Проверка перед выпуском — ничего не меняет
 
-Проверка, что сервер и новая версия ровно такие, как задумано: тот сервер,
-та версия программы сейчас, новая версия — это проверенный `main` плюс PR
-#154 и ничего больше, в ней ровно одна миграция, резервной копии хватит
-места. Программа продолжает работать, ничего не
+Проверка, что сервер и новая версия ровно такие, как задумано: тот сервер;
+та версия программы сейчас; код новой версии — ровно проверенный (после него
+в `main` менялись только документы); гейт выпуска пуст; в новой версии ровно
+одна миграция; резервной копии хватит места. Программа продолжает работать, ничего не
 останавливается и не меняется.
 
 **Сначала запишите одно число** — после выпуска с ним сравнивается:
@@ -118,12 +128,21 @@ $backupBat = 'C:\transport-report\backup_production_db.bat'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $files     = @('C:\VehicleSoft_Secrets\agro_work_credentials.txt', 'C:\VehicleSoft_AgroWork\agro_work_unmatched.csv', 'C:\VehicleSoft_AgroWork\agro_work_methods.xlsx')
 $baseline  = 'eb7d0034333e996258232e6e254806c656a99b47'
-$expected  = 'Merge pull request #154 from sINte3/claude/elegant-edison-zgmpbb'
-$mainBefore = '5271d1f7eaa10ad6242f945e1801a42207aef448'
+$reviewed  = 'de81e43289abd3d600cc30ef80b596ec0bf26240'
 $migration = 'migrate_agro_work_001.py'
 $work      = 'C:\VehicleSoft_AgroWork'
 $log       = 'C:\VehicleSoft_AgroWork\release_step2.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+function Get-OpenItems([string[]]$lines) {
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ($lines[$i].Trim() -eq '|---|---|---|---|---|') {
+      $count = 0
+      for ($j = $i + 1; ($j -lt $lines.Count) -and $lines[$j].StartsWith('|'); $j++) { $count++ }
+      return $count
+    }
+  }
+  return -1
+}
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 try { Start-Transcript -Path $log -Append | Out-Null } catch { Write-Host 'NOTE: the log file could not be started' }
 $failure = $null
@@ -147,11 +166,15 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "git fetch failed (exit $LASTEXITCODE) - is there a connection to GitHub?" }
   $head = [string](& git rev-parse HEAD)
   $release = [string](& git rev-parse origin/main)
-  $top = [string](& git log -1 --format=%s origin/main)
-  if ($top -ne $expected) { throw "the newest change on GitHub is '$top', this release expects '$expected' - was PR #154 merged in step 1?" }
-  $parent = [string](& git rev-parse "$release^1")
-  if ($parent -ne $mainBefore) { throw "before this PR something else was merged into main: main was $parent, expected $mainBefore" }
-  if ($head -eq $release) { throw 'this version is already on the server - step 3 was done before; go on to step 4' }
+  & git merge-base --is-ancestor $reviewed $release
+  if ($LASTEXITCODE -ne 0) { throw 'the checked version is not in main yet - was PR #154 merged in step 1?' }
+  $changed = @(& git diff --name-only $reviewed $release | Where-Object { $_ -notlike 'docs/*' })
+  if ($changed.Count -gt 0) { throw "after the checked version main got changes outside docs/: $($changed -join ', ')" }
+  $open = Get-OpenItems @(& git show "${release}:docs/RELEASE_GATE.md")
+  if ($open -lt 0) { throw 'docs/RELEASE_GATE.md could not be read' }
+  if ($open -gt 0) { throw "the release gate is closed: $open open item(s) in docs/RELEASE_GATE.md - the deploy waits until they are removed" }
+  & git merge-base --is-ancestor $reviewed $head
+  if ($LASTEXITCODE -eq 0) { throw 'this version is already on the server - step 3 was done before; go on to step 4' }
   if ($head -ne $baseline) { throw "the program here is at $head, this release was prepared for $baseline" }
   $modified = @(& git status --porcelain --untracked-files=no)
   if ($modified.Count -gt 0) { throw "program files were edited on this server: $($modified -join '; ')" }
@@ -218,8 +241,7 @@ $errLog    = 'C:\transport-report\logs\error.log'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = 'eb7d0034333e996258232e6e254806c656a99b47'
-$expected  = 'Merge pull request #154 from sINte3/claude/elegant-edison-zgmpbb'
-$mainBefore = '5271d1f7eaa10ad6242f945e1801a42207aef448'
+$reviewed  = 'de81e43289abd3d600cc30ef80b596ec0bf26240'
 $migration = 'migrate_agro_work_001.py'
 $pendingId = 'AGRO_WORK_001 (migrate_agro_work_001.py)'
 $doneLine  = 'Done. 7 agro_work tables (100 columns), 7 indexes and 4 triggers are in place.'
@@ -227,6 +249,16 @@ $againLine = 'Already applied. Nothing to do.'
 $work      = 'C:\VehicleSoft_AgroWork'
 $log       = 'C:\VehicleSoft_AgroWork\release_step3.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+function Get-OpenItems([string[]]$lines) {
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ($lines[$i].Trim() -eq '|---|---|---|---|---|') {
+      $count = 0
+      for ($j = $i + 1; ($j -lt $lines.Count) -and $lines[$j].StartsWith('|'); $j++) { $count++ }
+      return $count
+    }
+  }
+  return -1
+}
 function Invoke-Tool([string]$exe, [string[]]$arguments) {
   $lines = @(& $exe @arguments 2>&1 | ForEach-Object { "$_" })
   $code = $LASTEXITCODE
@@ -304,11 +336,15 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "git fetch failed (exit $LASTEXITCODE) - is there a connection to GitHub?" }
   $head = [string](& git rev-parse HEAD)
   $release = [string](& git rev-parse origin/main)
-  $top = [string](& git log -1 --format=%s origin/main)
-  if ($top -ne $expected) { throw "the newest change on GitHub is '$top', this release expects '$expected'" }
-  $parent = [string](& git rev-parse "$release^1")
-  if ($parent -ne $mainBefore) { throw "before this PR something else was merged into main: main was $parent, expected $mainBefore" }
-  if ($head -eq $release) { throw 'this version is already on the server - step 3 was done before; go on to step 4' }
+  & git merge-base --is-ancestor $reviewed $release
+  if ($LASTEXITCODE -ne 0) { throw 'the checked version is not in main yet - was PR #154 merged in step 1?' }
+  $changed = @(& git diff --name-only $reviewed $release | Where-Object { $_ -notlike 'docs/*' })
+  if ($changed.Count -gt 0) { throw "after the checked version main got changes outside docs/: $($changed -join ', ')" }
+  $open = Get-OpenItems @(& git show "${release}:docs/RELEASE_GATE.md")
+  if ($open -lt 0) { throw 'docs/RELEASE_GATE.md could not be read' }
+  if ($open -gt 0) { throw "the release gate is closed: $open open item(s) in docs/RELEASE_GATE.md - the deploy waits until they are removed" }
+  & git merge-base --is-ancestor $reviewed $head
+  if ($LASTEXITCODE -eq 0) { throw 'this version is already on the server - step 3 was done before; go on to step 4' }
   if ($head -ne $baseline) { throw "the program here is at $head, this release was prepared for $baseline" }
   $modified = @(& git status --porcelain --untracked-files=no)
   if ($modified.Count -gt 0) { throw "program files were edited on this server: $($modified -join '; ')" }
@@ -458,8 +494,11 @@ try { Stop-Transcript | Out-Null } catch { }
 4. «GPS план-факт» → «Факт по технике»: выберите любую машину и вчерашний
    день — открывается карта, по умолчанию спутниковая. Это изменение трека
    GPS (PR #153), приехавшее тем же выпуском.
-5. Переключите язык на узбекский и обратно — страницы открываются.
-6. Откройте «Отчёт» за вчерашний день — он строится.
+5. «Дроны» → «Сводка» — открывается; рядом с площадью DJI видна принятая
+   площадь. Это изменение трека Дронов (PR #152); его подробную приёмку вы
+   уже прошли до выпуска.
+6. Переключите язык на узбекский и обратно — страницы открываются.
+7. Откройте «Отчёт» за вчерашний день — он строится.
 
 **Прислать:** «шаг 4 — всё сходится» или что не так. Метку выпуска в
 GitHub (тег) я поставлю сам после вашего ответа.
@@ -660,8 +699,9 @@ Set-Content -Path C:\transport-report\agro_work_import.bat -Encoding Ascii -Valu
 | Что видно | Что это значит | Что делать |
 |---|---|---|
 | `RESULT: STOP - this window is not run as administrator` | окно PowerShell открыто без прав администратора | закрыть окно, открыть «от имени администратора», повторить шаг |
-| `RESULT: STOP - the newest change on GitHub is ...` | PR #154 не влит или после него влито что-то ещё | шаг 1; если он сделан — прислать журнал, ничего не менялось |
-| `RESULT: STOP - before this PR something else was merged into main` | перед PR #154 влит другой PR — например, #152 | прислать журнал; ничего не менялось, выпуск я пересоберу |
+| `RESULT: STOP - the release gate is closed` | в `docs/RELEASE_GATE.md` есть открытые пункты — сейчас строка Дронов (PR #152) | ждать, пока их трек снимет строку, затем повторить шаг 2; ничего не менялось |
+| `RESULT: STOP - the checked version is not in main yet` | PR #154 ещё не влит | шаг 1; ничего не менялось |
+| `RESULT: STOP - after the checked version main got changes outside docs/` | после проверки в `main` влит чужой код | прислать журнал; ничего не менялось, выпуск я пересоберу |
 | `RESULT: STOP - this version is already on the server` | шаг 3 уже выполнен раньше | идти к шагу 4 |
 | `RESULT: STOP - the program here is at ...` | на сервере не та версия, для которой готовился выпуск | прислать журнал; ничего не менялось |
 | `RESULT: STOP - the backup did not pass` | копия базы не записалась или не совпала | прислать журнал; программа снова запущена на прежней версии |
@@ -690,7 +730,7 @@ $prod      = 'C:\transport-report'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = 'eb7d0034333e996258232e6e254806c656a99b47'
-$expected  = 'Merge pull request #154 from sINte3/claude/elegant-edison-zgmpbb'
+$reviewed  = 'de81e43289abd3d600cc30ef80b596ec0bf26240'
 $work      = 'C:\VehicleSoft_AgroWork'
 $log       = 'C:\VehicleSoft_AgroWork\release_rollback.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -712,9 +752,11 @@ try {
   if ((hostname) -ne 'srv-yoqsh') { throw "this computer is $(hostname), not SRV-YOQSH" }
   Set-Location -LiteralPath $prod
   $head = [string](& git rev-parse HEAD)
-  $top = [string](& git log -1 --format=%s HEAD)
   if ($head -eq $baseline) { throw 'the program is already on the previous version - there is nothing to roll back' }
-  if ($top -ne $expected) { throw "the program is at '$top', not at this release - roll back only together with the session" }
+  & git merge-base --is-ancestor $reviewed $head
+  if ($LASTEXITCODE -ne 0) { throw 'the program is not at this release - roll back only together with the session' }
+  $changed = @(& git diff --name-only $reviewed $head | Where-Object { $_ -notlike 'docs/*' })
+  if ($changed.Count -gt 0) { throw "the program is past this release (code changed after it: $($changed -join ', ')) - roll back only together with the session" }
   & git merge-base --is-ancestor $baseline $head
   if ($LASTEXITCODE -ne 0) { throw 'the previous version is not an ancestor of the current one' }
   $modified = @(& git status --porcelain --untracked-files=no)
