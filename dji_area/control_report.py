@@ -36,6 +36,7 @@ A -> B -> C корректируется только C, и отчёт гово�
 import json
 from datetime import datetime, timedelta
 
+from dji_area import accepted as accepted_area
 from dji_area import accounting as acc
 from dji_area import decisions as dec
 from dji_area import resolver as rs
@@ -376,19 +377,22 @@ def record_view(row, lang='ru', decision=None, times=None):
     ``decision`` -- действующее решение администратора (словарь) либо None;
     ``times`` -- {flight_id: start_at_utc} для звеньев цепочки A и B.
     """
-    auto = acc.classify(row)
-    cls = auto['accounting_class']
-    raw = auto['raw_area_m2']
-    if cls == acc.PHANTOM_PROVEN:
-        auto_accepted = auto['accounted_area_m2']
-        auto_excluded = auto['confirmed_overstatement_m2']
-    else:
-        auto_accepted = raw
-        auto_excluded = 0.0 if raw is not None else None
+    # [REASON]: DJI-AREA-ACCEPTED-PROPAGATION-001 -- связка «класс автомата
+    # + действующее решение -> эффективная площадь» живёт в одном месте,
+    # `dji_area.accepted`, и рабочие отчёты модуля берут её оттуда же. Копия
+    # здесь дала бы экрану контроля и сводке два способа посчитать одну
+    # принятую площадь.
+    result = accepted_area.evaluate(row, decision)
+    auto = result['auto']
+    cls = result['auto_class']
+    raw = result['calc_raw_m2']
+    auto_accepted = result['auto_accepted_m2']
+    auto_excluded = result['auto_excluded_m2']
     decision_view = _decision_view(decision, row, lang)
-    stale = bool(decision_view and decision_view['stale'])
-    state, accepted, excluded, applied = dec.effective(
-        cls, raw, auto_accepted, auto_excluded, decision, stale=stale)
+    state = result['state']
+    accepted = result['accepted_m2']
+    excluded = result['excluded_m2']
+    applied = result['decision_applied']
     lapsed = decision is not None and not applied
     if decision_view is not None:
         decision_view['applied'] = applied

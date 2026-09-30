@@ -86,6 +86,10 @@ DRONES_PLAIN_NUM_TEMPLATES = (
     # здесь нет: та тройка означает ровно шесть денежных карточек. Опт-аут
     # `is-num` картам нужен -- гектары группируются как числа.
     'templates/drones/coverage.html',
+    # DJI-AREA-ACCEPTED-PROPAGATION-001: плитки принятой площади (DJI RAW,
+    # принято, исключено, не рассчитано, открыто) -- гектары и счётчики, не
+    # деньги; общий блок сводки, сверки и календаря.
+    'templates/drones/_accepted.html',
 )
 
 # [REASON]: this line is the rule the fix opts OUT of, and it must survive the

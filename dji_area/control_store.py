@@ -26,7 +26,7 @@ import re
 import socket
 from datetime import datetime, timedelta
 
-from dji_area import accounting as acc
+from dji_area import accepted as accepted_area
 from dji_area import decisions as dec
 from dji_area import store
 
@@ -343,22 +343,73 @@ def history(con, flight_ids):
 
 
 def _auto_figures(calc):
-    """(класс, причина, RAW, авто-принято, авто-исключено) -- как в отчёте."""
-    auto = acc.classify(calc)
-    cls = auto['accounting_class']
-    raw = auto['raw_area_m2']
-    if cls == acc.PHANTOM_PROVEN:
-        accepted = auto['accounted_area_m2']
-        excluded = auto['confirmed_overstatement_m2']
-    else:
-        accepted = raw
-        excluded = 0.0 if raw is not None else None
-    return cls, auto['reason'], raw, accepted, excluded
+    """(класс, причина, RAW, авто-принято, авто-исключено) -- как в отчёте.
+
+    Числа -- `dji_area.accepted.auto_figures`, тот же источник, что у экрана
+    контроля и рабочих отчётов."""
+    auto, accepted, excluded = accepted_area.auto_figures(calc)
+    return (auto['accounting_class'], auto['reason'], auto['raw_area_m2'],
+            accepted, excluded)
 
 
 def current_calculation(con, flight_id):
     row = store.current_calculation(con, flight_id)
     return dict(row) if row is not None else None
+
+
+# ─── Принятая площадь для рабочих отчётов (пакетно) ─────────────────────────
+
+def _table_present(con, name):
+    return con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND "
+                       'name=?', (name,)).fetchone() is not None
+
+
+def current_calculations(con, flight_ids, version=None):
+    """{flight_id DJI: текущая строка расчёта} -- пакетно, кусками по 400.
+
+    Текущая -- та же, что у `store.current_calculation` и экрана контроля:
+    действующая версия алгоритма, `superseded_at IS NULL`; при двух текущих
+    строках одного вылета берётся последняя по id. Вылетов без расчёта в
+    ответе нет. Соединение -- как у всего модуля, с `row_factory =
+    sqlite3.Row` (его требуют цепочки решений).
+    """
+    version = version or store.AREA_ALGORITHM_VERSION
+    out = {}
+    if not _table_present(con, 'dji_area_calculations'):
+        return out
+    cols = ', '.join(accepted_area.CALC_COLUMNS)
+    for chunk in _chunks(flight_ids):
+        cursor = con.execute(
+            'SELECT %s FROM dji_area_calculations WHERE '
+            'area_algorithm_version=? AND superseded_at IS NULL AND '
+            'flight_id IN (%s) ORDER BY id' % (cols, ','.join('?' * len(chunk))),
+            [version] + chunk)
+        names = [d[0] for d in cursor.description]
+        for values in cursor.fetchall():
+            row = dict(zip(names, values))
+            out[int(row['flight_id'])] = row
+    return out
+
+
+def accepted_for(con, raw_by_flight, version=None):
+    """{flight_id DJI: `dji_area.accepted.for_flight(...)`} для рабочих отчётов.
+
+    ``raw_by_flight`` -- {flight_id DJI: RAW вылета в м²}. Два запроса на
+    каждые 400 вылетов (расчёты и цепочки решений), независимо от числа
+    вылетов внутри куска: N+1 здесь нет. Только чтение.
+
+    [REASON]: таблица решений может отсутствовать (миграция V2 не применена)
+    -- тогда действует автоматический слой, как и на экране контроля; а
+    вылет без текущего расчёта остаётся `NOT_CALCULATED`, а не «принят».
+    """
+    ids = [int(i) for i in raw_by_flight]
+    calcs = current_calculations(con, ids, version)
+    decisions = {}
+    if calcs and tables_present(con):
+        decisions = active_decisions(con, list(calcs))
+    return {fid: accepted_area.for_flight(raw_by_flight[fid], calcs.get(fid),
+                                          decisions.get(fid))
+            for fid in ids}
 
 
 def record_decision(con, flight_id, action, comment, confirmed,

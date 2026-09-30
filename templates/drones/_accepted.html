@@ -1,0 +1,92 @@
+{# DJI-AREA-ACCEPTED-PROPAGATION-001. Принятая площадь Area Control рядом с
+   DJI RAW в рабочих отчётах модуля. Числа и статусы даёт
+   `dji_area.accepted` через `_drone_accepted_*` в drones.py; здесь только
+   разметка.
+
+   [REASON]: «не рассчитано» -- не ноль и не RAW. Вылет, который Area Control
+   не рассчитывал, показывается словом, а итог группы называет, сколько
+   таких вылетов и сколько RAW за ними: принятая по рассчитанным вылетам
+   никогда не выдаётся за принятую по всем.
+
+   У макросов нет своего `is_ru`: язык передаёт страница. #}
+
+{# Статус одного вылета: принято / скорректировано / требует решения /
+   ожидает доказательства / не рассчитано. #}
+{% macro acc_status(a) -%}
+<span class="vs-badge vs-badge-sm {{ a.status_badge }}">{{ a.status_label }}</span>
+{%- endmacro %}
+
+{# Принятая площадь одного вылета: число либо «не рассчитано». #}
+{% macro acc_flight_value(a, is_ru) -%}
+{% if a.accepted_ha is not none %}{{ '%.2f'|format(a.accepted_ha)|vs_num }}{% elif a.calculated %}—{% else %}<span class="vs-muted">{{ 'не рассчитано' if is_ru else 'ҳисобланмаган' }}</span>{% endif %}
+{%- endmacro %}
+
+{# Принятая площадь группы: по рассчитанным вылетам; «частично», если
+   расчёта нет у части вылетов; «не рассчитано», если ни у одного; «—»,
+   если вылетов в группе нет вовсе (месяц только с ведомостями).
+   «расхождение RAW» -- у части вылетов RAW расчёта не совпадает с RAW
+   вылета: число показано, но базой контроля группа не служит
+   (`control_ready`, fail-closed). #}
+{% macro acc_value(a, is_ru) -%}
+{% if not a.records %}—{% elif a.accepted_ha is none %}<span class="vs-muted">{{ 'не рассчитано' if is_ru else 'ҳисобланмаган' }}</span>{% else %}{{ '%.2f'|format(a.accepted_ha)|vs_num }}{% if a.is_partial %} <span class="vs-badge vs-badge-sm is-outline" title="{{ 'Принято только по рассчитанным вылетам; остальные — в колонке «Не рассчитано»' if is_ru else 'Фақат ҳисобланган парвозлар бўйича қабул қилинган; қолганлари «Ҳисобланмаган» устунида' }}">{{ 'частично' if is_ru else 'қисман' }}</span>{% endif %}{% if a.raw_mismatch_records %} <span class="vs-badge vs-badge-sm vs-badge-warning" title="{{ 'RAW расчёта расходится с RAW вылета; принятая этой группы не используется как база контроля' if is_ru else 'Ҳисобдаги RAW парвоздаги RAW дан фарқ қилади; бу гуруҳнинг қабул қилинган майдони назорат асоси сифатида ишлатилмайди' }}">{{ 'расхождение RAW' if is_ru else 'RAW фарқи' }}</span>{% endif %}{% endif %}
+{%- endmacro %}
+
+{# Исключено (DJI RAW − принято) по рассчитанным вылетам группы. #}
+{% macro acc_excluded(a) -%}
+{% if a.excluded_ha is none %}—{% else %}{{ '%.2f'|format(a.excluded_ha)|vs_num }}{% endif %}
+{%- endmacro %}
+
+{# Вылеты группы без расчёта Area Control: число и их DJI RAW. #}
+{% macro acc_uncalc(a, is_ru) -%}
+{% if a.not_calculated_records %}{{ a.not_calculated_records|vs_num }} · {{ '%.2f'|format(a.not_calculated_raw_ha)|vs_num }} {{ 'га' if is_ru else 'га' }}{% else %}—{% endif %}
+{%- endmacro %}
+
+{# Открытые записи группы: ожидают доказательства или решения человека. Их
+   площадь сидит в принятой по DJI RAW, пока не решено иначе. #}
+{% macro acc_open(a, is_ru) -%}
+{% if a.pending_records %}<span class="vs-badge vs-badge-sm vs-badge-warning">{{ 'ожидает' if is_ru else 'кутмоқда' }}: {{ a.pending_records }}</span> {% endif %}{% if a.needs_decision_records %}<span class="vs-badge vs-badge-sm vs-badge-danger">{{ 'требует решения' if is_ru else 'қарор керак' }}: {{ a.needs_decision_records }}</span>{% endif %}{% if not a.open_records %}—{% endif %}
+{%- endmacro %}
+
+{# Плитки итога и строка полноты: DJI RAW, принято, исключено, не
+   рассчитано, открыто. Значение плитки -- гектары, число вылетов --
+   подписью под ним: «6 · 38 304.44 га» в одной строке переносилось по
+   цифрам. `link` -- адрес экрана контроля того же периода. #}
+{% macro acc_block(a, is_ru, link=None) -%}
+<div class="vs-stat-grid vs-mb">
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'DJI RAW, га' if is_ru else 'DJI RAW, га' }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(a.raw_ha)|vs_num }}</div>
+    <div class="vs-muted">{{ 'вылетов' if is_ru else 'парвозлар' }}: {{ a.records|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Принято, га' if is_ru else 'Қабул қилинган, га' }}</div>
+    <div class="vs-stat-value is-num">{{ acc_value(a, is_ru) }}</div>
+    <div class="vs-muted">{{ a.coverage_label }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Исключено, га' if is_ru else 'Чиқарилган, га' }}</div>
+    <div class="vs-stat-value is-num">{{ acc_excluded(a) }}</div>
+    <div class="vs-muted">{{ 'скорректировано вылетов' if is_ru else 'тузатилган парвозлар' }}: {{ a.corrected_records|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Не рассчитано, DJI RAW га' if is_ru else 'Ҳисобланмаган, DJI RAW га' }}</div>
+    <div class="vs-stat-value is-num">{% if a.not_calculated_records %}{{ '%.2f'|format(a.not_calculated_raw_ha)|vs_num }}{% else %}—{% endif %}</div>
+    <div class="vs-muted">{{ 'вылетов' if is_ru else 'парвозлар' }}: {{ a.not_calculated_records|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Открыто, DJI RAW га' if is_ru else 'Очиқ, DJI RAW га' }}</div>
+    <div class="vs-stat-value is-num">{% if a.open_records %}{{ '%.2f'|format(a.open_raw_ha)|vs_num }}{% else %}—{% endif %}</div>
+    <div class="vs-muted">{{ 'ожидает' if is_ru else 'кутмоқда' }}: {{ a.pending_records|vs_num }} · {{ 'требует решения' if is_ru else 'қарор керак' }}: {{ a.needs_decision_records|vs_num }}</div>
+  </div>
+</div>
+<div class="vs-alert {{ 'is-warning' if (a.is_partial or a.is_none or a.open_records or a.raw_mismatch_records) else 'is-info' }} vs-mb" role="status">
+  <div>
+    <b>{{ 'Контроль площади DJI:' if is_ru else 'DJI майдони назорати:' }}</b> {{ a.coverage_label }}{% if a.records %} — {{ 'рассчитано' if is_ru else 'ҳисобланган' }} {{ a.calculated_records|vs_num }} {{ 'из' if is_ru else '/' }} {{ a.records|vs_num }} {{ 'вылетов' if is_ru else 'парвоз' }}{% endif %}.
+    {% if a.not_calculated_records %}{{ 'Для вылетов без расчёта принятая площадь не показывается и не заменяется площадью DJI RAW: они не проверялись.' if is_ru else 'Ҳисоби йўқ парвозлар учун қабул қилинган майдон кўрсатилмайди ва DJI RAW майдони билан алмаштирилмайди: улар текширилмаган.' }}{% endif %}
+    {% if a.open_records %}{{ 'Открытые записи пока входят в принятую по DJI RAW, пока администратор не решил иначе.' if is_ru else 'Очиқ ёзувлар администратор бошқача ҳал қилмагунча DJI RAW бўйича қабул қилинганга киради.' }}{% endif %}
+    {% if a.raw_mismatch_records %}{{ 'У вылетов (%d) DJI RAW расчёта отличается от DJI RAW вылета: принятая этой группы показана, но базой контроля не служит — сверка, календарь и «л/га по принятой» берут DJI RAW. Проверьте эти вылеты на экране контроля площади.'|format(a.raw_mismatch_records) if is_ru else 'Парвозларда (%d) ҳисобдаги DJI RAW парвоздаги DJI RAW дан фарқ қилади: бу гуруҳнинг қабул қилинган майдони кўрсатилган, аммо назорат асоси бўлмайди — солиштириш, тақвим ва «қабул қилинган бўйича л/га» DJI RAW ни олади. Бу парвозларни майдон назорати экранида текширинг.'|format(a.raw_mismatch_records) }}{% endif %}
+    {{ 'Принятая площадь — техническая площадь контроля, а не площадь к оплате.' if is_ru else 'Қабул қилинган майдон — назоратнинг техник майдони, тўлов учун майдон эмас.' }}
+    {% if link %}<a href="{{ link }}">{{ 'Контроль площади DJI за этот период' if is_ru else 'Шу давр учун DJI майдон назорати' }}</a>{% endif %}
+  </div>
+</div>
+{%- endmacro %}

@@ -196,6 +196,15 @@ jobs:
       - name: DJI area evidence acceptance matrix (pure modules)
         run: python -m unittest tests.test_dji_area_core
 
+      # DJI-AREA-ACCEPTED-PROPAGATION-001. The accepted area every drone
+      # report now shows comes from ONE module, dji_area/accepted.py. Its
+      # semantics (the twelve accounting/decision cases, «not calculated» is
+      # never RAW) and the batch reader (queries per chunk, not per flight)
+      # are stdlib-only and run on the real migration DDL -- no Flask, no
+      # server. The report half needs the app and runs in the full suite.
+      - name: DJI accepted area -- one source for every report (pure)
+        run: python -m unittest tests.test_dji_area_accepted_core
+
       - name: DJI area evidence migration (four paths, DDL columns)
         run: python -m unittest tests.test_dji_area_migration_001
 
