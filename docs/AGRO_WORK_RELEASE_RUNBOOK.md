@@ -73,10 +73,15 @@
 
 ## Шаг 1. Влить изменения на GitHub
 
-Новая версия лежит на GitHub в запросе PR #152. «Влить» — сделать её
+Новая версия лежит на GitHub в запросе PR #154. «Влить» — сделать её
 основной, чтобы сервер мог её забрать. Сам сервер на этом шаге не меняется.
 
-1. Откройте https://github.com/sINte3/vehicle-soft/pull/152
+**Важно: до конца шага 4 не вливайте другие PR** — сейчас открыты #152
+(Дроны) и #153 (GPS). Выпуск проверен ровно для «прежняя версия + этот PR»;
+если перед ним или после него влито что-то ещё, шаги 2 и 3 остановятся сами
+и ничего не тронут — тогда напишите мне.
+
+1. Откройте https://github.com/sINte3/vehicle-soft/pull/154
 2. Внизу — зелёная кнопка. Если на ней не написано «Merge pull request»,
    нажмите стрелку рядом с ней и выберите **«Create a merge commit»** (не
    «Squash» и не «Rebase»).
@@ -88,8 +93,8 @@
 ## Шаг 2. Проверка перед выпуском — ничего не меняет
 
 Проверка, что сервер и новая версия ровно такие, как задумано: тот сервер,
-та версия программы сейчас, в новой версии ровно одна миграция, резервной
-копии хватит места. Программа продолжает работать, ничего не
+та версия программы сейчас, новая версия — это прежняя плюс PR #154 и ничего
+больше, в ней ровно одна миграция, резервной копии хватит места. Программа продолжает работать, ничего не
 останавливается и не меняется.
 
 **Сначала запишите одно число** — после выпуска с ним сравнивается:
@@ -110,7 +115,8 @@ $backupBat = 'C:\transport-report\backup_production_db.bat'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $files     = @('C:\VehicleSoft_Secrets\agro_work_credentials.txt', 'C:\VehicleSoft_AgroWork\agro_work_unmatched.csv', 'C:\VehicleSoft_AgroWork\agro_work_methods.xlsx')
 $baseline  = 'eb7d0034333e996258232e6e254806c656a99b47'
-$expected  = 'Merge pull request #152 from sINte3/claude/elegant-edison-zgmpbb'
+$expected  = 'Merge pull request #154 from sINte3/claude/elegant-edison-zgmpbb'
+$mainBefore = '012390c7c43a143b88343e274596793123a5643b'
 $migration = 'migrate_agro_work_001.py'
 $work      = 'C:\VehicleSoft_AgroWork'
 $log       = 'C:\VehicleSoft_AgroWork\release_step2.log'
@@ -139,7 +145,9 @@ try {
   $head = [string](& git rev-parse HEAD)
   $release = [string](& git rev-parse origin/main)
   $top = [string](& git log -1 --format=%s origin/main)
-  if ($top -ne $expected) { throw "the newest change on GitHub is '$top', this release expects '$expected' - was PR #152 merged in step 1?" }
+  if ($top -ne $expected) { throw "the newest change on GitHub is '$top', this release expects '$expected' - was PR #154 merged in step 1?" }
+  $parent = [string](& git rev-parse "$release^1")
+  if ($parent -ne $mainBefore) { throw "before this PR something else was merged into main: main was $parent, expected $mainBefore" }
   if ($head -eq $release) { throw 'this version is already on the server - step 3 was done before; go on to step 4' }
   if ($head -ne $baseline) { throw "the program here is at $head, this release was prepared for $baseline" }
   $modified = @(& git status --porcelain --untracked-files=no)
@@ -164,7 +172,7 @@ try { Stop-Transcript | Out-Null } catch { }
 **Что должно получиться:** последняя строка перед `LOG FILE` —
 `RESULT: CHECK PASSED - go on to step 3`. Выше — три строки
 `SERVICE ... : Running`, строка `RELEASE: eb7d0034... -> ...` и список
-влитых изменений: `Merge pull request #146` … `#152`.
+влитых изменений: `Merge pull request #146` … `#154`.
 
 **Если `RESULT: STOP - ...`:** дальше не идти. Программа не тронута и
 работает как раньше. Пришлите `C:\VehicleSoft_AgroWork\release_step2.log`.
@@ -207,7 +215,8 @@ $errLog    = 'C:\transport-report\logs\error.log'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = 'eb7d0034333e996258232e6e254806c656a99b47'
-$expected  = 'Merge pull request #152 from sINte3/claude/elegant-edison-zgmpbb'
+$expected  = 'Merge pull request #154 from sINte3/claude/elegant-edison-zgmpbb'
+$mainBefore = '012390c7c43a143b88343e274596793123a5643b'
 $migration = 'migrate_agro_work_001.py'
 $pendingId = 'AGRO_WORK_001 (migrate_agro_work_001.py)'
 $doneLine  = 'Done. 7 agro_work tables (100 columns), 7 indexes and 4 triggers are in place.'
@@ -294,6 +303,8 @@ try {
   $release = [string](& git rev-parse origin/main)
   $top = [string](& git log -1 --format=%s origin/main)
   if ($top -ne $expected) { throw "the newest change on GitHub is '$top', this release expects '$expected'" }
+  $parent = [string](& git rev-parse "$release^1")
+  if ($parent -ne $mainBefore) { throw "before this PR something else was merged into main: main was $parent, expected $mainBefore" }
   if ($head -eq $release) { throw 'this version is already on the server - step 3 was done before; go on to step 4' }
   if ($head -ne $baseline) { throw "the program here is at $head, this release was prepared for $baseline" }
   $modified = @(& git status --porcelain --untracked-files=no)
@@ -641,7 +652,8 @@ Set-Content -Path C:\transport-report\agro_work_import.bat -Encoding Ascii -Valu
 | Что видно | Что это значит | Что делать |
 |---|---|---|
 | `RESULT: STOP - this window is not run as administrator` | окно PowerShell открыто без прав администратора | закрыть окно, открыть «от имени администратора», повторить шаг |
-| `RESULT: STOP - the newest change on GitHub is ...` | PR #152 не влит или после него влито что-то ещё | шаг 1; если он сделан — прислать журнал, ничего не менялось |
+| `RESULT: STOP - the newest change on GitHub is ...` | PR #154 не влит или после него влито что-то ещё | шаг 1; если он сделан — прислать журнал, ничего не менялось |
+| `RESULT: STOP - before this PR something else was merged into main` | перед PR #154 влит другой PR — например, #152 или #153 | прислать журнал; ничего не менялось, выпуск я пересоберу |
 | `RESULT: STOP - this version is already on the server` | шаг 3 уже выполнен раньше | идти к шагу 4 |
 | `RESULT: STOP - the program here is at ...` | на сервере не та версия, для которой готовился выпуск | прислать журнал; ничего не менялось |
 | `RESULT: STOP - the backup did not pass` | копия базы не записалась или не совпала | прислать журнал; программа снова запущена на прежней версии |
@@ -670,7 +682,7 @@ $prod      = 'C:\transport-report'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = 'eb7d0034333e996258232e6e254806c656a99b47'
-$expected  = 'Merge pull request #152 from sINte3/claude/elegant-edison-zgmpbb'
+$expected  = 'Merge pull request #154 from sINte3/claude/elegant-edison-zgmpbb'
 $work      = 'C:\VehicleSoft_AgroWork'
 $log       = 'C:\VehicleSoft_AgroWork\release_rollback.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)

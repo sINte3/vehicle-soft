@@ -262,7 +262,8 @@ class ReleaseRunbook(unittest.TestCase):
     def test_the_release_follows_the_procedure_order(self):
         body = release_block('Шаг 3')
         marks = [
-            'if ($head -ne $baseline)',                       # проверки
+            'if ($parent -ne $mainBefore)',                   # проверки
+            'if ($head -ne $baseline)',
             'if (($migrations.Count -ne 1)',
             '$stopped = $true',                               # шаг 2 порядка
             'foreach ($name in $services) { Stop-Service',
@@ -303,6 +304,7 @@ class ReleaseRunbook(unittest.TestCase):
             'services': "@('TransportReport', 'TransportBot', 'TransportBot003')",
             'site': "'http://10.103.25.14:5050'",
             'baseline': "'%s'" % BASELINE,
+            'mainBefore': "'%s'" % MAIN_BEFORE,
             'migration': "'migrate_agro_work_001.py'",
             'pendingId': "'%s (migrate_agro_work_001.py)'" % mig.MIGRATION_ID,
             'doneLine': "'%s'" % done_line(),
@@ -318,6 +320,11 @@ class ReleaseRunbook(unittest.TestCase):
                         self.assertEqual(value, expected[key], key)
                 self.assertEqual(found['baseline'], expected['baseline'])
                 subjects.add(found['expected'])
+                if name != 'Откат':
+                    # Выпуск -- «мерж #151 + этот PR» и ничего больше.
+                    self.assertEqual(found['mainBefore'], expected['mainBefore'])
+                    self.assertIn('if ($parent -ne $mainBefore)',
+                                  release_block(name))
         self.assertEqual(len(subjects), 1)
         subject = subjects.pop().strip("'")
         self.assertRegex(subject, MERGE_SUBJECT)
@@ -339,6 +346,14 @@ class ReleaseRunbook(unittest.TestCase):
         # Блок выпуска готовился от записанного production baseline.
         self.assertEqual(len(production), 1)
         self.assertIn('`%s`' % BASELINE[:7], production[0])
+
+    def test_main_before_is_the_merge_of_pr_151(self):
+        probe = subprocess.run(['git', 'log', '-1', '--format=%s', MAIN_BEFORE],
+                               cwd=REPO_ROOT, capture_output=True, text=True)
+        if probe.returncode != 0:
+            self.skipTest('the merge of PR #151 is outside this shallow clone')
+        self.assertEqual(probe.stdout.strip(), 'Merge pull request #151 from '
+                         'sINte3/claude/elegant-edison-zgmpbb')
 
     def test_the_delta_carries_exactly_the_one_migration(self):
         probe = subprocess.run(['git', 'cat-file', '-e', BASELINE + '^{commit}'],
@@ -528,7 +543,8 @@ class ReleaseBlocksInPowerShell(unittest.TestCase):
         subject = constants(release_block('Шаг 3'))['expected'].strip("'")
         value = {
             'Host': 'SRV-YOQSH', 'Admin': True, 'Head': BASELINE,
-            'Release': RELEASE_HASH, 'Top': subject, 'HeadSubject': subject,
+            'Release': RELEASE_HASH, 'ReleaseParent': MAIN_BEFORE,
+            'Top': subject, 'HeadSubject': subject,
             'FetchCode': 0, 'AncestorCode': 0, 'MergeCode': 0, 'ResetCode': 0,
             'DiffNames': ['agro_work/store.py', 'migrate_agro_work_001.py',
                           'docs/AGRO_WORK_RELEASE_RUNBOOK.md'],
@@ -655,6 +671,7 @@ class ReleaseBlocksInPowerShell(unittest.TestCase):
             'not SRV-YOQSH': dict(Host='SOME-PC'),
             'git fetch failed': dict(FetchCode=128),
             'this release expects': dict(Top='Merge pull request #999 from x/y'),
+            'something else was merged into main': dict(ReleaseParent='f' * 40),
             'already on the server': dict(Head=RELEASE_HASH),
             'this release was prepared for': dict(Head='0' * 40),
             'edited on this server': dict(Modified=[' M app.py']),
@@ -745,12 +762,13 @@ class ReleaseBlocksInPowerShell(unittest.TestCase):
         self.assertUntouched(calls)
         self.assertIn('git fetch --quiet origin', calls)
         self.assertIn('RELEASE: %s -> %s' % (BASELINE, RELEASE_HASH), output)
-        self.assertIn('Merge pull request #152', output)
+        self.assertIn('Merge pull request #154', output)
         self.assertIn('RESULT: CHECK PASSED', transcript)
 
     def test_the_check_stops_on_what_the_release_would_stop_on(self):
         cases = {
             'this release expects': dict(Top='Merge pull request #999 from x/y'),
+            'something else was merged into main': dict(ReleaseParent='f' * 40),
             'already on the server': dict(Head=RELEASE_HASH),
             'drive D:': dict(FreeBytes=10),
             'drive D: not found': dict(FreeBytes=None),
@@ -793,6 +811,7 @@ class ReleaseBlocksInPowerShell(unittest.TestCase):
 
 HARNESS = os.path.join(REPO_ROOT, 'tests', 'agro_work_release_harness.ps1')
 BASELINE = 'eb7d0034333e996258232e6e254806c656a99b47'
+MAIN_BEFORE = '012390c7c43a143b88343e274596793123a5643b'      # мерж PR #151
 MERGE_SUBJECT = re.compile(r'^Merge pull request #\d+ from '
                            r'sINte3/claude/elegant-edison-zgmpbb$')
 BACKUP_PATTERNS = {

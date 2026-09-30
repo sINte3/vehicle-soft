@@ -115,6 +115,7 @@ function git {
     'fetch' { $global:LASTEXITCODE = [int]$s.FetchCode; return }
     'rev-parse' {
       if ($a -contains 'origin/main') { return [string]$s.Release }
+      if (@($a | Where-Object { $_ -like '*^1' }).Count -gt 0) { return [string]$s.ReleaseParent }
       if ($a -contains '--short') { return $global:state.Head.Substring(0, 7) }
       return $global:state.Head
     }
@@ -123,7 +124,7 @@ function git {
         if ($a -contains 'HEAD') { return [string]$s.HeadSubject }
         return [string]$s.Top
       }
-      return @('Merge pull request #151 from sINte3/claude/elegant-edison-zgmpbb', 'Merge origin/main into the branch', 'Merge pull request #152 from sINte3/claude/elegant-edison-zgmpbb')
+      return @('Merge pull request #151 from sINte3/claude/elegant-edison-zgmpbb', 'Merge origin/main into the branch', 'Merge pull request #154 from sINte3/claude/elegant-edison-zgmpbb')
     }
     'status' {
       if ($a -contains '--untracked-files=no') { return @($s.Modified | ForEach-Object { [string]$_ }) }
