@@ -67,6 +67,7 @@
             {% if day.coverage %}
               {% if day.coverage[0] == 'pokryta' %}<span class="vs-badge vs-badge-success">{{ coverage_label(day.coverage[0]) }}</span>
               {% elif day.coverage[0] == 'bez_zayavki' %}<span class="vs-badge vs-badge-danger">{{ coverage_label(day.coverage[0]) }}</span>
+                {% if day.late %}<div class="vs-soft">{{ ('заявка %s заведена задним числом через %d сут.' if is_ru else '%s буюртма %d кундан кейин орқа сана билан киритилган')|format(day.late[0].number, day.late[1]) }}</div>{% endif %}
               {% else %}<span class="vs-badge">{{ coverage_label(day.coverage[0]) }}</span>
                 <div class="vs-soft">{{ reason_label(day.coverage[1]) }}</div>
               {% endif %}
