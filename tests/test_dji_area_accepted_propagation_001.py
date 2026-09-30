@@ -433,6 +433,18 @@ class Reports(Seeded):
                                places=6)
         self.assertAlmostEqual(summary['by_machine']['rows'][0]['acc']
                                ['accepted_ha'], june_ha, places=6)
+        # Разрез по операторам -- то же правило привязки: назначений в
+        # фикстуре нет, весь июнь -- «оператор не определён».
+        self.assertAlmostEqual(summary['by_operator']['undetermined']['acc']
+                               ['accepted_ha'], june_ha, places=6)
+        self.assertAlmostEqual(summary['by_operator']['total']['acc']
+                               ['accepted_ha'], june_ha, places=6)
+        book = self.book('/drones/summary.xlsx?' + WINDOW_JUNE)
+        rows = list(book['По операторам'].iter_rows(min_row=3,
+                                                    values_only=True))
+        self.assertEqual(rows[-1][0], 'Итого')
+        self.assertAlmostEqual(rows[-1][4], june_ha, places=6)
+        self.assertEqual(rows[-1][6], 0)
         self.assertEqual(summary['accepted']['open_records'],
                          report['total']['open_records'])
 
