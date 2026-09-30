@@ -319,9 +319,24 @@ def add(totals, item):
 def finalize(totals):
     """Полнота и производные. Возвращает тот же словарь.
 
-    ``accepted_full_m2`` -- принятая площадь группы, только когда расчёт есть
-    у КАЖДОЙ записи (или записей нет вовсе); иначе None. Частичная сумма
-    остаётся в ``accepted_m2`` и показывается только с подписью полноты.
+    Два разных вопроса -- два признака:
+
+    * ``coverage`` / ``complete`` -- есть ли расчёт у каждой записи группы
+      (и у каждого расчёта есть RAW). Только наличие расчёта, не больше.
+    * ``control_ready`` -- можно ли взять принятую площадь группы БАЗОЙ
+      рабочего контроля (сверка с ведомостями, число календаря, «л/га по
+      принятой»): расчёт полон И ни у одной записи RAW расчёта не расходится
+      с RAW вылета.
+
+    ``accepted_full_m2`` -- принятая площадь группы, только при
+    ``control_ready``; иначе None. Сумма по рассчитанным остаётся в
+    ``accepted_m2`` и показывается только с подписью полноты и расхождения.
+
+    [REASON]: расхождение RAW -- fail-closed. Принятая площадь построена на
+    RAW расчёта; если RAW вылета, который показывает рабочий отчёт, уже
+    другой, система сама видит противоречие, и считать такую группу готовой
+    базой нельзя: принятая относилась бы не к тому RAW, что стоит рядом.
+    Такая группа контролируется по DJI RAW, а расхождение называется словами.
     """
     if not totals['records']:
         coverage = COVERAGE_EMPTY
@@ -334,9 +349,12 @@ def finalize(totals):
     totals['coverage'] = coverage
     totals['complete'] = coverage in (COVERAGE_FULL, COVERAGE_EMPTY) \
         and not totals['accepted_missing_records']
+    totals['control_ready'] = totals['complete'] \
+        and not totals['raw_mismatch_records']
     totals['accepted_full_m2'] = totals['accepted_m2'] \
-        if totals['complete'] else None
-    totals['resolved'] = totals['complete'] and not totals['open_records']
+        if totals['control_ready'] else None
+    totals['resolved'] = totals['control_ready'] \
+        and not totals['open_records']
     return totals
 
 

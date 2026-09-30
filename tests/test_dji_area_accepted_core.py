@@ -267,6 +267,56 @@ class PerFlightSemantics(unittest.TestCase):
         self.assertFalse(same['raw_mismatch'])
 
 
+class RawMismatchFailClosed(unittest.TestCase):
+    """REVIEW-FIX: расхождение RAW -- не готовая база контроля.
+
+    Расчёт есть у каждой записи группы (``coverage`` = FULL), но RAW расчёта
+    одного вылета расходится с RAW вылета. Группа полна по расчёту и НЕ
+    готова служить базой контроля: ``control_ready`` = False, принятая
+    «полной группы» пуста, сумма по рассчитанным и счётчик расхождения
+    видны.
+    """
+
+    def group(self, flight_raws):
+        spec = CASES[0]
+        items = [acc.for_flight(flight_raw,
+                                calc_row(spec[2], spec[3], calc_raw,
+                                         calc_raw, flight_id=900001 + n))
+                 for n, (flight_raw, calc_raw) in enumerate(flight_raws)]
+        return acc.summarize(items)
+
+    def test_full_coverage_with_a_mismatch_is_not_control_ready(self):
+        # (a) расчёт у всех, у одного вылета RAW расходится.
+        totals = self.group([(10500.0, 10000.0), (8000.0, 8000.0)])
+        # (b) полнота по расчёту FULL, но базой контроля группа не служит.
+        self.assertEqual(totals['coverage'], acc.COVERAGE_FULL)
+        self.assertTrue(totals['complete'])
+        self.assertFalse(totals['control_ready'])
+        self.assertIsNone(totals['accepted_full_m2'])
+        self.assertFalse(totals['resolved'])
+        self.assertEqual(totals['raw_mismatch_records'], 1)
+        # Сумма по рассчитанным и сам факт расхождения остаются видны.
+        self.assertAlmostEqual(totals['accepted_m2'], 18000.0)
+        self.assertAlmostEqual(totals['raw_m2'], 18500.0)
+
+    def test_negative_control_without_mismatch_is_control_ready(self):
+        # Та же группа без расхождения -- готовая база: проверка выше
+        # различает два случая, а не отвечает «нет» всегда.
+        totals = self.group([(10000.0, 10000.0), (8000.0, 8000.0)])
+        self.assertEqual(totals['coverage'], acc.COVERAGE_FULL)
+        self.assertTrue(totals['control_ready'])
+        self.assertAlmostEqual(totals['accepted_full_m2'], 18000.0)
+        self.assertTrue(totals['resolved'])
+
+    def test_partial_and_empty_groups_keep_their_meaning(self):
+        partial = acc.summarize([acc.for_flight(1.0, None)])
+        self.assertFalse(partial['control_ready'])
+        self.assertIsNone(partial['accepted_full_m2'])
+        empty = acc.summarize([])
+        self.assertTrue(empty['control_ready'])
+        self.assertEqual(empty['accepted_full_m2'], 0.0)
+
+
 class ColumnSufficiency(unittest.TestCase):
     """Пакетный читатель берёт только `accepted.CALC_COLUMNS`.
 

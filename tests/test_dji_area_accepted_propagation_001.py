@@ -60,6 +60,14 @@ JULY_CALC_RAW, JULY_NOCALC_HA = 20000.0, 1.2345
 # Ноябрь 2025: до запуска контроля площади -- расчётов нет вовсе.
 NOV_FLIGHTS = ((930030, 0.5), (930031, 0.7))
 LITERS = 10.0
+# Август 2026 (REVIEW-FIX): расчёт есть у обоих вылетов, но у одного RAW
+# вылета (0.90 га) расходится с RAW расчёта (0.80 га). Полон по расчёту, не
+# готов служить базой контроля.
+AUG = date(2026, 8, 12)
+AUG_OK, AUG_BAD = 930040, 930041
+AUG_OK_RAW, AUG_BAD_CALC_RAW, AUG_BAD_FLIGHT_HA = 10000.0, 8000.0, 0.9
+AUG_RAW_HA = AUG_OK_RAW / 10000.0 + AUG_BAD_FLIGHT_HA          # 1.90 га
+AUG_ACCEPTED_HA = (AUG_OK_RAW + AUG_BAD_CALC_RAW) / 10000.0     # 1.80 га
 
 
 # ─── 11-15: отчёты на синтетической базе ─────────────────────────────────────
@@ -89,6 +97,14 @@ class Seeded(ReportBase):
             db.session.add(self.flight(JULY_NOCALC, JULY, 30, JULY_NOCALC_HA))
             for i, (fid, area) in enumerate(NOV_FLIGHTS):
                 db.session.add(self.flight(fid, NOV, i * 10, area))
+            for n, (fid, calc_raw, flight_ha) in enumerate((
+                    (AUG_OK, AUG_OK_RAW, AUG_OK_RAW / 10000.0),
+                    (AUG_BAD, AUG_BAD_CALC_RAW, AUG_BAD_FLIGHT_HA))):
+                db.session.add(self.calc_object(
+                    fid, rs.RAW_CORROBORATED, rs.AGG_CERTIFIED,
+                    raw_m2=calc_raw, corrected_m2=calc_raw, day=AUG,
+                    minute=n * 10))
+                db.session.add(self.flight(fid, AUG, n * 10, flight_ha))
             customer = DroneCustomer(name='SYNTHETIC customer')
             db.session.add(customer)
             db.session.flush()
@@ -100,6 +116,13 @@ class Seeded(ReportBase):
                 customer_raw='SYNTHETIC customer',
                 area_ha=JUNE_ACCEPTED / 10000.0, amount=0,
                 received_amount=0, payment_type='cash'))
+            # Август: ведомость ровно на принятую по рассчитанным (1.80) --
+            # по принятой было бы 100 %, но база -- RAW (расхождение).
+            db.session.add(DroneWork(
+                period_month='2026-08', work_date_from=AUG,
+                work_date_to=AUG, drone_customer_id=customer.id,
+                customer_raw='SYNTHETIC customer', area_ha=AUG_ACCEPTED_HA,
+                amount=0, received_amount=0, payment_type='cash'))
             # Май: ведомость есть, вылетов нет -- «—», а не «не рассчитано».
             db.session.add(DroneWork(
                 period_month='2026-05', work_date_from=date(2026, 5, 10),
@@ -474,6 +497,97 @@ class Reports(Seeded):
             con.close()
         self.assertEqual(filled, 0)
         self.assertGreater(total, len(CASES))
+
+    # ── REVIEW-FIX: расхождение RAW -- fail-closed ────────────────────────
+
+    def test_the_mismatched_month_is_full_but_not_control_ready(self):
+        items = self.provider()
+        self.assertTrue(items[AUG_BAD]['raw_mismatch'])
+        self.assertFalse(items[AUG_OK]['raw_mismatch'])
+        with app.app_context():
+            with app.test_request_context():
+                data = drones._drone_works_flights_reconcile_data()
+        aug = [r for r in data['rows'] if r['month'] == '2026-08'][0]
+        # (a)/(b): расчёт есть у каждого вылета, но базой месяц не служит.
+        self.assertEqual(aug['acc']['coverage'], acc.COVERAGE_FULL)
+        self.assertTrue(aug['acc']['complete'])
+        self.assertFalse(aug['acc']['control_ready'])
+        self.assertIsNone(aug['acc']['accepted_full_ha'])
+        self.assertEqual(aug['acc']['raw_mismatch_records'], 1)
+        # (c): сверка остаётся на DJI RAW.
+        self.assertEqual(aug['control_basis'], 'raw')
+        self.assertAlmostEqual(aug['control_area'], AUG_RAW_HA, places=6)
+        self.assertAlmostEqual(aug['control_coverage'],
+                               AUG_ACCEPTED_HA * 100.0 / AUG_RAW_HA, places=6)
+        # Отрицательный контроль: по принятой по рассчитанным покрытие было
+        # бы ровно 100 % -- основания различимы, проверка не пустая.
+        self.assertAlmostEqual(aug['acc']['accepted_ha'] * 100.0
+                               / AUG_ACCEPTED_HA, 100.0, places=6)
+        html = self.get('/drones/reports/reconcile').get_data(as_text=True)
+        row = [r for r in re.findall(r'<tr[^>]*>(.*?)</tr>', html, re.S)
+               if '2026-08' in r][0]
+        self.assertIn('по DJI RAW', row)
+        self.assertIn('расхождение RAW', row)
+
+    def test_the_calendar_does_not_work_on_a_mismatched_cell(self):
+        # (d): число ячейки -- DJI RAW с «*», причина в подсказке.
+        with app.app_context():
+            with app.test_request_context():
+                data = drones._drone_flight_calendar_data('2026-08')
+        row = [r for r in data['rows'] if r['unit_id'] == self.unit6_id][0]
+        cell = [c for c in row['cells'] if c['day'] == AUG][0]
+        self.assertEqual(cell['acc']['coverage'], acc.COVERAGE_FULL)
+        self.assertEqual(cell['basis'], 'raw')
+        self.assertAlmostEqual(cell['shown'], AUG_RAW_HA, places=6)
+        self.assertEqual(data['total']['basis'], 'raw')
+        html = self.get('/drones/reports/calendar?month=2026-08').get_data(
+            as_text=True)
+        self.assertIn('%.2f*' % AUG_RAW_HA, html)
+        self.assertNotIn('>%.2f<' % AUG_ACCEPTED_HA, html)
+        self.assertIn('RAW расчёта расходится с RAW вылета: 1', html)
+
+    def test_the_spray_rate_names_the_mismatch_instead_of_a_number(self):
+        # (e): «л/га по принятой» не считается, причина названа.
+        with app.app_context():
+            with app.test_request_context():
+                data = drones._drone_spray_usage_data(
+                    drones._drone_flight_conditions(
+                        drones._drone_filters_from_args(_Args({
+                            'date_from': '2026-08-01',
+                            'date_to': '2026-08-31'}),
+                            default_current_month=False)), [], 30)
+        aug = data['rows'][0]
+        self.assertEqual(aug['month'], '2026-08')
+        self.assertIsNotNone(aug['rate'], 'расход по RAW -- как и был')
+        self.assertIsNone(aug['rate_accepted'])
+        self.assertEqual(aug['rate_accepted_reason'], 'raw_mismatch')
+        # Прямой вызов идёт без пользователя -- язык по умолчанию узбекский.
+        self.assertIn(aug['rate_accepted_note'],
+                      ('расхождение RAW', 'RAW фарқ қилади'))
+        self.assertIsNone(data['total']['rate_accepted'])
+        book = self.book('/drones/reports/spray.xlsx?date_from=2026-08-01'
+                         '&date_to=2026-08-31')
+        rows = list(book['Литров на гектар'].iter_rows(min_row=2,
+                                                       values_only=True))
+        self.assertIsNone(rows[0][11])
+        self.assertEqual(rows[0][12], 'расхождение RAW')
+
+    def test_the_summary_shows_the_mismatch_and_no_ready_basis(self):
+        query = 'date_from=2026-08-01&date_to=2026-08-31'
+        html = self.get('/drones/summary?' + query).get_data(as_text=True)
+        self.assertIn('расхождение RAW', self.stat(html, 'Принято, га'))
+        self.assertIn('RAW расходится: 1', html)
+        self.assertIn('базой контроля не служит', html)
+        book = self.book('/drones/summary.xlsx?' + query)
+        pairs = {row[0]: row[1] for row in
+                 book.worksheets[0].iter_rows(min_row=2, values_only=True)}
+        self.assertEqual(pairs['RAW расчёта расходится с RAW вылета, '
+                               'вылетов'], 1)
+        self.assertIn('RAW расходится: 1',
+                      pairs['Полнота контроля площади DJI'])
+        # Сумма по рассчитанным -- видна, с подписью; не выдана за базу.
+        self.assertAlmostEqual(pairs['Принято (по рассчитанным вылетам), га'],
+                               AUG_ACCEPTED_HA, places=6)
 
     def test_the_uzbek_pages_speak_cyrillic(self):
         html = self.get('/drones/?' + WINDOW_ALL, language='uz').get_data(

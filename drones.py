@@ -307,6 +307,14 @@ def _drone_accepted_view(totals):
 
     ha = dji_accepted.ha
     calculated = totals['calculated_records']
+    label = dji_accepted.pick(
+        dji_accepted.COVERAGE_LABELS[totals['coverage']], _drone_lang())
+    if totals['raw_mismatch_records']:
+        # [REASON]: «рассчитано полностью» при расхождении RAW читалось бы
+        # как готовая база контроля. Подпись называет расхождение сама --
+        # и на экране, и в колонке полноты книг.
+        label += _drone_t('; RAW фарқ қилади: %d', '; RAW расходится: %d') \
+            % totals['raw_mismatch_records']
     return {
         'records': totals['records'],
         'raw_ha': ha(totals['raw_m2']),
@@ -326,11 +334,13 @@ def _drone_accepted_view(totals):
         'raw_mismatch_records': totals['raw_mismatch_records'],
         'accepted_missing_records': totals['accepted_missing_records'],
         'coverage': totals['coverage'],
-        'coverage_label': dji_accepted.pick(
-            dji_accepted.COVERAGE_LABELS[totals['coverage']], _drone_lang()),
+        'coverage_label': label,
         'is_partial': totals['coverage'] == dji_accepted.COVERAGE_PARTIAL,
         'is_none': totals['coverage'] == dji_accepted.COVERAGE_NONE,
         'complete': totals['complete'],
+        # Принятая группы -- база рабочего контроля: расчёт полон и RAW
+        # расчёта нигде не расходится с RAW вылета (`accepted.finalize`).
+        'control_ready': totals['control_ready'],
         'resolved': totals['resolved'],
     }
 
@@ -4407,6 +4417,11 @@ def summary_xlsx():
          acc['open_records'], None),
         (_drone_t('Очиқ ёзувлар, DJI RAW га', 'Открыто, DJI RAW га'),
          acc['open_raw_ha'], '0.00'),
+        # Расхождение RAW расчёта с RAW вылета: такая группа базой
+        # контроля не служит (`accepted.finalize`, control_ready).
+        (_drone_t('Ҳисобдаги RAW парвоздаги RAW дан фарқ қилади, парвозлар',
+                  'RAW расчёта расходится с RAW вылета, вылетов'),
+         acc['raw_mismatch_records'], None),
     ]
     for label, value, fmt in summary_rows:
         ws.append([label, value])
@@ -7198,6 +7213,7 @@ DRONE_SPRAY_ACC_NO_LITERS = 'no_liters'
 DRONE_SPRAY_ACC_NOT_CALCULATED = 'not_calculated'
 DRONE_SPRAY_ACC_PARTIAL = 'partial'
 DRONE_SPRAY_ACC_ZERO_AREA = 'zero_area'
+DRONE_SPRAY_ACC_RAW_MISMATCH = 'raw_mismatch'
 
 
 def _drone_spray_accepted(row, acc):
@@ -7206,9 +7222,18 @@ def _drone_spray_accepted(row, acc):
     Числитель -- те же литры, что у расхода по DJI RAW; знаменатель --
     принятая площадь вылетов опрыскивания пары. Числа нет, когда литры не
     записаны (как у RAW), когда принятая рассчитана не у каждого вылета
-    опрыскивания (частично или вовсе нет) и когда принятая равна нулю.
+    опрыскивания (частично или вовсе нет), когда RAW расчёта хоть у одного
+    вылета пары расходится с RAW вылета и когда принятая равна нулю.
     [REASON]: «нет принятой» -- не ноль гектаров: ноль в знаменателе дал бы
     ложную бесконечность, а подстановка RAW -- ложный «проверенный» расход.
+
+    [REASON]: политика владельца 30.09.2026. Литры доказанного фантома
+    площади НЕ исключаются: доказательство фантомной площади не доказывает
+    фантомность литров, и вычесть их -- значит придумать правило без
+    доказательства. Числитель -- записанные DJI литры, как у расхода по RAW.
+    Эта величина -- дополнительная диагностика: в медиану, коридор и цвет
+    строки она не входит, к счёту и к автоматическим выводам отношения не
+    имеет. Медиана и коридор остаются по DJI RAW.
     """
     row['acc_spray'] = acc
     liters_known = row['spray_flights'] > row['no_liters']
@@ -7219,6 +7244,8 @@ def _drone_spray_accepted(row, acc):
         reason = DRONE_SPRAY_ACC_NOT_CALCULATED
     elif not acc['complete']:
         reason = DRONE_SPRAY_ACC_PARTIAL
+    elif not acc['control_ready']:
+        reason = DRONE_SPRAY_ACC_RAW_MISMATCH
     else:
         rate = _drone_rate(row['liters'], acc['accepted_full_ha'])
         reason = (DRONE_SPRAY_ACC_OK if rate is not None
@@ -7234,6 +7261,8 @@ def _drone_spray_accepted(row, acc):
                                           'рассчитано частично'),
         DRONE_SPRAY_ACC_ZERO_AREA: _drone_t('қабул қилинган 0 га',
                                             'принято 0 га'),
+        DRONE_SPRAY_ACC_RAW_MISMATCH: _drone_t('RAW фарқ қилади',
+                                               'расхождение RAW'),
     }[reason]
     return row
 
@@ -7852,9 +7881,14 @@ def _drone_reconcile_control(row, ledger_area, flight_area):
     же принятое с RAW нерассчитанных -- значит выдать непроверенное за
     принятое. Поэтому база такого месяца -- DJI RAW, названная рядом.
     Правила ветвления и полосы цвета -- те же, что у RAW (`_drone_coverage_flag`).
+
+    [REASON]: то же при расхождении RAW (fail-closed, `control_ready`):
+    принятая месяца построена на RAW расчёта, а колонка «DJI RAW» рядом
+    показывает уже другой RAW вылета. Сверять ведомость с такой принятой --
+    значит сверять с числом, которое не относится к показанным вылетам.
     """
     acc = row['acc']
-    if acc['records'] and acc['complete']:
+    if acc['records'] and acc['control_ready']:
         basis = DRONE_CONTROL_BASIS_ACCEPTED
         area = acc['accepted_full_ha'] or 0.0
     else:
@@ -8457,10 +8491,12 @@ def _drone_flight_calendar_data(month):
 def _drone_calendar_figure(cell, acc):
     """Рабочее число ячейки календаря и его база.
 
-    ``shown`` -- принятая площадь Area Control, если расчёт есть у каждого
-    вылета ячейки; иначе DJI RAW, и тогда ``basis == 'raw'`` -- шаблон
-    ставит пометку «*». ``open`` -- в ячейке есть записи, ожидающие
-    доказательства или решения (пометка «?»); они внутри принятой по RAW.
+    ``shown`` -- принятая площадь Area Control, если она готова быть базой
+    (`control_ready`: расчёт есть у каждого вылета ячейки и RAW расчёта
+    нигде не расходится с RAW вылета); иначе DJI RAW, и тогда
+    ``basis == 'raw'`` -- шаблон ставит пометку «*», подсказка называет
+    причину. ``open`` -- в ячейке есть записи, ожидающие доказательства или
+    решения (пометка «?»); они внутри принятой по RAW.
 
     [REASON]: календарь -- экран «летал / стоял», и пустая ячейка на
     месяцах до запуска Area Control уничтожила бы его смысл. Поэтому число
@@ -8468,7 +8504,7 @@ def _drone_calendar_figure(cell, acc):
     своя строка в легенде, а в подсказке ячейки -- оба числа.
     """
     cell['acc'] = acc
-    if acc['records'] and acc['complete']:
+    if acc['records'] and acc['control_ready']:
         cell['shown'] = acc['accepted_full_ha'] or 0.0
         cell['basis'] = DRONE_CONTROL_BASIS_ACCEPTED
     else:
