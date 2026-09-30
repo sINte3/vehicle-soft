@@ -343,37 +343,38 @@ class ReleaseRunbook(unittest.TestCase):
             self.assertIn("print('Already applied. Nothing to do.')", fh.read())
         with open(os.path.join(REPO_ROOT, 'docs', 'DEPLOYED.md'),
                   encoding='utf-8') as fh:
-            production = [row for row in fh.read().splitlines()
-                          if row.startswith('| production |')]
-        # Блок выпуска готовился от записанного production baseline.
-        self.assertEqual(len(production), 1)
-        self.assertIn('`%s`' % BASELINE[:7], production[0])
+            deployed = fh.read()
+        # Блок выпуска готовился от записанного production baseline. После
+        # выпуска строка production сменится, а baseline останется в журнале
+        # релизов -- проверка не должна падать у того, кто её обновит.
+        self.assertIn('`%s`' % BASELINE[:7], deployed)
 
-    def test_the_reviewed_commit_holds_all_the_code_of_this_tree(self):
-        # Блок выкатывает код ровно проверенного коммита: после него -- только
-        # docs/. Держится на дереве, где этот коммит есть (локально; в CI
-        # клон глубиной 1).
+    def test_the_pin_was_right_when_the_runbook_was_written(self):
+        # Блок выкатывает код ровно проверенного коммита: всё, что изменилось
+        # после него ДО последней правки ранбука, -- только docs/. Код,
+        # влитый в main позже, ловят шаги 2 и 3 (они остановят выпуск), а не
+        # эта проверка: сравнение с HEAD падало бы у каждого трека, который
+        # добавил свой код, -- ничего не сломав. Держится там, где оба
+        # коммита есть в клоне (локально; в CI клон глубиной 1).
         commit = constants(release_block('Шаг 3'))['reviewed'].strip("'")
-        probe = subprocess.run(['git', 'cat-file', '-e', commit + '^{commit}'],
-                               cwd=REPO_ROOT, capture_output=True)
-        if probe.returncode != 0:
-            self.skipTest('the reviewed commit is outside this clone')
+        written = git('log', '-1', '--format=%H', '--',
+                      'docs/AGRO_WORK_RELEASE_RUNBOOK.md').strip()
+        if not (written and has_commit(commit) and has_commit(written)):
+            self.skipTest('the pinned history is outside this clone')
         ancestor = subprocess.run(['git', 'merge-base', '--is-ancestor', commit,
-                                   'HEAD'], cwd=REPO_ROOT)
+                                   written], cwd=REPO_ROOT)
         self.assertEqual(ancestor.returncode, 0)
-        names = subprocess.run(['git', 'diff', '--name-only', commit, 'HEAD'],
-                               cwd=REPO_ROOT, capture_output=True, text=True,
-                               check=True).stdout.split()
+        names = git('diff', '--name-only', commit, written).split()
         self.assertEqual([n for n in names if not n.startswith('docs/')], [])
 
     def test_the_delta_carries_exactly_the_one_migration(self):
-        probe = subprocess.run(['git', 'cat-file', '-e', BASELINE + '^{commit}'],
-                               cwd=REPO_ROOT, capture_output=True)
-        if probe.returncode != 0:
-            self.skipTest('the production commit is outside this shallow clone')
-        names = subprocess.run(['git', 'diff', '--name-only', BASELINE, 'HEAD'],
-                               cwd=REPO_ROOT, capture_output=True, text=True,
-                               check=True).stdout.split()
+        # Дельта выпуска -- от production до проверенного коммита, а не до
+        # HEAD: миграция, которую позже добавит другой трек, в этот выпуск не
+        # едет (шаги 2 и 3 её не пропустят) и эту проверку не роняет.
+        commit = constants(release_block('Шаг 3'))['reviewed'].strip("'")
+        if not (has_commit(BASELINE) and has_commit(commit)):
+            self.skipTest('the release delta is outside this clone')
+        names = git('diff', '--name-only', BASELINE, commit).split()
         self.assertEqual([n for n in names if n.startswith('migrate_')],
                          ['migrate_agro_work_001.py'])
 
@@ -864,6 +865,16 @@ DRIFT_PATTERNS = {
     'header': r'^file-but-not-registered: \d+$',
     'item': r'^  - (.+)$',
 }
+
+
+def git(*args):
+    return subprocess.run(['git'] + list(args), cwd=REPO_ROOT,
+                          capture_output=True, text=True, check=True).stdout
+
+
+def has_commit(commit):
+    return subprocess.run(['git', 'cat-file', '-e', commit + '^{commit}'],
+                          cwd=REPO_ROOT, capture_output=True).returncode == 0
 
 
 def open_items(lines):
