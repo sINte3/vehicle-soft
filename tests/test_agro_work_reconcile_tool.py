@@ -21,6 +21,7 @@ import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import date
+from unittest import mock
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -95,16 +96,30 @@ class ReportTool(unittest.TestCase):
         self.assertEqual(book['Заявка-работа'].max_row - 1, len(forward))
         self.assertEqual(book['Работа-заявка'].max_row - 1, len(reverse))
         notes = ' '.join(str(r[0]) for r in summary if r and r[0])
-        self.assertIn('N для заявок, заведённых задним числом: не утверждён',
-                      notes)
+        self.assertIn('N для заявок, заведённых задним числом: 2 '
+                      '(утверждён владельцем)', notes)
 
-    def test_preview_is_marked_as_not_approved(self):
-        code, out, err = self.main('--lookback-preview', '2')
+    def test_preview_names_itself_and_the_approved_n(self):
+        code, out, err = self.main('--lookback-preview', '3')
         self.assertEqual(code, 0, err)
-        self.assertIn('PREVIEW N=2', out)
+        self.assertIn('PREVIEW N=3', out)
         notes = ' '.join(str(r[0]) for r in book_of(self.out)['Свод']
                          .iter_rows(values_only=True) if r and r[0])
-        self.assertIn('ПРЕДПРОСМОТР: N = 2 не утверждён владельцем', notes)
+        self.assertIn('ПРЕДПРОСМОТР: N = 3; утверждённое владельцем N = 2',
+                      notes)
+
+    def test_without_an_approved_n_the_book_says_so(self):
+        with mock.patch.object(rc, 'BACKDATED_LOOKBACK_DAYS', None):
+            code, out, err = self.main()
+            self.assertEqual(code, 0, err)
+            notes = ' '.join(str(r[0]) for r in book_of(self.out)['Свод']
+                             .iter_rows(values_only=True) if r and r[0])
+            self.assertIn('N для заявок, заведённых задним числом: не '
+                          'утверждён', notes)
+            code, out, err = self.main('--lookback-preview', '2')
+            notes = ' '.join(str(r[0]) for r in book_of(self.out)['Свод']
+                             .iter_rows(values_only=True) if r and r[0])
+            self.assertIn('ПРЕДПРОСМОТР: N = 2 не утверждён владельцем', notes)
 
     def test_lag_measurement_is_printed_and_written(self):
         code, out, err = self.main()

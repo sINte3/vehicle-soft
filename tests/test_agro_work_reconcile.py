@@ -197,9 +197,18 @@ class Forward(unittest.TestCase):
         app = self.fx.app(created=9, completed=10)
         self.assertEqual(self.fx.forward(app)['verdict'], rc.V_WORK)
 
+    def test_n_is_the_one_the_owner_approved(self):
+        # Растяжка: N = 2 утвердил владелец 29.09 по замеру на копии боевой
+        # базы (вопрос 4) и подтвердил 30.09: ввод задним числом через 3-6
+        # суток -- нарушение, его сверка и должна показывать. Другое число --
+        # только новым замером и его словом.
+        self.assertEqual(rc.BACKDATED_LOOKBACK_DAYS, 2)
+        app = self.fx.app(created=12, completed=12, initial='COMPLETED')
+        self.assertEqual(self.fx.forward(app)['window'], (D(10), D(12)))
+
     def test_backdated_waits_for_n_and_then_looks_back_n_days(self):
         app = self.fx.app(created=12, completed=12, initial='COMPLETED')
-        row = self.fx.forward(app)
+        row = self.fx.forward(app, lookback=None)
         self.assertEqual((row['verdict'], row['reason']),
                          (rc.V_NONE, rc.R_BACKDATED))
         row = self.fx.forward(app, lookback=2)
@@ -335,7 +344,7 @@ class Reverse(unittest.TestCase):
 
     def test_a_later_backdated_application_may_cover_until_n_is_set(self):
         self.fx.app(transport='T2', created=15, completed=15, initial='COMPLETED')
-        row = self.rows()[(12, D(13))]
+        row = self.rows(lookback=None)[(12, D(13))]
         self.assertEqual((row['coverage'], row['reason']),
                          (rc.C_NONE, rc.R_MAYBE_BACKDATED))
         self.assertEqual(self.rows(lookback=1)[(12, D(13))]['coverage'],
@@ -349,7 +358,7 @@ class Reverse(unittest.TestCase):
 
     def test_an_application_without_history_suspends_while_it_could_cover(self):
         self.fx.app(transport='T2', created=20, history=False)
-        row = self.rows()[(12, D(13))]
+        row = self.rows(lookback=None)[(12, D(13))]
         self.assertEqual((row['coverage'], row['reason']),
                          (rc.C_NONE, rc.R_WINDOW_UNKNOWN))
         # При N = 3 заявка от 20-го не дотягивается до 13-го ни одним окном.
