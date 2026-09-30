@@ -7,6 +7,10 @@
 и его итог «counted» обязан совпадать со столбцом `days_computed` инвентаря
 -- иначе разбивка объясняла бы не то число. Это и проверяется сверкой с
 `computed_activity` самого инвентаря, а не пересказом его правила.
+
+`--date` раскладывает одни сутки по объектам (30.09: 301,18 га спецтехники за
+28.09 до релиза A1). Сумма по объектам обязана совпасть со строкой той же
+даты в таблице по датам, имя машины -- с именем на экране.
 """
 import ast
 import contextlib
@@ -28,6 +32,8 @@ import tools.gps_units_inventory as inv                             # noqa: E402
 from tests.test_gps_units_inventory import DDL                      # noqa: E402
 
 LOADER, TRACTOR, MIXED, ALIEN = 419, 387, 553, 5001
+# id меньше, чем у погрузчика: порядок «по номеру» и «по гектарам» различим
+CRANE = 311
 
 
 class World(unittest.TestCase):
@@ -62,10 +68,10 @@ class World(unittest.TestCase):
         finally:
             con.close()
 
-    def equipment(self, name, category):
-        return self.sql('INSERT INTO equipment (name, category, '
-                        'organization_id, is_active) VALUES (?, ?, 1, 1)',
-                        (name, category))
+    def equipment(self, name, category, plate=None):
+        return self.sql('INSERT INTO equipment (name, plate, category, '
+                        'organization_id, is_active) VALUES (?, ?, ?, 1, 1)',
+                        (name, plate, category))
 
     def mapping(self, name, wialon_id, equipment_id, skip=0):
         return self.sql('INSERT INTO vialon_mappings (vialon_name, wialon_id, '
@@ -182,6 +188,120 @@ class ReadOnly(World):
             code = tod.main(['--db', self.db, '--since', '29.08.2026'])
         self.assertEqual(code, 2)
         self.assertIn('YYYY-MM-DD', err.getvalue())
+
+
+class OneDateByObject(World):
+    """`--date`: чьи гектары спецтехники легли на одни сутки."""
+
+    def setUp(self):
+        super().setUp()
+        crane = self.equipment('Автокран', 'special', plate='725 KBA')
+        # строка без машины раньше строки с машиной: имя всё равно машинное
+        self.mapping('Кран, старый трекер', CRANE, None)
+        self.mapping('Автокран 725 KBA', CRANE, crane)
+
+    def site(self, work_date, unit, number, hectares):
+        self.sql('INSERT INTO gps_work_polygons (work_date, wialon_id, '
+                 'site_number, area_ha) VALUES (?, ?, ?, ?)',
+                 (work_date, unit, number, hectares))
+
+    def by_object(self, day):
+        con = tod.open_readonly(self.db)
+        try:
+            units, table = tod.days_by_date(con, day)
+            rows = tod.objects_on(con, day, units)
+            names = tod.unit_names(con, [row['wialon_id'] for row in rows])
+            return units, table, rows, names
+        finally:
+            con.close()
+
+    def test_the_objects_of_a_date_add_up_to_its_row_in_the_table(self):
+        self.day('2026-09-28', LOADER, None, hectares=3.5)
+        self.site('2026-09-28', LOADER, 2, 1.25)
+        self.day('2026-09-28', CRANE, 'net_dvizheniya')
+        # соседние сутки той же машины в разбивку даты не входят
+        self.day('2026-09-27', LOADER, None, hectares=8.0)
+        self.day('2026-09-29', LOADER, None, hectares=2.0)
+        # полевые, противоречие и исключённый -- не объекты правила
+        for unit in (TRACTOR, MIXED, ALIEN):
+            self.day('2026-09-28', unit, None, hectares=5.0)
+        units, table, rows, _names = self.by_object('2026-09-28')
+        self.assertEqual(sorted(units), [CRANE, LOADER])
+        self.assertEqual([row['wialon_id'] for row in rows], [LOADER, CRANE])
+        loader, crane = rows
+        self.assertEqual((loader['reason'], loader['sites'], loader['ha'],
+                          loader['largest']), (None, 2, 4.75, 3.5))
+        self.assertEqual((crane['reason'], crane['sites'], crane['ha']),
+                         ('net_dvizheniya', 0, 0.0))
+        self.assertEqual(sum(row['ha'] for row in rows),
+                         table['2026-09-28']['ha'])
+
+    def test_a_kept_polygon_of_a_track_only_day_gives_no_hectares(self):
+        # участок с ответом оператора переживает правило, но гектаров не даёт
+        self.day('2026-09-28', LOADER, 'spetstekhnika', hectares=6.0)
+        # у крана суток 28.09 нет: следующие сутки не делают его строкой даты
+        self.day('2026-09-29', CRANE, None, hectares=1.0)
+        _units, table, rows, _names = self.by_object('2026-09-28')
+        self.assertEqual([row['wialon_id'] for row in rows], [LOADER])
+        self.assertEqual((rows[0]['sites'], rows[0]['ha']), (0, 0.0))
+        self.assertEqual(table['2026-09-28']['ha'], 0.0)
+
+    def test_names_are_the_screen_s_model_and_plate(self):
+        self.day('2026-09-28', LOADER, None, hectares=1.0)
+        self.day('2026-09-28', CRANE, None, hectares=2.0)
+        _units, _table, _rows, names = self.by_object('2026-09-28')
+        self.assertEqual(names[CRANE], 'Автокран — 725 KBA')
+        # без госномера -- одна модель, как на экране
+        self.assertEqual(names[LOADER], 'Погрузчик 326 HA')
+
+    def test_the_command_prints_the_day_in_ascii_and_writes_nothing(self):
+        self.day('2026-09-28', CRANE, None, hectares=2.0)
+        self.day('2026-09-28', LOADER, None, hectares=1.0)
+        # исключённый и полевой в разбивку команды не попадают
+        self.day('2026-09-28', ALIEN, None, hectares=5.0)
+        self.day('2026-09-28', TRACTOR, None, hectares=5.0)
+        before = self.digest()
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            code = tod.main(['--db', self.db, '--date', '2026-09-28'])
+        text = out.getvalue()
+        self.assertEqual(code, 0)
+        self.assertTrue(text.isascii())
+        self.assertIn('Avtokran - 725 KBA', text)
+        self.assertIn('Pogruzchik 326 HA', text)
+        self.assertRegex(text, r'hectares on published days\s+: 3\.00')
+        self.assertNotIn('MISMATCH', text)
+        self.assertEqual(before, self.digest())
+
+    def test_a_mismatch_with_the_table_is_said_out_loud(self):
+        """Отрицательный контроль сверки: она умеет сказать «не сходится»."""
+        rows = [{'wialon_id': LOADER, 'reason': None, 'sites': 1, 'ha': 2.0,
+                 'largest': 2.0, 'km': None, 'points_work': None,
+                 'jumps': None}]
+        lines = []
+        total = tod.report_day('2026-09-28', [LOADER], rows, {}, 3.0,
+                               out=lines.append)
+        self.assertEqual(total, 2.0)
+        self.assertTrue(any(line.startswith('MISMATCH') for line in lines))
+        row_line = next(line for line in lines
+                        if line.strip().startswith(str(LOADER)))
+        # пустые измерения печатаются прочерком, а не нулём
+        self.assertRegex(row_line, r'\s-\s+-\s+-\s')
+
+    def test_since_and_date_are_one_or_the_other(self):
+        for argv in (['--db', self.db],
+                     ['--db', self.db, '--since', '2026-08-29',
+                      '--date', '2026-09-28']):
+            with self.subTest(argv=argv), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as stop:
+                    tod.main(argv)
+                self.assertEqual(stop.exception.code, 2)
+
+    def test_the_date_must_be_a_date(self):
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            code = tod.main(['--db', self.db, '--date', '28.09.2026'])
+        self.assertEqual(code, 2)
+        self.assertIn('--date must look like YYYY-MM-DD', err.getvalue())
 
 
 class SameNamesAsTheEngine(unittest.TestCase):
