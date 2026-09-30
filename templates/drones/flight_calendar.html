@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from 'drones/_accepted.html' import acc_block %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Дроны — календарь вылетов' if is_ru else 'Дронлар — парвозлар тақвими' }}{% endblock %}
 {% block content %}
@@ -22,6 +23,18 @@
    Excel здесь нет: это экран наблюдения, как и «Ведомости против вылетов». #}
 {% set t_total = 'Итого' if is_ru else 'Жами' %}
 {% set t_empty = 'Вылетов ещё нет ни за один месяц' if is_ru else 'Ҳали бирорта ойда парвоз йўқ' %}
+
+{# DJI-AREA-ACCEPTED-PROPAGATION-001. Число ячейки -- принятая площадь
+   контроля DJI, если расчёт есть у каждого вылета ячейки; иначе DJI RAW с
+   пометкой «*». «?» -- в ячейке есть записи, ожидающие доказательства или
+   решения. В подсказке ячейки -- оба числа. Макрос получает `is_ru`
+   параметром: своего контекста страницы у него нет. #}
+{% macro cal_figure(c) -%}
+{{ '%.2f'|format(c.shown)|vs_num }}{% if c.basis == 'raw' %}*{% endif %}{% if c.open %}?{% endif %}
+{%- endmacro %}
+{% macro cal_title(c, is_ru) -%}
+DJI RAW {{ '%.2f'|format(c.area) }} {{ 'га' if is_ru else 'га' }}{% if c.acc.calculated_records %}; {{ 'принято' if is_ru else 'қабул қилинган' }} {{ '%.2f'|format(c.acc.accepted_ha) }} {{ 'га' if is_ru else 'га' }}{% endif %}{% if c.acc.not_calculated_records %}; {{ 'не рассчитано вылетов' if is_ru else 'ҳисобланмаган парвозлар' }}: {{ c.acc.not_calculated_records }}{% endif %}{% if c.acc.open_records %}; {{ 'открыто записей' if is_ru else 'очиқ ёзувлар' }}: {{ c.acc.open_records }}{% endif %}
+{%- endmacro %}
 
 <div class="vs-hero vs-mb">
   <div>
@@ -59,6 +72,10 @@
   {{ ' в ячейке стоят гектары — машина в этот день летала. Серая пустая ячейка — машина была исправна и не летала: этот простой ничем не объяснён, и ради этих клеток экран и сделан. Розовая пустая ячейка — машина числилась неисправной, простой объяснён. Пустая ячейка в точечной пунктирной рамке, почти белая — состояние машины в этот день НЕ ЗАПИСАНО: сервисного журнала на этот месяц ещё не было, и пустота значит только «машина не летала», а не «простаивала». День берётся в часовом поясе операторов (UTC+5), поэтому ночной вылет попадает в те же сутки, в которые его выполняли, а не в предыдущие.' if is_ru else ' катакда гектар турса — машина ўша куни учган. Кулранг бўш катак — машина соз эди ва учмади: бу бекор туриш ҳеч нима билан изоҳланмаган, экран айнан шу катаклар учун қилинган. Пушти бўш катак — машина носоз деб қайд этилган, бекор туриш изоҳланган. Нуқтали пунктир ҳошиядаги деярли оқ бўш катак — машинанинг ўша куни ҳолати ЁЗИЛМАГАН: шу ойга сервис журнали ҳали бўлмаган, бўшлик фақат «машина учмаган» дегани, «бекор турган» эмас. Кун операторлар вақт минтақасида (UTC+5) олинади, шунинг учун тунги парвоз ўзи бажарилган суткага тушади, олдингисига эмас.' }}
 </div>
 
+<div class="vs-alert is-info vs-mb">
+  <div>{{ 'Гектары в ячейках — принятая площадь контроля DJI (DJI RAW минус доказанно исключённое, с решением администратора). Пометка «*» — в ячейке DJI RAW: контроль площади этот день рассчитал не полностью или не рассчитывал вовсе, и принятой площадью это число не является. Пометка «?» — в ячейке есть записи, ожидающие доказательства или решения; пока они учтены по DJI RAW. Наведите на ячейку, чтобы увидеть DJI RAW и принятую рядом.' if is_ru else 'Катаклардаги гектарлар — DJI майдони назорати қабул қилган майдон (DJI RAW дан исботланган ҳолда чиқарилгани айирилган, администратор қарори билан). «*» белгиси — катакда DJI RAW: майдон назорати бу кунни тўлиқ ҳисобламаган ёки умуман ҳисобламаган, ва бу сон қабул қилинган майдон эмас. «?» белгиси — катакда далил ёки қарор кутаётган ёзувлар бор; ҳозирча улар DJI RAW бўйича ҳисобга олинган. DJI RAW ва қабул қилинганни ёнма-ён кўриш учун катак устига олиб боринг.' }}</div>
+</div>
+
 {# DRONE-SPRAY-MEDIAN-SCOPE-001/3: the banner. This month lies entirely before
    the first row of the serviceability ledger (read from the data -- earliest
    changed_on, never hardcoded), so every empty cell here is is-unknown and the
@@ -81,11 +98,10 @@
     <div class="vs-stat-label">{{ 'Вылеты' if is_ru else 'Парвозлар' }}</div>
     <div class="vs-stat-value is-num">{{ data.total.flights|vs_num }}</div>
   </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Гектары' if is_ru else 'Гектар' }}</div>
-    <div class="vs-stat-value is-num">{{ '%.2f'|format(data.total.area)|vs_num }}</div>
-  </div>
 </div>
+
+{# Гектары месяца: DJI RAW, принято, исключено, не рассчитано, открыто. #}
+{{ acc_block(data.accepted, is_ru) }}
 
 <div class="vs-table-wrap vs-mb">
   <div class="vs-card-header">
@@ -105,9 +121,9 @@
       <tr>
         <td>{{ '№ %s'|format(r.number) }}</td>
         {% for c in r.cells %}
-        <td class="right vs-cal-cell {{ c.state }}">{% if c.state == 'is-flown' %}{{ '%.2f'|format(c.area)|vs_num }}{% endif %}</td>
+        <td class="right vs-cal-cell {{ c.state }}"{% if c.state == 'is-flown' %} title="{{ cal_title(c, is_ru) }}"{% endif %}>{% if c.state == 'is-flown' %}{{ cal_figure(c) }}{% endif %}</td>
         {% endfor %}
-        <td class="right"><b>{{ '%.2f'|format(r.area)|vs_num }}</b></td>
+        <td class="right" title="{{ cal_title(r, is_ru) }}"><b>{{ cal_figure(r) }}</b></td>
       </tr>
       {% endfor %}
       {% if data.unattributed %}
@@ -116,17 +132,17 @@
       <tr class="is-warning-row">
         <td><b>{{ 'Не распознано' if is_ru else 'Аниқланмаган' }}</b></td>
         {% for c in data.unattributed.cells %}
-        <td class="right vs-cal-cell {{ c.state }}">{% if c.state == 'is-flown' %}{{ '%.2f'|format(c.area)|vs_num }}{% endif %}</td>
+        <td class="right vs-cal-cell {{ c.state }}"{% if c.state == 'is-flown' %} title="{{ cal_title(c, is_ru) }}"{% endif %}>{% if c.state == 'is-flown' %}{{ cal_figure(c) }}{% endif %}</td>
         {% endfor %}
-        <td class="right"><b>{{ '%.2f'|format(data.unattributed.area)|vs_num }}</b></td>
+        <td class="right" title="{{ cal_title(data.unattributed, is_ru) }}"><b>{{ cal_figure(data.unattributed) }}</b></td>
       </tr>
       {% endif %}
       <tr style="font-weight:700;">
         <td>{{ t_total }}</td>
         {% for t in data.day_totals %}
-        <td class="right">{% if t.flights %}{{ '%.2f'|format(t.area)|vs_num }}{% endif %}</td>
+        <td class="right"{% if t.flights %} title="{{ cal_title(t, is_ru) }}"{% endif %}>{% if t.flights %}{{ cal_figure(t) }}{% endif %}</td>
         {% endfor %}
-        <td class="right">{{ '%.2f'|format(data.total.area)|vs_num }}</td>
+        <td class="right" title="{{ cal_title(data.total, is_ru) }}">{{ cal_figure(data.total) }}</td>
       </tr>
     </tbody>
   </table>

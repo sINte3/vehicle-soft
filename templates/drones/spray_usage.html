@@ -1,5 +1,6 @@
 {% extends g.base_template %}
 {% from 'drones/_period.html' import time_field, period_notes %}
+{% from 'drones/_accepted.html' import acc_value %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Дроны — расход рабочего раствора' if is_ru else 'Дронлар — иш эритмаси сарфи' }}{% endblock %}
 {% block content %}
@@ -112,6 +113,16 @@
     <div class="vs-stat-label">{{ 'Л/га по всем' if is_ru else 'Барчаси бўйича л/га' }}</div>
     <div class="vs-stat-value is-num">{% if data.total.rate is none %}—{% else %}{{ '%.2f'|format(data.total.rate)|vs_num }}{% endif %}</div>
   </div>
+  {# DJI-AREA-ACCEPTED-PROPAGATION-001: тот же расход, знаменатель -- принятая
+     площадь контроля DJI. Нет числа -- названа причина. #}
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Л/га по принятой' if is_ru else 'Қабул қилинган бўйича л/га' }}</div>
+    <div class="vs-stat-value is-num">{% if data.total.rate_accepted is none %}{% if data.total.rate_accepted_note %}<span class="vs-muted">{{ data.total.rate_accepted_note }}</span>{% else %}—{% endif %}{% else %}{{ '%.2f'|format(data.total.rate_accepted)|vs_num }}{% endif %}</div>
+  </div>
+</div>
+
+<div class="vs-help vs-mb">
+  <div>{{ 'Колонка «Л/га», медиана и коридор считаются по гектарам DJI RAW, как и раньше. «Л/га по принятой» — те же литры на принятую площадь контроля DJI (DJI RAW минус доказанно исключённые повторы). Число есть только там, где контроль площади рассчитал каждый вылет опрыскивания пары; иначе написано «не рассчитано» или «рассчитано частично» — ни ноль, ни DJI RAW туда не подставляются.' if is_ru else '«Л/га» устуни, медиана ва йўлак аввалгидек DJI RAW гектарлари бўйича ҳисобланади. «Қабул қилинган бўйича л/га» — ўша литрлар DJI майдони назорати қабул қилган майдонга (DJI RAW дан исботланган такрорлар чиқарилган). Сон фақат майдон назорати жуфтликдаги ҳар бир пуркаш парвозини ҳисоблаган жойда бор; акс ҳолда «ҳисобланмаган» ёки «қисман ҳисобланган» деб ёзилади — у ерга на нол, на DJI RAW қўйилмайди.' }}</div>
 </div>
 
 {# Коридор объяснён СЛОВАМИ и числами: читатель должен видеть, что означает
@@ -184,6 +195,8 @@
         {# Колонка существует, чтобы читатель ВИДЕЛ, почему строка не
            покрашена, а не гадал. Пустая — значит строка оценивалась. #}
         <th>{{ 'Примечание' if is_ru else 'Изоҳ' }}</th>
+        <th class="right">{{ 'Гектары опрыскивания, принято' if is_ru else 'Пуркаш гектари, қабул қилинган' }}</th>
+        <th class="right">{{ 'Л/га по принятой' if is_ru else 'Қабул қилинган бўйича л/га' }}</th>
       </tr>
     </thead>
     <tbody>
@@ -199,6 +212,8 @@
         <td class="right">{% if r.spray_flights > r.no_liters %}{{ '%.2f'|format(r.liters)|vs_num }}{% else %}—{% endif %}</td>
         <td class="right">{% if r.rate is none %}—{% else %}<b>{{ '%.2f'|format(r.rate)|vs_num }}</b>{% endif %}</td>
         <td class="vs-muted" style="font-size:11px;">{{ r.note }}</td>
+        <td class="right">{{ acc_value(r.acc_spray, is_ru) }}</td>
+        <td class="right">{% if r.rate_accepted is none %}{% if r.rate_accepted_note %}<span class="vs-muted">{{ r.rate_accepted_note }}</span>{% else %}—{% endif %}{% else %}{{ '%.2f'|format(r.rate_accepted)|vs_num }}{% endif %}</td>
       </tr>
       {% endfor %}
       <tr style="font-weight:700;">
@@ -215,6 +230,8 @@
            парку. #}
         <td class="right">{% if data.total.rate is none %}—{% else %}{{ '%.2f'|format(data.total.rate)|vs_num }}{% endif %}</td>
         <td></td>
+        <td class="right">{{ acc_value(data.total.acc_spray, is_ru) }}</td>
+        <td class="right">{% if data.total.rate_accepted is none %}{% if data.total.rate_accepted_note %}<span class="vs-muted">{{ data.total.rate_accepted_note }}</span>{% else %}—{% endif %}{% else %}{{ '%.2f'|format(data.total.rate_accepted)|vs_num }}{% endif %}</td>
       </tr>
     </tbody>
   </table>

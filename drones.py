@@ -237,6 +237,130 @@ def _drone_usage_labels():
     }
 
 
+# ─── DJI-AREA-ACCEPTED-PROPAGATION-001: принятая площадь в рабочих отчётах ───
+#
+# Рабочие отчёты модуля (вылеты и их Excel, сводка и её Excel, календарь,
+# ведомости против вылетов, расход раствора) показывают рядом с DJI RAW
+# принятую площадь Area Control. Семантику даёт ОДИН модуль --
+# `dji_area.accepted` (связка accounting.classify + decisions.effective, та же,
+# что у экрана контроля), чтение -- `dji_area.control_store.accepted_for`
+# пакетом по 400 вылетов. Здесь только сбор пар (id вылета DJI, RAW) и
+# перевод в гектары.
+#
+# [REASON]: RAW не заменяется и не переписывается. Колонки и числа DJI RAW в
+# отчётах остаются прежними (их читают бухгалтерия и сверочные скрипты);
+# принятая площадь добавляется рядом. Вылет, для которого Area Control
+# расчёта не делал, показывается «не рассчитано», а итоги называют, сколько
+# таких вылетов и сколько RAW за ними, -- принятой он не считается никогда.
+# `billable_area_m2` не читается и не пишется.
+
+def _drone_accepted_by_dji(pairs):
+    """{dji_flight_id: `dji_area.accepted.for_flight`} для пар (id DJI, га).
+
+    Соединение только для чтения (`mode=ro`); базы нет -- все вылеты
+    `NOT_CALCULATED`, а не «приняты».
+    """
+    from dji_area import accepted as dji_accepted
+    from dji_area import control_store
+
+    raw = {}
+    for dji_flight_id, area_ha in pairs:
+        raw[int(dji_flight_id)] = float(area_ha or 0.0) * 10000.0
+    if not raw:
+        return {}
+    con = _drone_area_control_db()
+    if con is None:
+        return {fid: dji_accepted.for_flight(value)
+                for fid, value in raw.items()}
+    try:
+        return control_store.accepted_for(con, raw)
+    finally:
+        con.close()
+
+
+def _drone_accepted_item_view(item):
+    """Один вылет для шаблона и книги: гектары, статус словами, значок."""
+    from dji_area import accepted as dji_accepted
+
+    lang = _drone_lang()
+    return {
+        'calculated': item['calculated'],
+        'raw_ha': dji_accepted.ha(item['raw_m2']),
+        'accepted_ha': dji_accepted.ha(item['accepted_m2']),
+        'excluded_ha': dji_accepted.ha(item['excluded_m2']),
+        'status': item['status'],
+        'status_label': dji_accepted.label(item, lang),
+        'status_badge': dji_accepted.badge(item),
+        'is_open': item['is_open'],
+        'raw_mismatch': item.get('raw_mismatch', False),
+        'decision_applied': item['decision_applied'],
+    }
+
+
+def _drone_accepted_view(totals):
+    """Итог группы (`dji_area.accepted.finalize`) в гектарах для шаблона.
+
+    ``accepted_ha`` -- принятая по РАССЧИТАННЫМ вылетам группы; None, когда
+    не рассчитан ни один. Полнота -- ``coverage`` и счётчики рядом.
+    """
+    from dji_area import accepted as dji_accepted
+
+    ha = dji_accepted.ha
+    calculated = totals['calculated_records']
+    return {
+        'records': totals['records'],
+        'raw_ha': ha(totals['raw_m2']),
+        'calculated_records': calculated,
+        'calculated_raw_ha': ha(totals['calculated_raw_m2']),
+        'accepted_ha': ha(totals['accepted_m2']) if calculated else None,
+        'accepted_full_ha': ha(totals['accepted_full_m2']),
+        'excluded_ha': ha(totals['excluded_m2']) if calculated else None,
+        'not_calculated_records': totals['not_calculated_records'],
+        'not_calculated_raw_ha': ha(totals['not_calculated_raw_m2']),
+        'open_records': totals['open_records'],
+        'open_raw_ha': ha(totals['open_raw_m2']),
+        'pending_records': totals['pending_records'],
+        'needs_decision_records': totals['needs_decision_records'],
+        'corrected_records': totals['corrected_records'],
+        'decided_records': totals['decided_records'],
+        'raw_mismatch_records': totals['raw_mismatch_records'],
+        'accepted_missing_records': totals['accepted_missing_records'],
+        'coverage': totals['coverage'],
+        'coverage_label': dji_accepted.pick(
+            dji_accepted.COVERAGE_LABELS[totals['coverage']], _drone_lang()),
+        'is_partial': totals['coverage'] == dji_accepted.COVERAGE_PARTIAL,
+        'is_none': totals['coverage'] == dji_accepted.COVERAGE_NONE,
+        'complete': totals['complete'],
+        'resolved': totals['resolved'],
+    }
+
+
+def _drone_accepted_groups(rows, key_fn, by_dji=None):
+    """({ключ: вид итога}, вид общего итога) по строкам с dji_flight_id и area_ha.
+
+    ``rows`` -- кортежи/строки запроса, у которых есть `dji_flight_id` и
+    `area_ha`; ``key_fn(row)`` -- ключ группы (машина, месяц, день ...).
+    Одно пакетное чтение на все строки, затем раскладка в Python;
+    ``by_dji`` -- уже прочитанный результат, если разрезов несколько.
+    """
+    from dji_area import accepted as dji_accepted
+
+    if by_dji is None:
+        by_dji = _drone_accepted_by_dji((r.dji_flight_id, r.area_ha)
+                                        for r in rows)
+    pairs = [(key_fn(r), by_dji[int(r.dji_flight_id)]) for r in rows]
+    groups = dji_accepted.group(pairs)
+    total = dji_accepted.summarize(item for _key, item in pairs)
+    return ({key: _drone_accepted_view(bucket)
+             for key, bucket in groups.items()},
+            _drone_accepted_view(total))
+
+
+def _drone_accepted_empty_view():
+    from dji_area import accepted as dji_accepted
+    return _drone_accepted_view(dji_accepted.summarize(()))
+
+
 # ─── Routes (read-only) ───────────────────────────────────────────────────────
 
 @drones_bp.route('/')
@@ -275,6 +399,14 @@ def index():
                .filter(DroneFlight.region.isnot(None))
                .distinct().order_by(DroneFlight.region).all()]
 
+    # DJI-AREA-ACCEPTED-PROPAGATION-001: DJI RAW, принятая площадь и статус
+    # Area Control для строк ЭТОЙ страницы -- одним пакетом, не по вылету.
+    accepted = _drone_accepted_by_dji((f.dji_flight_id, f.area_ha)
+                                      for f in flights)
+    area_by_flight = {
+        f.id: _drone_accepted_item_view(accepted[int(f.dji_flight_id)])
+        for f in flights}
+
     # Filter args echoed into pagination links, only the ones actually set.
     # [REASON]: the list keeps its own «only what is set» rule rather than
     # _drone_link_args: its default is all time, so a cleared date and an
@@ -295,6 +427,7 @@ def index():
     return render_template(
         'drones/list.html',
         flights=flights,
+        area_by_flight=area_by_flight,
         total=total,
         page=page,
         pages=pages,
@@ -3262,6 +3395,8 @@ def _drone_flight_operator_subquery(conds):
     assign = aliased(DroneOperatorAssignment)
     return (db.session.query(
         DroneFlight.id.label('flight_id'),
+        # DJI-AREA-ACCEPTED-PROPAGATION-001: ключ принятой площади вылета.
+        DroneFlight.dji_flight_id.label('dji_flight_id'),
         DroneFlight.area_ha.label('area_ha'),
         func.count(func.distinct(assign.operator_id)).label('covers'),
         func.min(assign.operator_id).label('operator_id'),
@@ -3273,8 +3408,34 @@ def _drone_flight_operator_subquery(conds):
     )).filter(*conds).group_by(DroneFlight.id).subquery())
 
 
-def _drone_operator_cut(conds, total_area):
-    """Flights, hectares and share per operator, plus the two special rows."""
+def _drone_operator_accepted(per_flight, by_dji=None):
+    """Принятая площадь по операторам -- тем же правилом привязки, что у среза.
+
+    {('op', id) | 'none' | 'many': вид итога} и общий итог. Строится из того
+    же подзапроса «одна строка на вылет», что и гектары DJI RAW среза, поэтому
+    вылет не попадёт к двум операторам и в принятой.
+    """
+    rows = db.session.query(per_flight.c.dji_flight_id,
+                            per_flight.c.area_ha, per_flight.c.covers,
+                            per_flight.c.operator_id).all()
+
+    def key(row):
+        if not row.covers:
+            return 'none'
+        if row.covers == 1:
+            return ('op', row.operator_id)
+        return 'many'
+
+    return _drone_accepted_groups(rows, key, by_dji)
+
+
+def _drone_operator_cut(conds, total_area, by_dji=None):
+    """Flights, hectares and share per operator, plus the two special rows.
+
+    DJI-AREA-ACCEPTED-PROPAGATION-001: каждая строка несёт ``acc`` -- принятую
+    площадь Area Control тех же вылетов; ``by_dji`` -- уже прочитанный
+    результат провайдера, чтобы не читать его второй раз.
+    """
     per_flight = _drone_flight_operator_subquery(conds)
     groups = (db.session.query(
         per_flight.c.covers,
@@ -3313,13 +3474,19 @@ def _drone_operator_cut(conds, total_area):
                  + multiple['flights'])
     o_area = (sum(r['area'] for r in rows) + undetermined['area']
               + multiple['area'])
+    acc_groups, acc_total = _drone_operator_accepted(per_flight, by_dji)
+    empty = _drone_accepted_empty_view()
+    for row in rows:
+        row['acc'] = acc_groups.get(('op', row['operator_id']), empty)
+    undetermined['acc'] = acc_groups.get('none', empty)
+    multiple['acc'] = acc_groups.get('many', empty)
     return {
         'rows': rows,
         # Both special rows are ALWAYS present in the structure; the template
         # hides an empty one. They are never folded into a named operator.
         'undetermined': undetermined,
         'multiple': multiple,
-        'total': {'flights': o_flights, 'area': o_area},
+        'total': {'flights': o_flights, 'area': o_area, 'acc': acc_total},
     }
 
 
@@ -3402,6 +3569,26 @@ def _drone_summary_data(conds):
         return (flights_sum == totals['flights']
                 and abs(area_sum - totals['area_ha']) < 0.005)
 
+    # DJI-AREA-ACCEPTED-PROPAGATION-001: принятая площадь Area Control тех же
+    # вылетов -- одним пакетным чтением на все разрезы страницы. Гектары
+    # выше (DJI RAW) и их сверка не меняются; `acc` каждого разреза считается
+    # из тех же строк и сводится к общему итогу так же, как RAW.
+    _acc_offset = int(DRONE_DISPLAY_UTC_OFFSET.total_seconds() // 60)
+    acc_month_expr = func.strftime(
+        '%Y-%m', func.datetime(DroneFlight.started_at,
+                               '%+d minutes' % _acc_offset))
+    acc_rows = (db.session.query(
+        DroneFlight.dji_flight_id, DroneFlight.area_ha,
+        DroneFlight.drone_unit_id, acc_month_expr.label('month'),
+    ).filter(*conds).all())
+    acc_by_dji = _drone_accepted_by_dji((r.dji_flight_id, r.area_ha)
+                                        for r in acc_rows)
+    acc_by_machine, acc_total = _drone_accepted_groups(
+        acc_rows, lambda r: r.drone_unit_id, acc_by_dji)
+    acc_by_month, _acc_total = _drone_accepted_groups(
+        acc_rows, lambda r: r.month, acc_by_dji)
+    acc_empty = _drone_accepted_empty_view()
+
     # По машинам -- ordered by machine number, NULL as its own line.
     machine_groups = (db.session.query(
         DroneFlight.drone_unit_id,
@@ -3441,6 +3628,7 @@ def _drone_summary_data(conds):
             'liters_per_ha': (_drone_rate(liters, area)
                               if spray_rows else None),
         }
+        cell['acc'] = acc_by_machine.get(unit_id, acc_empty)
         if unit_id is None:
             machine_unattributed = cell
         else:
@@ -3465,6 +3653,7 @@ def _drone_summary_data(conds):
             'ha_per_hour': _drone_rate(m_area, m_seconds / 3600.0),
             'liters_per_ha': (_drone_rate(m_liters, m_area)
                               if m_spray_rows else None),
+            'acc': acc_total,
         },
         'reconciled': reconciled(m_flights, m_area),
     }
@@ -3573,24 +3762,30 @@ def _drone_summary_data(conds):
         'flights': flights,
         'area': float(area or 0.0),
         'share': _drone_share(float(area or 0.0), total_area),
+        'acc': acc_by_month.get(month, acc_empty),
     } for month, flights, area in month_groups]
     mo_flights = sum(r['flights'] for r in month_rows)
     mo_area = sum(r['area'] for r in month_rows)
     by_month = {
         'rows': month_rows,
-        'total': {'flights': mo_flights, 'area': mo_area},
+        'total': {'flights': mo_flights, 'area': mo_area, 'acc': acc_total},
         'reconciled': reconciled(mo_flights, mo_area),
     }
 
     # По операторам (DRONE-FLEET-001) -- derived from the assignment table,
     # never observed. It must reconcile with the grand total exactly like the
     # four cuts above, and it does because it is built from one row per flight.
-    by_operator = _drone_operator_cut(conds, total_area)
+    by_operator = _drone_operator_cut(conds, total_area, acc_by_dji)
     by_operator['reconciled'] = reconciled(by_operator['total']['flights'],
                                            by_operator['total']['area'])
 
     return {
         'totals': totals,
+        # Итог Area Control периода; сходится с итогом DJI RAW по числу
+        # вылетов и по гектарам -- иначе на странице предупреждение.
+        'accepted': acc_total,
+        'accepted_reconciled': reconciled(acc_total['records'],
+                                          acc_total['raw_ha'] or 0.0),
         'by_machine': by_machine,
         'by_region': by_region,
         'by_usage': by_usage,
@@ -3979,29 +4174,78 @@ def _drone_operator_sheet(wb, st, by_operator):
     """
     ws = wb.create_sheet(_drone_t('Операторлар бўйича', 'По операторам'))
     ws.append([_drone_operator_derived_note()])
+    # DJI-AREA-ACCEPTED-PROPAGATION-001: прежние четыре колонки на своих
+    # местах; принятая площадь Area Control -- колонками правее.
     ws.append([_drone_t('Оператор', 'Оператор'),
                _drone_t('Парвозлар', 'Вылеты'),
                _drone_t('Гектар', 'Гектары'),
-               _drone_t('Улуш, %', 'Доля, %')])
+               _drone_t('Улуш, %', 'Доля, %')]
+              + _drone_accepted_xlsx_heads())
     for r in by_operator['rows']:
         ws.append([_drone_xlsx_safe(r['name']), r['flights'], r['area'],
-                   r['share']])
+                   r['share']] + _drone_accepted_xlsx_cells(r.get('acc')))
     # Both special rows are written whenever they carry anything, and they are
     # part of the total -- never a remainder outside it.
     if by_operator['undetermined']['flights']:
         u = by_operator['undetermined']
         ws.append([_drone_t('Оператор аниқланмаган', 'Оператор не определён'),
-                   u['flights'], u['area'], u['share']])
+                   u['flights'], u['area'], u['share']]
+                  + _drone_accepted_xlsx_cells(u.get('acc')))
     if by_operator['multiple']['flights']:
         m = by_operator['multiple']
         ws.append([_drone_t('Бир нечта оператор', 'Несколько операторов'),
-                   m['flights'], m['area'], m['share']])
+                   m['flights'], m['area'], m['share']]
+                  + _drone_accepted_xlsx_cells(m.get('acc')))
     ws.append([_drone_t('Жами', 'Итого'), by_operator['total']['flights'],
-               by_operator['total']['area'], 100.0])
+               by_operator['total']['area'], 100.0]
+              + _drone_accepted_xlsx_cells(by_operator['total'].get('acc')))
     # The note occupies row 1, so the header the styler freezes is row 2.
-    st.style_table(ws, num_formats={3: '0.00', 4: '0.0'},
+    st.style_table(ws, num_formats=_drone_accepted_xlsx_formats(
+                       5, {3: '0.00', 4: '0.0'}),
                    bold_rows=(ws.max_row,), header_row=2)
     return ws
+
+
+def _drone_accepted_xlsx_heads():
+    """Колонки принятой площади группы в книгах сводки и вылетов.
+
+    [REASON]: заголовок называет, по каким вылетам взято число. Принятая
+    считается только по рассчитанным вылетам; вылеты без расчёта -- отдельные
+    две колонки, а не ноль и не RAW в колонке «Принято». Пустая ячейка --
+    «не рассчитан ни один вылет группы».
+    """
+    return [_drone_t('Қабул қилинган (ҳисобланган парвозлар бўйича), га',
+                     'Принято (по рассчитанным вылетам), га'),
+            _drone_t('Чиқарилган, га', 'Исключено, га'),
+            _drone_t('Ҳисобланмаган, парвозлар',
+                     'Не рассчитано, вылетов'),
+            _drone_t('Ҳисобланмаган, DJI RAW га',
+                     'Не рассчитано, DJI RAW га'),
+            _drone_t('Очиқ, парвозлар', 'Открыто, вылетов'),
+            _drone_t('DJI майдони назорати тўлиқлиги',
+                     'Полнота контроля площади DJI')]
+
+
+def _drone_accepted_xlsx_cells(view):
+    if view is None:
+        view = _drone_accepted_empty_view()
+    return [view['accepted_ha'], view['excluded_ha'],
+            view['not_calculated_records'], view['not_calculated_raw_ha'],
+            view['open_records'], view['coverage_label']]
+
+
+def _drone_accepted_flight_cells(item):
+    """Три ячейки вылета: принято, исключено, статус словами."""
+    view = _drone_accepted_item_view(item)
+    return [view['accepted_ha'], view['excluded_ha'], view['status_label']]
+
+
+def _drone_accepted_xlsx_formats(first_column, base=None):
+    """Числовые форматы: ``base`` плюс шесть колонок с ``first_column``."""
+    out = dict(base or {})
+    out.update({first_column: '0.00', first_column + 1: '0.00',
+                first_column + 3: '0.00'})
+    return out
 
 
 def _drone_xlsx_styler():
@@ -4140,6 +4384,30 @@ def summary_xlsx():
         (_drone_t('Ноль майдонли парвозлар', 'Вылетов с нулевой площадью'),
          data['totals']['zero_area'], None),
     ]
+    # DJI-AREA-ACCEPTED-PROPAGATION-001: итог Area Control -- строками ПОСЛЕ
+    # прежних, их порядок и смысл не меняются. «Гектар» выше -- DJI RAW.
+    acc = data['accepted']
+    summary_rows += [
+        (_drone_t('Қабул қилинган (ҳисобланган парвозлар бўйича), га',
+                  'Принято (по рассчитанным вылетам), га'),
+         acc['accepted_ha'], '0.00'),
+        (_drone_t('Чиқарилган, га', 'Исключено, га'),
+         acc['excluded_ha'], '0.00'),
+        (_drone_t('DJI майдони назорати тўлиқлиги',
+                  'Полнота контроля площади DJI'),
+         acc['coverage_label'], None),
+        (_drone_t('Ҳисобланган парвозлар', 'Рассчитано вылетов'),
+         acc['calculated_records'], None),
+        (_drone_t('Ҳисобланмаган парвозлар', 'Не рассчитано вылетов'),
+         acc['not_calculated_records'], None),
+        (_drone_t('Ҳисобланмаган, DJI RAW га', 'Не рассчитано, DJI RAW га'),
+         acc['not_calculated_raw_ha'], '0.00'),
+        (_drone_t('Очиқ ёзувлар (далил ёки қарор кутилмоқда)',
+                  'Открыто (ожидает доказательства или решения), вылетов'),
+         acc['open_records'], None),
+        (_drone_t('Очиқ ёзувлар, DJI RAW га', 'Открыто, DJI RAW га'),
+         acc['open_raw_ha'], '0.00'),
+    ]
     for label, value, fmt in summary_rows:
         ws.append([label, value])
         if fmt:
@@ -4152,22 +4420,26 @@ def summary_xlsx():
     # to operators and to accounting.
     ws = wb.create_sheet(_drone_t('Машиналар бўйича', 'По машинам'))
     ws.append([_drone_t('Машина (№)', 'Машина (№)'), head_flights,
-               head_area, head_share, head_ha_hour, head_l_ha])
+               head_area, head_share, head_ha_hour, head_l_ha]
+              + _drone_accepted_xlsx_heads())
     for r in data['by_machine']['rows']:
         ws.append([r['number'], r['flights'], r['area'], r['share'],
                    _drone_xlsx_rate(r['ha_per_hour']),
-                   _drone_xlsx_rate(r['liters_per_ha'])])
+                   _drone_xlsx_rate(r['liters_per_ha'])]
+                  + _drone_accepted_xlsx_cells(r['acc']))
     if data['by_machine']['unattributed']:
         u = data['by_machine']['unattributed']
         ws.append([label_unattr, u['flights'], u['area'], u['share'],
                    _drone_xlsx_rate(u['ha_per_hour']),
-                   _drone_xlsx_rate(u['liters_per_ha'])])
+                   _drone_xlsx_rate(u['liters_per_ha'])]
+                  + _drone_accepted_xlsx_cells(u['acc']))
     ws.append([label_total, data['by_machine']['total']['flights'],
                data['by_machine']['total']['area'], 100.0,
                _drone_xlsx_rate(data['by_machine']['total']['ha_per_hour']),
-               _drone_xlsx_rate(data['by_machine']['total']['liters_per_ha'])])
-    st.style_table(ws, num_formats={3: '0.00', 4: '0.0', 5: '0.00',
-                                    6: '0.00'},
+               _drone_xlsx_rate(data['by_machine']['total']['liters_per_ha'])]
+              + _drone_accepted_xlsx_cells(data['by_machine']['total']['acc']))
+    st.style_table(ws, num_formats=_drone_accepted_xlsx_formats(
+                       7, {3: '0.00', 4: '0.0', 5: '0.00', 6: '0.00'}),
                    bold_rows=(ws.max_row,))
 
     # 3. По областям / Вилоятлар бўйича
@@ -4205,12 +4477,16 @@ def summary_xlsx():
 
     # 5. По месяцам / Ойлар бўйича
     ws = wb.create_sheet(_drone_t('Ойлар бўйича', 'По месяцам'))
-    ws.append([_drone_t('Ой', 'Месяц'), head_flights, head_area, head_share])
+    ws.append([_drone_t('Ой', 'Месяц'), head_flights, head_area, head_share]
+              + _drone_accepted_xlsx_heads())
     for r in data['by_month']['rows']:
-        ws.append([r['month'], r['flights'], r['area'], r['share']])
+        ws.append([r['month'], r['flights'], r['area'], r['share']]
+                  + _drone_accepted_xlsx_cells(r['acc']))
     ws.append([label_total, data['by_month']['total']['flights'],
-               data['by_month']['total']['area'], 100.0])
-    st.style_table(ws, num_formats={3: '0.00', 4: '0.0'},
+               data['by_month']['total']['area'], 100.0]
+              + _drone_accepted_xlsx_cells(data['by_month']['total']['acc']))
+    st.style_table(ws, num_formats=_drone_accepted_xlsx_formats(
+                       5, {3: '0.00', 4: '0.0'}),
                    bold_rows=(ws.max_row,))
 
     # 6. По операторам / Операторлар бўйича (DRONE-FLEET-001)
@@ -4275,7 +4551,16 @@ def flights_xlsx():
                  'Оператор (выведен по назначениям)'),
         _drone_t('Га/соат', 'Га/час'),
         _drone_t('Л/га', 'Л/га'),
+        # DJI-AREA-ACCEPTED-PROPAGATION-001: правее прежних колонок. Пустая
+        # ячейка «Принято» -- расчёта Area Control нет, статус это называет;
+        # «Гектар» выше -- DJI RAW, как и раньше.
+        _drone_t('Қабул қилинган, га', 'Принято, га'),
+        _drone_t('Чиқарилган, га', 'Исключено, га'),
+        _drone_t('Майдон ҳолати (DJI майдони назорати)',
+                 'Статус площади (контроль площади DJI)'),
     ])
+    accepted = _drone_accepted_by_dji((f.dji_flight_id, f.area_ha)
+                                      for f in flights)
     for f in flights:
         usage_label = usage_labels.get(f.usage_type)
         if usage_label is None and f.usage_type is not None:
@@ -4297,17 +4582,19 @@ def flights_xlsx():
             _drone_xlsx_safe(operator_by_flight.get(f.id, '')),
             _drone_xlsx_rate(_drone_rate(f.area_ha or 0.0, hours)),
             _drone_xlsx_rate(_drone_rate(f.spray_liters or 0.0, f.area_ha)),
-        ])
+        ] + _drone_accepted_flight_cells(accepted[int(f.dji_flight_id)]))
     st = _drone_xlsx_styler()
     st.style_table(ws,
                    num_formats={6: '0.00', 7: '0.0', 8: '0.00', 9: '0.000',
-                                13: '0.00', 14: '0.00'},
+                                13: '0.00', 14: '0.00', 15: '0.00',
+                                16: '0.00'},
                    datetime_format={1: 'DD.MM.YYYY HH:MM'})
 
     # The same operator cut sheet as summary.xlsx, over the same filters --
     # the flat list answers "which flight", the cut answers "how much whose",
     # and a reader who has only this file needs both.
-    _drone_operator_sheet(wb, st, _drone_operator_cut(conds, total_area))
+    _drone_operator_sheet(wb, st, _drone_operator_cut(conds, total_area,
+                                                      accepted))
     return _drone_xlsx_response(wb, 'drones_flights', filters)
 
 
@@ -6857,6 +7144,26 @@ def _drone_spray_usage_data(period_conds, view_conds, band,
     total['area_total'] = total['area_spray'] + total['area_other']
     total['rate'] = (_drone_rate(total['liters'], total['area_spray'])
                      if total['spray_flights'] > total['no_liters'] else None)
+
+    # DJI-AREA-ACCEPTED-PROPAGATION-001: площадь опрыскивания по принятой
+    # контроля DJI и «л/га по принятой» -- ОТДЕЛЬНЫМИ полями. Прежний расход
+    # (`rate`), медиана и коридор остаются по DJI RAW.
+    # [REASON]: медиана берётся по всему парку периода, а принятая есть не у
+    # всех машино-месяцев (до 01.03.2026 её нет вовсе). Медиана из смеси двух
+    # знаменателей сравнивала бы несравнимое, поэтому знаменатель коридора не
+    # меняется молча; «л/га по принятой» показывается рядом и только там, где
+    # принятая рассчитана у каждого вылета опрыскивания пары.
+    acc_rows = (db.session.query(
+        DroneFlight.drone_unit_id, month_expr.label('month'),
+        DroneFlight.dji_flight_id, DroneFlight.area_ha,
+    ).filter(*(period_conds + view_conds)).filter(is_spray).all())
+    acc_groups, acc_total = _drone_accepted_groups(
+        acc_rows, lambda r: (r.drone_unit_id, r.month))
+    acc_empty = _drone_accepted_empty_view()
+    for row in rows:
+        _drone_spray_accepted(row, acc_groups.get(
+            (row['unit_id'], row['month']), acc_empty))
+    _drone_spray_accepted(total, acc_total)
     # A1.2: area_spray + area_other over every row against the grand total of
     # the same filter. Shown on the page as the other cuts show it, never
     # hidden -- a breakdown that quietly loses hectares is the defect this
@@ -6884,6 +7191,51 @@ def _drone_spray_usage_data(period_conds, view_conds, band,
         'unjudged_cells': sum(1 for r in fleet
                               if r['rate'] is not None and not r['judged']),
     }
+
+
+DRONE_SPRAY_ACC_OK = 'ok'
+DRONE_SPRAY_ACC_NO_LITERS = 'no_liters'
+DRONE_SPRAY_ACC_NOT_CALCULATED = 'not_calculated'
+DRONE_SPRAY_ACC_PARTIAL = 'partial'
+DRONE_SPRAY_ACC_ZERO_AREA = 'zero_area'
+
+
+def _drone_spray_accepted(row, acc):
+    """«Л/га по принятой» строки расхода: число либо причина, почему его нет.
+
+    Числитель -- те же литры, что у расхода по DJI RAW; знаменатель --
+    принятая площадь вылетов опрыскивания пары. Числа нет, когда литры не
+    записаны (как у RAW), когда принятая рассчитана не у каждого вылета
+    опрыскивания (частично или вовсе нет) и когда принятая равна нулю.
+    [REASON]: «нет принятой» -- не ноль гектаров: ноль в знаменателе дал бы
+    ложную бесконечность, а подстановка RAW -- ложный «проверенный» расход.
+    """
+    row['acc_spray'] = acc
+    liters_known = row['spray_flights'] > row['no_liters']
+    rate = None
+    if not liters_known:
+        reason = DRONE_SPRAY_ACC_NO_LITERS
+    elif not acc['records'] or acc['is_none']:
+        reason = DRONE_SPRAY_ACC_NOT_CALCULATED
+    elif not acc['complete']:
+        reason = DRONE_SPRAY_ACC_PARTIAL
+    else:
+        rate = _drone_rate(row['liters'], acc['accepted_full_ha'])
+        reason = (DRONE_SPRAY_ACC_OK if rate is not None
+                  else DRONE_SPRAY_ACC_ZERO_AREA)
+    row['rate_accepted'] = rate
+    row['rate_accepted_reason'] = reason
+    row['rate_accepted_note'] = {
+        DRONE_SPRAY_ACC_OK: '',
+        DRONE_SPRAY_ACC_NO_LITERS: '',
+        DRONE_SPRAY_ACC_NOT_CALCULATED: _drone_t('ҳисобланмаган',
+                                                 'не рассчитано'),
+        DRONE_SPRAY_ACC_PARTIAL: _drone_t('қисман ҳисобланган',
+                                          'рассчитано частично'),
+        DRONE_SPRAY_ACC_ZERO_AREA: _drone_t('қабул қилинган 0 га',
+                                            'принято 0 га'),
+    }[reason]
+    return row
 
 
 @drones_bp.route('/reports/spray')
@@ -7007,6 +7359,12 @@ def spray_usage_xlsx():
         _drone_t('Литр', 'Литры'),
         _drone_t('Л/га', 'Л/га'),
         _drone_t('Изоҳ', 'Примечание'),
+        # DJI-AREA-ACCEPTED-PROPAGATION-001: правее прежних. «Л/га» выше --
+        # по DJI RAW, как и было; эти три -- по принятой площади.
+        _drone_t('Пуркаш гектари, қабул қилинган',
+                 'Гектары опрыскивания, принято'),
+        _drone_t('Л/га, қабул қилинган бўйича', 'Л/га по принятой'),
+        _drone_t('Қабул қилинган бўйича изоҳ', 'Примечание по принятой'),
     ])
     def _liters_cell(row):
         """Litres for a workbook cell, or None when none were ever recorded.
@@ -7031,14 +7389,21 @@ def spray_usage_xlsx():
             _liters_cell(r),
             r['rate'],
             r['note'],
+            r['acc_spray']['accepted_ha'],
+            r['rate_accepted'],
+            r['rate_accepted_note'],
         ])
     ws.append([label_total, '',
                data['total']['spray_flights'], data['total']['no_liters'],
                data['total']['area_spray'], data['total']['area_other'],
                data['total']['area_total'], _liters_cell(data['total']),
-               data['total']['rate'], ''])
+               data['total']['rate'], '',
+               data['total']['acc_spray']['accepted_ha'],
+               data['total']['rate_accepted'],
+               data['total']['rate_accepted_note']])
     st.style_table(ws, num_formats={5: '0.00', 6: '0.00', 7: '0.00',
-                                    8: '0.00', 9: '0.00'},
+                                    8: '0.00', 9: '0.00', 11: '0.00',
+                                    12: '0.00'},
                    bold_rows=(ws.max_row,))
     return _drone_xlsx_response(wb, 'drone_spray_usage', filters)
 
@@ -7388,6 +7753,15 @@ def _drone_works_flights_reconcile_data():
             func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
         ).group_by(flight_month).all() if row[0])
 
+    # DJI-AREA-ACCEPTED-PROPAGATION-001: принятая площадь Area Control тех же
+    # вылетов по месяцам -- одним пакетным чтением.
+    acc_rows = [row for row in db.session.query(
+        DroneFlight.dji_flight_id, DroneFlight.area_ha,
+        flight_month.label('month')).all() if row.month]
+    acc_by_month, acc_total = _drone_accepted_groups(acc_rows,
+                                                     lambda r: r.month)
+    acc_empty = _drone_accepted_empty_view()
+
     note_no_books = _drone_t('Ведомостлар киритилмаган',
                              'Ведомости не заведены')
     note_no_flights = _drone_t('Бу ойда парвозлар йўқ',
@@ -7423,6 +7797,8 @@ def _drone_works_flights_reconcile_data():
             row['note'] = note_no_books
         else:
             row['note'] = note_no_flights
+        row['acc'] = acc_by_month.get(month, acc_empty)
+        _drone_reconcile_control(row, ledger_area, flight_area)
         rows.append(row)
 
     total_ledger = sum(r['ledger_area'] for r in rows)
@@ -7433,21 +7809,66 @@ def _drone_works_flights_reconcile_data():
     # printed exactly the sentence every row is forbidden to print. A footer
     # that contradicts the column above it is worse than no footer.
     both_sides = total_ledger > 0.005 and total_flight > 0.005
+    total = {
+        'ledger_jobs': sum(r['ledger_jobs'] for r in rows),
+        'ledger_area': total_ledger,
+        'flights': sum(r['flights'] for r in rows),
+        'flight_area': total_flight,
+        'diff': total_ledger - total_flight,
+        'percent': (((total_ledger - total_flight) * 100.0 / total_flight)
+                    if both_sides else None),
+        'coverage': ((total_ledger * 100.0 / total_flight)
+                     if both_sides else None),
+        'acc': acc_total,
+    }
+    _drone_reconcile_control(total, total_ledger, total_flight)
     return {
         'rows': rows,
-        'total': {
-            'ledger_jobs': sum(r['ledger_jobs'] for r in rows),
-            'ledger_area': total_ledger,
-            'flights': sum(r['flights'] for r in rows),
-            'flight_area': total_flight,
-            'diff': total_ledger - total_flight,
-            'percent': (((total_ledger - total_flight) * 100.0 / total_flight)
-                        if both_sides else None),
-            'coverage': ((total_ledger * 100.0 / total_flight)
-                         if both_sides else None),
-        },
+        'total': total,
         'months': len(rows),
+        'accepted': acc_total,
     }
+
+
+# DJI-AREA-ACCEPTED-PROPAGATION-001: какая площадь вылетов контролирует
+# ведомость. Принятая Area Control -- когда она рассчитана у КАЖДОГО вылета
+# месяца; иначе DJI RAW, и строка говорит об этом словами.
+DRONE_CONTROL_BASIS_ACCEPTED = 'accepted'
+DRONE_CONTROL_BASIS_RAW = 'raw'
+
+
+def _drone_reconcile_control(row, ledger_area, flight_area):
+    """Контролируемая сверка строки: база, разница, процент, покрытие, цвет.
+
+    [REASON]: прежние поля строки (`flight_area`, `diff`, `percent`,
+    `coverage`, `flag`) остаются по DJI RAW. Их читает «Кто не сдал
+    ведомость» -- экран присутствия, который по решению этого инкремента
+    остаётся на RAW, и его помесячные итоги обязаны совпадать с этим
+    отчётом (`test_every_month_equals_the_reconcile_report`).
+
+    [REASON]: частично рассчитанный месяц не сверяется по принятой. Принятая
+    по рассчитанным вылетам меньше площади месяца на RAW нерассчитанных, и
+    покрытие по ней было бы завышено ровно на непроверенную часть; сложить
+    же принятое с RAW нерассчитанных -- значит выдать непроверенное за
+    принятое. Поэтому база такого месяца -- DJI RAW, названная рядом.
+    Правила ветвления и полосы цвета -- те же, что у RAW (`_drone_coverage_flag`).
+    """
+    acc = row['acc']
+    if acc['records'] and acc['complete']:
+        basis = DRONE_CONTROL_BASIS_ACCEPTED
+        area = acc['accepted_full_ha'] or 0.0
+    else:
+        basis = DRONE_CONTROL_BASIS_RAW
+        area = flight_area
+    both = ledger_area > 0.005 and area > 0.005
+    row['control_basis'] = basis
+    row['control_area'] = area
+    row['control_diff'] = ledger_area - area
+    row['control_percent'] = ((ledger_area - area) * 100.0 / area
+                              if both else None)
+    row['control_coverage'] = (ledger_area * 100.0 / area) if both else None
+    row['control_flag'] = _drone_coverage_flag(row['control_coverage'])
+    return row
 
 
 @drones_bp.route('/reports/reconcile')
@@ -7903,6 +8324,23 @@ def _drone_flight_calendar_data(month):
         flown.setdefault(unit_id, {})[day_text] = {
             'flights': flights, 'area': float(area or 0.0)}
 
+    # DJI-AREA-ACCEPTED-PROPAGATION-001: принятая площадь тех же вылетов --
+    # одно пакетное чтение на месяц, затем разрезы ячейка / машина / день.
+    acc_rows = (db.session.query(
+        DroneFlight.drone_unit_id, day_expr.label('day'),
+        DroneFlight.dji_flight_id, DroneFlight.area_ha,
+    ).filter(day_expr >= first.isoformat())
+        .filter(day_expr <= last.isoformat()).all())
+    acc_by_dji = _drone_accepted_by_dji((r.dji_flight_id, r.area_ha)
+                                        for r in acc_rows)
+    acc_cells, acc_month = _drone_accepted_groups(
+        acc_rows, lambda r: (r.drone_unit_id, r.day), acc_by_dji)
+    acc_units, _unused = _drone_accepted_groups(
+        acc_rows, lambda r: r.drone_unit_id, acc_by_dji)
+    acc_days, _unused = _drone_accepted_groups(
+        acc_rows, lambda r: r.day, acc_by_dji)
+    acc_empty = _drone_accepted_empty_view()
+
     units = DroneUnit.query.order_by(DroneUnit.number).all()
     history, earliest_on = _drone_status_on_day_map(first, last)
     # [REASON]: THE FOURTH STATE, is-unknown -- DRONE-SPRAY-MEDIAN-SCOPE-001/3.
@@ -7928,8 +8366,10 @@ def _drone_flight_calendar_data(month):
             if hit:
                 row_flights += hit['flights']
                 row_area += hit['area']
-                cells.append({'day': day, 'state': 'is-flown',
-                              'flights': hit['flights'], 'area': hit['area']})
+                cells.append(_drone_calendar_figure(
+                    {'day': day, 'state': 'is-flown',
+                     'flights': hit['flights'], 'area': hit['area']},
+                    acc_cells.get((unit.id, key), acc_empty)))
             else:
                 status = _drone_status_on(history.get(unit.id, []), day)
                 if status is None:
@@ -7940,9 +8380,10 @@ def _drone_flight_calendar_data(month):
                     state = 'is-idle'
                 cells.append({'day': day, 'state': state, 'flights': 0,
                               'area': 0.0, 'status': status})
-        rows.append({'unit_id': unit.id, 'number': unit.number,
-                     'cells': cells, 'flights': row_flights,
-                     'area': row_area})
+        rows.append(_drone_calendar_figure(
+            {'unit_id': unit.id, 'number': unit.number, 'cells': cells,
+             'flights': row_flights, 'area': row_area},
+            acc_units.get(unit.id, acc_empty)))
 
     # The unattributed line: flights whose nickname resolved to no machine.
     # Same rule as everywhere in this module -- shown, never dropped.
@@ -7954,9 +8395,10 @@ def _drone_flight_calendar_data(month):
         if hit:
             unattr_flights += hit['flights']
             unattr_area += hit['area']
-            unattr_cells.append({'day': day, 'state': 'is-flown',
-                                 'flights': hit['flights'],
-                                 'area': hit['area']})
+            unattr_cells.append(_drone_calendar_figure(
+                {'day': day, 'state': 'is-flown', 'flights': hit['flights'],
+                 'area': hit['area']},
+                acc_cells.get((None, day.isoformat()), acc_empty)))
         else:
             # An unattributed bucket has no serviceability of its own, so its
             # empty days are blank rather than «idle» or «down».
@@ -7975,13 +8417,13 @@ def _drone_flight_calendar_data(month):
 
     day_totals = []
     for index, day in enumerate(days):
-        day_totals.append({
+        day_totals.append(_drone_calendar_figure({
             'day': day,
             'flights': sum(r['cells'][index]['flights'] for r in rows)
             + unattr_cells[index]['flights'],
             'area': sum(r['cells'][index]['area'] for r in rows)
             + unattr_cells[index]['area'],
-        })
+        }, acc_days.get(day.isoformat(), acc_empty)))
 
     # [REASON]: THE BANNER -- DRONE-SPRAY-MEDIAN-SCOPE-001/3. When the whole
     # displayed month lies before the ledger's first row, EVERY empty cell is
@@ -7996,17 +8438,44 @@ def _drone_flight_calendar_data(month):
         'month': month,
         'days': days,
         'rows': rows,
-        'unattributed': {'cells': unattr_cells, 'flights': unattr_flights,
-                         'area': unattr_area} if unattr_flights else None,
+        'unattributed': _drone_calendar_figure(
+            {'cells': unattr_cells, 'flights': unattr_flights,
+             'area': unattr_area},
+            acc_units.get(None, acc_empty)) if unattr_flights else None,
         'day_totals': day_totals,
         'banner': {
             'ledger_begins': earliest_on,
         } if before_ledger else None,
-        'total': {
+        'total': _drone_calendar_figure({
             'flights': sum(r['flights'] for r in rows) + unattr_flights,
             'area': sum(r['area'] for r in rows) + unattr_area,
-        },
+        }, acc_month),
+        'accepted': acc_month,
     }
+
+
+def _drone_calendar_figure(cell, acc):
+    """Рабочее число ячейки календаря и его база.
+
+    ``shown`` -- принятая площадь Area Control, если расчёт есть у каждого
+    вылета ячейки; иначе DJI RAW, и тогда ``basis == 'raw'`` -- шаблон
+    ставит пометку «*». ``open`` -- в ячейке есть записи, ожидающие
+    доказательства или решения (пометка «?»); они внутри принятой по RAW.
+
+    [REASON]: календарь -- экран «летал / стоял», и пустая ячейка на
+    месяцах до запуска Area Control уничтожила бы его смысл. Поэтому число
+    остаётся, но RAW никогда не выдаётся за принятую: у него своя пометка и
+    своя строка в легенде, а в подсказке ячейки -- оба числа.
+    """
+    cell['acc'] = acc
+    if acc['records'] and acc['complete']:
+        cell['shown'] = acc['accepted_full_ha'] or 0.0
+        cell['basis'] = DRONE_CONTROL_BASIS_ACCEPTED
+    else:
+        cell['shown'] = cell['area']
+        cell['basis'] = DRONE_CONTROL_BASIS_RAW
+    cell['open'] = bool(acc['open_records'])
+    return cell
 
 
 @drones_bp.route('/reports/calendar')
