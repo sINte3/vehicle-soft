@@ -88,8 +88,8 @@
 основной, чтобы сервер мог её забрать. Сам сервер на этом шаге не меняется.
 
 **Важно: до конца шага 4 не вливайте другие PR с кодом.** Выпуск проверен
-ровно для кода, который сейчас в `main` (agro-work, GPS #153, Дроны #152),
-плюс этот PR. Документы вливать можно — например, снятие строки гейта. Если
+ровно для кода, который сейчас в `main` (agro-work, GPS #153 и #155, Дроны
+#152), плюс этот PR. Документы вливать можно — например, снятие строки гейта. Если
 в `main` появится другой код, шаги 2 и 3 остановятся сами и ничего не
 тронут — тогда напишите мне.
 
@@ -128,7 +128,7 @@ $backupBat = 'C:\transport-report\backup_production_db.bat'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $files     = @('C:\VehicleSoft_Secrets\agro_work_credentials.txt', 'C:\VehicleSoft_AgroWork\agro_work_unmatched.csv', 'C:\VehicleSoft_AgroWork\agro_work_methods.xlsx')
 $baseline  = 'eb7d0034333e996258232e6e254806c656a99b47'
-$reviewed  = 'b27ee1982f51ece0315be1a52f69490b7125ca38'
+$reviewed  = 'a90af884e5d1b8054828dda60d3f517c5dfaaadb'
 $migration = 'migrate_agro_work_001.py'
 $work      = 'C:\VehicleSoft_AgroWork'
 $log       = 'C:\VehicleSoft_AgroWork\release_step2.log'
@@ -241,7 +241,7 @@ $errLog    = 'C:\transport-report\logs\error.log'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = 'eb7d0034333e996258232e6e254806c656a99b47'
-$reviewed  = 'b27ee1982f51ece0315be1a52f69490b7125ca38'
+$reviewed  = 'a90af884e5d1b8054828dda60d3f517c5dfaaadb'
 $migration = 'migrate_agro_work_001.py'
 $pendingId = 'AGRO_WORK_001 (migrate_agro_work_001.py)'
 $doneLine  = 'Done. 7 agro_work tables (100 columns), 7 indexes and 4 triggers are in place.'
@@ -730,7 +730,7 @@ $prod      = 'C:\transport-report'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = 'eb7d0034333e996258232e6e254806c656a99b47'
-$reviewed  = 'b27ee1982f51ece0315be1a52f69490b7125ca38'
+$reviewed  = 'a90af884e5d1b8054828dda60d3f517c5dfaaadb'
 $work      = 'C:\VehicleSoft_AgroWork'
 $log       = 'C:\VehicleSoft_AgroWork\release_rollback.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
