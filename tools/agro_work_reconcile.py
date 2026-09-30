@@ -28,8 +28,9 @@
 
   & "C:\\Program Files\\Python314\\python.exe" tools\\agro_work_reconcile.py --from 2026-09-01 --to 2026-09-27
 
-`--lookback-preview N` -- то же, как если бы N был утверждён; лист «Свод»
-тогда помечен «ПРЕДПРОСМОТР». Утверждённое N ставится в коде, не ключом.
+`--lookback-preview N` -- то же с другим N, ничего не меняя; лист «Свод»
+тогда помечен «ПРЕДПРОСМОТР» и называет утверждённое N рядом. Утверждённое
+N ставится в коде (N = 2, владелец, 29.09), не ключом.
 
 Вывод в консоль -- ASCII.
 """
@@ -144,15 +145,26 @@ def build_book(ctx, forward, reverse, lags, excluded, preview):
             'Маълумотномада машинаси йўқ объектларнинг GPS бўйича иши, '
             'объект-кунлар: %d' % ctx.orphan_work_days())),
     ]
-    if preview is not None:
+    approved = rc.BACKDATED_LOOKBACK_DAYS
+    if preview is not None and approved is None:
         notes.insert(0, bi(('ПРЕДПРОСМОТР: N = %d не утверждён владельцем'
                             % preview,
                             'ОЛДИНДАН КЎРИШ: N = %d эгаси томонидан '
                             'тасдиқланмаган' % preview)))
-    else:
+    elif preview is not None:
+        notes.insert(0, bi(('ПРЕДПРОСМОТР: N = %d; утверждённое владельцем '
+                            'N = %d' % (preview, approved),
+                            'ОЛДИНДАН КЎРИШ: N = %d; эгаси тасдиқлаган '
+                            'N = %d' % (preview, approved))))
+    elif approved is None:
         notes.append(bi(('N для заявок, заведённых задним числом: не утверждён',
                          'Орқа сана билан киритилган буюртмалар учун N: '
                          'тасдиқланмаган')))
+    else:
+        notes.append(bi(('N для заявок, заведённых задним числом: %d '
+                         '(утверждён владельцем)' % approved,
+                         'Орқа сана билан киритилган буюртмалар учун N: %d '
+                         '(эгаси тасдиқлаган)' % approved)))
     sheet.append(())
     for note in notes:
         sheet.append((note,))
