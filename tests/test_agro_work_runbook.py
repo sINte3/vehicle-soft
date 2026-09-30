@@ -321,7 +321,7 @@ class ReleaseRunbook(unittest.TestCase):
                 self.assertEqual(found['baseline'], expected['baseline'])
                 subjects.add(found['expected'])
                 if name != 'Откат':
-                    # Выпуск -- «мерж #151 + этот PR» и ничего больше.
+                    # Выпуск -- «разобранный main + этот PR» и ничего больше.
                     self.assertEqual(found['mainBefore'], expected['mainBefore'])
                     self.assertIn('if ($parent -ne $mainBefore)',
                                   release_block(name))
@@ -347,13 +347,19 @@ class ReleaseRunbook(unittest.TestCase):
         self.assertEqual(len(production), 1)
         self.assertIn('`%s`' % BASELINE[:7], production[0])
 
-    def test_main_before_is_the_merge_of_pr_151(self):
+    def test_main_before_is_the_reviewed_state_of_main(self):
+        # Разобранное состояние main: мерж GPS #153 поверх agro-work #151.
         probe = subprocess.run(['git', 'log', '-1', '--format=%s', MAIN_BEFORE],
                                cwd=REPO_ROOT, capture_output=True, text=True)
         if probe.returncode != 0:
-            self.skipTest('the merge of PR #151 is outside this shallow clone')
-        self.assertEqual(probe.stdout.strip(), 'Merge pull request #151 from '
-                         'sINte3/claude/elegant-edison-zgmpbb')
+            self.skipTest('the reviewed main is outside this shallow clone')
+        self.assertEqual(probe.stdout.strip(), 'Merge pull request #153 from '
+                         'sINte3/claude/gps-plan-fakt-vehicle-9nt03a')
+        ancestor = subprocess.run(
+            ['git', 'merge-base', '--is-ancestor',
+             '012390c7c43a143b88343e274596793123a5643b', MAIN_BEFORE],
+            cwd=REPO_ROOT)
+        self.assertEqual(ancestor.returncode, 0)
 
     def test_the_delta_carries_exactly_the_one_migration(self):
         probe = subprocess.run(['git', 'cat-file', '-e', BASELINE + '^{commit}'],
@@ -811,7 +817,7 @@ class ReleaseBlocksInPowerShell(unittest.TestCase):
 
 HARNESS = os.path.join(REPO_ROOT, 'tests', 'agro_work_release_harness.ps1')
 BASELINE = 'eb7d0034333e996258232e6e254806c656a99b47'
-MAIN_BEFORE = '012390c7c43a143b88343e274596793123a5643b'      # мерж PR #151
+MAIN_BEFORE = '5271d1f7eaa10ad6242f945e1801a42207aef448'      # мерж PR #153
 MERGE_SUBJECT = re.compile(r'^Merge pull request #\d+ from '
                            r'sINte3/claude/elegant-edison-zgmpbb$')
 BACKUP_PATTERNS = {

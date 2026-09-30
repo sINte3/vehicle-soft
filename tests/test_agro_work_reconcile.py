@@ -15,6 +15,7 @@
 """
 
 import os
+import re
 import sqlite3
 import sys
 import unittest
@@ -139,6 +140,19 @@ class DayState(unittest.TestCase):
                          (rc.UNKNOWN, 0.0))
         # Причина, которой трек GPS ещё не заводил, -- незнание, а не простой.
         self.assertEqual(rc.day_state({'reason': 'novaya_prichina'}, []),
+                         (rc.UNKNOWN, 0.0))
+
+    def test_special_equipment_is_unknown_even_with_old_hectares(self):
+        # Трек GPS (PR #153, A1) с 30.09 публикует по спецтехнике только
+        # след: причина REASON_TRACK_ONLY из gps/exclusion.py. Участки,
+        # насчитанные до правила, сутки работой не делают.
+        with open(os.path.join(REPO_ROOT, 'gps', 'exclusion.py'),
+                  encoding='utf-8') as fh:
+            reason = re.search(r'^REASON_TRACK_ONLY = "([a-z_]+)"$', fh.read(),
+                               re.M).group(1)
+        self.assertEqual(reason, 'spetstekhnika')
+        self.assertEqual(rc.day_state({'reason': reason},
+                                      [{'area_ha': 5.0, 'operator_label': None}]),
                          (rc.UNKNOWN, 0.0))
         self.assertEqual(rc.day_state({'reason': 'net_dvizheniya'}, []),
                          (rc.IDLE, 0.0))
