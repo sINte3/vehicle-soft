@@ -199,7 +199,9 @@ class Forward(unittest.TestCase):
 
     def test_n_is_the_one_the_owner_approved(self):
         # Растяжка: N = 2 утвердил владелец 29.09 по замеру на копии боевой
-        # базы (вопрос 4). Другое число -- только новым замером и его словом.
+        # базы (вопрос 4) и подтвердил 30.09: ввод задним числом через 3-6
+        # суток -- нарушение, его сверка и должна показывать. Другое число --
+        # только новым замером и его словом.
         self.assertEqual(rc.BACKDATED_LOOKBACK_DAYS, 2)
         app = self.fx.app(created=12, completed=12, initial='COMPLETED')
         self.assertEqual(self.fx.forward(app)['window'], (D(10), D(12)))
