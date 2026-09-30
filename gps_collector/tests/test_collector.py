@@ -363,6 +363,98 @@ class ReasonBesideTheCode(unittest.TestCase):
                             str(WialonError(8)))
 
 
+class RefusedLogins(FakeServer):
+    """Отказывает во входе первые `refusals` раз -- так, как ответил Wialon 28.09."""
+
+    def __init__(self, refusals, code=1003, reason="LIMIT invalid_logins",
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.refusals = refusals
+        self.code = code
+        self.reason = reason
+
+    def urlopen(self, request, timeout=None):
+        from gps_collector.tests.support import FakeResponse
+        import json
+        import urllib.parse
+        query = urllib.parse.parse_qs(request.data.decode("utf-8"))
+        if query["svc"][0] == "token/login" and self.refusals > 0:
+            self.refusals -= 1
+            self.calls.append(("token/login", json.loads(query["params"][0])))
+            return FakeResponse({"error": self.code, "reason": self.reason})
+        return FakeServer.urlopen(self, request, timeout)
+
+
+class LoginRepeat(unittest.TestCase):
+    """Отказ входа по лимиту -- пауза и ОДИН повтор; остальные отказы -- сразу.
+
+    [REASON]: 28.09.2026 верный вход инвентаря отклонён кодом 1003 с причиной
+    «LIMIT invalid_logins»: лимит неудачных входов с одного адреса выбрал
+    кто-то другой в сети кластера. Коллектор входит раз за ночь; без повтора
+    такая минута стоила бы ночи сбора. Паузы здесь не ждутся по-настоящему --
+    подменяется time.sleep, и записывается, сколько просили ждать.
+    """
+
+    def setUp(self):
+        self.slept = []
+        self.said = []
+        original = time.sleep
+        time.sleep = self.slept.append
+        self.addCleanup(setattr, time, "sleep", original)
+
+    def login(self, server):
+        with Installed(server):
+            client = Client(pause=0.0, log=self.said.append)
+            try:
+                return client, client.login("test-token-not-a-real-one"), None
+            except WialonError as problem:
+                return client, None, problem
+
+    def test_one_refusal_by_the_limit_is_waited_out_and_repeated(self):
+        server = RefusedLogins(refusals=1)
+        client, sid, problem = self.login(server)
+        self.assertIsNone(problem)
+        self.assertEqual(sid, "SESSION")
+        self.assertEqual(client.logins, 1)
+        self.assertEqual(server.count("token/login"), 2)
+        # пауза длиннее документированной минутной блокировки адреса
+        self.assertEqual(self.slept, [65.0])
+        self.assertTrue(any("povtor cherez 65 s" in line and
+                            "LIMIT invalid_logins" in line for line in self.said),
+                        self.said)
+        for line in self.said:
+            line.encode("ascii")
+
+    def test_two_refusals_give_up_after_exactly_one_repeat(self):
+        server = RefusedLogins(refusals=5)
+        client, sid, problem = self.login(server)
+        self.assertIsNone(sid)
+        self.assertEqual(problem.code, 1003)
+        self.assertEqual(problem.reason, "LIMIT invalid_logins")
+        self.assertEqual(server.count("token/login"), 2)
+        self.assertEqual(self.slept, [65.0])
+        self.assertEqual(client.logins, 0)
+
+    def test_a_refused_token_is_not_repeated(self):
+        # Код 8 ожиданием не лечится, а повтор сам стал бы неудачным входом,
+        # засчитанным тому же адресу.
+        server = RefusedLogins(refusals=1, code=8, reason="INVALID_AUTH_TOKEN")
+        _client, sid, problem = self.login(server)
+        self.assertIsNone(sid)
+        self.assertEqual(problem.code, 8)
+        self.assertEqual(server.count("token/login"), 1)
+        self.assertEqual(self.slept, [])
+
+    def test_a_clean_login_neither_waits_nor_repeats(self):
+        """Отрицательный контроль: повтор не должен стать привычкой."""
+        server = FakeServer()
+        client, sid, problem = self.login(server)
+        self.assertIsNone(problem)
+        self.assertEqual(server.count("token/login"), 1)
+        self.assertEqual(self.slept, [])
+        self.assertEqual(self.said, [])
+
+
 class Positions(unittest.TestCase):
     def test_longitude_and_latitude_are_not_swapped(self):
         folder = tempfile.mkdtemp()

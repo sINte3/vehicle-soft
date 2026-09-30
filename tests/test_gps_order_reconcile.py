@@ -228,6 +228,19 @@ class Reconcile(unittest.TestCase):
         self.assertIn('Площадь за эти сутки не публиковалась', html)
         self.assertIn('Редкая запись', html)
 
+    def test_a_special_machine_day_says_why_and_counts_no_leftover_site(self):
+        # A1: у спецтехники гектаров нет по правилу. Полигон, оставшийся от
+        # расчёта до решения 28.09, в базе лежит (расчёт его не удаляет), но
+        # в факт наряда не входит: сутки с причиной не сверяются вовсе.
+        self._order(actual=8.0)
+        self._map()
+        self._day(reason='spetstekhnika', sites=[(8.772, None)])
+        html = self._rows()
+        self.assertIn('Площадь за эти сутки не публиковалась', html)
+        self.assertIn('Спецтехника — гектары не считаются', html)
+        self.assertNotIn('8.772', html)
+        self.assertNotIn('vs-badge-success', html)
+
     def test_an_order_without_a_quantity_has_nothing_to_compare(self):
         self._order(planned=None, actual=None)
         self._map()

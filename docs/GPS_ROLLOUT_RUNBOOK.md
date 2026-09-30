@@ -12,13 +12,60 @@ Claude выполнить не может: облачный контейнер �
 
 ---
 
+## Откуда берётся код (правило с 28.09.2026)
+
+`C:\transport-report` — каталог **боевого** сервера. Код туда приезжает
+**только релизом** (порядок релиза и гейт — `docs/RELEASE_GATE.md`). `git pull`
+в этом каталоге шаги трека не содержат и содержать не должны: 27–28.09 такой
+`pull` сдвинул рабочую копию прода с записанного базиса `54a875d` на `436e890`
+и подтянул PR #133, чья миграция на production не применена. Служба при этом
+продолжала работать на старом коде, и любой её перезапуск загрузил бы код без
+миграции.
+
+Ночные задачи (раздел 7) работают на коде релиза из `C:\transport-report` —
+как и раньше.
+
+Инструменты трека с **новым** кодом — проверка до релиза, разовые прогоны —
+запускаются из отдельного клона `C:\gps-tools` с ключами `--db` и `--dir` на
+боевые файлы или на их копию. Все инструменты трека эти ключи принимают.
+
+Завести клон (один раз; адрес берётся у рабочей копии прода, поэтому и учётные
+данные те же):
+
+```
+if (-not (Test-Path C:\gps-tools)) { git clone (git -C C:\transport-report remote get-url origin) C:\gps-tools }
+```
+
+Обновить его до `main`:
+
+```
+git -C C:\gps-tools fetch origin
+```
+
+```
+git -C C:\gps-tools checkout --detach origin/main
+```
+
+Проверить, на чём стоит клон:
+
+```
+git -C C:\gps-tools --no-pager log --oneline -1
+```
+
+Токен Wialon в клон не копируется: инструменты ищут `wialon_token.txt` в
+текущем каталоге, поэтому те, кому нужен Wialon, запускаются из
+`C:\transport-report` полным путём к скрипту в `C:\gps-tools`, например
+`& "C:\Program Files\Python314\python.exe" C:\gps-tools\tools\gps_units_inventory.py --db ...`.
+
+---
+
 ## 0. Что должно быть верно до начала
 
 | Условие | Как проверить |
 |---|---|
 | Доступ к Wialon с адреса кластера | `Test-NetConnection web.gpstrack.uz -Port 443` → `TcpTestSucceeded : True` |
 | Токен Wialon лежит на месте | файл `C:\transport-report\wialon_token.txt`, первая строка — токен |
-| Код обновлён | `git --no-pager log --oneline -1` показывает мерж GPS-10 или новее |
+| Код обновлён **релизом** | `git --no-pager log --oneline -1` в `C:\transport-report` показывает коммит релиза, записанный в `docs/RELEASE_GATE.md`; `git pull` здесь не делается (раздел выше) |
 | Окружение с геостеком есть | `& C:\gps_venv\Scripts\python.exe -c "import shapely, scipy, pyproj; print('ok')"` |
 
 Если окружения нет — две команды:
@@ -179,7 +226,13 @@ cd C:\transport-report
 
 В выводе — по строке на объект: сколько участков и сколько гектаров, либо
 причина, по которой площадь не публикуется (`redkaya_zapis`, `net_dvizheniya`,
-`net_tochek`, `sbor_nepolnyy`). Внизу — `published / not computed / sites`.
+`net_tochek`, `sbor_nepolnyy`, `spetstekhnika`). Внизу — `published / not computed / sites`.
+
+`spetstekhnika` — машина в категории «Спецтехника» (решение владельца
+28.09.2026): след трека посчитан, гектары по ней не считаются никогда. Если
+машина на самом деле полевая — поменять категорию в карточке техники; ночной
+`--catch-up` пересчитает последние 30 суток сам (строка
+`category rule -- N day(s) now track only ..., M day(s) back to hectares`).
 
 `sbor_nepolnyy` — коллектор не дошёл до конца этих суток (его отметка по
 объекту стоит раньше полуночи: усечённый ответ после простоя). Площадь по
@@ -420,9 +473,577 @@ schtasks /delete /tn "GpsDaily" /f
    то, что руками не восстановить: `gps_work_polygons.operator_label` (ответы
    операторов «работа/проезд») и весь `gps_verdicts` (журнал разбора). Команды
    выгрузки — в докстрингах самих миграций.
-4. Помесячные файлы точек удалять не обязательно: приложение их не читает
-   вовсе. Место — `tools\gps_retention.py`.
+4. Помесячные файлы точек удалять не обязательно: после отката кода
+   приложение их не читает вовсе (с A2 экран «Факт по технике» читает из них
+   трек одной машины за одни сутки, только `mode=ro`). Место —
+   `tools\gps_retention.py`.
 5. Связки `wialon_id` снимаются тем же скриптом по списку из
    `gps_link_plan.csv`: `tools\gps_link_mappings.py --unset ID --apply`.
    Строки сопоставления при этом не удаляются, ручной импорт моточасов их
    не замечает.
+
+### Откат A1+A2 отдельно (спецтехника, карта; PR 30.09.2026)
+
+Схему БД A1+A2 не меняют, но A1 меняет **данные**: первая ночь после релиза
+переводит сутки спецтехники за 30 суток в причину `spetstekhnika` (полигоны
+не удаляются). Код откатывается раньше данных:
+
+1. `git revert -m 1` мерж-коммита этого PR, релизом.
+2. Сутки с `spetstekhnika` после отката остаются как есть: старый код
+   гектаров по ним не показывает и сам их не пересчитывает. Вернуть гектары
+   -- пересчитать последние 30 суток старым кодом (около минуты на сутки;
+   ответы операторов переносятся на новые участки по перекрытию, как при
+   любом пересчёте), из `C:\transport-report`:
+
+```
+Set-Location C:\transport-report
+```
+
+```
+foreach ($i in 1..30) { $d = (Get-Date).Date.AddDays(-$i).ToString('yyyy-MM-dd'); & C:\gps_venv\Scripts\python.exe -m gps.daily --date $d }
+```
+
+3. Файлы ключей подложек (`instance\esri_api_key.txt`,
+   `instance\copernicus_instance_id.txt`) старый код не читает -- их можно
+   оставить.
+
+---
+
+## 11. Карта на экране «Факт по технике» (A2)
+
+С A2 экран показывает сутки машины на карте: трек, найденные участки (номер
+на карте тот же, что в таблице; цвет — ответ оператора) и контур поля из
+справочника, если участок в него попал. Трек читается из помесячного файла
+точек только чтением (`mode=ro`), в `transport.db` точки не попадают.
+
+Библиотека — Leaflet 1.9.4 в репозитории (`static/vendor/leaflet/`, суммы и
+лицензия — `VENDOR.md` там же), без CDN. Компонент общий для программы:
+`static/js/vs-map.js`, `static/css/vs-map.css`, `vs_map.py`.
+
+**Подложка грузится в браузере оператора из интернета.** Доступ нужен с
+рабочих компьютеров. 28.09.2026 с компьютера оператора `10.103.53.128`
+`tile.openstreetmap.org` и `ibasemaps-api.arcgis.com` отвечали
+(`TcpTestSucceeded : True`). Без доступа карта всё равно встанет — трек,
+участки и контуры от плиток не зависят, — но на сером фоне.
+
+### Три подложки и почему их три
+
+| Подложка | Что это | Свежесть | Чёткость | Условие |
+|---|---|---|---|---|
+| Спутник (чёткий, Esri) | World Imagery | раз в месяцы–год: Esri обновляет у Maxar раз в год | до 30–60 см | ключ Esri, бесплатно 2 000 000 плиток в месяц |
+| Свежий снимок (Sentinel-2, 10 м) | Copernicus Data Space Ecosystem | снимок раз в 2–5 суток; под картой — дата | 10 м на пиксель | идентификатор конфигурации, бесплатная квота — ниже |
+| Карта | OpenStreetMap | — | — | ничего не нужно |
+
+Свежих и одновременно чётких снимков бесплатно не бывает ни у кого: чёткие
+подложки обновляются раз в месяцы–годы, свежесть в днях даёт только
+Sentinel-2. Поэтому обе на одной карте. По умолчанию открывается чёткая;
+свежая — в переключателе слоёв, а её дата подписана под картой всегда.
+Окно даты свежего снимка — месяц до суток работы и две недели после, не
+дальше сегодняшнего: для вчерашней работы это самый свежий снимок, для
+старой — снимок её результата.
+
+Проверено 28.09.2026, что нельзя: плитки Google через Leaflet — вне условий
+Google; Esri без ключа — вне условий Esri; сервис EOX Sentinel-2 — только
+некоммерческий.
+
+**Квота Copernicus.** Бесплатно — 10 000 единиц обработки в месяц, остаток
+сгорает 1-го числа. Лимит запросов в месяц у бесплатного тарифа тоже есть;
+его число из среды сессии не проверено (сайт документации Copernicus
+закрыт), и панель Usage его не показывает (30.09.2026) — там видно только
+фактическое использование за 31 день. Квота одна на учётную запись: всё,
+что ходит под ней (и не только наша карта), тратит её вместе. Плитка 256×256 истинных
+цветов — около 0,25 единицы и один запрос. Свежий слой просит плитки не
+мельче 14-го уровня (7 м на пиксель на широте Бухары — мельче самого
+снимка) и ближе растягивает их сам: на стенде поле на уровне 17 — 2 плитки
+Sentinel-2 против 21 плитки Esri, приближение новых плиток не просит. Дата
+снимка — один запрос WFS на каждое открытие экрана с картой. Квота
+кончилась — свежий слой и его дата не грузятся до 1-го числа; чёткий Esri,
+карта, трек и участки работают.
+
+### Подключить (владелец)
+
+Регистрации — в браузере; сайты Esri и Copernicus из среды сессии Claude
+недоступны, поэтому названия пунктов меню могут отличаться от написанного.
+
+1. **Esri.** Бесплатная учётная запись ArcGIS Location Platform
+   (`https://location.arcgis.com`). В ней — API-ключ с правом на базовые карты
+   (Basemaps); в ограничениях ключа по адресу (Referrers) — две строки:
+   `http://10.103.25.14:5050` (боевой) и `http://10.103.25.14:5051`
+   (площадка). Ключ показывается один раз — сразу к шагу 3.
+2. **Copernicus.** Бесплатная учётная запись Copernicus Data Space
+   Ecosystem (`https://dataspace.copernicus.eu`). В панели Sentinel Hub
+   (`https://shapps.dataspace.copernicus.eu/dashboard`) — «Configuration
+   Utility», новая конфигурация по шаблону Sentinel-2 L2A, где есть слой
+   истинных цветов. Скопировать идентификатор конфигурации (ID). Если слой
+   истинных цветов называется не `TRUE_COLOR` (например, `1_TRUE_COLOR`) —
+   записать его идентификатор второй строкой файла в шаге 4.
+3. Ключ Esri — в файл (Блокнот создаст его; вставить ключ первой строкой,
+   сохранить, закрыть; ключ не пересылать и в отчёты не вставлять):
+
+```
+notepad C:\transport-report\instance\esri_api_key.txt
+```
+
+4. Идентификатор Copernicus — в файл, так же:
+
+```
+notepad C:\transport-report\instance\copernicus_instance_id.txt
+```
+
+Служба читает оба файла при каждом открытии экрана — перезапуск не нужен.
+Действуют файлы с релиза, в котором есть A2; до него программа их не
+читает. Выключить подложку — удалить её файл.
+
+**Площадка.** Перед проверкой экрана на площадке — те же два файла в её
+каталог (сейчас площадка за Дронами: делать, когда на неё выйдет GPS):
+
+```
+Copy-Item C:\transport-report\instance\esri_api_key.txt C:\transport-report-staging\instance\esri_api_key.txt
+```
+
+```
+Copy-Item C:\transport-report\instance\copernicus_instance_id.txt C:\transport-report-staging\instance\copernicus_instance_id.txt
+```
+
+### Проверить ключи до релиза (сервер, PowerShell)
+
+Все команды — в одном окне PowerShell, по порядку. Ключи читаются из файлов
+так же, как их читает программа: первая непустая строка, у Copernicus вторая
+строка — имя слоя, если есть. Вставлять ничего не нужно, на экран ключи не
+выводятся. Сначала — доступ с сервера:
+
+```
+Test-NetConnection ibasemaps-api.arcgis.com -Port 443
+```
+
+```
+Test-NetConnection sh.dataspace.copernicus.eu -Port 443
+```
+
+Ожидается `TcpTestSucceeded : True` у обоих. Если `False` — проверки ниже
+не пройдут с сервера, и это не значит, что ключи плохие: операторам нужен
+доступ со своих компьютеров, и его там проверить так же.
+
+Каталог для результатов:
+
+```
+New-Item -ItemType Directory -Force C:\gps-tools\check
+```
+
+Windows PowerShell 5.1 не всегда включает TLS 1.2, без которого оба сервиса
+отвечают ошибкой «Could not create SSL/TLS secure channel». Эта команда
+включает его только в этом окне, на систему не влияет:
+
+```
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+```
+
+**Esri — одна плитка над полем 3208 (Бухара).** Заголовок `Referer` — тот
+же, что шлёт браузер оператора с боевого адреса: так проверяется и
+ограничение ключа по адресу из шага 1.
+
+```
+$esri = @(Get-Content C:\transport-report\instance\esri_api_key.txt | ForEach-Object { $_.Trim() } | Where-Object { $_ })[0]
+```
+
+```
+Invoke-WebRequest ("https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/16/24810/44519?token=" + $esri) -Headers @{ Referer = 'http://10.103.25.14:5050/' } -OutFile C:\gps-tools\check\esri_tile.jpg -UseBasicParsing
+```
+
+```
+(Get-Item C:\gps-tools\check\esri_tile.jpg).Length
+```
+
+Ожидается число больше 5 000 (байт) и никакой красной ошибки. Красная
+ошибка — ключ не принят: не тот ключ, нет права Basemaps или адрес в
+ограничении ключа записан не так (шаг 1). Число меньше 1 000 — в файле
+текст ответа, а не снимок: `Get-Content C:\gps-tools\check\esri_tile.jpg`
+покажет его, ключа в нём нет.
+
+**Copernicus — идентификатор и слой из файла:**
+
+```
+$copernicus = @(Get-Content C:\transport-report\instance\copernicus_instance_id.txt | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+```
+
+```
+$layer = if ($copernicus.Count -gt 1) { $copernicus[1] } else { 'TRUE_COLOR' }
+```
+
+**Copernicus — какие снимки есть над полем за сентябрь** (это тот же
+запрос, которым карта узнаёт дату снимка):
+
+```
+$answer = (Invoke-WebRequest ("https://sh.dataspace.copernicus.eu/ogc/wfs/" + $copernicus[0] + "?SERVICE=WFS&REQUEST=GetFeature&VERSION=2.0.0&TYPENAMES=DSS2&OUTPUTFORMAT=application/json&SRSNAME=EPSG:3857&BBOX=7184828,4865014,7186828,4867014&TIME=2026-09-01/2026-09-28&MAXCC=30&MAXFEATURES=100") -UseBasicParsing).Content
+```
+
+```
+$answer | ConvertFrom-Json | Select-Object -ExpandProperty features | ForEach-Object { $_.properties.date } | Sort-Object -Unique
+```
+
+Ожидается несколько дат сентября 2026 вида `2026-09-24`, по одной в строке
+(снимок раз в 2–5 суток, без облаков). Пусто или красная ошибка — показать
+начало ответа (идентификатора в нём нет):
+
+```
+$answer.Substring(0, [Math]::Min(600, $answer.Length))
+```
+
+**Copernicus — отдаст ли WFS дату браузеру** (CORS). Дату снимка
+спрашивает не сервер, а браузер оператора со страницы боевого адреса, и
+браузер отдаст ответ странице, только если в нём есть заголовок
+`Access-Control-Allow-Origin`. Тот же запрос с заголовком `Origin`, как у
+браузера:
+
+```
+$wfs = Invoke-WebRequest ("https://sh.dataspace.copernicus.eu/ogc/wfs/" + $copernicus[0] + "?SERVICE=WFS&REQUEST=GetFeature&VERSION=2.0.0&TYPENAMES=DSS2&OUTPUTFORMAT=application/json&SRSNAME=EPSG:3857&BBOX=7184828,4865014,7186828,4867014&TIME=2026-09-01/2026-09-28&MAXCC=30&MAXFEATURES=100") -Headers @{ Origin = 'http://10.103.25.14:5050' } -UseBasicParsing
+```
+
+```
+$wfs.Headers.GetEnumerator() | Where-Object { $_.Key -like 'Access-Control-*' } | Format-List Key, Value
+```
+
+Ожидается строка `Key : Access-Control-Allow-Origin` и значение `*` или
+`http://10.103.25.14:5050`. Пусто — браузер дату не получит: слой всё равно
+работает (окно дат), а под картой будет написано, что дата не определилась.
+
+**Copernicus — сам снимок поля** (одна картинка 512×512 — около одной
+единицы обработки из 10 000):
+
+```
+Invoke-WebRequest ("https://sh.dataspace.copernicus.eu/ogc/wms/" + $copernicus[0] + "?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=" + $layer + "&CRS=EPSG:3857&BBOX=7184828,4865014,7186828,4867014&WIDTH=512&HEIGHT=512&FORMAT=image/jpeg&TIME=2026-09-01/2026-09-28&MAXCC=30&PRIORITY=mostRecent&SHOWLOGO=false") -OutFile C:\gps-tools\check\sentinel_field.jpg -UseBasicParsing
+```
+
+```
+(Get-Item C:\gps-tools\check\sentinel_field.jpg).Length
+```
+
+Ожидается число больше 10 000 (байт); в файле — снимок местности 2×2 км
+вокруг поля 3208 в естественных цветах (`Start-Process
+C:\gps-tools\check\sentinel_field.jpg` откроет его). Красная ошибка —
+чаще всего слой называется не так (шаг 2): его имя из «Configuration
+Utility» — второй строкой файла, и повторить с команды `$copernicus = ...`.
+Оба снимка (`esri_tile.jpg`, `sentinel_field.jpg`) ключей не содержат, их
+можно пересылать.
+
+## 12. Площадка: экран «Факт по технике» до мержа (A1+A2)
+
+Решение владельца 30.09 (путь 2): экран проверяется на площадке **до**
+мержа, чтобы строка GPS в `docs/RELEASE_GATE.md` не закрывала прод-деплой
+остальным трекам. Площадка — `C:\transport-report-staging`, служба
+`TransportReportStaging`, порт 5051.
+
+**Ревизия кода:** `4a5d16ac2b9ba0c29a1582b0e1b7c78cfd2d3aed` (ветка
+`claude/gps-plan-fakt-vehicle-9nt03a`, `main` на 30.09 влит). Следом в
+ветке идут только документы и тесты ранбука — кода они не меняют.
+
+**Данные.** Экран имеет смысл только на настоящих данных, поэтому база
+площадки на время проверки заменяется согласованной копией боевой (снимок
+SQLite online backup, боевые файлы только читаются), а рядом кладутся копии
+помесячных файлов точек за окно догона — 30 суток до вчера. Собственная база
+площадки и её файлы точек сохраняются и возвращаются блоком «Вернуть
+площадку». Миграция, которой нет на проде, одна — `migrate_agro_work_001.py`
+(agro-work, #149, в `main`); у GPS миграций нет.
+
+**Известное ограничение (выкладка 30.09.2026).** Файл отметок сборщика
+`gps_collector_state.db` блок не копирует. Без него догон считает любые сутки
+собранными полностью (`collection_state`): сутки, которые на проде ещё ждут
+сборщика (`sbor_nepolnyy`), на площадке пересчитываются по тем точкам, что
+есть, — 30.09 таких было 108. Экран, карту и правило спецтехники это не
+меняет, но числа таких суток на площадке могут оказаться меньше будущих
+боевых. Исправить до следующей выкладки: копировать файл тем же способом, что
+файлы точек, и так же возвращать.
+
+**Почему блок требует остановленных ботов площадки.** Уведомления в Telegram
+отправляют отдельные службы ботов (очередь `bot003_notification_outbox`), не
+сайт. Запущенный бот площадки на копии боевой базы разослал бы настоящим
+людям то, что лежит в боевой очереди. Поэтому блок останавливается, если
+любая другая служба `*Staging*` работает, а после проверки база площадки
+возвращается.
+
+### Перед выкладкой: остановить ботов площадки
+
+На площадке работают две службы ботов — `TransportBot003Staging` и
+`TransportBotStaging` (30.09.2026: обе запущены, запуск «Automatic»). Блок
+выкладки с работающими ботами не идёт. Их нужно остановить и перевести на
+ручной запуск, чтобы перезагрузка сервера не подняла их на копии боевой базы,
+пока идёт проверка:
+
+```
+Set-Service -Name TransportBot003Staging -StartupType Manual
+```
+
+```
+Set-Service -Name TransportBotStaging -StartupType Manual
+```
+
+```
+Stop-Service -Name TransportBot003Staging -Force
+```
+
+```
+Stop-Service -Name TransportBotStaging -Force
+```
+
+```
+Get-Service -Name TransportBot003Staging, TransportBotStaging | Format-Table Name, Status, StartType -AutoSize
+```
+
+Ожидается: у обеих служб `Stopped` и `Manual`.
+
+### Выложить (владелец, SRV-YOQSH, PowerShell от администратора)
+
+Скопировать целиком и вставить. Блок останавливается на первой неудаче;
+`STEP=PASS` последней строкой — только когда прошли все шаги. Займёт около
+15 минут: копии баз и догон A1 (около 8 минут) — самое долгое.
+
+```powershell
+& {
+  $ErrorActionPreference = 'Stop'
+  $expectedHost = 'srv-yoqsh'
+  $root         = 'C:\transport-report-staging'
+  $prodInstance = 'C:\transport-report\instance'
+  $service      = 'TransportReportStaging'
+  $python       = 'C:\Program Files\Python314\python.exe'
+  $geoPython    = 'C:\gps_venv\Scripts\python.exe'
+  $branch       = 'claude/gps-plan-fakt-vehicle-9nt03a'
+  $sha          = '4a5d16ac2b9ba0c29a1582b0e1b7c78cfd2d3aed'
+  $runRoot      = 'D:\transport-report-backups\staging\gps_a1a2'
+  $backupDir    = Join-Path $runRoot (Get-Date -Format 'yyyyMMdd_HHmmss')
+
+  $open = @(Get-ChildItem $runRoot -Directory -ErrorAction SilentlyContinue | Where-Object { -not (Test-Path (Join-Path $_.FullName 'returned.txt')) })
+  if ($open.Count -gt 0) { throw "STEP FAILED: run $($open[0].Name) was not returned -- run the block 'Vernut ploshchadku' first" }
+
+  if ((hostname) -ne $expectedHost) { throw "STEP FAILED: host is $(hostname), expected $expectedHost" }
+  if ($root -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a root that is not the staging checkout" }
+  if (-not (Test-Path "$root\instance\transport.db")) { throw "STEP FAILED: staging database not found under $root" }
+  if (-not (Test-Path "$prodInstance\transport.db")) { throw "STEP FAILED: production database not found under $prodInstance" }
+  if (-not (Test-Path $geoPython)) { throw "STEP FAILED: geo python not found at $geoPython" }
+  $svc = Get-Service -Name $service
+  if ($svc.Name -eq 'TransportReport') { throw "STEP FAILED: that is the production service" }
+  $others = @(Get-Service | Where-Object { $_.Name -like '*Staging*' -and $_.Name -ne $service })
+  foreach ($o in $others) { Write-Output ("OTHER_STAGING_SERVICE=" + $o.Name + " " + $o.Status + " " + $o.StartType) }
+  $running = @($others | Where-Object { $_.Status -ne 'Stopped' })
+  if ($running.Count -gt 0) { throw "STEP FAILED: stop these staging services first, they would read the production copy: $(($running | ForEach-Object { $_.Name }) -join ', ')" }
+  Write-Output ("SERVICE_BEFORE=" + $svc.Status)
+
+  Set-Location $root
+  $before = (git rev-parse HEAD)
+  Write-Output ("BEFORE_HEAD=" + $before)
+  $changed = @(git status --porcelain --untracked-files=no)
+  if ($changed.Count -gt 0) { throw "STEP FAILED: $($changed.Count) tracked file(s) changed in the staging checkout -- send the output of git status" }
+  git fetch origin
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: git fetch" }
+  git merge-base --is-ancestor $before origin/main
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: staging runs $before, which is not in main (on: $((git branch -r --contains $before) -join ', ')) -- someone may still use staging; send this line" }
+  git cat-file -e "$sha^{commit}"
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: commit $sha not found after fetch" }
+  git merge-base --is-ancestor $sha "origin/$branch"
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: $sha is not on origin/$branch" }
+
+  $yesterday = (Get-Date).Date.AddDays(-1)
+  $months = @($yesterday.AddDays(-29).ToString('yyyyMM'), $yesterday.ToString('yyyyMM')) | Select-Object -Unique
+  $points = @($months | ForEach-Object { "$prodInstance\gps_points_$_.db" } | Where-Object { Test-Path $_ })
+  if ($points.Count -eq 0) { throw "STEP FAILED: no point files for $($months -join ', ') in $prodInstance" }
+  Write-Output ("POINT_FILES=" + (($points | ForEach-Object { Split-Path $_ -Leaf }) -join ', '))
+  $prodBytes = (Get-Item "$prodInstance\transport.db").Length
+  $stagingBytes = (Get-Item "$root\instance\transport.db").Length
+  $pointBytes = ($points | ForEach-Object { (Get-Item $_).Length } | Measure-Object -Sum).Sum
+  $freeC = (Get-PSDrive -Name C).Free
+  $freeD = (Get-PSDrive -Name D).Free
+  Write-Output ("SIZES_MB prod=" + [math]::Round($prodBytes / 1MB) + " staging=" + [math]::Round($stagingBytes / 1MB) + " points=" + [math]::Round($pointBytes / 1MB) + " freeC=" + [math]::Round($freeC / 1MB) + " freeD=" + [math]::Round($freeD / 1MB))
+  if ($freeD -lt 1.2 * ($prodBytes + $stagingBytes + 2 * $pointBytes)) { throw "STEP FAILED: not enough free space on D:" }
+  if ($freeC -lt 1.2 * ($prodBytes + $pointBytes)) { throw "STEP FAILED: not enough free space on C:" }
+
+  New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
+  Set-Content -Path "$backupDir\before_head.txt" -Value $before -Encoding ASCII
+  $copies = @(
+    @{ Name = 'staging_before'; Source = "$root\instance\transport.db" },
+    @{ Name = 'prod_copy'; Source = "$prodInstance\transport.db" }
+  ) + @($points | ForEach-Object { @{ Name = ((Split-Path $_ -Leaf) -replace '\.db$', ''); Source = $_ } })
+  foreach ($c in $copies) {
+    $dir = Join-Path $backupDir $c.Name
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $out = & $python backup_transport_db.py --source $c.Source --dest-dir $dir --suffix $c.Name | Out-String
+    if (($LASTEXITCODE -ne 0) -or ($out -notmatch 'Integrity check : ok')) { throw "STEP FAILED: copy of $($c.Source)" }
+    $file = Get-ChildItem $dir -Filter '*.db' | Select-Object -First 1
+    Write-Output ("COPY " + $c.Name + " = " + $file.FullName + " MB=" + [math]::Round($file.Length / 1MB) + " integrity=ok")
+  }
+
+  git checkout --detach $sha
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: git checkout" }
+  Write-Output ("AFTER_HEAD=" + (git rev-parse HEAD))
+  & $python -m compileall -q .
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: compileall" }
+  & $python -m unittest tests.test_gps_fact_map tests.test_gps_fact_screen tests.test_gps_exclusion tests.test_gps_track_only_days
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: GPS tests" }
+
+  Stop-Service -Name $service -Force
+  (Get-Service -Name $service).WaitForStatus('Stopped', (New-TimeSpan -Seconds 90))
+  Write-Output ("SERVICE_STOPPED=" + (Get-Service -Name $service).Status)
+  & $python tools\check_db_lock.py --db "$root\instance\transport.db"
+  $lock = $LASTEXITCODE
+  if ($lock -eq 2) { throw "STEP FAILED: another process holds the staging database (exit 2)" }
+  Write-Output ("DB_LOCK_EXIT=$lock (0 clean, 3 stale WAL -- both fine: the file is replaced)")
+
+  Set-Content -Path "$backupDir\swapped.txt" -Value 'staging database and point files replaced' -Encoding ASCII
+  $keep = Join-Path $backupDir 'staging_points_before'
+  New-Item -ItemType Directory -Force -Path $keep | Out-Null
+  foreach ($c in $copies) {
+    if ($c.Name -eq 'staging_before') { continue }
+    $target = if ($c.Name -eq 'prod_copy') { "$root\instance\transport.db" } else { "$root\instance\$($c.Name).db" }
+    if (($c.Name -ne 'prod_copy') -and (Test-Path $target)) { Move-Item $target $keep -Force }
+    foreach ($side in @("$target-wal", "$target-shm")) { if (Test-Path $side) { Remove-Item $side -Force } }
+    $file = Get-ChildItem (Join-Path $backupDir $c.Name) -Filter '*.db' | Select-Object -First 1
+    Copy-Item $file.FullName $target -Force
+    Write-Output ("PLACED " + $target)
+  }
+  foreach ($k in @('esri_api_key.txt', 'copernicus_instance_id.txt')) {
+    if (Test-Path "$prodInstance\$k") { Copy-Item "$prodInstance\$k" "$root\instance\$k" -Force; Write-Output "KEY_FILE_COPIED=$k" }
+    else { Write-Output "KEY_FILE_MISSING=$k" }
+  }
+
+  & $python migrate_agro_work_001.py
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: migrate_agro_work_001" }
+  & $python migrate_agro_work_001.py
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: migrate_agro_work_001 second run (must print 'Already applied. Nothing to do.')" }
+  $ErrorActionPreference = 'Continue'
+  & $python tools\check_migration_drift.py --db "$root\instance\transport.db" > "$backupDir\drift.log" 2>&1
+  $driftExit = $LASTEXITCODE
+  $ErrorActionPreference = 'Stop'
+  Write-Output ("DRIFT_EXIT=$driftExit (not judged here; the report is drift.log in the run folder)")
+
+  $ErrorActionPreference = 'Continue'
+  & $geoPython -m gps.daily --catch-up --db "$root\instance\transport.db" --dir "$root\instance" > "$backupDir\catchup_out.log" 2> "$backupDir\catchup_err.log"
+  $catchExit = $LASTEXITCODE
+  $ErrorActionPreference = 'Stop'
+  Get-Content "$backupDir\catchup_out.log" | Select-String -Pattern 'catch-up|category rule|NE POSCHITANO' | ForEach-Object { Write-Output ("CATCHUP: " + $_.Line) }
+  if ($catchExit -ne 0) { throw "STEP FAILED: catch-up exit $catchExit -- send $backupDir\catchup_out.log and catchup_err.log" }
+
+  Start-Service -Name $service
+  (Get-Service -Name $service).WaitForStatus('Running', (New-TimeSpan -Seconds 90))
+  Start-Sleep -Seconds 8
+  $login = Invoke-WebRequest -Uri 'http://10.103.25.14:5051/login' -UseBasicParsing -TimeoutSec 30
+  if ($login.StatusCode -ne 200) { throw "STEP FAILED: smoke /login returned $($login.StatusCode)" }
+  if ($login.Content -notmatch 'vs-login-form') { throw "STEP FAILED: smoke /login did not render the login form" }
+  Write-Output "SMOKE_LOGIN=200"
+  Write-Output ("FINAL_HEAD=" + (git rev-parse HEAD))
+  Write-Output ("SERVICE_FINAL=" + (Get-Service -Name $service).Status)
+  Write-Output "STEP=PASS"
+}
+```
+
+**Прислать:** весь вывод блока. Ключевые строки: `BEFORE_HEAD`, `POINT_FILES`,
+`SIZES_MB`, четыре-пять строк `COPY ... integrity=ok`, `AFTER_HEAD`,
+`DB_LOCK_EXIT`, `DRIFT_EXIT`, строки `CATCHUP:` (среди них `category rule --
+N day(s) now track only`), `SMOKE_LOGIN=200`, `STEP=PASS`.
+
+**Если блок остановился.** До строки `SERVICE_STOPPED` база и файлы площадки
+не менялись (после `AFTER_HEAD` переключена только ревизия кода); после неё
+служба остаётся остановленной намеренно. В обоих случаях — прислать вывод и
+вернуть площадку блоком «Вернуть площадку»; выкладку можно повторить только
+после него.
+
+### Проверить экран (владелец, браузер)
+
+1. `http://10.103.25.14:5051` — войти своей обычной (боевой) учётной
+   записью: база площадки — копия боевой.
+2. «Факт по технике» за **вчерашний** день, в списке — полевой трактор с
+   гектарами. Ожидается: карта с треком, номерами участков (те же, что в
+   таблице) и контуром поля; справа вверху переключатель слоёв — «Спутник
+   (чёткий, Esri)» (открыт), «Свежий снимок (Sentinel-2, 10 м)», «Карта»;
+   под картой строка «Свежий снимок Sentinel-2 — от ДД.ММ.ГГГГ…». Включить
+   свежий снимок — появляется 10-метровый снимок той же местности.
+3. В списке — спецтехника, например Isuzu 260 JAA. Ожидается: «Спецтехника
+   — гектары не считаются», пробег и время в движении есть, участков нет,
+   трек на карте есть.
+4. В выпадающем списке машины названы вместе с госномером.
+
+**Прислать:** по каждому пункту — да или нет; строку под картой из пункта 2
+целиком; два снимка экрана (пункты 2 и 3).
+
+### Вернуть площадку (после проверки или после остановки блока)
+
+Возвращает то, что заменил незакрытый прогон в
+`D:\transport-report-backups\staging\gps_a1a2`: базу площадки и её файлы
+точек (если прогон дошёл до замены — метка `swapped.txt`) и ревизию кода.
+Прогон помечается `returned.txt`; пока метки нет, блок выкладки второй раз
+не запустится — иначе его «база до выкладки» была бы уже копией боевой.
+Файлы ключей подложек остаются.
+
+```powershell
+& {
+  $ErrorActionPreference = 'Stop'
+  $root    = 'C:\transport-report-staging'
+  $service = 'TransportReportStaging'
+  $runRoot = 'D:\transport-report-backups\staging\gps_a1a2'
+  $open = @(Get-ChildItem $runRoot -Directory -ErrorAction SilentlyContinue | Where-Object { -not (Test-Path (Join-Path $_.FullName 'returned.txt')) } | Sort-Object Name)
+  if ($open.Count -eq 0) { throw "STEP FAILED: no run to return under $runRoot" }
+  if ($open.Count -gt 1) { throw "STEP FAILED: $($open.Count) runs are open ($(($open | ForEach-Object { $_.Name }) -join ', ')) -- send this line" }
+  $run = $open[0]
+  Write-Output ("RUN=" + $run.Name)
+  if ((Get-Service -Name $service).Status -ne 'Stopped') {
+    Stop-Service -Name $service -Force
+    (Get-Service -Name $service).WaitForStatus('Stopped', (New-TimeSpan -Seconds 90))
+  }
+  Set-Location $root
+  if (Test-Path (Join-Path $run.FullName 'swapped.txt')) {
+    $backup = Get-ChildItem (Join-Path $run.FullName 'staging_before') -Filter '*.db' | Select-Object -First 1
+    if (-not $backup) { throw "STEP FAILED: the run replaced the database but has no staging backup -- send this line" }
+    foreach ($side in @("$root\instance\transport.db-wal", "$root\instance\transport.db-shm")) { if (Test-Path $side) { Remove-Item $side -Force } }
+    Copy-Item $backup.FullName "$root\instance\transport.db" -Force
+    Write-Output ("DATABASE_RETURNED=" + $backup.Name)
+    foreach ($d in @(Get-ChildItem $run.FullName -Directory | Where-Object { $_.Name -like 'gps_points_*' })) {
+      $target = "$root\instance\$($d.Name).db"
+      foreach ($f in @($target, "$target-wal", "$target-shm")) { if (Test-Path $f) { Remove-Item $f -Force } }
+      Write-Output ("REMOVED " + $target)
+    }
+    $kept = Join-Path $run.FullName 'staging_points_before'
+    if (Test-Path $kept) { Get-ChildItem $kept -Filter '*.db' | ForEach-Object { Move-Item $_.FullName "$root\instance" -Force; Write-Output ("RESTORED " + $_.Name) } }
+  } else {
+    Write-Output "DATABASE_UNTOUCHED (the run stopped before the swap)"
+  }
+  $headFile = Join-Path $run.FullName 'before_head.txt'
+  if (Test-Path $headFile) {
+    $before = (Get-Content $headFile -TotalCount 1).Trim()
+    git checkout --detach $before
+    if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: git checkout $before" }
+  }
+  Start-Service -Name $service
+  (Get-Service -Name $service).WaitForStatus('Running', (New-TimeSpan -Seconds 90))
+  Set-Content -Path (Join-Path $run.FullName 'returned.txt') -Value ((Get-Date -Format s) + ' ' + (git rev-parse HEAD)) -Encoding ASCII
+  Write-Output ("RESTORED_HEAD=" + (git rev-parse HEAD))
+  Write-Output "STEP=PASS"
+}
+```
+
+**Прислать:** вывод блока; ключевые строки `RUN=`, `RESTORED_HEAD` (равна
+`BEFORE_HEAD` выкладки), `STEP=PASS`. Копии в прогоне на `D:` остаются —
+удалить их можно вручную, когда проверка закрыта.
+
+### После возврата: вернуть ботов площадки
+
+Только после `STEP=PASS` блока «Вернуть площадку» — база площадки снова
+своя:
+
+```
+Set-Service -Name TransportBot003Staging -StartupType Automatic
+```
+
+```
+Set-Service -Name TransportBotStaging -StartupType Automatic
+```
+
+```
+Start-Service -Name TransportBot003Staging
+```
+
+```
+Start-Service -Name TransportBotStaging
+```
+
+```
+Get-Service -Name TransportBot003Staging, TransportBotStaging | Format-Table Name, Status, StartType -AutoSize
+```
+
+Ожидается: у обеих служб `Running` и `Automatic`.
