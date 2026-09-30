@@ -1963,7 +1963,9 @@ class DroneNumberPlacementTests(unittest.TestCase):
     # DRONE-AREA-CONTROL-V2-MEGA added area_control.html (it existed since
     # DJI-AREA-PRODUCTIONIZATION-001 but was never listed -- the roster test
     # stood red on main), area_decision.html and the two partials.
-    TEMPLATES = ('_dji_refresh.html', '_drones_nav.html', '_money_cell.html',
+    # DJI-AREA-ACCEPTED-PROPAGATION-001 added the partial _accepted.html.
+    TEMPLATES = ('_accepted.html', '_dji_refresh.html', '_drones_nav.html',
+                 '_money_cell.html',
                  '_period.html', 'area_control.html', 'area_decision.html',
                  'area_evidence.html',
                  'coverage.html', 'customers.html',
@@ -2162,14 +2164,26 @@ class DroneNumberPlacementTests(unittest.TestCase):
         #   Its staging UX pass made it 25: the drone and day rows lost the
         #   «accepted automatically» column (it lives in the flight detail
         #   now) and the problem counter above the tree gained one.
+        #   DJI-AREA-ACCEPTED-PROPAGATION-001 brought the partial
+        #   _accepted.html 15: hectares (DJI RAW, accepted, excluded, not
+        #   calculated, open) of one flight and of a group, and the flight
+        #   counts beside them and under the five tiles -- every accepted-area figure of the list,
+        #   summary, reconcile, calendar and spray screens is printed there.
+        #   flight_calendar went 9 -> 3: every cell, row, day and month
+        #   figure now goes through ONE macro, cal_figure (the accepted area
+        #   or DJI RAW with its «*» mark), and the month-hectares card moved
+        #   into the partial's block. spray_usage went 28 -> 31: the
+        #   «л/га по принятой» card, row and footer cells. Counts of hectares,
+        #   not percentages; nothing lost its filter.
         expected = {
+            '_accepted.html': 15,
             '_money_cell.html': 1, 'area_control.html': 25,
             'area_evidence.html': 28,
             'coverage.html': 9,
-            'customers.html': 2, 'flight_calendar.html': 9,
+            'customers.html': 2, 'flight_calendar.html': 3,
             'health.html': 11, 'list.html': 3,
             'operator_cash.html': 19,
-            'reattach.html': 12, 'sources.html': 7, 'spray_usage.html': 28,
+            'reattach.html': 12, 'sources.html': 7, 'spray_usage.html': 31,
             'summary.html': 42, 'works.html': 9,
             'works_assignment_hints.html': 9, 'works_closing.html': 24,
             'works_debts.html': 18, 'works_debts_aging.html': 15,
@@ -2180,7 +2194,7 @@ class DroneNumberPlacementTests(unittest.TestCase):
                   for name in self.TEMPLATES
                   if '|vs_num' in self.source(name)}
         self.assertEqual(actual, expected)
-        self.assertEqual(sum(actual.values()), 328)
+        self.assertEqual(sum(actual.values()), 340)
 
 
 class DroneUiFixUzbekTests(unittest.TestCase):

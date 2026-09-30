@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from 'drones/_accepted.html' import acc_block, acc_value, acc_excluded, acc_uncalc, acc_open %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Дроны — ведомости против вылетов' if is_ru else 'Дронлар — ведомостлар ва парвозлар' }}{% endblock %}
 {% block content %}
@@ -26,6 +27,8 @@
    красный. Знаковая разница в гектарах остаётся: её проверяют руками. #}
 {% set t_total = 'Итого' if is_ru else 'Жами' %}
 {% set t_empty = 'Ни ведомостей, ни вылетов' if is_ru else 'На ведомост, на парвоз' %}
+{% set t_basis_acc = 'по принятой' if is_ru else 'қабул қилинган бўйича' %}
+{% set t_basis_raw = 'по DJI RAW' if is_ru else 'DJI RAW бўйича' %}
 
 <div class="vs-hero vs-mb">
   <div>
@@ -41,6 +44,19 @@
   {{ 'Две стороны меряют разное и совпадать не обязаны. Ведомости — это только оплачиваемая работа; вылеты — всё, что машина пролетела, включая землю самого холдинга и облёты. Поэтому разница в плюс-минус несколько процентов — это норма, а не ошибка. Цвет строки берётся с колонки «Покрытие» — это гектары ведомостей в процентах от гектаров вылетов. 90–110 % — без цвета, вне полосы — жёлтым, ниже 50 % или выше 200 % — красным. Знаковая разница для этого не годится: месяц, где ведомостей почти нет, даёт −99 %, и в колонке процентов он неотличим от настоящего расхождения. Смотреть стоит на месяцы, где покрытие далеко от ста процентов или где ведомостей нет вовсе. Процент считается от гектаров вылетов и показывается только там, где обе стороны ненулевые: в месяце без ведомостей он был бы −100 %, а это утверждение не о гектарах, а о том, что книги ещё не завели. Выгрузки в Excel у этого экрана нет намеренно: число меняется по мере ввода ведомостей, а выгрузку цитируют неделями позже.' if is_ru else 'Икки томон турли нарсани ўлчайди ва мос келиши шарт эмас. Ведомостлар — фақат ҳақ тўланадиган иш; парвозлар — машина учиб ўтган ҳамма нарса, холдингнинг ўз ери ва синов учишлари билан бирга. Шунинг учун бир неча фоиз фарқ — меъёр, хато эмас. Қатор ранги «Қамров» устунидан олинади — бу ведомост гектарларининг парвоз гектарларига нисбатан фоизи. 90–110 % — рангсиз, полосадан ташқарида — сариқ, 50 % дан паст ёки 200 % дан юқори — қизил. Ишорали фарқ бунга ярамайди: ведомости деярли йўқ ой −99 % беради ва фоиз устунида у ҳақиқий фарқдан ажралмайди. Қамрови юз фоиздан узоқ ёки ведомости умуман йўқ ойларга қараш керак. Фоиз парвоз гектарларидан ҳисобланади ва фақат иккала томон ҳам нолдан фарқли бўлган жойда кўрсатилади: ведомостсиз ойда у −100 % бўлар эди, бу эса гектар ҳақида эмас, китоблар ҳали очилмагани ҳақидаги гап. Бу экранда Excel юклаб олиш атайлаб йўқ: сон ведомостлар киритилиши билан ўзгаради, юклаб олинган файлни эса ҳафталар ўтиб иқтибос келтиришади.' }}
 </div>
 
+{# DJI-AREA-ACCEPTED-PROPAGATION-001. Контролируемая площадь вылетов --
+   принятая Area Control (DJI RAW минус доказанно исключённое, решение
+   администратора поверх), но только в месяце, где расчёт есть у КАЖДОГО
+   вылета. Месяц до запуска Area Control или с нерассчитанными вылетами
+   сверяется по DJI RAW, и строка говорит это словами. DJI RAW остаётся
+   колонкой рядом; «Кто не сдал ведомость» читает его и по-прежнему
+   совпадает с этим отчётом по RAW. #}
+<div class="vs-alert is-info vs-mb">
+  <div>{{ 'Площадь вылетов для сверки — принятая контролем площади DJI: DJI RAW минус доказанно исключённое (повторы площади), с решением администратора поверх. Она используется только в месяцах, где контроль площади рассчитал каждый вылет. Месяцы до запуска контроля площади и месяцы с нерассчитанными вылетами сверяются по DJI RAW — это написано в колонке «База сверки». DJI RAW всегда показан рядом. Записи, ожидающие доказательства или решения, входят в принятую по DJI RAW, пока администратор не решил иначе.' if is_ru else 'Солиштириш учун парвозлар майдони — DJI майдони назорати қабул қилган майдон: DJI RAW дан исботланган ҳолда чиқарилгани (майдон такрорлари) айирилган, администратор қарори устидан. У фақат майдон назорати ҳар бир парвозни ҳисоблаган ойларда ишлатилади. Майдон назорати ишга туширилишидан олдинги ойлар ва ҳисобланмаган парвозли ойлар DJI RAW бўйича солиштирилади — бу «Солиштириш асоси» устунида ёзилган. DJI RAW доимо ёнида кўрсатилади. Далил ёки қарор кутаётган ёзувлар администратор бошқача ҳал қилмагунча DJI RAW бўйича қабул қилинганга киради.' }}</div>
+</div>
+
+{{ acc_block(data.accepted, is_ru, url_for('drones.area_control', date_from='', date_to='')) }}
+
 <div class="vs-stat-grid vs-mb">
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Месяцев' if is_ru else 'Ойлар' }}</div>
@@ -51,11 +67,11 @@
     <div class="vs-stat-value is-num">{{ '%.2f'|format(data.total.ledger_area)|vs_num }}</div>
   </div>
   <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Гектары вылетов' if is_ru else 'Парвоз гектарлари' }}</div>
+    <div class="vs-stat-label">{{ 'Гектары вылетов, DJI RAW' if is_ru else 'Парвоз гектарлари, DJI RAW' }}</div>
     <div class="vs-stat-value is-num">{{ '%.2f'|format(data.total.flight_area)|vs_num }}</div>
   </div>
   <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Разница' if is_ru else 'Фарқ' }}</div>
+    <div class="vs-stat-label">{{ 'Разница с DJI RAW' if is_ru else 'DJI RAW билан фарқ' }}</div>
     <div class="vs-stat-value is-num">{{ '%.2f'|format(data.total.diff)|vs_num }}</div>
   </div>
 </div>
@@ -73,7 +89,12 @@
         <th class="right">{{ 'Работ' if is_ru else 'Ишлар' }}</th>
         <th class="right">{{ 'Гектары ведомостей' if is_ru else 'Ведомост гектарлари' }}</th>
         <th class="right">{{ 'Вылеты' if is_ru else 'Парвозлар' }}</th>
-        <th class="right">{{ 'Гектары вылетов' if is_ru else 'Парвоз гектарлари' }}</th>
+        <th class="right">{{ 'DJI RAW, га' if is_ru else 'DJI RAW, га' }}</th>
+        <th class="right">{{ 'Принято, га' if is_ru else 'Қабул қилинган, га' }}</th>
+        <th class="right">{{ 'Исключено, га' if is_ru else 'Чиқарилган, га' }}</th>
+        <th class="right">{{ 'Не рассчитано' if is_ru else 'Ҳисобланмаган' }}</th>
+        <th>{{ 'Открыто' if is_ru else 'Очиқ' }}</th>
+        <th>{{ 'База сверки' if is_ru else 'Солиштириш асоси' }}</th>
         <th class="right">{{ 'Разница' if is_ru else 'Фарқ' }}</th>
         <th class="right">{{ 'Разница, %' if is_ru else 'Фарқ, %' }}</th>
         {# Цвет строки берётся ИМЕННО ОТСЮДА, а не из знаковой разницы:
@@ -84,17 +105,25 @@
       </tr>
     </thead>
     <tbody>
+      {# Разница, процент, покрытие и цвет -- по БАЗЕ СВЕРКИ строки
+         (control_*): принятая, если месяц рассчитан полностью, иначе DJI
+         RAW. Правило ветвления прежнее: процент или фраза, никогда −100 %. #}
       {% for r in data.rows %}
-      <tr{% if r.flag %} class="{{ r.flag }}"{% endif %}>
+      <tr{% if r.control_flag %} class="{{ r.control_flag }}"{% endif %}>
         <td>{{ r.month }}</td>
         <td class="right">{{ r.ledger_jobs|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(r.ledger_area)|vs_num }}</td>
         <td class="right">{{ r.flights|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(r.flight_area)|vs_num }}</td>
-        <td class="right">{{ '%.2f'|format(r.diff)|vs_num }}</td>
+        <td class="right">{{ acc_value(r.acc, is_ru) }}</td>
+        <td class="right">{{ acc_excluded(r.acc) }}</td>
+        <td class="right">{{ acc_uncalc(r.acc, is_ru) }}</td>
+        <td>{{ acc_open(r.acc, is_ru) }}</td>
+        <td>{% if r.flights %}{{ t_basis_acc if r.control_basis == 'accepted' else t_basis_raw }}{% else %}—{% endif %}</td>
+        <td class="right">{{ '%.2f'|format(r.control_diff)|vs_num }}</td>
         {# Процент ИЛИ фраза — никогда оба и никогда −100 %. #}
-        <td class="right">{% if r.percent is none %}<span class="vs-muted">{{ r.note }}</span>{% else %}{{ '%.2f'|format(r.percent) }}{% endif %}</td>
-        <td class="right">{% if r.coverage is none %}<span class="vs-muted">—</span>{% else %}<b>{{ '%.1f'|format(r.coverage) }} %</b>{% endif %}</td>
+        <td class="right">{% if r.control_percent is none %}<span class="vs-muted">{{ r.note }}</span>{% else %}{{ '%.2f'|format(r.control_percent) }}{% endif %}</td>
+        <td class="right">{% if r.control_coverage is none %}<span class="vs-muted">—</span>{% else %}<b>{{ '%.1f'|format(r.control_coverage) }} %</b>{% endif %}</td>
       </tr>
       {% endfor %}
       <tr style="font-weight:700;">
@@ -103,9 +132,14 @@
         <td class="right">{{ '%.2f'|format(data.total.ledger_area)|vs_num }}</td>
         <td class="right">{{ data.total.flights|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(data.total.flight_area)|vs_num }}</td>
-        <td class="right">{{ '%.2f'|format(data.total.diff)|vs_num }}</td>
-        <td class="right">{% if data.total.percent is none %}—{% else %}{{ '%.2f'|format(data.total.percent) }}{% endif %}</td>
-        <td class="right">{% if data.total.coverage is none %}—{% else %}{{ '%.1f'|format(data.total.coverage) }} %{% endif %}</td>
+        <td class="right">{{ acc_value(data.total.acc, is_ru) }}</td>
+        <td class="right">{{ acc_excluded(data.total.acc) }}</td>
+        <td class="right">{{ acc_uncalc(data.total.acc, is_ru) }}</td>
+        <td>{{ acc_open(data.total.acc, is_ru) }}</td>
+        <td>{% if data.total.flights %}{{ t_basis_acc if data.total.control_basis == 'accepted' else t_basis_raw }}{% else %}—{% endif %}</td>
+        <td class="right">{{ '%.2f'|format(data.total.control_diff)|vs_num }}</td>
+        <td class="right">{% if data.total.control_percent is none %}—{% else %}{{ '%.2f'|format(data.total.control_percent) }}{% endif %}</td>
+        <td class="right">{% if data.total.control_coverage is none %}—{% else %}{{ '%.1f'|format(data.total.control_coverage) }} %{% endif %}</td>
       </tr>
     </tbody>
   </table>
