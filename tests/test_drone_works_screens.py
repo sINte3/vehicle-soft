@@ -907,6 +907,9 @@ class DroneReportsLauncherTests(unittest.TestCase):
             # summary and the calendar carry, and stands beside them: it is
             # the same flight data read through the evidence model.
             ('is-primary', '/drones/area-evidence'),
+            # DRONE-FIELD-PASSPORT-001 reuses is-primary and stands beside the
+            # evidence report: the same flights, read by DJI field record.
+            ('is-primary', '/drones/fields'),
             ('is-info', '/drones/reports/reconcile'),
             ('is-warning', '/drones/works/debts/aging'),
             ('is-purple', '/drones/reports/spray'),
@@ -949,8 +952,9 @@ class DroneReportsLauncherTests(unittest.TestCase):
         # One inline <svg> per tile, ten tiles. This is also X-6: a tile key
         # with no icon branch renders an EMPTY icon box and nothing fails, so
         # the count is the only thing that catches it.
-        # DJI-AREA-REPORT-001 brought the eleventh icon branch.
-        self.assertEqual(tiles.count('<svg'), 11)
+        # DJI-AREA-REPORT-001 brought the eleventh icon branch,
+        # DRONE-FIELD-PASSPORT-001 the twelfth.
+        self.assertEqual(tiles.count('<svg'), 12)
         for marker in ('http://', 'https://', '<img', '@font-face', 'url('):
             self.assertNotIn(marker, tiles, marker)
 
@@ -1964,12 +1968,15 @@ class DroneNumberPlacementTests(unittest.TestCase):
     # DJI-AREA-PRODUCTIONIZATION-001 but was never listed -- the roster test
     # stood red on main), area_decision.html and the two partials.
     # DJI-AREA-ACCEPTED-PROPAGATION-001 added the partial _accepted.html.
+    # DRONE-FIELD-PASSPORT-001 added field.html, fields.html and
+    # flight_passport.html.
     TEMPLATES = ('_accepted.html', '_dji_refresh.html', '_drones_nav.html',
                  '_money_cell.html',
                  '_period.html', 'area_control.html', 'area_decision.html',
                  'area_evidence.html',
-                 'coverage.html', 'customers.html',
-                 'flight_calendar.html', 'health.html', 'list.html',
+                 'coverage.html', 'customers.html', 'field.html',
+                 'fields.html', 'flight_calendar.html', 'flight_passport.html',
+                 'health.html', 'list.html',
                  'operator_card.html', 'operator_cash.html',
                  'operators.html', 'reattach.html', 'reports.html',
                  'sources.html', 'spray_usage.html', 'summary.html',
@@ -2175,12 +2182,20 @@ class DroneNumberPlacementTests(unittest.TestCase):
         #   into the partial's block. spray_usage went 28 -> 31: the
         #   «л/га по принятой» card, row and footer cells. Counts of hectares,
         #   not percentages; nothing lost its filter.
+        #   DRONE-FIELD-PASSPORT-001 brought fields.html 13 (the period
+        #   coverage counts, the record total, the catalog hectares and the
+        #   confirmed / provisional counts per row) and field.html 6 (catalog
+        #   hectares, flights per boundary version, the confirmed counter,
+        #   the provisional RAW and count). The passport carries none: its
+        #   hectares of one flight print four decimals, and its identifiers,
+        #   hashes and percentages are never grouped.
         expected = {
             '_accepted.html': 15,
             '_money_cell.html': 1, 'area_control.html': 25,
             'area_evidence.html': 28,
             'coverage.html': 9,
-            'customers.html': 2, 'flight_calendar.html': 3,
+            'customers.html': 2, 'field.html': 6, 'fields.html': 13,
+            'flight_calendar.html': 3,
             'health.html': 11, 'list.html': 3,
             'operator_cash.html': 19,
             'reattach.html': 12, 'sources.html': 7, 'spray_usage.html': 31,
@@ -2194,7 +2209,7 @@ class DroneNumberPlacementTests(unittest.TestCase):
                   for name in self.TEMPLATES
                   if '|vs_num' in self.source(name)}
         self.assertEqual(actual, expected)
-        self.assertEqual(sum(actual.values()), 340)
+        self.assertEqual(sum(actual.values()), 359)
 
 
 class DroneUiFixUzbekTests(unittest.TestCase):
