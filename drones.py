@@ -6202,6 +6202,21 @@ DRONE_REPORT_TILES = (
                        'баҳо ва далага боғланиш ишончлилиги — соя режими',
     },
     {
+        # DRONE-FIELD-PASSPORT-001. Reuses is-primary and stands beside the
+        # two area tiles: the same flights and the same accepted area, read
+        # field by field. The shared module menu (templates/_module_nav.html)
+        # is not touched -- the tile is the module's own door to the page.
+        'key': 'fields',
+        'endpoint': 'drones.fields',
+        'accent': 'is-primary',
+        'title_ru': 'Поля DJI и паспорт работ',
+        'title_uz': 'DJI далалари ва ишлар паспорти',
+        'subtitle_ru': 'Поле DJI и его подтверждённые работы: исходная '
+                       'площадь DJI, исключено, принято и почему',
+        'subtitle_uz': 'DJI даласи ва унинг тасдиқланган ишлари: DJI манба '
+                       'майдони, чиқарилган, қабул қилинган ва нима учун',
+    },
+    {
         # DRONE-ANALYTICS-001/3. Reuses is-info, the accent of the works
         # report: this compares that report's hectares against the flights.
         'key': 'reconcile',
@@ -9957,6 +9972,43 @@ def _drone_area_flight_row(flight_id):
     return row
 
 
+def _drone_area_history_rows(chain, active, item, lang):
+    """История решений администратора одной записи, новые сверху.
+
+    Одна функция на карточку решения и на паспорт вылета
+    (DRONE-FIELD-PASSPORT-001): история читается одинаково на обоих экранах.
+    ``item`` -- `control_report.record_view` текущего расчёта либо None
+    (расчёта нет -- ни одно решение не применено к нему).
+    """
+    from dji_area import control_report as dji_control
+    from dji_area import decisions as dji_decisions
+
+    applied = bool(((item or {}).get('decision') or {}).get('applied'))
+    rows = []
+    for entry in reversed(chain):
+        at_local = dji_control.local_time(entry.get('performed_at'))
+        kind = entry['decision_type']
+        rows.append({
+            'seq': entry['chain_seq'],
+            'label': dji_decisions.pick(dji_decisions.DECISION_SHORT.get(
+                kind, (kind, kind)), lang),
+            # Действует -- последняя строка цепочки, и решение применено к
+            # нынешнему расчёту (не потеряло силу).
+            'is_current': (active is not None and entry['id'] == active['id']
+                           and applied),
+            'is_override': entry.get('is_override'),
+            'by': entry.get('performed_by_name'),
+            'at_s': at_local.strftime('%d.%m.%Y %H:%M') if at_local else '',
+            'comment': entry.get('comment'),
+            'auto_label': dji_decisions.pick(
+                dji_control.CLASS_LABELS[entry['auto_class']], lang)
+            if entry.get('auto_class') in dji_control.CLASS_LABELS else '',
+            'raw_ha': dji_control.ha(entry.get('raw_area_m2')),
+            'accepted_ha': dji_control.ha(entry.get('effective_accepted_m2')),
+        })
+    return rows
+
+
 @drones_bp.route('/area-control/flight/<int:flight_id>')
 @module_required('drones')
 def area_control_flight(flight_id):
@@ -9983,28 +10035,7 @@ def area_control_flight(flight_id):
     active = control_store.active_from_chain(chain)
     item = dji_control.record_view(row, lang, decision=active,
                                    times=_drone_area_chain_times([row]))
-    history_rows = []
-    for entry in reversed(chain):
-        at_local = dji_control.local_time(entry.get('performed_at'))
-        kind = entry['decision_type']
-        history_rows.append({
-            'seq': entry['chain_seq'],
-            'label': dji_decisions.pick(dji_decisions.DECISION_SHORT.get(
-                kind, (kind, kind)), lang),
-            # Действует -- последняя строка цепочки, и решение применено к
-            # нынешнему расчёту (не потеряло силу).
-            'is_current': (active is not None and entry['id'] == active['id']
-                           and bool((item['decision'] or {}).get('applied'))),
-            'is_override': entry.get('is_override'),
-            'by': entry.get('performed_by_name'),
-            'at_s': at_local.strftime('%d.%m.%Y %H:%M') if at_local else '',
-            'comment': entry.get('comment'),
-            'auto_label': dji_decisions.pick(
-                dji_control.CLASS_LABELS[entry['auto_class']], lang)
-            if entry.get('auto_class') in dji_control.CLASS_LABELS else '',
-            'raw_ha': dji_control.ha(entry.get('raw_area_m2')),
-            'accepted_ha': dji_control.ha(entry.get('effective_accepted_m2')),
-        })
+    history_rows = _drone_area_history_rows(chain, active, item, lang)
     # [REASON]: действующее решение можно снять всегда, даже если пересчёт
     # сделал запись обычной (V4 пришёл и опроверг кандидата) -- иначе оно
     # осталось бы в силе навсегда.
@@ -10101,6 +10132,483 @@ def area_control_decide(flight_id):
           % dji_decisions.pick(dji_decisions.DECISION_SHORT[
               saved['decision_type']], lang), 'success')
     return redirect(target)
+
+
+# ─── DRONE-FIELD-PASSPORT-001: поля DJI и паспорт работы ─────────────────────
+# Поле DJI -> его вылеты -> DJI RAW -> исключено -> принято -> почему ->
+# доказательства. Три экрана только для чтения поверх слоя доказательств DJI:
+# привязку вылета к полю пишет суточный пересчёт (`dji_field_attributions`),
+# принятую площадь даёт `dji_area.accepted` через `control_store.accepted_for`
+# -- та же, что в рабочих отчётах. Здесь ничего не пересчитывается.
+#
+# [REASON]: членство вылета в подтверждённом итоге поля -- только по
+# `field_land_uuid` его текущей привязки и подтверждённому состоянию
+# (`dji_area.field_store.confirmed_members`). Одинаковая граница (md5) у
+# нескольких записей DJI вылет в их гектары НЕ добавляет -- она показывается
+# диагностикой «та же граница», иначе одна принятая площадь складывалась бы
+# столько раз, сколько у границы держателей.
+#
+# [REASON]: координат на этих страницах нет вовсе -- ни кольца границы, ни
+# точки маршрута, ни рамки. Карта -- отдельный следующий шаг на общем
+# `vs-map`; здесь сначала доказывается, что привязка и итоги верны.
+
+DRONE_FIELDS_PAGE_SIZE = 50
+DRONE_FIELD_FLIGHTS_PAGE_SIZE = 50
+# Вылеты на той же границе, учтённые в другой записи DJI: диагностика, а не
+# итог, -- поимённо показывается не больше этого числа, остальное -- счётом.
+DRONE_FIELD_SHARED_LIMIT = 100
+_DRONE_LAND_UUID_RE = re.compile(r'^[0-9A-Za-z-]{1,40}$')
+_DRONE_FIELD_QUERY_MAX = 100
+
+
+def _drone_field_period(args):
+    """Период экранов полей: целые местные дни, по умолчанию -- всё время."""
+    return drone_period.parse(args, default_window=None, with_time=False)
+
+
+def _drone_field_link_args(filters, **extra):
+    out = {}
+    if filters['date_from_s']:
+        out['date_from'] = filters['date_from_s']
+    if filters['date_to_s']:
+        out['date_to'] = filters['date_to_s']
+    out.update(extra)
+    return {key: value for key, value in out.items()
+            if value not in (None, '')}
+
+
+def _drone_field_local(value):
+    """UTC-строка или datetime -> местное «дд.мм.гггг чч:мм», либо ''."""
+    from dji_area import control_report as dji_control
+
+    local = dji_control.local_time(value)
+    return local.strftime('%d.%m.%Y %H:%M') if local else ''
+
+
+def _drone_field_machine(row):
+    if row.get('unit_number') is not None:
+        return '№ %s' % row['unit_number']
+    if row.get('nickname_raw'):
+        return row['nickname_raw']
+    return _drone_t('Машина аниқланмаган', 'Машина не определена')
+
+
+def _drone_field_coverage_view(bucket):
+    """Строка покрытия периода: сколько вылетов и у скольких поле известно."""
+    from dji_area import field_view as dji_field_view
+
+    states = bucket['states']
+    reasons = bucket['reasons']
+    shares = dji_field_view.census_shares(bucket)
+    return {
+        'flights': bucket['flights'],
+        'confirmed': (states[dji_field_view.STATE_EXACT]
+                      + states[dji_field_view.STATE_IDENTIFIED]),
+        'exact': states[dji_field_view.STATE_EXACT],
+        'identified': states[dji_field_view.STATE_IDENTIFIED],
+        'provisional': (states[dji_field_view.STATE_PROBABLE]
+                        + states[dji_field_view.STATE_CANDIDATE]),
+        'ambiguous': states[dji_field_view.STATE_AMBIGUOUS],
+        'unresolved': states[dji_field_view.STATE_UNRESOLVED],
+        'not_resolved': states[dji_field_view.STATE_NOT_RESOLVED],
+        'no_card': reasons[dji_field_view.REASON_NO_CARD],
+        'no_key': reasons[dji_field_view.REASON_NO_KEY],
+        'confirmed_pct': shares['confirmed_pct'],
+    }
+
+
+def _drone_field_flight_view(row, item, lang):
+    """Строка вылета на карточке поля: дата, машина, площадь, привязка."""
+    from dji_area import field_view as dji_field_view
+
+    attr = dji_field_view.attribution_view(row, lang=lang)
+    return {
+        'flight_id': int(row['flight_id']),
+        'started_s': _drone_field_local(row.get('started_at')),
+        'machine': _drone_field_machine(row),
+        'raw_ha': float(row.get('area_ha') or 0.0),
+        'area': _drone_accepted_item_view(item),
+        'attr': attr,
+        'md5_short': dji_field_view.short_hash(row.get('geometry_md5')),
+    }
+
+
+@drones_bp.route('/fields')
+@module_required('drones')
+def fields():
+    """Список записей полей DJI: поиск, период, привязанные вылеты."""
+    from dji_area import field_store
+    from dji_area import field_view as dji_field_view
+
+    lang = _drone_lang()
+    filters = _drone_field_period(request.args)
+    query = (request.args.get('q') or '').strip()[:_DRONE_FIELD_QUERY_MAX]
+    only_with_flights = (request.args.get('flights') or '') == '1'
+    page = request.args.get('page', 1, type=int) or 1
+    listing = {'rows': [], 'total': 0, 'page': 1, 'pages': 1}
+    coverage = None
+    ready = False
+    con = _drone_area_control_db()
+    if con is not None:
+        try:
+            ready = field_store.tables_present(con)
+            if ready:
+                listing = field_store.land_list(
+                    con, query, filters['utc_start'], filters['utc_end_excl'],
+                    only_with_flights, page, DRONE_FIELDS_PAGE_SIZE)
+                bucket, _months = field_store.flight_census(
+                    con, filters['utc_start'], filters['utc_end_excl'])
+                coverage = _drone_field_coverage_view(bucket)
+        finally:
+            con.close()
+    rows = []
+    for r in listing['rows']:
+        rows.append({
+            'land_uuid': r['land_uuid'],
+            'name': r['name'] or r['serial_number'] or r['land_uuid'],
+            'has_name': bool(r['name']),
+            'serial': r['serial_number'],
+            'address': r['address'],
+            'catalog_ha': dji_field_view.mu_to_ha(
+                r['work_area_raw'] if r['work_area_raw'] is not None
+                else r['total_area_raw'])
+            if (r['area_unit'] or 'mu') == 'mu' else None,
+            'revisions': r['revisions'],
+            'boundaries': r['boundaries'],
+            'confirmed': r['confirmed'],
+            'provisional': r['provisional'],
+            'last_confirmed_s': _drone_field_local(r['last_confirmed_at']),
+        })
+    link_args = _drone_field_link_args(
+        filters, q=query or None, flights='1' if only_with_flights else None)
+    return render_template(
+        'drones/fields.html',
+        rows=rows,
+        total=listing['total'],
+        page=listing['page'],
+        pages=listing['pages'],
+        ready=ready,
+        coverage=coverage,
+        filters=filters,
+        query=query,
+        only_with_flights=only_with_flights,
+        link_args=link_args,
+    )
+
+
+@drones_bp.route('/fields/<land_uuid>')
+@module_required('drones')
+def field_card(land_uuid):
+    """Карточка записи поля DJI: версии границы, работы, итог, диагностика."""
+    from dji_area import accepted as dji_accepted
+    from dji_area import control_store
+    from dji_area import field_store
+    from dji_area import field_view as dji_field_view
+
+    if not _DRONE_LAND_UUID_RE.match(land_uuid or ''):
+        abort(404)
+    lang = _drone_lang()
+    filters = _drone_field_period(request.args)
+    page = request.args.get('page', 1, type=int) or 1
+    con = _drone_area_control_db()
+    if con is None:
+        abort(404)
+    try:
+        if not field_store.tables_present(con):
+            abort(404)
+        header = field_store.land_header(con, land_uuid)
+        if header is None:
+            abort(404)
+        revisions = field_store.land_revisions(con, land_uuid)
+        found = field_store.field_flights(
+            con, land_uuid, filters['utc_start'], filters['utc_end_excl'])
+        confirmed = field_store.confirmed_members(found['rows'], land_uuid)
+        provisional = field_store.provisional_members(found['rows'],
+                                                      land_uuid)
+        raw = {}
+        for row in confirmed + provisional:
+            raw[int(row['flight_id'])] = float(row['area_ha'] or 0.0) \
+                * 10000.0
+        by_flight = control_store.accepted_for(con, raw) if raw else {}
+        md5s = [r['geometry_md5'] for r in revisions if r['geometry_md5']]
+        md5s += [r['geometry_md5'] for r in confirmed if r['geometry_md5']]
+        geometries = field_store.geometry_rows(con, md5s)
+        holders = field_store.other_holders(con, md5s, land_uuid)
+        shared = field_store.shared_geometry_flights(
+            con, land_uuid, md5s, filters['utc_start'],
+            filters['utc_end_excl'], limit=DRONE_FIELD_SHARED_LIMIT)
+        labels = field_store.fields_of_flights(
+            con, [u for us in holders.values() for u in us]
+            + [r['field_land_uuid'] for r in shared['rows']])
+    finally:
+        con.close()
+
+    # Итог -- ТОЛЬКО по подтверждённым членам записи (§4 задания).
+    totals = _drone_accepted_view(dji_accepted.summarize(
+        by_flight[int(r['flight_id'])] for r in confirmed))
+    provisional_totals = _drone_accepted_view(dji_accepted.summarize(
+        by_flight[int(r['flight_id'])] for r in provisional))
+
+    # Версии границы: по md5, в порядке первого наблюдения в каталоге.
+    versions = []
+    index = {}
+    for rev in revisions:
+        key = rev['geometry_md5'] or ''
+        if key not in index:
+            index[key] = len(versions)
+            versions.append({'md5': rev['geometry_md5'], 'names': [],
+                             'first_seen_at': rev['first_seen_at'],
+                             'last_seen_at': rev['last_seen_at'],
+                             'revisions': 0, 'from_catalog': True})
+        version = versions[index[key]]
+        version['revisions'] += 1
+        if rev['name'] and rev['name'] not in version['names']:
+            version['names'].append(rev['name'])
+        if rev['last_seen_at'] and (not version['last_seen_at']
+                                    or rev['last_seen_at']
+                                    > version['last_seen_at']):
+            version['last_seen_at'] = rev['last_seen_at']
+    flights_by_md5 = {}
+    for row in confirmed:
+        flights_by_md5.setdefault(row['geometry_md5'] or '', []).append(row)
+    for key in flights_by_md5:
+        if key and key not in index:
+            # Граница известна по карточкам вылетов, но в ревизиях этой
+            # записи её нет (байты держит другая запись DJI).
+            index[key] = len(versions)
+            versions.append({'md5': key, 'names': [], 'first_seen_at': None,
+                             'last_seen_at': None, 'revisions': 0,
+                             'from_catalog': False})
+    version_views = []
+    for version in versions:
+        md5 = version['md5']
+        used = flights_by_md5.get(md5 or '', []) if md5 else []
+        dates = sorted(r['started_at'] for r in used if r['started_at'])
+        state = dji_field_view.boundary_state(geometries.get(md5)) \
+            if md5 else None
+        version_views.append({
+            'md5': md5,
+            'md5_short': dji_field_view.short_hash(md5),
+            'names': version['names'],
+            'first_seen_s': _drone_field_local(version['first_seen_at']),
+            'last_seen_s': _drone_field_local(version['last_seen_at']),
+            'revisions': version['revisions'],
+            'from_catalog': version['from_catalog'],
+            'boundary_label': dji_field_view.pick(
+                dji_field_view.BOUNDARY_LABELS[state], lang) if state else '',
+            'boundary_saved': state == dji_field_view.BOUNDARY_SAVED,
+            'flights': len(used),
+            'first_flight_s': _drone_field_local(dates[0]) if dates else '',
+            'last_flight_s': _drone_field_local(dates[-1]) if dates else '',
+            'others': [{'land_uuid': u,
+                        'name': (labels.get(u) or {}).get('name') or u}
+                       for u in holders.get(md5, [])] if md5 else [],
+        })
+
+    per_page = DRONE_FIELD_FLIGHTS_PAGE_SIZE
+    pages = max(1, (len(confirmed) + per_page - 1) // per_page)
+    page = min(max(1, page), pages)
+    shown = confirmed[(page - 1) * per_page:page * per_page]
+    flights_view = [_drone_field_flight_view(
+        r, by_flight[int(r['flight_id'])], lang) for r in shown]
+    provisional_view = [_drone_field_flight_view(
+        r, by_flight[int(r['flight_id'])], lang) for r in provisional]
+    shared_view = []
+    for r in shared['rows']:
+        attr = dji_field_view.attribution_view(r, lang=lang)
+        other = r.get('field_land_uuid')
+        shared_view.append({
+            'flight_id': int(r['flight_id']),
+            'started_s': _drone_field_local(r.get('started_at')),
+            'attr': attr,
+            'md5_short': dji_field_view.short_hash(r.get('geometry_md5')),
+            'other_uuid': other,
+            'other_name': ((labels.get(other) or {}).get('name') or other)
+            if other else None,
+        })
+    name = header['name'] or header['serial_number'] or header['land_uuid']
+    return render_template(
+        'drones/field.html',
+        header=header,
+        name=name,
+        catalog_ha=dji_field_view.mu_to_ha(
+            header['work_area_raw'] if header['work_area_raw'] is not None
+            else header['total_area_raw'])
+        if (header['area_unit'] or 'mu') == 'mu' else None,
+        catalog_total_ha=dji_field_view.mu_to_ha(header['total_area_raw'])
+        if (header['area_unit'] or 'mu') == 'mu' else None,
+        first_seen_s=_drone_field_local(header['first_seen_at']),
+        last_seen_s=_drone_field_local(header['last_seen_at']),
+        versions=version_views,
+        flights=flights_view,
+        confirmed_count=len(confirmed),
+        provisional=provisional_view,
+        orphans=found['orphans'],
+        totals=totals,
+        provisional_totals=provisional_totals,
+        shared=shared_view,
+        shared_total=shared['total'],
+        shared_limit=DRONE_FIELD_SHARED_LIMIT,
+        page=page,
+        pages=pages,
+        filters=filters,
+        link_args=_drone_field_link_args(filters),
+        state_help={state: dji_field_view.pick(text, lang)
+                    for state, text in dji_field_view.STATE_HELP.items()},
+    )
+
+
+@drones_bp.route('/flights/<int:dji_flight_id>/passport')
+@module_required('drones')
+def flight_passport(dji_flight_id):
+    """Паспорт вылета: площадь, почему, поле, решение, происхождение.
+
+    [REASON]: открывается и без расчёта Area Control -- RAW вылета виден
+    всегда, принятая тогда «не рассчитано». Страница решения администратора
+    (`area_control_flight`) остаётся отдельной: паспорт объясняет, решение
+    записывается там.
+    """
+    from dji_area import accepted as dji_accepted
+    from dji_area import control_report as dji_control
+    from dji_area import control_store
+    from dji_area import field_store
+    from dji_area import field_view as dji_field_view
+
+    lang = _drone_lang()
+    con = _drone_area_control_db()
+    if con is None:
+        abort(404)
+    chain = []
+    try:
+        if not field_store.tables_present(con):
+            abort(404)
+        flight = field_store.flight_row(con, dji_flight_id)
+        if flight is None:
+            abort(404)
+        raw_m2 = float(flight['area_ha'] or 0.0) * 10000.0
+        item = control_store.accepted_for(
+            con, {dji_flight_id: raw_m2})[dji_flight_id]
+        attr = field_store.current_attributions(con, [dji_flight_id]).get(
+            dji_flight_id)
+        evidence = field_store.evidence_for(con, [dji_flight_id]).get(
+            dji_flight_id)
+        meta = field_store.calculation_meta(con, dji_flight_id)
+        decisions_ready = control_store.tables_present(con)
+        if decisions_ready:
+            chain = control_store.decision_chains(
+                con, [dji_flight_id]).get(dji_flight_id, [])
+        # Источники: те ревизии, на которых стоит расчёт; без расчёта --
+        # последние полученные указатели доказательств.
+        source_ids = {}
+        for kind in ('list', 'card', 'route', 'v4'):
+            key = '%s_revision_id' % kind
+            used = (meta or {}).get(key)
+            latest = (evidence or {}).get(key)
+            source_ids[kind] = (used, latest)
+        sources = field_store.source_revisions(
+            con, [i for pair in source_ids.values() for i in pair if i])
+        md5 = (attr or {}).get('geometry_md5')
+        geometry = field_store.geometry_rows(con, [md5]).get(md5) \
+            if md5 else None
+        land_uuid = (attr or {}).get('field_land_uuid')
+        holders = field_store.other_holders(
+            con, [md5], land_uuid or '').get(md5, []) if md5 else []
+        land = field_store.fields_of_flights(
+            con, [land_uuid] + list(holders)) if (land_uuid or holders) \
+            else {}
+        snapshot = field_store.snapshots(
+            con, [(attr or {}).get('land_snapshot_id')]).get(
+            (attr or {}).get('land_snapshot_id'))
+    finally:
+        con.close()
+
+    area = _drone_accepted_item_view(item)
+    single = dji_accepted.summarize([item])
+    row = _drone_area_flight_row(dji_flight_id)
+    why = None
+    flags = []
+    limitation = ''
+    active = control_store.active_from_chain(chain)
+    if row is not None:
+        why = dji_control.record_view(row, lang, decision=active,
+                                      times=_drone_area_chain_times([row]))
+        for flag in _drone_area_flags(row):
+            if flag in DRONE_AREA_FLAGS_SILENT:
+                continue
+            flags.append(_drone_area_pick(DRONE_AREA_FLAG_LABELS, flag))
+        limitation = _drone_area_limitation(row)
+    history = _drone_area_history_rows(chain, active, why, lang)
+
+    field = dji_field_view.attribution_view(attr, evidence, lang)
+    boundary_state = (dji_field_view.boundary_state(geometry)
+                      if md5 else None)
+    source_labels = {
+        'list': _drone_t('Парвозлар рўйхати', 'Список вылетов'),
+        'card': _drone_t('Парвоз карточкаси', 'Карточка вылета'),
+        'route': _drone_t('Маршрут', 'Маршрут'),
+        'v4': _drone_t('V4 телеметрияси', 'Телеметрия V4'),
+    }
+    source_rows = []
+    for kind in ('list', 'card', 'route', 'v4'):
+        used_id, latest_id = source_ids[kind]
+        for role, rev_id in (('used', used_id), ('latest', latest_id)):
+            if role == 'latest' and (not rev_id or rev_id == used_id):
+                continue
+            rev = sources.get(rev_id) if rev_id else None
+            source_rows.append({
+                'kind': kind,
+                'label': source_labels[kind],
+                'role': role,
+                'present': rev is not None,
+                'revision_id': rev_id,
+                'sha_short': dji_field_view.short_hash((rev or {}).get(
+                    'sha256'), 16),
+                'captured_s': _drone_field_local((rev or {}).get(
+                    'captured_at_utc')),
+                'parser_version': (rev or {}).get('parser_version'),
+                'is_import': bool((rev or {}).get('is_evidence_import')),
+            })
+    return render_template(
+        'drones/flight_passport.html',
+        flight=flight,
+        dji_flight_id=dji_flight_id,
+        started_s=_drone_field_local(flight['started_at']),
+        machine=_drone_field_machine(flight),
+        area=area,
+        control_ready=single['control_ready'],
+        why=why,
+        flags=flags,
+        limitation=limitation,
+        history=history,
+        decisions_ready=decisions_ready,
+        field=field,
+        boundary_label=(dji_field_view.pick(
+            dji_field_view.BOUNDARY_LABELS[boundary_state], lang)
+            if boundary_state else ''),
+        boundary_saved=boundary_state == dji_field_view.BOUNDARY_SAVED,
+        md5_short=dji_field_view.short_hash(md5, 32),
+        land_name=((land.get(land_uuid) or {}).get('name')
+                   if land_uuid else None),
+        land_in_catalog=bool(land_uuid and land.get(land_uuid)),
+        holders=[{'land_uuid': u,
+                  'name': (land.get(u) or {}).get('name') or u}
+                 for u in holders],
+        snapshot_s=_drone_field_local((snapshot or {}).get('captured_at_utc')),
+        meta=meta,
+        calc_hash_short=dji_field_view.short_hash(
+            (meta or {}).get('calculation_input_hash'), 16),
+        calculated_s=_drone_field_local((meta or {}).get('calculated_at')),
+        field_hash_short=dji_field_view.short_hash(
+            field.get('field_input_hash'), 16),
+        field_calculated_s=_drone_field_local(field.get('calculated_at')),
+        sources=source_rows,
+        dji_url=dji_control.dji_url(dji_flight_id),
+        decision_url=(url_for('drones.area_control_flight',
+                              flight_id=dji_flight_id)
+                      if row is not None else None),
+        bridge_note=dji_control.pick(dji_control.BRIDGE_NOTE, lang),
+        ha=dji_control.ha,
+    )
 
 
 # ─── «Обновить данные DJI» ───────────────────────────────────────────────────

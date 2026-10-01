@@ -1,0 +1,190 @@
+{% extends g.base_template %}
+{% from 'drones/_accepted.html' import acc_status, acc_flight_value %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ ('Дроны — паспорт вылета ' if is_ru else 'Дронлар — парвоз паспорти ') ~ dji_flight_id }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+{# DRONE-FIELD-PASSPORT-001. Паспорт вылета: почему программа считает его
+   именно так. Только чтение существующих результатов: площадь -- из
+   dji_area.accepted (та же, что в отчётах), объяснение -- из
+   control_report, привязка к полю -- из dji_field_attributions, решения --
+   из drone_area_decisions, происхождение -- хэши и время ревизий источников.
+   Ни тел источников, ни путей к файлам, ни координат на странице нет.
+   Записать решение администратора -- на отдельной странице решения. #}
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Паспорт вылета' if is_ru else 'Парвоз паспорти' }} {{ dji_flight_id }}</div>
+    <div class="vs-hero-sub">{{ machine }} · {{ started_s or '—' }} (UTC+5)</div>
+  </div>
+  <div class="vs-row-end">
+    {% if decision_url %}<a href="{{ decision_url }}" class="vs-btn">{{ 'Площадь и решение' if is_ru else 'Майдон ва қарор' }}</a>{% endif %}
+    <a href="{{ dji_url }}" target="_blank" rel="noopener" class="vs-btn">{{ 'Открыть в DJI' if is_ru else 'DJI да очиш' }}</a>
+  </div>
+</div>
+
+{# А. Площадь #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Площадь' if is_ru else 'Майдон' }}</span>
+    <span class="vs-muted">{{ 'DJI RAW не меняется; исключается только доказанное завышение' if is_ru else 'DJI RAW ўзгармайди; фақат исботланган ошириш чиқарилади' }}</span>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table is-static">
+      <tbody>
+        <tr><th>{{ 'DJI RAW, га' if is_ru else 'DJI RAW, га' }}</th><td>{{ '%.4f'|format(area.raw_ha or 0) }}</td></tr>
+        <tr><th>{{ 'Исключено, га' if is_ru else 'Чиқарилган, га' }}</th><td>{% if area.excluded_ha is not none %}{{ '%.4f'|format(area.excluded_ha) }}{% elif area.calculated %}—{% else %}<span class="vs-muted">{{ 'не рассчитано' if is_ru else 'ҳисобланмаган' }}</span>{% endif %}</td></tr>
+        <tr><th>{{ 'Принято, га' if is_ru else 'Қабул қилинган, га' }}</th><td><strong>{% if area.accepted_ha is not none %}{{ '%.4f'|format(area.accepted_ha) }}{% else %}{{ acc_flight_value(area, is_ru) }}{% endif %}</strong></td></tr>
+        <tr><th>{{ 'Статус площади' if is_ru else 'Майдон ҳолати' }}</th><td>{{ acc_status(area) }}{% if area.is_open %} <span class="vs-muted">{{ 'открытая запись: пока учтена по DJI RAW, решение за человеком' if is_ru else 'очиқ ёзув: ҳозирча DJI RAW бўйича ҳисобланган, қарор инсонга боғлиқ' }}</span>{% endif %}</td></tr>
+        <tr><th>{{ 'Годится как база контроля' if is_ru else 'Назорат асоси сифатида яроқли' }}</th><td>{% if control_ready %}{{ 'да: расчёт есть, DJI RAW расчёта совпадает с DJI RAW вылета' if is_ru else 'ҳа: ҳисоб бор, ҳисобдаги DJI RAW парвоздаги DJI RAW билан мос' }}{% elif area.raw_mismatch %}<span class="vs-badge vs-badge-sm vs-badge-warning">{{ 'нет: DJI RAW расчёта расходится с DJI RAW вылета' if is_ru else 'йўқ: ҳисобдаги DJI RAW парвоздаги DJI RAW дан фарқ қилади' }}</span>{% else %}{{ 'нет: расчёта Area Control для вылета нет' if is_ru else 'йўқ: парвоз учун Area Control ҳисоби йўқ' }}{% endif %}</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+{% if not area.calculated %}
+<div class="vs-alert is-info vs-mb" role="status">
+  <div>{{ 'Area Control этот вылет не рассчитывал: принятая площадь не показывается и не заменяется площадью DJI RAW.' if is_ru else 'Area Control бу парвозни ҳисобламаган: қабул қилинган майдон кўрсатилмайди ва DJI RAW майдони билан алмаштирилмайди.' }}</div>
+</div>
+{% endif %}
+
+{# Б. Почему #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Почему' if is_ru else 'Нима учун' }}</span>
+    <span class="vs-muted">{{ 'объяснение автоматического контроля площади; новый вердикт здесь не вычисляется' if is_ru else 'майдон автоматик назоратининг изоҳи; бу ерда янги хулоса ҳисобланмайди' }}</span>
+  </div>
+  {% if why %}
+  <div class="vs-table-scroll">
+    <table class="vs-table is-static">
+      <tbody>
+        <tr><th>{{ 'Автоматический результат' if is_ru else 'Автоматик натижа' }}</th><td><span class="vs-badge {{ why.class_badge }}">{{ why.class_label }}</span> {{ why.reason_text }}</td></tr>
+        <tr><th>{{ 'Доказательство' if is_ru else 'Далил' }}</th><td>{{ why.evidence_label }}</td></tr>
+        <tr><th>{{ 'Автоматически принято / исключено, га' if is_ru else 'Автоматик қабул қилинган / чиқарилган, га' }}</th><td>{% if why.auto_accepted_m2 is not none %}{{ '%.4f'|format(ha(why.auto_accepted_m2)) }}{% else %}—{% endif %} / {% if why.auto_excluded_m2 is not none %}{{ '%.4f'|format(ha(why.auto_excluded_m2)) }}{% else %}—{% endif %}</td></tr>
+        <tr><th>{{ 'Итог с учётом решений' if is_ru else 'Қарорлар билан якун' }}</th><td><span class="vs-badge {{ why.state_badge }}">{{ why.state_label }}</span></td></tr>
+        <tr><th>{{ 'Метод и признаки' if is_ru else 'Усул ва белгилар' }}</th><td>{{ limitation or '—' }}</td></tr>
+        <tr><th>{{ 'Цепочка A → B → C' if is_ru else 'A → B → C занжири' }}</th><td>
+          {% if why.chain %}
+          A <a href="{{ url_for('drones.flight_passport', dji_flight_id=why.chain.a.flight_id) }}">{{ why.chain.a.flight_id }}</a> <span class="vs-muted">{{ why.chain.a.datetime_s }}</span>
+          {% for b in why.chain.b %}
+          → B <a href="{{ url_for('drones.flight_passport', dji_flight_id=b.flight_id) }}" title="{{ bridge_note }}">{{ b.flight_id }}</a> <span class="vs-muted">{{ b.datetime_s }}</span>
+          {% endfor %}
+          → C {{ why.chain.c.flight_id }} <span class="vs-muted">{{ why.chain.c.datetime_s }}</span>
+          {% if why.chain.b %}<div class="vs-muted">{{ bridge_note }}</div>{% endif %}
+          {% else %}—{% endif %}
+        </td></tr>
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="vs-card-body vs-muted">{{ 'Расчёта Area Control для вылета нет — объяснять нечего: вылет учтён только по DJI RAW в колонке «не рассчитано».' if is_ru else 'Парвоз учун Area Control ҳисоби йўқ — изоҳлайдиган нарса йўқ: парвоз фақат «ҳисобланмаган» устунида DJI RAW бўйича ҳисобланган.' }}</div>
+  {% endif %}
+</div>
+
+{# В. Поле #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Поле' if is_ru else 'Дала' }}</span>
+    <span class="vs-muted">{{ 'привязка по доказательствам; ближайшее поле и точка взлёта доказательством не служат' if is_ru else 'далиллар бўйича боғланиш; энг яқин дала ва учиш нуқтаси далил бўлмайди' }}</span>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table is-static">
+      <tbody>
+        <tr><th>{{ 'Состояние привязки' if is_ru else 'Боғланиш ҳолати' }}</th><td><span class="vs-badge {{ field.state_badge }}">{{ field.state_label }}</span>{% if field.reason_text %} — {{ field.reason_text }}{% endif %}<div class="vs-muted">{{ field.state_help }}</div></td></tr>
+        <tr><th>{{ 'Запись поля DJI' if is_ru else 'DJI дала ёзуви' }}</th><td>{% if field.field_land_uuid %}{% if land_in_catalog %}<a href="{{ url_for('drones.field_card', land_uuid=field.field_land_uuid) }}">{{ land_name or field.field_land_uuid }}</a>{% else %}{{ field.field_land_uuid }}{% endif %} <span class="vs-muted">{{ field.field_land_uuid }}</span>{% else %}—{% endif %}</td></tr>
+        <tr><th>{{ 'Название на момент привязки' if is_ru else 'Боғланиш пайтидаги номи' }}</th><td>{{ field.field_name or '—' }}{% if field.field_serial %} · {{ 'серийный №' if is_ru else 'серия №' }} {{ field.field_serial }}{% endif %}</td></tr>
+        <tr><th>{{ 'Граница вылета (md5)' if is_ru else 'Парвоз чегараси (md5)' }}</th><td>{% if field.geometry_md5 %}{{ md5_short }} — {% if boundary_saved %}<span class="vs-badge vs-badge-sm vs-badge-success">{{ boundary_label }}</span>{% else %}<span class="vs-badge vs-badge-sm vs-badge-warning">{{ boundary_label }}</span>{% endif %}<div class="vs-muted">{{ 'это версия границы, которую назвала карточка этого вылета, а не сегодняшняя граница поля' if is_ru else 'бу ушбу парвоз карточкаси кўрсатган чегара версияси, даланинг бугунги чегараси эмас' }}</div>{% else %}—{% endif %}</td></tr>
+        {% if holders %}
+        <tr><th>{{ 'Та же граница у других записей DJI' if is_ru else 'Шу чегара бошқа DJI ёзувларида' }}</th><td>{% for h in holders %}<a href="{{ url_for('drones.field_card', land_uuid=h.land_uuid) }}">{{ h.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %} <span class="vs-muted">{{ 'вылет учтён только в одной записи' if is_ru else 'парвоз фақат битта ёзувда ҳисобланган' }}</span></td></tr>
+        {% endif %}
+        <tr><th>{{ 'Метод и уверенность' if is_ru else 'Усул ва ишонч' }}</th><td>{{ field.method or '—' }}{% if field.confidence_label %} · {{ field.confidence_label }}{% endif %}</td></tr>
+        <tr><th>{{ 'Предупреждения резолвера' if is_ru else 'Резолвер огоҳлантиришлари' }}</th><td>{% if field.warning_texts %}{{ field.warning_texts|join('; ') }}{% else %}—{% endif %}</td></tr>
+        <tr><th>{{ 'Снимок каталога привязки (UTC+5)' if is_ru else 'Боғланиш каталоги сурати (UTC+5)' }}</th><td>{{ snapshot_s or '—' }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# Г. Решение администратора #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Решения администратора' if is_ru else 'Администратор қарорлари' }}</span>
+    <span class="vs-muted">{{ 'записи не удаляются и не изменяются; отмена — новая запись' if is_ru else 'ёзувлар ўчирилмайди ва ўзгармайди; бекор қилиш — янги ёзув' }}</span>
+  </div>
+  {% if why and why.decision %}
+  <div class="vs-card-body">
+    <b>{{ 'Действующее решение' if is_ru else 'Амалдаги қарор' }}:</b> {{ why.decision.label }} — {{ why.decision.performed_by or '—' }}, {{ why.decision.performed_at_s }} (UTC+5)
+    {% if why.decision.stale %}<div class="vs-muted">{{ why.decision.stale_note }}</div>{% endif %}
+    {% if why.decision.lapsed_note %}<div class="vs-muted">{{ why.decision.lapsed_note }}</div>{% endif %}
+  </div>
+  {% endif %}
+  <div class="vs-table-scroll">
+    <table class="vs-table is-static">
+      <thead>
+        <tr>
+          <th>№</th>
+          <th>{{ 'Действие' if is_ru else 'Амал' }}</th>
+          <th>{{ 'Действует' if is_ru else 'Амалда' }}</th>
+          <th>{{ 'Кто' if is_ru else 'Ким' }}</th>
+          <th>{{ 'Когда (UTC+5)' if is_ru else 'Қачон (UTC+5)' }}</th>
+          <th>{{ 'Причина' if is_ru else 'Сабаб' }}</th>
+          <th>{{ 'Автомат на момент решения' if is_ru else 'Қарор пайтидаги автомат' }}</th>
+          <th class="right">{{ 'Принято по решению, га' if is_ru else 'Қарор бўйича қабул қилинган, га' }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for h in history %}
+        <tr>
+          <td>{{ h.seq }}</td>
+          <td><strong>{{ h.label }}</strong></td>
+          <td>{% if h.is_current %}<span class="vs-badge vs-badge-success">{{ 'да' if is_ru else 'ҳа' }}</span>{% else %}{{ 'нет' if is_ru else 'йўқ' }}{% endif %}</td>
+          <td>{{ h.by or '—' }}</td>
+          <td>{{ h.at_s }}</td>
+          <td>{{ h.comment }}</td>
+          <td>{{ h.auto_label }}</td>
+          <td class="right">{% if h.accepted_ha is not none %}{{ '%.4f'|format(h.accepted_ha) }}{% else %}—{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="vs-empty">{% if decisions_ready %}{{ 'Решений по этому вылету не было.' if is_ru else 'Бу парвоз бўйича қарорлар бўлмаган.' }}{% else %}{{ 'Журнал решений в этой базе не создан.' if is_ru else 'Қарорлар журнали бу базада яратилмаган.' }}{% endif %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# Д. Происхождение #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Происхождение' if is_ru else 'Келиб чиқиши' }}</span>
+    <span class="vs-muted">{{ 'неизменяемые ревизии ответов DJI: хэш и время получения; содержимое здесь не показывается' if is_ru else 'DJI жавобларининг ўзгармас ревизиялари: хэш ва олинган вақт; мазмуни бу ерда кўрсатилмайди' }}</span>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table is-static">
+      <thead>
+        <tr>
+          <th>{{ 'Источник' if is_ru else 'Манба' }}</th>
+          <th>{{ 'Роль' if is_ru else 'Вазифа' }}</th>
+          <th>SHA-256</th>
+          <th>{{ 'Получен (UTC+5)' if is_ru else 'Олинган (UTC+5)' }}</th>
+          <th>{{ 'Разборщик' if is_ru else 'Таҳлилчи' }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in sources %}
+        <tr>
+          <td>{{ s.label }}</td>
+          <td>{% if s.role == 'used' %}{{ 'использован расчётом' if is_ru else 'ҳисобда ишлатилган' }}{% else %}{{ 'последний полученный' if is_ru else 'охирги олинган' }}{% endif %}{% if s.is_import %} <span class="vs-badge vs-badge-sm is-outline">{{ 'импорт архива' if is_ru else 'архив импорти' }}</span>{% endif %}</td>
+          <td>{% if s.present %}{{ s.sha_short }}{% else %}<span class="vs-muted">{{ 'не получен' if is_ru else 'олинмаган' }}</span>{% endif %}</td>
+          <td>{{ s.captured_s or '—' }}</td>
+          <td>{{ s.parser_version or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="vs-card-body">
+    <div>{{ 'Расчёт площади' if is_ru else 'Майдон ҳисоби' }}: {% if meta %}№ {{ meta.id }} · {{ meta.area_algorithm_version }} · {{ 'входы' if is_ru else 'кирувчилар' }} {{ calc_hash_short }} · {{ calculated_s }} (UTC+5){% else %}<span class="vs-muted">{{ 'нет' if is_ru else 'йўқ' }}</span>{% endif %}</div>
+    <div>{{ 'Привязка к полю' if is_ru else 'Далага боғланиш' }}: {% if field.resolver_version %}{{ field.resolver_version }} · {{ 'входы' if is_ru else 'кирувчилар' }} {{ field_hash_short }} · {{ field_calculated_s }} (UTC+5){% if field.land_snapshot_id %} · {{ 'снимок каталога' if is_ru else 'каталог сурати' }} № {{ field.land_snapshot_id }}{% endif %}{% if field.land_revision_id %} · {{ 'ревизия' if is_ru else 'ревизия' }} № {{ field.land_revision_id }}{% endif %}{% else %}<span class="vs-muted">{{ 'нет' if is_ru else 'йўқ' }}</span>{% endif %}</div>
+  </div>
+</div>
+
+{% endblock %}
