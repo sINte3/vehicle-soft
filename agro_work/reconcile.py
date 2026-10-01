@@ -43,18 +43,6 @@
 неизвестным окном или заведённая задним числом; нарушение «работа без
 заявки» -- только когда не может никакая.
 
-ПОЗДНЯЯ ЗАЯВКА (B4, пункт 4, решение 30.09). У суток «работа без заявки»
-называется ближайшая заявка той же машины, заведённая задним числом ПОЗЖЕ
-этих суток, и через сколько суток после них её ввели. Вердикт не меняется:
-ввод задним числом позже N суток -- нарушение (владелец, 30.09). Порога
-«насколько поздно» нет: его пришлось бы выдумать, а число суток читающему
-видно само -- 3 похоже на поздний ввод той же работы, 29 -- на другую.
-
-ОТКРЫТЫЕ ЗАЯВКИ (B4, пункт 5). Список открытых заявок периода от самой
-старой, с числом суток с ввода -- единственной даты, которая есть у каждой
-заявки. Сколько суток заявке позволено быть открытой, решает владелец;
-пока он не назвал это число, список ничего не подсвечивает.
-
 МАШИНА. Заявка -> машина agro-work -> наша техника (связь импорта или
 владельца) -> объект Wialon (`vialon_mappings`, без `skip`). Неоднозначное
 не угадывается: несколько объектов у машины -- причина, как в сверке
@@ -102,10 +90,6 @@ V_NONE = 'bez_verdikta'
 C_COVERED = 'pokryta'
 C_UNCOVERED = 'bez_zayavki'
 C_NONE = 'bez_verdikta'
-
-# Счётчик свода: из суток «без заявки» -- те, у которых есть поздняя заявка
-# задним числом (B4, пункт 4).
-DAY_LATE = 'day_bez_zayavki_pozdnyaya'
 
 # Причины «без вердикта». Слаги ASCII, подписи -- на экране и в отчёте.
 R_OPEN = 'otkryta'
@@ -503,8 +487,7 @@ class Reconciliation:
                        'wialon_id': worked[0][0] if len(live) == 1 else None,
                        'gps_ha': round(sum(ha for _, ha in worked), 3)
                        if len(live) == 1 else None,
-                       'coverage': C_NONE, 'reason': None, 'apps': [],
-                       'late_app': None, 'late_days': None}
+                       'coverage': C_NONE, 'reason': None, 'apps': []}
                 if len(live) > 1:
                     # [REASON]: у машины несколько объектов Wialon -- сверка
                     # нарядов GPS называет это причиной, а не складывает и не
@@ -514,56 +497,7 @@ class Reconciliation:
                     coverage, reason, apps = self.coverage(equipment_id, day)
                     row.update({'coverage': coverage, 'reason': reason,
                                 'apps': apps})
-                    if coverage == C_UNCOVERED:
-                        late = self.late_backdated(equipment_id, day)
-                        if late:
-                            row['late_app'], row['late_days'] = late
                 rows.append(row)
-        return rows
-
-    def late_backdated(self, equipment_id, day):
-        """(заявка, суток) -- ближайшая поздняя заявка задним числом, или None.
-
-        Заявка той же машины, заведённая сразу «выполненной» позже суток
-        работы. Сутки «без заявки» она не покрыла -- значит, введена позже,
-        чем на N суток, -- и вердикт не меняет; её только называют.
-        """
-        transports = self.transports_by_equipment.get(equipment_id, [])
-        if len(transports) != 1:
-            return None
-        # [REASON]: только заявки, заведённые задним числом (сразу
-        # «выполнено», есть история): о них решение владельца 30.09. Обычная
-        # заявка, созданная после работы, покрывает с дня создания
-        # (правило 4) -- её «опоздание» здесь не выдумывается. Окно у заявки
-        # задним числом есть, только пока она не удалена в agro-work (ответ
-        # 11) и N утверждено; без окна она поздней не называется.
-        late = [a for a in self.apps_by_transport.get(transports[0], [])
-                if a.backdated and a.window and a.created_day > day]
-        if not late:
-            return None
-        app = min(late, key=lambda a: (a.created_day, a.number))
-        return app, (app.created_day - day).days
-
-    def open_applications(self):
-        """Открытые заявки периода, от самой старой: суток с ввода."""
-        rows = []
-        for app in self.applications:
-            if app.status not in records.OPEN_STATUSES or app.gone:
-                continue
-            if not self.in_period(app):
-                continue
-            equipment_id = self.machine_of(app.transport_id)[0]
-            if equipment_id is None:
-                # Как в «заявка -> работа»: без сопоставленной машины
-                # организации у нас нет, такую видит только тот, кому видны
-                # все организации.
-                if self.org_ids is not None:
-                    continue
-            elif not self.equipment_in_scope(equipment_id):
-                continue
-            rows.append({'app': app, 'equipment_id': equipment_id,
-                         'days_open': (self.today - app.created_day).days})
-        rows.sort(key=lambda r: (-r['days_open'], r['app'].number))
         return rows
 
     def orphan_work_days(self):
@@ -611,8 +545,6 @@ class Reconciliation:
                 counter['day_reason_' + row['reason']] += 1
             else:
                 counter['day_' + row['coverage']] += 1
-            if row.get('late_app') is not None:
-                counter[DAY_LATE] += 1
             machines[key].add(row['equipment_id'])
         total = Counter()
         for key, counter in groups.items():
@@ -639,14 +571,11 @@ class Reconciliation:
                 if start <= day <= end:
                     on_day.append(app)
             coverage = None
-            late = None
             if any(state == WORK for _, (state, _) in states) and len(units) == 1 \
                     and units[0] not in self.excluded:
                 coverage = self.coverage(equipment_id, day)
-                if coverage[0] == C_UNCOVERED:
-                    late = self.late_backdated(equipment_id, day)
             out.append({'day': day, 'states': states, 'apps': on_day,
-                        'coverage': coverage, 'late': late})
+                        'coverage': coverage})
         return out
 
 

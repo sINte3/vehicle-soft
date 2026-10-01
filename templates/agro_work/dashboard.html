@@ -31,7 +31,6 @@
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Из них без заявки' if is_ru else 'Шулардан буюртмасиз' }}</div>
     <div class="vs-stat-value"><a href="{{ url_for('agro_work.work_days', **{'from': date_from.isoformat(), 'to': date_to.isoformat(), 'coverage': 'bez_zayavki'}) }}">{{ total.get('day_bez_zayavki', 0) }}</a></div>
-    {% if total.get(late_key) %}<div class="vs-soft">{{ ('из них с заявкой, заведённой задним числом позже: %d' if is_ru else 'шулардан кейин орқа сана билан киритилган буюртмаси борлари: %d')|format(total.get(late_key)) }}</div>{% endif %}
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Без вердикта: заявок / суток' if is_ru else 'Ҳукмсиз: буюртма / кун' }}</div>
@@ -101,35 +100,6 @@
           <td class="right"><b>{{ total.get('day_bez_zayavki', 0) }}</b></td>
           <td class="right"><b>{{ total.get('day_bez_verdikta', 0) }}</b></td>
         </tr>
-      </tbody>
-    </table>
-  </div>
-</div>
-{% endif %}
-
-{% if open_groups %}
-<div class="vs-table-wrap vs-mb">
-  <div class="vs-card-header">
-    <span class="vs-card-title">{{ 'Открытые заявки: кто их не закрыл' if is_ru else 'Очиқ буюртмалар: ким ёпмаган' }}</span>
-    <span class="vs-soft">{{ 'Пока заявка открыта, вердикта по ней нет. Возраст — суток с ввода; сколько суток заявке позволено быть открытой, решает владелец.' if is_ru else 'Буюртма очиқ экан, у бўйича ҳукм йўқ. Ёши — киритилгандан бери кунлар; буюртма неча кун очиқ туриши мумкинлигини эгаси ҳал қилади.' }}</span>
-  </div>
-  <div class="vs-table-scroll">
-    <table class="vs-table">
-      <thead>
-        <tr>
-          <th>{{ 'Организация' if is_ru else 'Ташкилот' }}</th>
-          <th class="right">{{ 'Открытых заявок' if is_ru else 'Очиқ буюртмалар' }}</th>
-          <th class="right">{{ 'Самая старая, суток с ввода' if is_ru else 'Энг эскиси, киритилгандан бери кун' }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for group in open_groups %}
-        <tr>
-          <td>{% if group.org_id %}{{ group.org_name }}{% else %}{{ 'Машина agro-work не связана с нашей техникой' if is_ru else 'agro-work машинаси бизнинг техника билан боғланмаган' }}{% endif %}</td>
-          <td class="right"><a href="{{ url_for('agro_work.applications', reason='otkryta', org=group.org_id if group.org_id else 'none', **{'from': date_from.isoformat(), 'to': date_to.isoformat()}) }}">{{ group.count }}</a></td>
-          <td class="right">{{ group.oldest }}</td>
-        </tr>
-        {% endfor %}
       </tbody>
     </table>
   </div>

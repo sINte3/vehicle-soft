@@ -216,22 +216,10 @@ def dashboard():
     rows.sort(key=lambda r: (r['org_id'] is None, r['org_name'] or '',
                              order.index(r['category'])
                              if r['category'] in order else len(order)))
-    # B4, пункт 5: открытые заявки по организациям, самая старая -- первой.
-    opened = {}
-    for item in ctx.open_applications():
-        org_id = ctx.group_of(item['equipment_id'])[0]
-        group = opened.setdefault(org_id, {
-            'org_id': org_id, 'count': 0, 'oldest': 0,
-            'org_name': ctx.orgs.get(org_id, '') if org_id else None})
-        group['count'] += 1
-        group['oldest'] = max(group['oldest'], item['days_open'])
-    open_groups = sorted(opened.values(),
-                         key=lambda g: (-g['oldest'], g['org_name'] or ''))
     return render_template(
         'agro_work/dashboard.html',
         **_common(date_from, date_to, empty=None, rows=rows, total=total,
-                  orphan_days=ctx.orphan_work_days(),
-                  open_groups=open_groups, late_key=rc.DAY_LATE))
+                  orphan_days=ctx.orphan_work_days()))
 
 
 # --- заявка -> работа ----------------------------------------------------------
@@ -259,9 +247,6 @@ def applications():
         row['machine'] = _machine_label(ctx, row['equipment_id'])
         row['work_type'] = ctx.work_type_names.get(row['app'].work_type_id) \
             or row['app'].row.get('work_type_name') or ''
-        # B4, пункт 5: у открытой заявки -- сколько суток она открыта.
-        row['days_open'] = ((ctx.today - row['app'].created_day).days
-                            if row['reason'] == rc.R_OPEN else None)
         rows.append(row)
     # [REASON]: нарушения -- первыми: ради них экран и открывают, а в
     # хронологическом порядке они тонут среди подтверждённых.

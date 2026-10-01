@@ -26,7 +26,6 @@ import hashlib
 import re
 import sqlite3
 import unittest
-from datetime import date
 
 from tests.harness import (app, db, reset_db, create_admin, create_org, login,
                            TEST_DB_PATH)
@@ -290,63 +289,6 @@ class Numbers(ScreenCase):
                     '/agro-work/machine/%d' % self.eq1_id):
             self.assertEqual(self.get(url).status_code, 200, url)
         self.assertEqual(sha(), before)
-
-
-class LateAndOpen(ScreenCase):
-    """B4: поздняя заявка задним числом и открытые заявки на экранах."""
-
-    def setUp(self):
-        super().setUp()
-        # A6: T2 заведена сразу «выполненной» 18-го -- для работы 13-го это
-        # опоздание 5 суток при N = 2; A7: T1 открыта с 10-го.
-        _sql(["INSERT INTO agro_work_applications (id, application_number, "
-              "transport_id, work_type_id, work_type_name, unit, status, "
-              "created_at, updated_at, created_day, first_seen_run_id, "
-              "last_seen_run_id, history_updated_at, initial_status, "
-              "completed_day, plate_number) VALUES ('A6', 'APP-TEST-006', "
-              "'T2', 'W1', 'Култивация', 'HECTARE', 'COMPLETED', "
-              "'2026-09-18T08:00:00+05:00', 'u', '2026-09-18', 1, 1, 'u', "
-              "'COMPLETED', '2026-09-18', 'PT2')",
-              "INSERT INTO agro_work_applications (id, application_number, "
-              "transport_id, work_type_id, work_type_name, unit, status, "
-              "created_at, updated_at, created_day, first_seen_run_id, "
-              "last_seen_run_id, plate_number) VALUES ('A7', 'APP-TEST-007', "
-              "'T1', 'W1', 'Култивация', 'HECTARE', 'IN_PROGRESS', "
-              "'2026-09-10T08:00:00+05:00', 'u', '2026-09-10', 1, 1, 'PT1')"])
-        self.days_open = (date.today() - date(2026, 9, 10)).days
-
-    def test_the_uncovered_day_names_the_late_application(self):
-        html = self.get('/agro-work/work-days', lang='ru',
-                        coverage='bez_zayavki').get_data(as_text=True)
-        self.assertIn('заявка APP-TEST-006 заведена задним числом через 5 сут.',
-                      html)
-        self.assertIn('позже, чем через 2 сут.', html)
-        html = self.get('/agro-work/work-days', lang='uz',
-                        coverage='bez_zayavki').get_data(as_text=True)
-        self.assertIn('APP-TEST-006 буюртма 5 кундан кейин орқа сана билан '
-                      'киритилган', html)
-        html = self.get('/agro-work/machine/%d' % self.eq2_id,
-                        lang='ru').get_data(as_text=True)
-        self.assertIn('заявка APP-TEST-006 заведена задним числом через 5 сут.',
-                      html)
-
-    def test_the_dashboard_counts_it_and_lists_who_keeps_applications_open(self):
-        html = self.get('/agro-work/', lang='ru').get_data(as_text=True)
-        self.assertIn('из них с заявкой, заведённой задним числом позже: 1', html)
-        self.assertIn('Открытые заявки: кто их не закрыл', html)
-        card = html[html.index('Открытые заявки: кто их не закрыл'):]
-        self.assertIn('Buxoro agroklaster', card[:3000])
-        self.assertIn('reason=otkryta', card[:3000])
-        self.assertIn('>%d</td>' % self.days_open, card[:3000])
-        html = self.get('/agro-work/', lang='uz').get_data(as_text=True)
-        self.assertIn('Очиқ буюртмалар: ким ёпмаган', html)
-
-    def test_an_open_application_shows_how_long_it_is_open(self):
-        html = self.get('/agro-work/applications', lang='ru',
-                        reason='otkryta').get_data(as_text=True)
-        self.assertIn('APP-TEST-007', html)
-        self.assertIn('открыта %d сут. с ввода' % self.days_open, html)
-        self.assertNotIn('APP-TEST-001', html)
 
 
 class Access(ScreenCase):
