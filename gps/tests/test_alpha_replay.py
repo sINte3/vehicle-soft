@@ -509,6 +509,24 @@ class Sets(unittest.TestCase):
         self.assertEqual(code, 3)
         self.assertIn('CONDITION 1: NOT CHECKED -- no contour was entered', out)
 
+    def test_an_unreadable_row_is_skipped_and_counted(self):
+        """A blank speed cell (Wialon gave none) must not kill the run."""
+        tracks = self.write_tracks('fields.csv', [
+            (1, '2026-08-01', shuttle_track(300.0, 300.0, pass_spacing_m=6.0))])
+        with open(tracks, 'a', encoding='utf-8', newline='') as handle:
+            handle.write('1;2026-08-01;12:00:00;39.7;64.4;;0;10\n')
+            handle.write('1;2026-08-01;;39.7;64.4;5.0;0;10\n')
+        days, skipped = replay.load_csv_days(tracks)
+        self.assertEqual(skipped, 2)
+        clean = replay.load_csv_days(self.write_tracks('clean.csv', [
+            (1, '2026-08-01', shuttle_track(300.0, 300.0,
+                                            pass_spacing_m=6.0))]))
+        self.assertEqual(clean[1], 0)
+        self.assertEqual(days, clean[0])
+        code, out, _err = self.run_main('--tracks', tracks, '--zones', self.zones)
+        self.assertEqual(code, 0, out)
+        self.assertIn('fields.csv: unreadable rows skipped 2', out)
+
     def test_bad_input_is_refused_and_nothing_is_written(self):
         tracks = self.write_tracks('fields.csv', [
             (1, '2026-08-01', shuttle_track(300.0, 300.0, pass_spacing_m=6.0))])

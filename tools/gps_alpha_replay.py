@@ -123,18 +123,31 @@ def verdict_code(verdicts):
 # --- наборы с ручными замерами (условие 1) ------------------------------------
 
 def load_csv_days(path):
-    """(unit_id, дата или '') -> [(t, lon, lat, speed)] по времени."""
-    days = defaultdict(list)
+    """((unit_id, дата или '') -> [(t, lon, lat, speed)] по времени, пропущено).
+
+    [REASON]: выгрузка набора пишет пустую ячейку там, где Wialon не дал
+    значения (`wialon_probe5_spraying.py`), и одна такая строка не должна
+    обрывать прогон всех 32 работ. Строка без времени, координат или
+    скорости пропускается -- обоими методами одинаково, сравнения она не
+    меняет, -- но число пропущенных печатается, а не теряется молча.
+    """
+    days, skipped = defaultdict(list), 0
     with open(path, encoding='utf-8-sig', newline='') as handle:
         for row in csv.DictReader(handle, delimiter=';'):
-            day = (row.get('date') or '').strip()
-            hh, mm, ss = row['time'].strip().split(':')
-            t = int(hh) * 3600 + int(mm) * 60 + int(ss)
-            if day:
-                t += datetime.strptime(day, '%Y-%m-%d').toordinal() * 86400
-            days[(int(row['unit_id']), day)].append(
-                (t, float(row['lon']), float(row['lat']), float(row['speed'])))
-    return {key: sorted(track) for key, track in days.items()}
+            try:
+                day = (row.get('date') or '').strip()
+                hh, mm, ss = row['time'].strip().split(':')
+                t = int(hh) * 3600 + int(mm) * 60 + int(ss)
+                if day:
+                    t += datetime.strptime(day, '%Y-%m-%d').toordinal() * 86400
+                point = (t, float(row['lon']), float(row['lat']),
+                         float(row['speed']))
+                unit = int(row['unit_id'])
+            except (KeyError, TypeError, ValueError):
+                skipped += 1
+                continue
+            days[(unit, day)].append(point)
+    return {key: sorted(track) for key, track in days.items()}, skipped
 
 
 def sites_key(sites):
@@ -566,8 +579,10 @@ def main(argv=None):
         zone_names = {zone_id: name for zone_id, (name, _polygon) in loaded.items()}
         rows = []
         for path in args.tracks:
-            rows += compare_set(os.path.basename(path), load_csv_days(path),
-                                zones, zone_names)
+            days, skipped = load_csv_days(path)
+            print('%s: unreadable rows skipped %d'
+                  % (console(os.path.basename(path)), skipped))
+            rows += compare_set(os.path.basename(path), days, zones, zone_names)
         verdict = report_sets(rows, zone_names)
         print('nothing was written: the tracks and zones were only read')
         return verdict_code([verdict])
