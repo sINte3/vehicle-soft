@@ -150,6 +150,7 @@ class GpsReleaseRunbook(unittest.TestCase):
             '{ Restart-Service -Name $name }',
             "($site + '/login')",
             "($site + '/wialon/mapping')",
+            "($site + '/drones/fields')",
         ]
         positions = [body.index(mark) for mark in marks]
         self.assertEqual(positions, sorted(positions))
@@ -299,6 +300,20 @@ class GpsReleaseRunbook(unittest.TestCase):
         # Аноним получает страницу входа -- её и ждёт проверка после пуска.
         self.assertIn('@admin_required', source[route:route + 200])
         self.assertIn("-notmatch 'vs-login-form'", release_block('Шаг 3'))
+        # /drones/fields (PR #160): тот же ответ анониму -- module_required
+        # обёрнут в login_required. На прежней версии адреса нет вовсе (404),
+        # поэтому эта проверка ещё и отличает новую версию от старой.
+        with open(os.path.join(REPO_ROOT, 'drones.py'), encoding='utf-8') as fh:
+            source = fh.read()
+        self.assertIn("Blueprint('drones', __name__, url_prefix='/drones')", source)
+        route = source.index("@drones_bp.route('/fields')\n")
+        self.assertIn("@module_required('drones')", source[route:route + 80])
+        with open(os.path.join(REPO_ROOT, 'models.py'), encoding='utf-8') as fh:
+            source = fh.read()
+        guard = source[source.index('def module_required('):]
+        self.assertIn('@login_required', guard[:guard.index('return decorator')])
+        block = release_block('Шаг 3')
+        self.assertIn("($fieldsBody -notmatch 'vs-login-form')", block)
 
     def test_the_lines_the_owner_waits_for_are_what_the_tool_prints(self):
         with open(os.path.join(REPO_ROOT, 'tools', 'gps_link_mappings.py'),
@@ -405,7 +420,8 @@ class GpsReleaseBlocksInPowerShell(unittest.TestCase):
             'BackupKind': 'ok', 'MigrateFirst': 'done',
             'MigrateSecond': 'again',
             'Web': {'/login': {'Status': 200, 'Body': LOGIN_BODY},
-                    '/wialon/mapping': {'Status': 200, 'Body': LOGIN_BODY}},
+                    '/wialon/mapping': {'Status': 200, 'Body': LOGIN_BODY},
+                    '/drones/fields': {'Status': 200, 'Body': LOGIN_BODY}},
             'ErrorLogAfterStart': None,
             'Outputs': self.outputs(),
         }
@@ -488,7 +504,8 @@ class GpsReleaseBlocksInPowerShell(unittest.TestCase):
         self.assertInOrder(calls, 'git fetch', 'python tools\\check_migration_drift',
                            'Stop-Service', 'python tools\\check_db_lock', 'backup',
                            'git merge --ff-only ' + RELEASE_HASH,
-                           'Restart-Service', 'GET /login', 'GET /wialon/mapping')
+                           'Restart-Service', 'GET /login', 'GET /wialon/mapping',
+                           'GET /drones/fields')
         self.assertFalse([c for c in calls if c.startswith('python migrate')])
         self.assertEqual(len([c for c in calls if 'check_migration_drift' in c]), 2)
         self.assertEqual(len([c for c in calls if 'check_db_lock' in c]), 1)
@@ -496,6 +513,7 @@ class GpsReleaseBlocksInPowerShell(unittest.TestCase):
         self.assertRegex(output, r'MIGRATIONS REGISTERED: (\d+) -> \1, unchanged')
         self.assertIn('BACKUP: ', output)
         self.assertIn('SMOKE /wialon/mapping: asks to log in', output)
+        self.assertIn('SMOKE /drones/fields: asks to log in', output)
         self.assertIn('NEW TRACEBACKS IN logs\\error.log: 0', output)
         self.assertIn('PROGRAM VERSION NOW: %s' % RELEASE_HASH[:7], output)
         self.assertIn('RESULT: RELEASE PASSED', transcript)
@@ -577,9 +595,23 @@ class GpsReleaseBlocksInPowerShell(unittest.TestCase):
         self.assertIn('the login page did not open', result)
         self.assertBackUp(calls)
         web = {'/login': {'Status': 200, 'Body': LOGIN_BODY},
-               '/wialon/mapping': {'Status': 404, 'Body': 'Not Found'}}
-        result, _calls, _output, _ = self.run_block('Шаг 3', self.scenario(Web=web))
+               '/wialon/mapping': {'Status': 404, 'Body': 'Not Found'},
+               '/drones/fields': {'Status': 200, 'Body': LOGIN_BODY}}
+        result, calls, _output, _ = self.run_block('Шаг 3', self.scenario(Web=web))
         self.assertIn('/wialon/mapping answered', result)
+        self.assertNotIn('GET /drones/fields', calls)
+
+    def test_the_old_code_still_running_is_a_stop(self):
+        # Службы поднялись, но на прежней версии: /drones/fields там нет (404),
+        # а /login и /wialon/mapping отвечают как обычно.
+        web = {'/login': {'Status': 200, 'Body': LOGIN_BODY},
+               '/wialon/mapping': {'Status': 200, 'Body': LOGIN_BODY},
+               '/drones/fields': {'Status': 404, 'Body': 'Not Found'}}
+        result, calls, output, _ = self.run_block('Шаг 3', self.scenario(Web=web))
+        self.assertIn('/drones/fields answered', result)
+        self.assertIn('SMOKE /wialon/mapping: asks to log in', output)
+        self.assertNotIn('SMOKE /drones/fields', output)
+        self.assertInOrder(calls, 'Restart-Service', 'GET /login', 'GET /drones/fields')
 
     def test_new_tracebacks_after_the_start_are_a_warning(self):
         result, _calls, output, _ = self.run_block('Шаг 3', self.scenario(
