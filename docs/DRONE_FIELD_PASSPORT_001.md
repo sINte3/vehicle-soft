@@ -307,69 +307,493 @@ YYYY-MM-DDTHH:MM` (для воспроизводимости). К DJI не об�
   карточки.
 * **Пункт «Отчёты» в меню модуля на страницах полей не подсвечен** — общее
   меню не трогалось намеренно.
+* **Зонд UAT меряет время на сервере, без сети.** Время страниц у зонда —
+  рендер тестовым клиентом на копии; сеть и браузер в него не входят. Время
+  «как у человека» — пункт 8 просмотра в браузере (§14.5).
 
 Открытых вопросов о бизнес-правилах у инкремента нет: состояния и членство —
 из задания владельца, площадь — из провайдера.
 
-## 14. UAT для владельца (площадка, после мержа)
+## 14. UAT на площадке до мержа (владелец, SRV-YOQSH)
 
-Площадка занимается по `docs/STAGING.md` (одна строка), база — свежая копия
-production. Номера вылетов и полей не выдуманы: каждый берётся с экрана по
-описанному пути.
+Живой UAT идёт **до мержа** PR #160, на точном коде
+`e7e97f1f3193eb7e5081478d2024b19267378d37` и свежей копии production
+(SQLite online backup). Production только читается, миграций нет. Порядок
+блоков, их проверки и возврат площадки повторяют выкладку GPS 30.09.2026
+(`docs/GPS_ROLLOUT_RUNBOOK.md` §12).
 
-### 14.1 Перепись (на копии базы площадки)
+Номера полей и вылетов для проверки выдумывать не нужно. Их выбирает
+запросами по живой копии зонд `tools/dji_field_passport_uat.py`. Он идёт в
+ветке после `e7e97f1`, кода приложения не меняет; блок выкладки это
+проверяет.
 
-```powershell
-cd C:\transport-report-staging
-New-Item -ItemType Directory -Force C:\VehicleSoft_Field_Census | Out-Null
-& "C:\Program Files\Python314\python.exe" tools\dji_field_census.py --db instance\transport.db --from 2026-09-01 --to 2026-09-30 --json C:\VehicleSoft_Field_Census\census_2026_09.json
-& "C:\Program Files\Python314\python.exe" tools\dji_field_census.py --db instance\transport.db --from 2026-08-01 --to 2026-08-31 --json C:\VehicleSoft_Field_Census\census_2026_08.json
-$From30 = (Get-Date).AddDays(-29).ToString('yyyy-MM-dd')
-$To30 = (Get-Date).ToString('yyyy-MM-dd')
-& "C:\Program Files\Python314\python.exe" tools\dji_field_census.py --db instance\transport.db --from $From30 --to $To30 --json C:\VehicleSoft_Field_Census\census_last30.json
+**Порядок:**
+
+0. Смержить PR #161: строка `docs/STAGING.md` «занято: Дроны».
+1. Остановить ботов площадки (14.1).
+2. Выкладка и копия production (14.2).
+3. Перепись (14.3).
+4. Зонд (14.4).
+5. Просмотр в браузере (14.5).
+6. «Вернуть площадку» (14.6).
+7. Вернуть ботов (14.7).
+8. Освободить строку `docs/STAGING.md`. Это отдельный docs-only PR, его готовит
+   сессия после отчёта.
+
+Все блоки — PowerShell от администратора. Каждый останавливается на первой
+неудаче. `STEP=PASS` последней строкой выводится только тогда, когда прошли
+все шаги. Прислать надо весь вывод каждого блока.
+
+### 14.1 Остановить ботов площадки
+
+Сначала записать, как они стоят сейчас: в 14.7 их нужно вернуть ровно так.
+
+```
+Get-Service -Name TransportBot003Staging, TransportBotStaging | Format-Table Name, Status, StartType -AutoSize
 ```
 
-Что записать: код возврата 0; `flights total`; `CONFIRMED`; `NO_CARD` и
-`NO_KEY`; `md5 shared by >1 record`; `local days with a snapshot ... of 30`.
-Сумма строк состояний (`CONFIRMED` + `PROBABLE` + `CANDIDATE` + `AMBIGUOUS`
-+ `UNRESOLVED` + `NOT_RESOLVED`) = `flights total`.
+```
+Set-Service -Name TransportBot003Staging -StartupType Manual
+```
 
-### 14.2 Поля (не меньше трёх)
+```
+Set-Service -Name TransportBotStaging -StartupType Manual
+```
 
-`/drones/fields` → период 01.09.2026–30.09.2026 → флажок «только с вылетами».
+```
+Stop-Service -Name TransportBot003Staging -Force
+```
 
-| Что взять | Как найти | Что проверить |
-|---|---|---|
-| поле с `EXACT` | первая строка списка (сортировка по числу подтверждённых); в карточке у вылета бейдж «Подтверждено, граница сохранена» | итог карточки = сумма строк таблицы «Подтверждённые работы» по RAW / исключено / принято; у каждой версии границы — число вылетов |
-| поле с `IDENTIFIED` | в списке поле, у которого в карточке у вылета бейдж «Подтверждено; историческая граница не сохранена» или «…граница получена после расчёта привязки» (если такого нет — записать «нет в периоде») | в паспорте этого вылета «историческая граница не сохранена» — и тогда в строке границы бейдж «историческая граница не сохранена»; либо «получена после расчёта привязки» — и тогда бейдж «сохранена и сверена» и «нужен пересчёт привязки». «Не сохранена» рядом с «сохранена» не стоит никогда |
-| поле с предположительными/проблемными | строка списка с ненулевым «предположительно» | таблица «Предположительные / требуют проверки» отдельна, её RAW в итог поля не входит |
-| общая граница | в «Версиях границы» поля указана «та же граница у другой записи DJI» (если есть) | вылет учтён только в одной записи: в другой он — в таблице «Вылеты на тех же границах, привязанные к другим записям DJI», без гектаров; в этой таблице у каждой строки есть запись, к которой вылет привязан |
+```
+Stop-Service -Name TransportBotStaging -Force
+```
 
-### 14.3 Вылеты (не меньше пяти)
+```
+Get-Service -Name TransportBot003Staging, TransportBotStaging | Format-Table Name, Status, StartType -AutoSize
+```
 
-| Случай | Как найти | Что проверить в паспорте |
-|---|---|---|
-| обычный | любой вылет из «Подтверждённых работ» поля 14.2 | принято = RAW, статус «принято»; поле и md5 названы; происхождение — хэши и время |
-| скорректирован/исключён | вкладка «Решённые» или автофантом на «Контроле площади DJI» (например, `701661028` из UAT PR #152) | принято и исключено = как на экране решения; статус «скорректировано» |
-| REVIEW | вкладка «Требует проверки» экрана контроля | принято = RAW, статус «требует решения», «открытая запись» |
-| точная историческая граница | вылет с «граница сохранена» из поля, у которого больше одной версии границы | md5 в паспорте = md5 той версии, в период которой попал вылет, а не обязательно последней |
-| без поля / без карточки / без расчёта | любой вылет до 01.03.2026 из «Вылетов дронов» (нет расчёта), либо вылет из переписи с `NO_CARD` | паспорт открылся; «не рассчитано», RAW виден; причина привязки названа словами |
+Ожидается: у обеих служб `Stopped` и `Manual`. Причина та же, что у GPS:
+запущенный бот площадки на копии боевой базы разослал бы настоящим людям то,
+что лежит в боевой очереди уведомлений.
 
-### 14.4 Сверка и прочее
+### 14.2 Выложить (около 10 минут: три копии баз и тесты)
 
-* Принятая вылета в паспорте = принятая на странице решения и в «Вылетах
-  дронов» (тот же провайдер).
-* Итог поля не больше суммы его подтверждённых вылетов; вылет из таблицы
-  «на тех же границах» не входит в итог этой записи.
-* Переключить язык на узбекский — все три экрана на кириллице; латиница —
-  только названия продуктов (DJI, Area Control), обозначения (RAW, md5,
-  SHA-256, UUID, UTC) и коды (метод резолвера, версия алгоритма).
-* Время открытия `/drones/fields` за всё время и карточки самого большого
-  поля — записать (ожидание по синтетике — доли секунды).
-* Просмотр исходного кода страницы паспорта: нет координат, ссылок с
-  подписью, путей `C:\`, слов `points_json`, `body`.
+Что делает блок:
 
-После UAT площадка возвращается в исходное состояние по `docs/STAGING.md`.
+* **До изменения площадки:**
+  * записывает её состояние;
+  * снимает факты production только чтением: HEAD, службы, размер базы;
+  * делает две online-копии — базы площадки и production — с
+    `integrity_check`;
+  * кладёт рядом зонд и третью, выбрасываемую копию для страниц.
+* **Потом:**
+  * переключает код на `e7e97f1`;
+  * прогоняет тесты на копии;
+  * подменяет базу площадки копией production;
+  * запускает только сайт.
+* **В конце:** сверяет, что production не изменился.
+
+```powershell
+& {
+  $ErrorActionPreference = 'Stop'
+  $expectedHost = 'srv-yoqsh'
+  $root         = 'C:\transport-report-staging'
+  $prodRoot     = 'C:\transport-report'
+  $service      = 'TransportReportStaging'
+  $python       = 'C:\Program Files\Python314\python.exe'
+  $branch       = 'claude/practical-davinci-chb4r7'
+  $sha          = 'e7e97f1f3193eb7e5081478d2024b19267378d37'
+  $runRoot      = 'D:\transport-report-backups\staging\field_passport_uat'
+  $backupDir    = Join-Path $runRoot (Get-Date -Format 'yyyyMMdd_HHmmss')
+
+  $open = @(Get-ChildItem $runRoot -Directory -ErrorAction SilentlyContinue | Where-Object { -not (Test-Path (Join-Path $_.FullName 'returned.txt')) })
+  if ($open.Count -gt 0) { throw "STEP FAILED: run $($open[0].Name) was not returned -- run the block 'Vernut ploshchadku' first" }
+  if ((hostname) -ne $expectedHost) { throw "STEP FAILED: host is $(hostname), expected $expectedHost" }
+  if ($root -notlike '*transport-report-staging*') { throw "STEP FAILED: refusing a root that is not the staging checkout" }
+  if (-not (Test-Path "$root\instance\transport.db")) { throw "STEP FAILED: staging database not found under $root" }
+  if (-not (Test-Path "$prodRoot\instance\transport.db")) { throw "STEP FAILED: production database not found under $prodRoot" }
+  $svc = Get-Service -Name $service
+  if ($svc.Name -eq 'TransportReport') { throw "STEP FAILED: that is the production service" }
+  $others = @(Get-Service | Where-Object { $_.Name -like '*Staging*' -and $_.Name -ne $service })
+  foreach ($o in $others) { Write-Output ("OTHER_STAGING_SERVICE=" + $o.Name + " " + $o.Status + " " + $o.StartType) }
+  $running = @($others | Where-Object { $_.Status -ne 'Stopped' })
+  if ($running.Count -gt 0) { throw "STEP FAILED: stop these staging services first, they would read the production copy: $(($running | ForEach-Object { $_.Name }) -join ', ')" }
+  Write-Output ("SERVICE_BEFORE=" + $svc.Status)
+  try { $pre = Invoke-WebRequest -Uri 'http://10.103.25.14:5051/login' -UseBasicParsing -TimeoutSec 30; Write-Output ("STAGING_LOGIN_BEFORE=" + $pre.StatusCode) } catch { Write-Output ("STAGING_LOGIN_BEFORE=ERROR " + $_.Exception.Message) }
+
+  $prodHead = (git -C $prodRoot rev-parse HEAD)
+  $prodServices = (@(Get-Service | Where-Object { $_.Name -like 'Transport*' -and $_.Name -notlike '*Staging*' } | Sort-Object Name | ForEach-Object { $_.Name + '=' + $_.Status }) -join ' ')
+  Write-Output ("PROD_HEAD=" + $prodHead)
+  Write-Output ("PROD_SERVICES=" + $prodServices)
+  Write-Output ("PROD_DB_BYTES=" + (Get-Item "$prodRoot\instance\transport.db").Length)
+
+  Set-Location $root
+  $before = (git rev-parse HEAD)
+  Write-Output ("BEFORE_HEAD=" + $before)
+  Write-Output ("STAGING_DB=" + "$root\instance\transport.db" + " BYTES=" + (Get-Item "$root\instance\transport.db").Length)
+  $changed = @(git status --porcelain --untracked-files=no)
+  if ($changed.Count -gt 0) { throw "STEP FAILED: $($changed.Count) tracked file(s) changed in the staging checkout -- send the output of git status" }
+  git fetch origin
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: git fetch" }
+  git merge-base --is-ancestor $before origin/main
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: staging runs $before, which is not in main (on: $((git branch -r --contains $before) -join ', ')) -- someone may still use staging; send this line" }
+  $row = (git show origin/main:docs/STAGING.md) -join ' '
+  if ($row -notmatch 'DRONE-FIELD-PASSPORT-001') { throw "STEP FAILED: docs/STAGING.md on main does not show this UAT -- merge PR #161 first" }
+  Write-Output "STAGING_ROW=occupied by DRONE-FIELD-PASSPORT-001 on origin/main"
+  git cat-file -e "$sha^{commit}"
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: commit $sha not found after fetch" }
+  git merge-base --is-ancestor $sha "origin/$branch"
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: $sha is not on origin/$branch" }
+  $later = @(git diff --name-only $sha "origin/$branch")
+  $appFiles = @($later | Where-Object { $_ -notmatch '^(docs/|tests/|tools/dji_field_passport_uat\.py$)' })
+  if ($appFiles.Count -gt 0) { throw "STEP FAILED: after $sha the branch changes application files: $($appFiles -join ', ')" }
+  Write-Output ("KIT_FILES_AFTER_SHA=" + ($later -join ', '))
+
+  $prodBytes = (Get-Item "$prodRoot\instance\transport.db").Length
+  $stagingBytes = (Get-Item "$root\instance\transport.db").Length
+  $freeC = (Get-PSDrive -Name C).Free
+  $freeD = (Get-PSDrive -Name D).Free
+  Write-Output ("SIZES_MB prod=" + [math]::Round($prodBytes / 1MB) + " staging=" + [math]::Round($stagingBytes / 1MB) + " freeC=" + [math]::Round($freeC / 1MB) + " freeD=" + [math]::Round($freeD / 1MB))
+  if ($freeD -lt 1.2 * ($stagingBytes + 2 * $prodBytes)) { throw "STEP FAILED: not enough free space on D:" }
+  if ($freeC -lt 1.2 * $prodBytes) { throw "STEP FAILED: not enough free space on C:" }
+
+  New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
+  Set-Content -Path "$backupDir\before_head.txt" -Value $before -Encoding ASCII
+  Set-Content -Path "$backupDir\prod_head.txt" -Value $prodHead -Encoding ASCII
+  Set-Content -Path "$backupDir\prod_services.txt" -Value $prodServices -Encoding ASCII
+  foreach ($c in @(@{ Name = 'staging_before'; Source = "$root\instance\transport.db" }, @{ Name = 'prod_copy'; Source = "$prodRoot\instance\transport.db" })) {
+    $dir = Join-Path $backupDir $c.Name
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $out = & $python backup_transport_db.py --source $c.Source --dest-dir $dir --suffix $c.Name | Out-String
+    if (($LASTEXITCODE -ne 0) -or ($out -notmatch 'Integrity check : ok')) { throw "STEP FAILED: copy of $($c.Source)" }
+    $file = Get-ChildItem $dir -Filter '*.db' | Select-Object -First 1
+    Write-Output ("COPY " + $c.Name + " = " + $file.FullName + " BYTES=" + $file.Length + " integrity=ok")
+  }
+
+  $probeDir = Join-Path $backupDir 'probe'
+  New-Item -ItemType Directory -Force -Path $probeDir | Out-Null
+  $probe = Join-Path $probeDir 'dji_field_passport_uat.py'
+  git show "origin/${branch}:tools/dji_field_passport_uat.py" | Set-Content -Path $probe -Encoding ASCII
+  & $python -m py_compile $probe
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: the probe did not compile after extraction" }
+  $prodCopy = Get-ChildItem (Join-Path $backupDir 'prod_copy') -Filter '*.db' | Select-Object -First 1
+  Copy-Item $prodCopy.FullName (Join-Path $probeDir 'page_copy.db')
+  Write-Output ("PROBE=" + $probe)
+
+  git checkout --detach $sha
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: git checkout" }
+  Write-Output ("AFTER_HEAD=" + (git rev-parse HEAD))
+  & $python -m compileall -q .
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: compileall" }
+  & $python -m unittest tests.test_drone_field_passport_core tests.test_drone_field_passport_001 tests.test_dji_area_accepted_core
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: field passport and accepted area tests" }
+
+  Stop-Service -Name $service -Force
+  (Get-Service -Name $service).WaitForStatus('Stopped', (New-TimeSpan -Seconds 90))
+  Write-Output ("SERVICE_STOPPED=" + (Get-Service -Name $service).Status)
+  & $python tools\check_db_lock.py --db "$root\instance\transport.db"
+  $lock = $LASTEXITCODE
+  if ($lock -eq 2) { throw "STEP FAILED: another process holds the staging database (exit 2)" }
+  Write-Output ("DB_LOCK_EXIT=$lock (0 clean, 3 stale WAL -- both fine: the file is replaced)")
+  Set-Content -Path "$backupDir\swapped.txt" -Value 'staging database replaced by the production copy' -Encoding ASCII
+  foreach ($side in @("$root\instance\transport.db-wal", "$root\instance\transport.db-shm")) { if (Test-Path $side) { Remove-Item $side -Force } }
+  Copy-Item $prodCopy.FullName "$root\instance\transport.db" -Force
+  Write-Output ("PLACED " + "$root\instance\transport.db")
+  Write-Output "MIGRATIONS=none (PR #160 has no migration)"
+  $ErrorActionPreference = 'Continue'
+  & $python tools\check_migration_drift.py --db "$root\instance\transport.db" > "$backupDir\drift.log" 2>&1
+  $driftExit = $LASTEXITCODE
+  $ErrorActionPreference = 'Stop'
+  Write-Output ("DRIFT_EXIT=$driftExit (report only, drift.log in the run folder)")
+
+  Start-Service -Name $service
+  (Get-Service -Name $service).WaitForStatus('Running', (New-TimeSpan -Seconds 90))
+  Start-Sleep -Seconds 8
+  $login = Invoke-WebRequest -Uri 'http://10.103.25.14:5051/login' -UseBasicParsing -TimeoutSec 30
+  if ($login.StatusCode -ne 200) { throw "STEP FAILED: smoke /login returned $($login.StatusCode)" }
+  if ($login.Content -notmatch 'vs-login-form') { throw "STEP FAILED: smoke /login did not render the login form" }
+  Write-Output "SMOKE_LOGIN=200"
+  $fields = Invoke-WebRequest -Uri 'http://10.103.25.14:5051/drones/fields' -UseBasicParsing -TimeoutSec 30
+  if ($fields.Content -notmatch 'vs-login-form') { throw "STEP FAILED: /drones/fields without a session did not lead to the login form" }
+  Write-Output "FIELDS_ANONYMOUS=login form (route exists, sign-in required)"
+
+  $prodHeadAfter = (git -C $prodRoot rev-parse HEAD)
+  $prodServicesAfter = (@(Get-Service | Where-Object { $_.Name -like 'Transport*' -and $_.Name -notlike '*Staging*' } | Sort-Object Name | ForEach-Object { $_.Name + '=' + $_.Status }) -join ' ')
+  Write-Output ("PROD_HEAD_AFTER=" + $prodHeadAfter)
+  Write-Output ("PROD_SERVICES_AFTER=" + $prodServicesAfter)
+  if (($prodHeadAfter -ne $prodHead) -or ($prodServicesAfter -ne $prodServices)) { throw "STEP FAILED: production head or services changed during the block -- send this output" }
+  Write-Output ("FINAL_HEAD=" + (git rev-parse HEAD))
+  Write-Output ("SERVICE_FINAL=" + (Get-Service -Name $service).Status)
+  Write-Output ("RUN=" + $backupDir)
+  Write-Output "STEP=PASS"
+}
+```
+
+Ключевые строки ответа:
+
+* до изменений: `STAGING_LOGIN_BEFORE`, `BEFORE_HEAD`, `STAGING_DB`,
+  `PROD_HEAD`, `PROD_SERVICES`, `PROD_DB_BYTES`;
+* проверки: `STAGING_ROW`, `KIT_FILES_AFTER_SHA`, две строки
+  `COPY … integrity=ok`, `AFTER_HEAD`, `DB_LOCK_EXIT`, `DRIFT_EXIT`;
+* итог: `SMOKE_LOGIN=200`, `FIELDS_ANONYMOUS`, `PROD_HEAD_AFTER`,
+  `PROD_SERVICES_AFTER`, `RUN`, `STEP=PASS`.
+
+`integrity_check` production в отчёте — по его online-копии: это
+согласованный снимок той же базы. По живой базе production блок проверку не
+гоняет.
+
+**Если блок остановился.** До строки `SERVICE_STOPPED` база площадки не
+менялась (после `AFTER_HEAD` переключена только ревизия кода). После неё
+служба остаётся остановленной намеренно. В обоих случаях прислать вывод и
+выполнить 14.6.
+
+### 14.3 Перепись: сентябрь, август, последние 30 полных суток
+
+Только чтение (`mode=ro`) базы площадки, то есть копии production. Вывод и
+JSON ложатся в папку прогона, `census\`.
+
+```powershell
+& {
+  $ErrorActionPreference = 'Stop'
+  $root    = 'C:\transport-report-staging'
+  $python  = 'C:\Program Files\Python314\python.exe'
+  $sha     = 'e7e97f1f3193eb7e5081478d2024b19267378d37'
+  $runRoot = 'D:\transport-report-backups\staging\field_passport_uat'
+  $open = @(Get-ChildItem $runRoot -Directory | Where-Object { -not (Test-Path (Join-Path $_.FullName 'returned.txt')) } | Sort-Object Name)
+  if ($open.Count -ne 1) { throw "STEP FAILED: expected exactly one open run under $runRoot, found $($open.Count)" }
+  if (-not (Test-Path (Join-Path $open[0].FullName 'swapped.txt'))) { throw "STEP FAILED: the open run has not placed the production copy -- run 14.2 first" }
+  Set-Location $root
+  if ((git rev-parse HEAD) -ne $sha) { throw "STEP FAILED: staging is not on $sha" }
+  $out = Join-Path $open[0].FullName 'census'
+  New-Item -ItemType Directory -Force -Path $out | Out-Null
+  $to30 = (Get-Date).Date.AddDays(-1)
+  $from30 = $to30.AddDays(-29)
+  $periods = @(
+    @{ Name = '2026_09'; From = '2026-09-01'; To = '2026-09-30' },
+    @{ Name = '2026_08'; From = '2026-08-01'; To = '2026-08-31' },
+    @{ Name = 'last30'; From = $from30.ToString('yyyy-MM-dd'); To = $to30.ToString('yyyy-MM-dd') }
+  )
+  foreach ($p in $periods) {
+    $json = Join-Path $out ('census_' + $p.Name + '.json')
+    $started = Get-Date
+    $text = & $python tools\dji_field_census.py --db "$root\instance\transport.db" --from $p.From --to $p.To --json $json | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: census $($p.Name) exit $LASTEXITCODE" }
+    $seconds = [math]::Round(((Get-Date) - $started).TotalSeconds, 1)
+    Set-Content -Path (Join-Path $out ('census_' + $p.Name + '.txt')) -Value $text -Encoding ASCII
+    Write-Output $text
+    Write-Output ("CENSUS_SECONDS " + $p.Name + "=" + $seconds)
+  }
+  Write-Output ("CENSUS_DIR=" + $out)
+  Write-Output "STEP=PASS"
+}
+```
+
+### 14.4 Зонд: случаи, сверка итогов, двойной счёт, история, страницы, время
+
+Часть данных зонд выполняет только чтением базы площадки. Страницы он рисует
+тестовым клиентом на `page_copy.db`, выбрасываемой копии в папке прогона.
+Импорт приложения пишет в эту копию (WAL, язык админа), поэтому в папке
+`transport-report*` зонд работать отказывается.
+
+Код выхода зонда: `0` — все ворота прошли; `4` — упали ворота-блокеры
+(строки `GATE … FAIL BLOCKER`). Оба исхода — ответ: блок падает только на
+неожиданном коде.
+
+```powershell
+& {
+  $ErrorActionPreference = 'Stop'
+  $root    = 'C:\transport-report-staging'
+  $python  = 'C:\Program Files\Python314\python.exe'
+  $sha     = 'e7e97f1f3193eb7e5081478d2024b19267378d37'
+  $runRoot = 'D:\transport-report-backups\staging\field_passport_uat'
+  $open = @(Get-ChildItem $runRoot -Directory | Where-Object { -not (Test-Path (Join-Path $_.FullName 'returned.txt')) } | Sort-Object Name)
+  if ($open.Count -ne 1) { throw "STEP FAILED: expected exactly one open run under $runRoot, found $($open.Count)" }
+  if (-not (Test-Path (Join-Path $open[0].FullName 'swapped.txt'))) { throw "STEP FAILED: the open run has not placed the production copy -- run 14.2 first" }
+  Set-Location $root
+  if ((git rev-parse HEAD) -ne $sha) { throw "STEP FAILED: staging is not on $sha" }
+  $probeDir = Join-Path $open[0].FullName 'probe'
+  $probe = Join-Path $probeDir 'dji_field_passport_uat.py'
+  $pageCopy = Join-Path $probeDir 'page_copy.db'
+  if (-not (Test-Path $probe)) { throw "STEP FAILED: probe not found at $probe" }
+  $ErrorActionPreference = 'Continue'
+  & $python $probe --db "$root\instance\transport.db" --out-dir $probeDir --page-copy $pageCopy 2> (Join-Path $probeDir 'probe_stderr.log')
+  $code = $LASTEXITCODE
+  $ErrorActionPreference = 'Stop'
+  Write-Output ("PROBE_EXIT=$code (0 all gates passed, 4 a blocker gate failed)")
+  Write-Output ("PROBE_DIR=" + $probeDir)
+  if (($code -ne 0) -and ($code -ne 4)) { throw "STEP FAILED: probe exit $code -- send $probeDir\probe_stderr.log" }
+  Write-Output "STEP=PASS"
+}
+```
+
+Прислать весь вывод (строки `DATA`, `CASE`, `GATE`, `CARD`, `LIST`,
+`TIME`, `PAGE`, `RESULT`). Файл `probe\uat_report.json` — по возможности
+тоже: в нём названия полей и числа по каждой странице.
+
+### 14.5 Просмотр в браузере (владелец)
+
+`http://10.103.25.14:5051` — войти своей обычной боевой учётной записью: база
+площадки — копия боевой. Номера взять из строк `CASE` зонда.
+
+1. «Дроны» → «Отчёты» → «Поля DJI и паспорт работ». Список открылся. Период
+   01.09.2026–30.09.2026, флажок «только с вылетами».
+2. Поиск по UUID из `CASE exact_field` → одна строка. Поиск по части
+   названия этого поля → поле в списке. Затем то же название буквами другого
+   регистра: если поле не нашлось — это известное ограничение (кириллица
+   ищется с учётом регистра), записать и не чинить.
+3. Карточка этого поля: плитки «DJI RAW / Принято / Исключено» равны строке
+   `CARD A` зонда (до двух знаков), «Всего: N» = `confirmed` из `CARD A`.
+4. Паспорта вылетов из `CASE normal_flight`, `corrected_flight`,
+   `review_flight`, `no_calc_flight` (или `no_card_flight`),
+   `historical_bytes_flight` — адрес `/drones/flights/<номер>/passport`.
+   * Статус площади соответствует названию случая.
+   * У `no_calc_flight` в «Принято» — «не рассчитано», без числа.
+   * Разделы «Почему» и «Решения администратора» совпадают со страницей
+     решения («Площадь и решение»).
+5. Если есть `CASE awaiting_recalc_flight`: в паспорте «Подтверждено; граница
+   получена после расчёта привязки» и «нужен пересчёт привязки». Слов
+   «граница не сохранена» нет.
+6. Если есть `CASE shared_md5`:
+   * в карточке `land_b` вылет `flight` стоит только в таблице «Вылеты на тех
+     же границах, привязанные к другим записям DJI»;
+   * в «Подтверждённых работах» записи `land_b` этого вылета нет;
+   * в карточке `land_a` он есть.
+7. Профиль → язык «Ўзбекча» → те же список, карточка и паспорт: всё на
+   кириллице, страницы открываются. Вернуть язык, как было.
+8. Время: список за всё время, сентябрь, поиск по UUID, поиск по названию —
+   «быстро / секунда / дольше двух секунд».
+
+Прислать: по каждому пункту «да / нет / нет случая», время (пункт 8) и
+снимки экрана карточки (пункт 3) и паспорта `review_flight`.
+
+### 14.6 Вернуть площадку (после проверки или после остановки 14.2)
+
+Блок возвращает то, что заменил незакрытый прогон: базу площадки (если
+прогон дошёл до замены — метка `swapped.txt`) и ревизию кода. Потом
+проверяет `/login`, целостность возвращённой базы и то, что production не
+изменился. Прогон помечается `returned.txt`; пока метки нет, 14.2 второй раз
+не запустится.
+
+```powershell
+& {
+  $ErrorActionPreference = 'Stop'
+  $root     = 'C:\transport-report-staging'
+  $prodRoot = 'C:\transport-report'
+  $service  = 'TransportReportStaging'
+  $python   = 'C:\Program Files\Python314\python.exe'
+  $runRoot  = 'D:\transport-report-backups\staging\field_passport_uat'
+  $open = @(Get-ChildItem $runRoot -Directory -ErrorAction SilentlyContinue | Where-Object { -not (Test-Path (Join-Path $_.FullName 'returned.txt')) } | Sort-Object Name)
+  if ($open.Count -eq 0) { throw "STEP FAILED: no run to return under $runRoot" }
+  if ($open.Count -gt 1) { throw "STEP FAILED: $($open.Count) runs are open ($(($open | ForEach-Object { $_.Name }) -join ', ')) -- send this line" }
+  $run = $open[0]
+  Write-Output ("RUN=" + $run.Name)
+  if ((Get-Service -Name $service).Status -ne 'Stopped') {
+    Stop-Service -Name $service -Force
+    (Get-Service -Name $service).WaitForStatus('Stopped', (New-TimeSpan -Seconds 90))
+  }
+  Set-Location $root
+  if (Test-Path (Join-Path $run.FullName 'swapped.txt')) {
+    $backup = Get-ChildItem (Join-Path $run.FullName 'staging_before') -Filter '*.db' | Select-Object -First 1
+    if (-not $backup) { throw "STEP FAILED: the run replaced the database but has no staging backup -- send this line" }
+    foreach ($side in @("$root\instance\transport.db-wal", "$root\instance\transport.db-shm")) { if (Test-Path $side) { Remove-Item $side -Force } }
+    Copy-Item $backup.FullName "$root\instance\transport.db" -Force
+    Write-Output ("DATABASE_RETURNED=" + $backup.Name + " BYTES=" + (Get-Item "$root\instance\transport.db").Length)
+    $integrity = & $python -c "import sqlite3,sys;print(sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True).execute('PRAGMA integrity_check').fetchone()[0])" "$root\instance\transport.db"
+    if ($integrity -ne 'ok') { throw "STEP FAILED: returned database integrity_check said $integrity" }
+    Write-Output "RETURNED_DB_INTEGRITY=ok"
+  } else {
+    Write-Output "DATABASE_UNTOUCHED (the run stopped before the swap)"
+  }
+  $headFile = Join-Path $run.FullName 'before_head.txt'
+  if (Test-Path $headFile) {
+    $before = (Get-Content $headFile -TotalCount 1).Trim()
+    git checkout --detach $before
+    if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: git checkout $before" }
+  }
+  Start-Service -Name $service
+  (Get-Service -Name $service).WaitForStatus('Running', (New-TimeSpan -Seconds 90))
+  Start-Sleep -Seconds 8
+  $login = Invoke-WebRequest -Uri 'http://10.103.25.14:5051/login' -UseBasicParsing -TimeoutSec 30
+  if ($login.StatusCode -ne 200) { throw "STEP FAILED: /login returned $($login.StatusCode)" }
+  Write-Output "STAGING_LOGIN_AFTER=200"
+  $prodHeadFile = Join-Path $run.FullName 'prod_head.txt'
+  if (Test-Path $prodHeadFile) {
+    $prodBefore = (Get-Content $prodHeadFile -TotalCount 1).Trim()
+    $prodNow = (git -C $prodRoot rev-parse HEAD)
+    Write-Output ("PROD_HEAD_BEFORE=" + $prodBefore + " PROD_HEAD_NOW=" + $prodNow)
+    if ($prodNow -ne $prodBefore) { throw "STEP FAILED: production HEAD differs from the one recorded before the UAT -- send this line" }
+  }
+  Write-Output ("PROD_SERVICES_NOW=" + ((@(Get-Service | Where-Object { $_.Name -like 'Transport*' -and $_.Name -notlike '*Staging*' } | Sort-Object Name | ForEach-Object { $_.Name + '=' + $_.Status })) -join ' '))
+  Set-Content -Path (Join-Path $run.FullName 'returned.txt') -Value ((Get-Date -Format s) + ' ' + (git rev-parse HEAD)) -Encoding ASCII
+  Write-Output ("RESTORED_HEAD=" + (git rev-parse HEAD))
+  Write-Output "STEP=PASS"
+}
+```
+
+Прислать вывод. Ключевые строки:
+
+* `RUN`, `DATABASE_RETURNED`, `RETURNED_DB_INTEGRITY=ok`;
+* `RESTORED_HEAD` — должна совпасть с `BEFORE_HEAD` из 14.2;
+* `STAGING_LOGIN_AFTER=200`, `PROD_HEAD_BEFORE`/`PROD_HEAD_NOW`;
+* `STEP=PASS`.
+
+Копии на `D:` остаются; удалить их можно вручную, когда проверка закрыта.
+
+### 14.7 Вернуть ботов площадки
+
+Только после `STEP=PASS` блока 14.6: база площадки снова своя. Вернуть так,
+как было записано в 14.1. Если там стояли `Running` и `Automatic`:
+
+```
+Set-Service -Name TransportBot003Staging -StartupType Automatic
+```
+
+```
+Set-Service -Name TransportBotStaging -StartupType Automatic
+```
+
+```
+Start-Service -Name TransportBot003Staging
+```
+
+```
+Start-Service -Name TransportBotStaging
+```
+
+```
+Get-Service -Name TransportBot003Staging, TransportBotStaging | Format-Table Name, Status, StartType -AutoSize
+```
+
+### 14.8 Освободить площадку
+
+После 14.6 и 14.7 строка `docs/STAGING.md` возвращается в «нет». Это
+отдельный docs-only PR, его готовит сессия по присланным выводам.
+
+### 14.9 Ворота UAT
+
+**Блокеры** (любой → FAIL):
+
+* неверное членство (`*.membership`, `*.confirmed_tiers_only_T1_T2`);
+* двойной счёт (`integrity.no_flight_confirmed_in_two_records`,
+  `double_count.*`, `page.shared_B_x_not_in_confirmed`);
+* неверная принятая (`*.totals_equal_hand_sum_of_provider`,
+  `*.raw_equals_sql_sum`, `page.card_A_tiles_equal_provider`);
+* неверная текущая ревизия (`latest_revision.*`,
+  `page.header_is_latest_observed`);
+* переписанная история (`history.*`, `page.history_old_passport_*`);
+* «не рассчитано» показано как RAW (`page.no_calc_accepted_is_empty`);
+* утечка (`pages.no_leaks`);
+* права (`pages.anonymous_redirected`, `FIELDS_ANONYMOUS`);
+* страница 500 (`pages.all_200_and_lang`);
+* неприемлемое время.
+
+**Не блокеры:**
+
+* поиск по кириллице с учётом регистра;
+* MAX(id) в замороженном `current_polygons` (необязательный TIER4, в
+  штатном цикле выключен);
+* отсутствие редкого живого случая (строка `CASE … NOT FOUND`), когда его
+  инвариант держит синтетический отрицательный тест.
 
 ## 15. Откат
 
@@ -377,6 +801,25 @@ $To30 = (Get-Date).ToString('yyyy-MM-dd')
 Данных: нечего — инкремент ничего не пишет и схему не меняет.
 
 ## 16. Проверки
+
+* `tests/test_dji_field_passport_uat.py` — 14 проверок живого UAT-зонда
+  `tools/dji_field_passport_uat.py` и блоков §14:
+  * файл зонда — чистый ASCII, строки экранов в нём равны строкам шаблонов;
+  * на синтетике сценария ядра все ворота проходят и все классы случаев
+    находятся запросом, база не пишется;
+  * отрицательные контроли — подтекающее членство, MAX(id) вместо последней
+    наблюдавшейся ревизии и утечка на странице роняют прогон (код 4);
+  * отказы: нет базы — код 2, файл не создан; нет таблиц — 3; копия для
+    страниц в папке `transport-report*` или сама база — 1;
+  * страницы RU и UZ: 200, без утечек, плитки = провайдер;
+  * блоки §14: production никогда не цель записи, миграций нет, службы —
+    только площадочные, код площадки ровно `e7e97f1`, ASCII без
+    плейсхолдеров. Четыре мутации документа — запись в production,
+    миграция, рестарт боевой службы, другой SHA — роняют тесты.
+
+  Все 15 блоков §14 разобраны парсером PowerShell 7.4: ошибок 0. Windows
+  PowerShell 5.1 в контейнере сессии нет; блоки используют только
+  конструкции, которые уже шли на сервере в блоках GPS §12.
 
 * `tests/test_drone_field_passport_core.py` (stdlib, в CI) — 39 проверок
   (29 + 10 REVIEW-FIX-1):
