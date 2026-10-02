@@ -83,8 +83,8 @@
 
 ## Шаг 1. Влить запрос выпуска на GitHub
 
-Блоки этого ранбука проверены вместе с кодом выпуска и лежат в запросе
-выпуска. «Влить» — сделать его основной версией, чтобы сервер мог её
+Блоки этого ранбука проверены вместе с кодом выпуска и лежат в запросе PR
+#164. «Влить» — сделать его основной версией, чтобы сервер мог её
 забрать. Сам сервер на этом шаге не меняется.
 
 **Важно: до конца шага 4 не вливайте другие PR с кодом.** Выпуск проверен
@@ -92,7 +92,7 @@
 PR. Документы вливать можно. Если в `main` появится другой код, шаги 2 и 3
 остановятся сами и ничего не тронут — как 02.10 в 18:19 — тогда напишите мне.
 
-1. Откройте запрос выпуска — ссылка в сообщении сессии.
+1. Откройте https://github.com/sINte3/vehicle-soft/pull/164
 2. Внизу — зелёная кнопка. Если на ней не написано «Merge pull request»,
    нажмите стрелку рядом с ней и выберите **«Create a merge commit»** (не
    «Squash» и не «Rebase»).
@@ -127,7 +127,7 @@ $py        = 'C:\Program Files\Python314\python.exe'
 $backupBat = 'C:\transport-report\backup_production_db.bat'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $baseline  = '6ed931a5545cf4392b7a5672c0e0cea8a99b9bc3'
-$reviewed  = '6443af1a8bb995d872b9c72fb60b7875ae596601'
+$reviewed  = '51022b0f59a81f41e429fb1f6f79e007ddd385a5'
 $work      = 'C:\VehicleSoft_Release'
 $log       = 'C:\VehicleSoft_Release\release_v121_step2.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -196,7 +196,7 @@ try { Stop-Transcript | Out-Null } catch { }
 **Что должно получиться:** последняя строка перед `LOG FILE` —
 `RESULT: CHECK PASSED - go on to step 3`. Выше — три строки
 `SERVICE ... : Running`, строка `RELEASE: 6ed931a5... -> ...` и список
-влитых изменений: PR этого выпуска, `#162` (первая сборка выпуска), `#160`
+влитых изменений: `#164` (этот выпуск), `#162` (первая сборка), `#160`
 (экраны Дронов), `#163` и `#161` (занятие площадки Дронами), `#156`
 («Добавить») и `#159` (документы выпуска v1.20). Если в списке есть ещё PR —
 значит, они только с документами: чужой код после проверенной версии блок не
@@ -243,7 +243,7 @@ $errLog    = 'C:\transport-report\logs\error.log'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '6ed931a5545cf4392b7a5672c0e0cea8a99b9bc3'
-$reviewed  = '6443af1a8bb995d872b9c72fb60b7875ae596601'
+$reviewed  = '51022b0f59a81f41e429fb1f6f79e007ddd385a5'
 $work      = 'C:\VehicleSoft_Release'
 $log       = 'C:\VehicleSoft_Release\release_v121_step3.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -568,7 +568,7 @@ $prod      = 'C:\transport-report'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '6ed931a5545cf4392b7a5672c0e0cea8a99b9bc3'
-$reviewed  = '6443af1a8bb995d872b9c72fb60b7875ae596601'
+$reviewed  = '51022b0f59a81f41e429fb1f6f79e007ddd385a5'
 $work      = 'C:\VehicleSoft_Release'
 $log       = 'C:\VehicleSoft_Release\release_v121_rollback.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
