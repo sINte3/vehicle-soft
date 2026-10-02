@@ -95,7 +95,9 @@
     <tbody>
       {% for f in flights %}
       <tr>
-        <td style="white-space:nowrap;">{{ fmt_dt(f.started_at) }}</td>
+        {# DRONE-FIELD-PASSPORT-001: время вылета ведёт в его паспорт --
+           площадь, почему, поле, решения, происхождение. #}
+        <td style="white-space:nowrap;"><a href="{{ url_for('drones.flight_passport', dji_flight_id=f.dji_flight_id) }}">{{ fmt_dt(f.started_at) }}</a></td>
         <td style="font-weight:700;">{% if f.drone_unit %}№ {{ f.drone_unit.number }}{% else %}—{% endif %}</td>
         <td class="vs-muted">{{ f.nickname_raw or '—' }}</td>
         {% set a = area_by_flight[f.id] %}

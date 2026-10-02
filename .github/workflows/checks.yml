@@ -205,6 +205,17 @@ jobs:
       - name: DJI accepted area -- one source for every report (pure)
         run: python -m unittest tests.test_dji_area_accepted_core
 
+      # DRONE-FIELD-PASSPORT-001. A flight counts toward a DJI field record
+      # only through its CURRENT attribution's field_land_uuid and a confirmed
+      # state; a shared boundary md5 never doubles it, PROBABLE and TIER4
+      # never add hectares, «card not collected» stays apart from «no key»,
+      # and an August flight keeps its August boundary. Stdlib only, on the
+      # real migration DDL, with a negative control beside each invariant;
+      # the census tool's exit codes and read-only proof run here too. The
+      # three screens need the app and run in the full suite.
+      - name: DJI field passport -- membership, states, history, census (pure)
+        run: python -m unittest tests.test_drone_field_passport_core
+
       - name: DJI area evidence migration (four paths, DDL columns)
         run: python -m unittest tests.test_dji_area_migration_001
 

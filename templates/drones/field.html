@@ -1,0 +1,248 @@
+{% extends g.base_template %}
+{% from 'drones/_accepted.html' import acc_status, acc_flight_value, acc_block %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ ('Дроны — поле ' if is_ru else 'Дронлар — дала ') ~ name }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+{# DRONE-FIELD-PASSPORT-001. Карточка ЗАПИСИ поля каталога DJI (land uuid).
+   Итог DJI RAW -> исключено -> принято складывается ТОЛЬКО из вылетов,
+   текущая привязка которых несёт uuid этой записи и подтверждённое
+   состояние. Предположительные -- отдельной таблицей и отдельным итогом;
+   вылеты на той же границе, учтённые в другой записи, -- диагностикой без
+   гектаров. Площадь даёт dji_area.accepted -- та же, что в отчётах.
+   Координат на странице нет. #}
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Поле DJI' if is_ru else 'DJI даласи' }}: {{ name }}</div>
+    <div class="vs-hero-sub">{{ 'Запись каталога DJI' if is_ru else 'DJI каталоги ёзуви' }} {{ header.land_uuid }}{% if header.serial_number %} · {{ 'серийный №' if is_ru else 'серия №' }} {{ header.serial_number }}{% endif %}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('drones.fields', **link_args) }}" class="vs-btn">{{ 'Все поля' if is_ru else 'Барча далалар' }}</a>
+  </div>
+</div>
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-body">
+    <form method="get" action="{{ url_for('drones.field_card', land_uuid=header.land_uuid) }}" class="vs-form-row">
+      <div class="vs-field">
+        <label class="vs-label" for="fieldCardFrom">{{ 'Вылеты с' if is_ru else 'Парвозлар дан' }}</label>
+        <input type="date" name="date_from" id="fieldCardFrom" class="vs-input" value="{{ filters.date_from_s }}">
+      </div>
+      <div class="vs-field">
+        <label class="vs-label" for="fieldCardTo">{{ 'Вылеты по' if is_ru else 'Парвозлар гача' }}</label>
+        <input type="date" name="date_to" id="fieldCardTo" class="vs-input" value="{{ filters.date_to_s }}">
+      </div>
+      <div class="vs-field-action">
+        <button type="submit" class="vs-btn">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Запись поля DJI' if is_ru else 'DJI дала ёзуви' }}</span>
+    <span class="vs-muted">{{ 'по последней ревизии каталога' if is_ru else 'каталогнинг охирги ревизияси бўйича' }}</span>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table is-static">
+      <tbody>
+        <tr><th>{{ 'Название' if is_ru else 'Номи' }}</th><td>{{ header.name or '—' }}</td></tr>
+        <tr><th>{{ 'Серийный №' if is_ru else 'Серия №' }}</th><td>{{ header.serial_number or '—' }}</td></tr>
+        <tr><th>{{ 'UUID записи DJI' if is_ru else 'DJI ёзуви UUID' }}</th><td>{{ header.land_uuid }}</td></tr>
+        <tr><th>{{ 'Внешний идентификатор DJI' if is_ru else 'DJI ташқи идентификатори' }}</th><td>{% if header.external_ids %}{{ header.external_ids|join(', ') }}{% else %}—{% endif %}</td></tr>
+        <tr><th>{{ 'Адрес DJI' if is_ru else 'DJI манзили' }}</th><td>{{ header.address or '—' }}</td></tr>
+        <tr><th>{{ 'Площадь по каталогу DJI, га' if is_ru else 'DJI каталоги бўйича майдон, га' }}</th><td>{% if catalog_ha is not none %}{{ '%.2f'|format(catalog_ha)|vs_num }} {{ '(рабочая)' if is_ru else '(иш майдони)' }}{% else %}—{% endif %}{% if catalog_total_ha is not none %} · {{ '%.2f'|format(catalog_total_ha)|vs_num }} {{ '(общая)' if is_ru else '(умумий)' }}{% endif %} <span class="vs-muted">{{ '— справочно; это не площадь работ и не принятая площадь' if is_ru else '— маълумот учун; бу иш майдони ҳам, қабул қилинган майдон ҳам эмас' }}</span></td></tr>
+        <tr><th>{{ 'В каталоге с / по (UTC+5)' if is_ru else 'Каталогда дан / гача (UTC+5)' }}</th><td>{{ first_seen_s or '—' }} — {{ last_seen_s or '—' }} <span class="vs-muted">{{ 'ревизий' if is_ru else 'ревизиялар' }}: {{ header.revisions }}</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Версии границы' if is_ru else 'Чегара версиялари' }}</span>
+    <span class="vs-muted">{{ 'версия границы — содержимое (md5), а не дата: вылет связан с той версией, что была у пульта при взлёте' if is_ru else 'чегара версияси — мазмуни (md5), сана эмас: парвоз пульт учишда фойдаланган версия билан боғланган' }}</span>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table is-static">
+      <thead>
+        <tr>
+          <th>md5</th>
+          <th>{{ 'Наблюдалась в каталоге (UTC+5)' if is_ru else 'Каталогда кузатилган (UTC+5)' }}</th>
+          <th>{{ 'Байты границы' if is_ru else 'Чегара байтлари' }}</th>
+          <th class="right">{{ 'Подтверждённых вылетов на ней' if is_ru else 'Ундаги тасдиқланган парвозлар' }}</th>
+          <th>{{ 'Даты вылетов (UTC+5)' if is_ru else 'Парвоз саналари (UTC+5)' }}</th>
+          <th>{{ 'Та же граница у других записей DJI' if is_ru else 'Шу чегара бошқа DJI ёзувларида' }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for v in versions %}
+        <tr>
+          <td>{% if v.md5 %}<span title="{{ v.md5 }}">{{ v.md5_short }}</span>{% else %}<span class="vs-muted">{{ 'без границы' if is_ru else 'чегарасиз' }}</span>{% endif %}{% if v.names %}<div class="vs-muted">{{ v.names|join(' · ') }}</div>{% endif %}</td>
+          <td>{% if v.from_catalog %}{{ v.first_seen_s or '—' }} — {{ v.last_seen_s or '—' }}{% else %}<span class="vs-muted">{{ 'в ревизиях этой записи нет; известна по карточкам вылетов' if is_ru else 'бу ёзув ревизияларида йўқ; парвоз карточкаларидан маълум' }}</span>{% endif %}</td>
+          <td>{% if v.md5 %}{% if v.boundary_saved %}<span class="vs-badge vs-badge-sm vs-badge-success">{{ v.boundary_label }}</span>{% else %}<span class="vs-badge vs-badge-sm vs-badge-warning">{{ v.boundary_label }}</span>{% endif %}{% else %}—{% endif %}</td>
+          <td class="right">{{ v.flights|vs_num }}</td>
+          <td>{% if v.flights %}{{ v.first_flight_s }}{% if v.last_flight_s != v.first_flight_s %} — {{ v.last_flight_s }}{% endif %}{% else %}—{% endif %}</td>
+          <td>{% for o in v.others %}<a href="{{ url_for('drones.field_card', land_uuid=o.land_uuid) }}">{{ o.name }}</a>{% if not loop.last %}, {% endif %}{% else %}—{% endfor %}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="vs-empty">{{ 'Версий границы нет.' if is_ru else 'Чегара версиялари йўқ.' }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="vs-muted vs-mb">{{ 'Итог ниже — только по подтверждённым работам этой записи поля DJI: DJI RAW, доказанно исключённое и принятое. Предположительные вылеты и вылеты на той же границе из других записей в него не входят.' if is_ru else 'Қуйидаги якун — фақат шу DJI дала ёзувининг тасдиқланган ишлари бўйича: DJI RAW, исботланган чиқарилган ва қабул қилинган. Тахминий парвозлар ва бошқа ёзувлардаги шу чегарадаги парвозлар унга кирмайди.' }}</div>
+{{ acc_block(totals, is_ru) }}
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Подтверждённые работы' if is_ru else 'Тасдиқланган ишлар' }}</span>
+    <span class="vs-soft">{{ 'Всего' if is_ru else 'Жами' }}: {{ confirmed_count|vs_num }}</span>
+  </div>
+  {% if flights %}
+  <div class="vs-table-scroll">
+  <table class="vs-table is-static">
+    <thead>
+      <tr>
+        <th>{{ 'Начало (UTC+5)' if is_ru else 'Бошланиши (UTC+5)' }}</th>
+        <th>{{ 'Машина' if is_ru else 'Машина' }}</th>
+        <th>{{ 'Вылет DJI' if is_ru else 'DJI парвози' }}</th>
+        <th class="right">{{ 'DJI RAW, га' if is_ru else 'DJI RAW, га' }}</th>
+        <th class="right">{{ 'Исключено, га' if is_ru else 'Чиқарилган, га' }}</th>
+        <th class="right">{{ 'Принято, га' if is_ru else 'Қабул қилинган, га' }}</th>
+        <th>{{ 'Статус площади' if is_ru else 'Майдон ҳолати' }}</th>
+        <th>{{ 'Привязка к полю' if is_ru else 'Далага боғланиш' }}</th>
+        <th>{{ 'Граница' if is_ru else 'Чегара' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in flights %}
+      <tr>
+        <td><a href="{{ url_for('drones.flight_passport', dji_flight_id=f.flight_id) }}">{{ f.started_s or '—' }}</a></td>
+        <td>{{ f.machine }}</td>
+        <td><a href="{{ url_for('drones.flight_passport', dji_flight_id=f.flight_id) }}">{{ f.flight_id }}</a></td>
+        <td class="right">{{ '%.4f'|format(f.raw_ha) }}</td>
+        <td class="right">{% if f.area.excluded_ha is not none %}{{ '%.4f'|format(f.area.excluded_ha) }}{% else %}—{% endif %}</td>
+        <td class="right">{% if f.area.accepted_ha is not none %}{{ '%.4f'|format(f.area.accepted_ha) }}{% else %}{{ acc_flight_value(f.area, is_ru) }}{% endif %}</td>
+        <td>{{ acc_status(f.area) }}</td>
+        <td><span class="vs-badge vs-badge-sm {{ f.attr.state_badge }}" title="{{ f.attr.state_help }}">{{ f.attr.state_label }}</span></td>
+        <td>{% if f.md5_short %}<span title="{{ f.attr.geometry_md5 }}">{{ f.md5_short }}</span>{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ 'Подтверждённых работ нет' if is_ru else 'Тасдиқланган ишлар йўқ' }}</div>
+    <div class="vs-empty-sub">{{ 'За этот период ни у одного вылета текущая привязка не указывает на эту запись поля DJI.' if is_ru else 'Бу давр учун бирорта парвознинг жорий боғланиши бу DJI дала ёзувини кўрсатмайди.' }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{% if pages > 1 %}
+<div class="vs-row vs-mb">
+  {% if page > 1 %}
+  <a href="{{ url_for('drones.field_card', land_uuid=header.land_uuid, page=page-1, **link_args) }}" class="vs-btn vs-btn-sm">← {{ 'Предыдущая' if is_ru else 'Олдингиси' }}</a>
+  {% endif %}
+  <span class="vs-soft">{{ 'Страница' if is_ru else 'Саҳифа' }} {{ page }} / {{ pages }}</span>
+  {% if page < pages %}
+  <a href="{{ url_for('drones.field_card', land_uuid=header.land_uuid, page=page+1, **link_args) }}" class="vs-btn vs-btn-sm">{{ 'Следующая' if is_ru else 'Кейингиси' }} →</a>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if orphans %}
+<div class="vs-alert is-warning vs-mb" role="status">
+  <div>{{ 'Привязок к этой записи без вылета в журнале вылетов: %d. Их DJI RAW взять неоткуда, в итог они не входят.'|format(orphans) if is_ru else 'Парвозлар журналида парвози йўқ боғланишлар: %d. Уларнинг DJI RAW маълумоти йўқ, якунга кирмайди.'|format(orphans) }}</div>
+</div>
+{% endif %}
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Предположительные / требуют проверки' if is_ru else 'Тахминий / текшириш талаб қилинади' }}</span>
+    <span class="vs-muted">{{ 'в гектары поля не входят' if is_ru else 'дала гектарларига кирмайди' }}</span>
+  </div>
+  {% if provisional %}
+  <div class="vs-table-scroll">
+  <table class="vs-table is-static">
+    <thead>
+      <tr>
+        <th>{{ 'Начало (UTC+5)' if is_ru else 'Бошланиши (UTC+5)' }}</th>
+        <th>{{ 'Машина' if is_ru else 'Машина' }}</th>
+        <th>{{ 'Вылет DJI' if is_ru else 'DJI парвози' }}</th>
+        <th class="right">{{ 'DJI RAW, га' if is_ru else 'DJI RAW, га' }}</th>
+        <th>{{ 'Статус площади' if is_ru else 'Майдон ҳолати' }}</th>
+        <th>{{ 'Привязка к полю' if is_ru else 'Далага боғланиш' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in provisional %}
+      <tr>
+        <td>{{ f.started_s or '—' }}</td>
+        <td>{{ f.machine }}</td>
+        <td><a href="{{ url_for('drones.flight_passport', dji_flight_id=f.flight_id) }}">{{ f.flight_id }}</a></td>
+        <td class="right">{{ '%.4f'|format(f.raw_ha) }}</td>
+        <td>{{ acc_status(f.area) }}</td>
+        <td><span class="vs-badge vs-badge-sm {{ f.attr.state_badge }}" title="{{ f.attr.state_help }}">{{ f.attr.state_label }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <div class="vs-card-body vs-muted">{{ 'DJI RAW предположительных вылетов' if is_ru else 'Тахминий парвозларнинг DJI RAW' }}: {{ '%.2f'|format(provisional_totals.raw_ha)|vs_num }} {{ 'га' if is_ru else 'га' }} · {{ 'вылетов' if is_ru else 'парвозлар' }}: {{ provisional_totals.records|vs_num }}</div>
+  {% else %}
+  <div class="vs-card-body vs-muted">{{ 'Нет.' if is_ru else 'Йўқ.' }}</div>
+  {% endif %}
+</div>
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    {# DRONE-FIELD-PASSPORT-001 REVIEW-FIX-1: only flights whose CURRENT
+       attribution names ANOTHER record. A flight with no field record on
+       the same md5 is counted nowhere, so it is not listed as «other». #}
+    <span class="vs-card-title">{{ 'Вылеты на тех же границах, привязанные к другим записям DJI' if is_ru else 'Шу чегараларда бошқа DJI ёзувларига боғланган парвозлар' }}</span>
+    <span class="vs-muted">{{ 'диагностика: в гектары этой записи не входят; подтверждённые учтены в своей записи' if is_ru else 'диагностика: бу ёзув гектарларига кирмайди; тасдиқланганлари ўз ёзувида ҳисобланган' }}</span>
+  </div>
+  {% if shared %}
+  <div class="vs-table-scroll">
+  <table class="vs-table is-static">
+    <thead>
+      <tr>
+        <th>{{ 'Начало (UTC+5)' if is_ru else 'Бошланиши (UTC+5)' }}</th>
+        <th>{{ 'Вылет DJI' if is_ru else 'DJI парвози' }}</th>
+        <th>{{ 'Граница' if is_ru else 'Чегара' }}</th>
+        <th>{{ 'Привязка к полю' if is_ru else 'Далага боғланиш' }}</th>
+        <th>{{ 'Привязан к записи' if is_ru else 'Боғланган ёзув' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in shared %}
+      <tr>
+        <td>{{ s.started_s or '—' }}</td>
+        <td><a href="{{ url_for('drones.flight_passport', dji_flight_id=s.flight_id) }}">{{ s.flight_id }}</a></td>
+        <td>{{ s.md5_short }}</td>
+        <td><span class="vs-badge vs-badge-sm {{ s.attr.state_badge }}">{{ s.attr.state_label }}</span>{% if s.attr.reason_text %} <span class="vs-muted">{{ s.attr.reason_text }}</span>{% endif %}</td>
+        <td>{% if s.other_uuid %}<a href="{{ url_for('drones.field_card', land_uuid=s.other_uuid) }}">{{ s.other_name }}</a>{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if shared_total > shared|length %}
+  <div class="vs-card-body vs-muted">{{ 'Показано %d из %d.'|format(shared|length, shared_total) if is_ru else '%d / %d кўрсатилган.'|format(shared|length, shared_total) }}</div>
+  {% endif %}
+  {% else %}
+  <div class="vs-card-body vs-muted">{{ 'Нет.' if is_ru else 'Йўқ.' }}</div>
+  {% endif %}
+</div>
+
+<div class="vs-alert is-info vs-mb" role="status">
+  <div>{{ 'Карта границы и маршрутов — следующим шагом, на общей карте программы. На этой странице координат нет.' if is_ru else 'Чегара ва маршрутлар харитаси — кейинги қадамда, дастурнинг умумий харитасида. Бу саҳифада координаталар йўқ.' }}</div>
+</div>
+
+{% endblock %}

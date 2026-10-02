@@ -18,6 +18,7 @@
   </div>
   <div class="vs-row-end">
     <a href="{{ back }}" class="vs-btn">{{ 'Назад к отчёту' if is_ru else 'Ҳисоботга қайтиш' }}</a>
+    <a href="{{ url_for('drones.flight_passport', dji_flight_id=item.flight_id) }}" class="vs-btn">{{ 'Паспорт вылета' if is_ru else 'Парвоз паспорти' }}</a>
     <a href="{{ item.dji_url }}" target="_blank" rel="noopener" class="vs-btn">{{ 'Открыть в DJI' if is_ru else 'DJI да очиш' }}</a>
   </div>
 </div>
