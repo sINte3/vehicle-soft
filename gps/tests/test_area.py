@@ -580,6 +580,18 @@ class OverflowCapTests(unittest.TestCase):
         self.assertEqual(self.votes_give([5.0, 7.0, 9.0, 40.0] + [300.0] * 10),
                          8.0)
 
+    def test_on_overflow_there_is_no_other_threshold(self):
+        """2.11, step 3: «других порогов нет» -- no floor, no minimum share.
+
+        Retraces outnumber the field among the kept votes: the median is
+        then the retraces' 3 m, as the rule is written. A floor that drops
+        short votes would answer 14 m; a minimum count of kept votes would
+        answer None for the two votes below.
+        """
+        self.assertEqual(self.votes_give([3.0] * 30 + [14.0] * 20
+                                         + [300.0] * 100), 3.0)
+        self.assertEqual(self.votes_give([20.0, 30.0] + [300.0] * 100), 25.0)
+
     def test_on_overflow_alpha_keeps_the_margin(self):
         """Alpha = 1.2 x the kept spacing, whenever that beats the 10 m floor.
 
