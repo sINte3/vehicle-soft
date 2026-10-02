@@ -126,8 +126,9 @@ PASS_SPACING_NEIGHBOURS = 80
 # [REASON]: A7, pre-registered 2026-10-02 (docs/GPS_PLAN_FAKT_VISION_ROADMAP.md
 # section 2.11), NOT yet the method: selected by `overflow_cap=True` until the
 # owner accepts it on his hand-measured sets. On a day of slow road driving
-# the "pass alongside" is the next road, and a median spacing of 300-981 m
-# billed everything between the roads (805 ha on six September days). 37.2 m
+# the "pass alongside" is the next road: a median spacing of 252-818 m, alpha
+# 302-981 m, billed everything between the roads (805 ha on six September
+# days, `tools/gps_alpha_report.py` on production 02.10). 37.2 m
 # is the widest pass spacing the method ever measured on a work with a hand
 # measurement (27.07 set, spraying); the cap is that times the engine's own
 # margin, 1.2 -- the widest alpha ever checked against a hand measurement. No

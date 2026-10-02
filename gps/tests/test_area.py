@@ -28,7 +28,9 @@ import json
 import math
 import os
 import unittest
+import unittest.mock
 
+import gps.area as area
 from gps.area import (ALPHA_M, ALPHA_SPACING_FACTOR, DENSIFY_MAX_SEG_M,
                       MOTION_GAP_SECONDS, SPACING_CAP_M, SPEED_MAX_KMH,
                       WIDEST_VALIDATED_SPACING_M, alpha_shape,
@@ -487,8 +489,8 @@ class OverflowCapTests(unittest.TestCase):
         """A 100 x 300 m field and six slow laps of the roads 1 km away.
 
         Today the road points outvote the passes, alpha balloons and the
-        field grows a road band; under the cap the field is measured as if
-        the roads were not there.
+        roads become a site of their own; under the cap the field is measured
+        as if the roads were not there.
         """
         field = shuttle_track(100.0, 300.0, pass_spacing_m=6.0,
                               point_step_m=100.0)
@@ -521,6 +523,49 @@ class OverflowCapTests(unittest.TestCase):
                 self.assertLessEqual(capped[0].alpha_used_m,
                                      today[0].alpha_used_m, index)
                 self.assertLessEqual(capped[0].alpha_used_m, 53.568 + 1e-9)
+
+    def test_the_contour_path_takes_the_switch_too(self):
+        """worked_area -- the per-contour half of condition 1 -- obeys the cap.
+
+        A contour drawn around the two roads: today the roads 300 m apart are
+        the "passes" and the contour fills; with the cap no pass alongside is
+        left, the spacing is gone and alpha falls back to the fixed 10 m.
+        """
+        track = slow_loop(TWO_ROADS)
+        contour = rectangle_contour(2000.0, 300.0, margin_m=50.0)
+        today = worked_area(track, contour)
+        capped = worked_area(track, contour, overflow_cap=True)
+        self.assertGreater(today.alpha_used_m, 300.0)
+        self.assertAlmostEqual(today.area_ha, 60.0, delta=0.5)
+        self.assertIsNone(capped.pass_spacing_m)
+        self.assertEqual(capped.alpha_used_m, ALPHA_M)
+        self.assertLess(capped.area_ha, 0.3)
+
+    def votes_give(self, votes):
+        with unittest.mock.patch.object(area, 'pass_votes', return_value=votes):
+            return pass_spacing_on_overflow([(0.0, 0.0)] * 30)
+
+    def test_a_median_exactly_at_the_cap_is_not_an_overflow(self):
+        """`today <= cap`, not `<`: the boundary belongs to today's answer.
+
+        Votes 20 m (40), exactly the cap (40) and 300 m (30): the median is
+        the cap itself. Treated as overflow, the median of the votes up to
+        the cap would be (20 + cap) / 2 -- the boundary would move the day.
+        """
+        votes = [20.0] * 40 + [SPACING_CAP_M] * 40 + [300.0] * 30
+        self.assertEqual(self.votes_give(votes), SPACING_CAP_M)
+
+    def test_on_overflow_a_vote_exactly_at_the_cap_is_kept(self):
+        """`vote <= cap`, not `<`: a pass exactly 44.64 m away still counts.
+
+        Ten votes at the cap, thirty roads at 300 m: the day overflows and the
+        ten survive. With a strict filter nothing would, and alpha would drop
+        to the fixed 10 m.
+        """
+        self.assertEqual(self.votes_give([SPACING_CAP_M] * 10 + [300.0] * 30),
+                         SPACING_CAP_M)
+        just_above = math.nextafter(SPACING_CAP_M, math.inf)
+        self.assertIsNone(self.votes_give([just_above] * 10 + [300.0] * 30))
 
     def test_the_daily_computation_passes_the_switch_through(self):
         from gps.daily import compute_day

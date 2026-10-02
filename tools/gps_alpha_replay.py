@@ -6,27 +6,38 @@
 2.11) записано 02.10.2026 до прогона на данных, вместе с условиями приёмки.
 Этот инструмент и есть прогон: он считает каждые машино-сутки действующим
 кодом и правилом (`overflow_cap=True` в `gps.area` / `gps.daily`) на одних и
-тех же точках и печатает, выполнены ли условия, которые проверяются машиной.
-Условия, которые решает глаз владельца (3 и 4), он готовит: выгружает KML,
-где у каждых суток рядом лежат участки «было» и «стало» поверх трека.
+тех же точках и печатает вердикт по условиям, которые проверяет машина.
+Условия, которые решает глаз владельца, он готовит: для условий 3 и 4
+выгружает KML, где у каждых суток рядом лежат участки «было» и «стало»
+поверх трека; для условия 1 печатает изменившиеся строки с названием контура.
 
 ДВА РЕЖИМА
   --tracks ... --zones ...  наборы с ручными замерами (условие 1). Треки --
       CSV с разделителем «;» и столбцами unit_id, [date,] time, lat, lon,
-      speed (как `verify_tracks.csv` 27.07 и `verify2_tracks.csv` 12.08);
-      зоны -- `wialon_zones.json`. Каждые машино-сутки считаются по дню
+      speed (`verify_tracks.csv` 27.07, `verify2_tracks.csv` 12.08); зоны --
+      `wialon_zones.json`. Каждые машино-сутки считаются по суткам
       (`work_sites`) и по каждому контуру, куда машина заехала хотя бы 10
-      точками в движении (`worked_area`). Условие выполнено, только если
-      ВСЕ результаты совпали с действующим кодом бит в бит.
+      точками в движении (`worked_area`). Это НАДМНОЖЕСТВО 32 работ с ручным
+      замером: какие строки -- работы, знает книга владельца, поэтому каждая
+      строка несёт номер и название контура.
   --db ... --dir ...  production (условия 2, 3, 5 и выгрузка для 3 и 4).
       Опубликованные машино-сутки периода (причина пуста), чьи точки ещё на
       диске. Контроль прогона: действующий код, пересчитанный по точкам,
-      обязан совпасть с базой; иначе виноват инструмент, а не правило.
+      обязан совпасть с базой; иначе прогон недействителен.
+
+ВЕРДИКТЫ И КОД ВЫХОДА
+  PASS / FAIL -- условие проверено; NOT CHECKED -- проверять было нечего
+  (пустой ввод); RUN INVALID -- контроль прогона не сошёлся, чинить
+  инструмент и повторять; NOT EVALUATED -- названные сутки не пересчитаны;
+  OWNER CHECK -- нужен глаз владельца. Код выхода: 0 -- всё машинное PASS,
+  1 -- есть FAIL, 3 -- FAIL нет, но есть невыполненная проверка или нужен
+  владелец, 2 -- неверный ввод (тогда ничего не считалось).
 
 [REASON]: база и файлы точек открываются `mode=ro`, KML пишется только в файл,
-указанный ключом. Решения здесь нет: условия 3 и 4 предрегистрации решает
-владелец по выгрузке, а включение правила в ночной расчёт -- отдельный шаг
-после его решения.
+указанный ключом. Решения здесь нет: включение правила в ночной расчёт --
+отдельный шаг после решения владельца. Одна оговорка про «ничего не пишет»:
+SQLite, открывая базу в режиме WAL только на чтение, может создать рядом
+пустые служебные файлы `-wal` и `-shm`; данные не меняются.
 
 Запуск -- из окружения расчёта (нужна геометрия), PowerShell, из C:\\gps-tools:
 
@@ -34,7 +45,7 @@
 
     & C:\\gps_venv\\Scripts\\python.exe tools\\gps_alpha_replay.py --db C:\\transport-report\\instance\\transport.db --dir C:\\transport-report\\instance --since 2026-09-01 --until 2026-09-30 --kml C:\\gps-tools\\check\\a7_replay.kml
 
-Отсутствующие база, папка или файлы -- код 2. Вывод -- только ASCII.
+Вывод -- только ASCII.
 """
 
 import argparse
@@ -49,8 +60,10 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from gps.area import (ALPHA_SPACING_FACTOR, SPACING_CAP_M,           # noqa: E402
-                      candidate_contours, work_sites, worked_area)
+from gps.area import (ALPHA_M, ALPHA_SPACING_FACTOR, SPACING_CAP_M,  # noqa: E402
+                      _moving_mask, candidate_contours, pass_spacing,
+                      pass_spacing_on_overflow, to_utm, work_sites,
+                      worked_area)
 from gps.daily import compute_day, load_contours                     # noqa: E402
 from tools.gps_day_kml import (STYLES, _coordinates, _polygon_kml,   # noqa: E402
                                polygons_of, track_pieces)
@@ -60,15 +73,51 @@ from tools.gps_track_only_days import (console, open_readonly,      # noqa: E402
 
 ALPHA_CEILING_M = ALPHA_SPACING_FACTOR * SPACING_CAP_M      # 53.568
 # [REASON]: шесть суток сентября с допуском 300-981 м, названные в условии 3
-# предрегистрации (вывод `tools/gps_alpha_report.py` 02.10). Список закреплён
-# в документе, поэтому и здесь он закреплён, а не вычисляется заново.
+# предрегистрации (вывод `tools/gps_alpha_report.py` 02.10, строки -- в треке).
+# Список закреплён в документе, поэтому и здесь закреплён, а не вычисляется
+# заново; тест сверяет его с текстом раздела 2.11.
 NAMED_DAYS = (('2026-09-26', 393), ('2026-09-26', 330), ('2026-09-26', 3188),
               ('2026-09-03', 411), ('2026-09-21', 10322), ('2026-09-05', 337))
 TOP_LOSSES = 10
 MIN_MOVING_POINTS_IN_ZONE = 10
+# [REASON]: допуск на сложение чисел с плавающей точкой при сравнении сумм
+# гектаров и альф. Сами шаг и альфа сравниваются как есть, без допуска.
 EPSILON = 1e-9
 NEW_STYLE = ('new', '<LineStyle><color>ffff6600</color><width>2</width>'
                     '</LineStyle><PolyStyle><color>55ff6600</color></PolyStyle>')
+PASS, FAIL, NOT_CHECKED, RUN_INVALID, NOT_EVALUATED, OWNER_CHECK = (
+    'PASS', 'FAIL', 'NOT CHECKED', 'RUN INVALID', 'NOT EVALUATED', 'OWNER CHECK')
+
+
+def alpha_of(spacing):
+    return (max(ALPHA_M, ALPHA_SPACING_FACTOR * spacing)
+            if spacing is not None else ALPHA_M)
+
+
+def measure(track):
+    """(шаг сегодня, шаг правила, альфа сегодня, альфа правила) по сырым числам.
+
+    [REASON]: решение «сработало ли правило» и инварианты альфы берутся отсюда,
+    а не из строк участков. Строки округлены (шаг до 0,001 м), а у суток без
+    участков их нет вовсе -- тогда сработавшее правило выглядело бы
+    несработавшим и его альфа не проверялась бы. Точки -- ровно те, что
+    `work_sites` отдаёт оценке шага: по времени, в окне рабочей скорости.
+    """
+    track = sorted(track)
+    xs, ys = to_utm([r[1] for r in track], [r[2] for r in track])
+    mask = _moving_mask([r[3] for r in track])
+    points = [(float(x), float(y)) for x, y, m in zip(xs, ys, mask) if m]
+    today = pass_spacing(points)
+    capped = pass_spacing_on_overflow(points)
+    return today, capped, alpha_of(today), alpha_of(capped)
+
+
+def verdict_code(verdicts):
+    if FAIL in verdicts:
+        return 1
+    if any(v != PASS for v in verdicts):
+        return 3
+    return 0
 
 
 # --- наборы с ручными замерами (условие 1) ------------------------------------
@@ -89,61 +138,96 @@ def load_csv_days(path):
 
 
 def sites_key(sites):
-    return [(site.area_ha, site.alpha_used_m, site.pass_spacing_m)
+    return [(site.area_ha, site.alpha_used_m, site.pass_spacing_m,
+             None if site.polygon is None else site.polygon.wkb)
             for site in sites]
 
 
-def compare_set(name, days, zones):
-    """Строки сравнения: по дню и по каждому контуру с заездом."""
+def compare_set(name, days, zones, zone_names):
+    """Строки сравнения: по суткам и по каждому контуру с заездом."""
     rows = []
     for (unit, day), track in sorted(days.items()):
-        today, _ = work_sites(track)
-        capped, _ = work_sites(track, overflow_cap=True)
-        spacing = today[0].pass_spacing_m if today else None
+        today_s, cap_s, today_a, cap_a = measure(track)
+        today, _ = work_sites(track, contours=zones)
+        capped, _ = work_sites(track, contours=zones, overflow_cap=True)
         rows.append({'set': name, 'unit': unit, 'day': day or '-',
-                     'path': 'day', 'zone': None,
+                     'path': 'day', 'zone': None, 'zone_name': '',
                      'ha_today': sum(s.area_ha for s in today),
                      'ha_cap': sum(s.area_ha for s in capped),
-                     'spacing': spacing,
-                     'triggered': spacing is not None and spacing > SPACING_CAP_M,
-                     'same': sites_key(today) == sites_key(capped)})
+                     'spacing': today_s, 'spacing_cap': cap_s,
+                     'triggered': today_s is not None and today_s > SPACING_CAP_M,
+                     'same': sites_key(today) == sites_key(capped),
+                     'sites_today': [(s.contour_id, s.area_ha) for s in today],
+                     'sites_cap': [(s.contour_id, s.area_ha) for s in capped]})
         for zone_id, _inside in candidate_contours(
                 track, zones, min_moving_points=MIN_MOVING_POINTS_IN_ZONE):
             one = worked_area(track, zones[zone_id], zone_id)
             two = worked_area(track, zones[zone_id], zone_id, overflow_cap=True)
             rows.append({'set': name, 'unit': unit, 'day': day or '-',
                          'path': 'zone', 'zone': zone_id,
+                         'zone_name': zone_names.get(zone_id, ''),
                          'ha_today': one.area_ha, 'ha_cap': two.area_ha,
                          'spacing': one.pass_spacing_m,
+                         'spacing_cap': two.pass_spacing_m,
                          'triggered': (one.pass_spacing_m is not None
                                        and one.pass_spacing_m > SPACING_CAP_M),
                          'same': ((one.area_ha, one.alpha_used_m,
-                                   one.pass_spacing_m)
+                                   one.pass_spacing_m,
+                                   None if one.polygon is None else one.polygon.wkb)
                                   == (two.area_ha, two.alpha_used_m,
-                                      two.pass_spacing_m))})
+                                      two.pass_spacing_m,
+                                      None if two.polygon is None
+                                      else two.polygon.wkb)),
+                         'sites_today': [], 'sites_cap': []})
     return rows
 
 
-def report_sets(rows, out=print):
-    differing = [row for row in rows if not row['same']]
-    triggered = [row for row in rows if row['triggered']]
+def _spacing(value):
+    return '-' if value is None else '%.2f' % value
+
+
+def report_sets(rows, zone_names, out=print):
+    """Условие 1 в редакции поправки 02.10. Возвращает вердикт."""
+    if not rows:
+        out('CONDITION 1: %s -- no machine-day was read from the tracks'
+            % NOT_CHECKED)
+        return NOT_CHECKED
     for name in sorted({row['set'] for row in rows}):
         mine = [row for row in rows if row['set'] == name]
-        out('%s: machine-days %d, zone works %d, triggered %d, different %d'
+        out('%s: machine-days %d, zone works %d (a superset of the hand-measured '
+            'works), triggered %d, changed %d'
             % (console(name), sum(1 for r in mine if r['path'] == 'day'),
                sum(1 for r in mine if r['path'] == 'zone'),
                sum(1 for r in mine if r['triggered']),
                sum(1 for r in mine if not r['same'])))
-    for row in triggered + [r for r in differing if r not in triggered]:
-        out('  %-5s unit %-6d day %-10s zone %-6s spacing %s  ha %.4f -> %.4f  %s'
+    changed = [row for row in rows if not row['same'] or row['triggered']]
+    for row in changed:
+        out('  %-4s unit %-6d day %-10s zone %-6s spacing %s -> %s  ha %.4f -> '
+            '%.4f  %s  %s'
             % (row['path'], row['unit'], row['day'],
                '-' if row['zone'] is None else row['zone'],
-               '-' if row['spacing'] is None else '%.2f' % row['spacing'],
+               _spacing(row['spacing']), _spacing(row['spacing_cap']),
                row['ha_today'], row['ha_cap'],
-               'same' if row['same'] else 'DIFFERENT'))
-    verdict = 'PASS' if not differing else 'FAIL'
-    out('CONDITION 1 (hand-measured sets bit-identical): %s' % verdict)
-    return not differing
+               'same' if row['same'] else 'CHANGED',
+               console(row['zone_name'])))
+        for label, sites in (('was', row['sites_today']), ('now', row['sites_cap'])):
+            for contour_id, area in sites:
+                out('       %s: site %.4f ha  zone %s  %s'
+                    % (label, area, '-' if contour_id is None else contour_id,
+                       console(zone_names.get(contour_id, ''))))
+    if not any(r['path'] == 'zone' for r in rows):
+        out('CONDITION 1: %s -- no contour was entered: the per-contour half '
+            'was not compared' % NOT_CHECKED)
+        return NOT_CHECKED
+    if not changed:
+        out('CONDITION 1 (no row of the sets changed or triggered, so none of the '
+            '32 works did): PASS')
+        return PASS
+    out('CONDITION 1: %s -- %d row(s) above changed or triggered. The rule is '
+        'rejected if ANY of them is one of the 32 hand-measured works (compare '
+        'zone numbers and names with the workbook); other rows are passages and '
+        'unmeasured contours and go to the report.' % (OWNER_CHECK, len(changed)))
+    return OWNER_CHECK
 
 
 # --- production (условия 2, 3, 5) ------------------------------------------------
@@ -174,41 +258,59 @@ def row_key(rows):
                    for row in rows), key=lambda item: -item[0])
 
 
+def full_key(rows):
+    return sorted(((row['area_ha'], row['alpha_used_m'], row['pass_spacing_m'],
+                    row['polygon_geojson']) for row in rows),
+                  key=lambda item: (-item[0], item[3]))
+
+
 def replay_day(points, contours):
     today = compute_day(points, contours=contours)
     capped = compute_day(points, contours=contours, overflow_cap=True)
     return today.sites, capped.sites
 
 
-def first(rows, key):
-    return rows[0][key] if rows else None
+def judge_day(day, unit, version, stored, today, capped, current_version,
+              measures):
+    """Одна строка прогона и её нарушения.
 
-
-def judge_day(day, unit, version, stored, today, capped, current_version):
-    """Одна строка прогона и её нарушения."""
+    `measures` -- (шаг сегодня, шаг правила, альфа сегодня, альфа правила)
+    по сырым числам (`measure`).
+    """
+    spacing, spacing_cap, alpha_today, alpha_cap = measures
     ha_today = sum(row['area_ha'] for row in today)
     ha_cap = sum(row['area_ha'] for row in capped)
-    spacing = first(today, 'pass_spacing_m')
-    alpha_today, alpha_cap = first(today, 'alpha_used_m'), first(capped, 'alpha_used_m')
     triggered = spacing is not None and spacing > SPACING_CAP_M
     violations = []
     if ha_cap > ha_today + EPSILON:
         violations.append('more hectares than today')
-    if alpha_cap is not None and alpha_today is not None \
-            and alpha_cap > alpha_today + EPSILON:
+    if alpha_cap > alpha_today + EPSILON:
         violations.append('wider alpha than today')
-    if alpha_cap is not None and alpha_cap > ALPHA_CEILING_M + 0.0005:
+    if alpha_cap > ALPHA_CEILING_M + EPSILON:
         violations.append('alpha above %.3f' % ALPHA_CEILING_M)
-    if not triggered and row_key(today) != row_key(capped):
+    if not triggered and (spacing_cap != spacing
+                          or full_key(today) != full_key(capped)):
         violations.append('changed below the cap')
     control = None
     if version == current_version:
         control = row_key(today) == sorted(stored, key=lambda item: -item[0])
+    # [REASON]: `measure` повторяет отбор точек движка, а не вызывает его;
+    # если повтор разошёлся с тем, что движок записал в строки, вердикт
+    # опирался бы на чужие числа. Такое расхождение -- поломка прогона.
+    consistent = (_rows_carry(today, spacing, alpha_today)
+                  and _rows_carry(capped, spacing_cap, alpha_cap))
     return {'day': day, 'unit': unit, 'ha_today': ha_today, 'ha_cap': ha_cap,
-            'spacing': spacing, 'spacing_cap': first(capped, 'pass_spacing_m'),
+            'spacing': spacing, 'spacing_cap': spacing_cap,
             'alpha_today': alpha_today, 'alpha_cap': alpha_cap,
             'triggered': triggered, 'violations': violations,
-            'control': control, 'today': today, 'capped': capped}
+            'control': control, 'consistent': consistent,
+            'today': today, 'capped': capped}
+
+
+def _rows_carry(rows, spacing, alpha):
+    expected = (None if spacing is None else round(spacing, 3), round(alpha, 3))
+    return all((row['pass_spacing_m'], row['alpha_used_m']) == expected
+               for row in rows)
 
 
 def site_placemarks(rows, style, label):
@@ -233,8 +335,10 @@ def kml_folder(result, points, name):
              % (name or result['unit'], day, result['ha_today'],
                 result['ha_cap']))
     parts = ['<Folder><name>%s</name>' % escape(title),
-             site_placemarks(result['today'], 'site', 'Было / эди: участок'),
-             site_placemarks(result['capped'], 'new', 'Стало / бўлди: участок')]
+             site_placemarks(result['today'], 'site',
+                             'Было / эди: участок / участка'),
+             site_placemarks(result['capped'], 'new',
+                             'Стало / бўлди: участок / участка')]
     pieces = track_pieces(points or [])
     for work, style, label in (
             (True, 'work', 'Трек в работе, 1–15 км/ч / иш тезлигидаги трек'),
@@ -262,6 +366,7 @@ def kml_document(folders):
 
 def replay_production(db, folder, since, until, kml_path, out=print,
                       progress=None):
+    """Прогон production. Возвращает список вердиктов машинных условий."""
     from gps.daily import METHOD_VERSION
     con = open_readonly(db)
     try:
@@ -276,7 +381,8 @@ def replay_production(db, folder, since, until, kml_path, out=print,
             today, capped = replay_day(points, contours or None)
             results.append(judge_day(day, unit, version,
                                      stored_sites(con, day, unit), today,
-                                     capped, METHOD_VERSION))
+                                     capped, METHOD_VERSION,
+                                     measure([r[:4] for r in points])))
             if progress and index % 200 == 0:
                 progress('  %d of %d machine-days' % (index, len(days)))
         units = sorted({row['unit'] for row in results})
@@ -284,7 +390,7 @@ def replay_production(db, folder, since, until, kml_path, out=print,
         names = unit_names(con, units)
     finally:
         con.close()
-    ok = report_production(results, missing, kinds, names, out)
+    verdicts = report_production(results, missing, kinds, names, out)
     if kml_path:
         picked = pick_for_review(results, kinds)
         folders = []
@@ -295,10 +401,18 @@ def replay_production(db, folder, since, until, kml_path, out=print,
             handle.write(kml_document(folders))
         out('KML for conditions 3 and 4 (%d machine-days): %s'
             % (len(picked), console(kml_path)))
-    return ok
+    return verdicts
 
 
 def counted(results, kinds):
+    """Сутки, чьи гектары идут в план-факт.
+
+    [REASON]: условия 4 и 5 говорят о план-факте, а объекты, исключённые
+    владельцем («не наша», непольевая категория), экран скрывает и в
+    план-факт не считает. Их строки в базе остаются, поэтому они проходят
+    контроль и инварианты условия 2 вместе со всеми, но в списке потерь и в
+    сумме план-факта их нет.
+    """
     return [row for row in results if kinds.get(row['unit']) != 'excluded']
 
 
@@ -318,11 +432,7 @@ def pick_for_review(results, kinds):
     return named + top_losses(results, kinds)
 
 
-def report_production(results, missing, kinds, names, out=print):
-    mine = counted(results, kinds)
-    out('machine-days replayed: %d (points gone from disk: %d); counted %d, '
-        'excluded objects %d' % (len(results), missing, len(mine),
-                                 len(results) - len(mine)))
+def condition_2(results, out):
     checked = [row for row in results if row['control'] is not None]
     mismatched = [row for row in checked if not row['control']]
     out('control, today recomputed == stored: %d of %d same, %d different, '
@@ -331,54 +441,85 @@ def report_production(results, missing, kinds, names, out=print):
            len(results) - len(checked)))
     for row in mismatched[:20]:
         out('  control mismatch %s %d' % (row['day'], row['unit']))
+    for row in [row for row in results if not row['consistent']][:20]:
+        out('  measure mismatch %s %d: the replay measured another spacing '
+            'than the engine wrote' % (row['day'], row['unit']))
+    inconsistent = sum(1 for row in results if not row['consistent'])
     violations = [row for row in results if row['violations']]
     for row in violations[:20]:
         out('  VIOLATION %s %d: %s' % (row['day'], row['unit'],
                                        '; '.join(row['violations'])))
-    triggered = [row for row in mine if row['triggered']]
-    ha_today = sum(row['ha_today'] for row in mine)
-    ha_cap = sum(row['ha_cap'] for row in mine)
-    out('CONDITION 2 (invariants on every machine-day): %s -- %d violation(s)%s'
-        % ('PASS' if not violations and not mismatched else 'FAIL',
-           len(violations),
-           '' if not mismatched else '; fix the replay first: the control '
-                                     'failed on %d machine-day(s)' % len(mismatched)))
-    out('')
+    if not results:
+        verdict, note = NOT_CHECKED, 'no machine-day was replayed'
+    elif mismatched or inconsistent:
+        verdict, note = RUN_INVALID, ('the control failed on %d machine-day(s), '
+                                      'the measure on %d: fix the replay and '
+                                      'run it again'
+                                      % (len(mismatched), inconsistent))
+    else:
+        verdict = PASS if not violations else FAIL
+        note = '%d violation(s) on %d machine-day(s)' % (len(violations),
+                                                         len(results))
+    out('CONDITION 2 (invariants on every machine-day): %s -- %s'
+        % (verdict, note))
+    return verdict
+
+
+def condition_3(results, names, out):
     out('condition 3, the six named machine-days:')
     by_key = {(row['day'], row['unit']): row for row in results}
-    named_ok = True
+    missing, failed = [], []
     for day, unit in NAMED_DAYS:
         row = by_key.get((day, unit))
         if row is None:
-            named_ok = False
+            missing.append((day, unit))
             out('  %s %6d  not replayed (no published row or no points)'
                 % (day, unit))
             continue
         fell = row['triggered'] and row['ha_cap'] < row['ha_today'] - EPSILON
-        named_ok = named_ok and fell
-        out('  %s %6d  triggered %-3s  alpha %s -> %s  ha %.2f -> %.2f  %s  %s'
+        if not fell:
+            failed.append((day, unit))
+        out('  %s %6d  triggered %-3s  alpha %.1f -> %.1f  ha %.2f -> %.2f  %s  %s'
             % (day, unit, 'yes' if row['triggered'] else 'NO',
-               '-' if row['alpha_today'] is None else '%.1f' % row['alpha_today'],
-               '-' if row['alpha_cap'] is None else '%.1f' % row['alpha_cap'],
-               row['ha_today'], row['ha_cap'], 'fell' if fell else 'DID NOT FALL',
+               row['alpha_today'], row['alpha_cap'], row['ha_today'],
+               row['ha_cap'], 'fell' if fell else 'DID NOT FALL',
                console(names.get(unit) or '')))
+    if failed:
+        verdict = FAIL
+    elif missing:
+        verdict = NOT_EVALUATED
+    else:
+        verdict = PASS
     out('CONDITION 3, machine part (all six triggered, hectares strictly fall): %s'
-        % ('PASS' if named_ok else 'FAIL'))
-    out('CONDITION 3, owner part: look at the six folders of the KML -- no '
-        'remaining blue site may cover ground between different roads')
+        % verdict)
+    out('CONDITION 3, owner part: %s -- look at the six folders of the KML; no '
+        'remaining blue site may cover ground between different roads'
+        % OWNER_CHECK)
+    return verdict
+
+
+def report_production(results, missing, kinds, names, out=print):
+    mine = counted(results, kinds)
+    out('machine-days replayed: %d (points gone from disk: %d); counted %d, '
+        'excluded objects %d' % (len(results), missing, len(mine),
+                                 len(results) - len(mine)))
+    verdicts = [condition_2(results, out)]
     out('')
-    out('condition 4, the %d other triggered machine-days with the largest loss '
-        '(owner looks at them in the KML):' % TOP_LOSSES)
+    verdicts.append(condition_3(results, names, out))
+    out('')
+    out('condition 4: %s -- the %d other triggered machine-days with the largest '
+        'loss, in the KML:' % (OWNER_CHECK, TOP_LOSSES))
     for row in top_losses(results, kinds):
-        out('  %s %6d  alpha %.1f -> %s  ha %.2f -> %.2f  %s'
-            % (row['day'], row['unit'], row['alpha_today'],
-               '-' if row['alpha_cap'] is None else '%.1f' % row['alpha_cap'],
+        out('  %s %6d  alpha %.1f -> %.1f  ha %.2f -> %.2f  %s'
+            % (row['day'], row['unit'], row['alpha_today'], row['alpha_cap'],
                row['ha_today'], row['ha_cap'],
                console(names.get(row['unit']) or '')))
     out('')
+    triggered = [row for row in mine if row['triggered']]
     untouched = [row for row in mine if not row['triggered']
-                 and row['alpha_today'] is not None
-                 and row['alpha_today'] > SPACING_CAP_M + 0.0005]
+                 and row['alpha_today'] > SPACING_CAP_M]
+    ha_today = sum(row['ha_today'] for row in mine)
+    ha_cap = sum(row['ha_cap'] for row in mine)
     out('condition 5 (report, no verdict):')
     out('  machine-days triggered: %d of %d counted' % (len(triggered), len(mine)))
     out('  hectares on untouched machine-days with alpha %.2f-%.3f m: %.2f '
@@ -387,7 +528,7 @@ def report_production(results, missing, kinds, names, out=print):
                                len(untouched)))
     out('  plan-fact of the period, counted objects: %.2f ha today -> %.2f ha '
         'with the rule (%+.2f)' % (ha_today, ha_cap, ha_cap - ha_today))
-    return not violations and not mismatched and named_ok
+    return verdicts
 
 
 def _day(option, value):
@@ -420,15 +561,16 @@ def main(argv=None):
                              % ', '.join(console(m) for m in missing))
             return 2
         from tools.gps_area_method_repro import load_zones
-        zones = {zone_id: polygon for zone_id, (_name, polygon)
-                 in load_zones(args.zones).items()}
+        loaded = load_zones(args.zones)
+        zones = {zone_id: polygon for zone_id, (_name, polygon) in loaded.items()}
+        zone_names = {zone_id: name for zone_id, (name, _polygon) in loaded.items()}
         rows = []
         for path in args.tracks:
             rows += compare_set(os.path.basename(path), load_csv_days(path),
-                                zones)
-        report_sets(rows)
+                                zones, zone_names)
+        verdict = report_sets(rows, zone_names)
         print('nothing was written: the tracks and zones were only read')
-        return 0
+        return verdict_code([verdict])
     since = _day('--since', args.since or '')
     until = None if args.until is None else _day('--until', args.until)
     if since is None or (args.until is not None and until is None):
@@ -436,11 +578,14 @@ def main(argv=None):
     if not os.path.isfile(args.db) or not os.path.isdir(args.dir or ''):
         sys.stderr.write('ERROR: no database or no points folder\n')
         return 2
-    replay_production(args.db, args.dir, since, until, args.kml,
-                      progress=print)
+    if args.kml and not os.path.isdir(os.path.dirname(os.path.abspath(args.kml))):
+        sys.stderr.write('ERROR: the folder for --kml does not exist\n')
+        return 2
+    verdicts = replay_production(args.db, args.dir, since, until, args.kml,
+                                 progress=print)
     print('nothing was written to the database or the point files: they were '
           'opened mode=ro')
-    return 0
+    return verdict_code(verdicts)
 
 
 if __name__ == '__main__':
