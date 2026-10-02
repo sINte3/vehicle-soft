@@ -30,9 +30,11 @@ import os
 import unittest
 
 from gps.area import (ALPHA_M, ALPHA_SPACING_FACTOR, DENSIFY_MAX_SEG_M,
-                      MOTION_GAP_SECONDS, SPEED_MAX_KMH, alpha_shape,
+                      MOTION_GAP_SECONDS, SPACING_CAP_M, SPEED_MAX_KMH,
+                      WIDEST_VALIDATED_SPACING_M, alpha_shape,
                       candidate_contours, densify, joint_work_check,
-                      pass_spacing, polygon_from_wialon, return_share, to_utm,
+                      pass_spacing, pass_spacing_on_overflow, pass_votes,
+                      polygon_from_wialon, return_share, to_utm,
                       track_quality, work_sites, worked_area)
 
 FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
@@ -420,6 +422,112 @@ class SlowRoadsTests(unittest.TestCase):
         """
         sites, _quality = work_sites(slow_loop(TWO_ROADS))
         self.assertEqual([site.area_ha for site in sites], [])
+
+
+def work_points(track):
+    """The work-window points work_sites hands to the spacing estimator."""
+    xs, ys = to_utm([r[1] for r in track], [r[2] for r in track])
+    return [(float(x), float(y)) for x, y, r in zip(xs, ys, track)
+            if 1.0 <= r[3] <= SPEED_MAX_KMH]
+
+
+class OverflowCapTests(unittest.TestCase):
+    """A7 rule, pre-registered 2026-10-02 (roadmap 2.11), behind a switch.
+
+    Off by default: the nightly computation stays today's until the owner
+    accepts the rule on his hand-measured sets. These tests hold what the rule
+    promises by construction -- untouched below the cap, never more hectares,
+    roads alone give nothing -- on the engine itself.
+    """
+
+    def test_the_cap_is_the_widest_validated_spacing_with_the_margin(self):
+        """Literals on purpose: an expectation spelled with the constant
+        moves when the constant moves."""
+        self.assertEqual(WIDEST_VALIDATED_SPACING_M, 37.2)
+        self.assertAlmostEqual(SPACING_CAP_M, 44.64, places=9)
+
+    def test_the_votes_are_what_todays_spacing_takes_the_median_of(self):
+        for spacing_m in (6.0, 14.0, 37.2):
+            points = work_points(shuttle_track(300.0, 300.0,
+                                               pass_spacing_m=spacing_m))
+            votes = pass_votes(points)
+            self.assertTrue(votes)
+            ordered = sorted(votes)
+            middle = len(ordered) // 2
+            median = (ordered[middle] if len(ordered) % 2
+                      else (ordered[middle - 1] + ordered[middle]) / 2.0)
+            self.assertAlmostEqual(pass_spacing(points), median, places=9)
+        self.assertEqual(pass_votes([(0.0, 0.0)] * 5), [])
+
+    def test_below_the_cap_a_day_is_bit_identical_to_today(self):
+        """Every hand-validated work has spacing <= 37.2 m: nothing moves."""
+        contour = rectangle_contour(300.0, 300.0)
+        for spacing_m in (6.0, 14.0, 37.2):
+            track = shuttle_track(300.0, 300.0, pass_spacing_m=spacing_m)
+            today, _ = work_sites(track)
+            capped, _ = work_sites(track, overflow_cap=True)
+            self.assertEqual([(s.area_ha, s.alpha_used_m, s.pass_spacing_m)
+                              for s in today],
+                             [(s.area_ha, s.alpha_used_m, s.pass_spacing_m)
+                              for s in capped], spacing_m)
+            one = worked_area(track, contour)
+            two = worked_area(track, contour, overflow_cap=True)
+            self.assertEqual((one.area_ha, one.alpha_used_m, one.pass_spacing_m),
+                             (two.area_ha, two.alpha_used_m, two.pass_spacing_m))
+
+    def test_slow_roads_alone_give_nothing_under_the_cap(self):
+        """The A7 target, met by the rule: 60 ha today, none with the cap."""
+        points = work_points(slow_loop(TWO_ROADS))
+        self.assertAlmostEqual(pass_spacing(points), 300.0, delta=1.0)
+        self.assertIsNone(pass_spacing_on_overflow(points))
+        sites, _quality = work_sites(slow_loop(TWO_ROADS), overflow_cap=True)
+        self.assertEqual([site.area_ha for site in sites], [])
+
+    def test_on_a_road_dominated_day_the_field_keeps_its_own_spacing(self):
+        """A 100 x 300 m field and six slow laps of the roads 1 km away.
+
+        Today the road points outvote the passes, alpha balloons and the
+        field grows a road band; under the cap the field is measured as if
+        the roads were not there.
+        """
+        field = shuttle_track(100.0, 300.0, pass_spacing_m=6.0,
+                              point_step_m=100.0)
+        roads = slow_loop([(e + 1000.0, n + 1000.0) for e, n in TWO_ROADS],
+                          loops=6, start_time=field[-1][0] + 600)
+        alone, _ = work_sites(field)
+        today, _ = work_sites(field + roads)
+        capped, _ = work_sites(field + roads, overflow_cap=True)
+        self.assertGreater(today[0].alpha_used_m, 44.64)
+        self.assertGreater(sum(s.area_ha for s in today),
+                           sum(s.area_ha for s in alone) + 1.0)
+        self.assertEqual(len(capped), 1)
+        self.assertEqual(capped[0].alpha_used_m, ALPHA_M)
+        self.assertAlmostEqual(capped[0].pass_spacing_m, 6.0, delta=0.6)
+        self.assertAlmostEqual(capped[0].area_ha, alone[0].area_ha, delta=0.01)
+
+    def test_the_cap_never_adds_alpha_or_hectares(self):
+        days = [shuttle_track(300.0, 300.0, pass_spacing_m=s)
+                for s in (6.0, 14.0, 37.2)]
+        days.append(slow_loop(TWO_ROADS))
+        days.append(shuttle_track(100.0, 300.0, pass_spacing_m=6.0,
+                                  point_step_m=100.0)
+                    + slow_loop(TWO_ROADS, loops=3, start_time=10 ** 5))
+        for index, track in enumerate(days):
+            today, _ = work_sites(track)
+            capped, _ = work_sites(track, overflow_cap=True)
+            self.assertLessEqual(sum(s.area_ha for s in capped),
+                                 sum(s.area_ha for s in today) + 1e-9, index)
+            if capped and today:
+                self.assertLessEqual(capped[0].alpha_used_m,
+                                     today[0].alpha_used_m, index)
+                self.assertLessEqual(capped[0].alpha_used_m, 53.568 + 1e-9)
+
+    def test_the_daily_computation_passes_the_switch_through(self):
+        from gps.daily import compute_day
+        points = [(t, lon, lat, speed, 10)
+                  for t, lon, lat, speed in slow_loop(TWO_ROADS)]
+        self.assertEqual(len(compute_day(points).sites), 1)
+        self.assertEqual(compute_day(points, overflow_cap=True).sites, [])
 
 
 class DensifyTests(unittest.TestCase):

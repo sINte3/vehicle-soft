@@ -226,11 +226,14 @@ class DayResult:
         return self.aggregate["reason"]
 
 
-def compute_day(points, contours=None, track_only=False):
+def compute_day(points, contours=None, track_only=False, overflow_cap=False):
     """points: [(t, lon, lat, speed, sats)] of one object, one local day.
 
     `track_only` -- the machine's category takes no hectares (special
     machinery): every measurement of the track is made, no site is sought.
+    `overflow_cap` -- the pre-registered A7 spacing rule
+    (`gps.area.pass_spacing_on_overflow`); only the read-only replay
+    (`tools/gps_alpha_replay.py`) turns it on until the owner accepts it.
     """
     aggregate = {"points_total": len(points), "points_work": 0, "track_km": 0.0,
                  "interval_median_s": None, "sats_median": None,
@@ -282,7 +285,7 @@ def compute_day(points, contours=None, track_only=False):
         aggregate["reason"] = REASON_RARE
         return DayResult(aggregate, [])
 
-    sites, _ = work_sites(points, contours=contours)
+    sites, _ = work_sites(points, contours=contours, overflow_cap=overflow_cap)
     flag = quality_flag(quality)
     rows = []
     for number, site in enumerate(sites, 1):
