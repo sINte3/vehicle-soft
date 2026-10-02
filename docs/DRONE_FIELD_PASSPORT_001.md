@@ -13,6 +13,10 @@
 `control_store.accepted_for`, та же, что в рабочих отчётах (PR #152). Карты в
 этом инкременте нет.
 
+> **Живой UAT 02.10.2026 — PASS** (код `e7e97f1`, копия production). Ворота
+> зонда 49 из 49, блокеров 0; просмотр владельца PASS; площадка возвращена,
+> production не изменён. Подробности — §17.
+
 ## 1. Цель
 
 Владелец хочет открыть поле и увидеть, какие работы на нём подтверждены,
@@ -316,6 +320,9 @@ YYYY-MM-DDTHH:MM` (для воспроизводимости). К DJI не об�
 
 ## 14. UAT на площадке до мержа (владелец, SRV-YOQSH)
 
+Проведён 02.10.2026, итог — PASS (§17). Блоки ниже — исправленная после
+прогона редакция: выбрасываемая копия страниц лежит вне `transport-report*`.
+
 Живой UAT идёт **до мержа** PR #160, на точном коде
 `e7e97f1f3193eb7e5081478d2024b19267378d37` и свежей копии production
 (SQLite online backup). Production только читается, миграций нет. Порядок
@@ -404,7 +411,10 @@ Get-Service -Name TransportBot003Staging, TransportBotStaging | Format-Table Nam
   $branch       = 'claude/practical-davinci-chb4r7'
   $sha          = 'e7e97f1f3193eb7e5081478d2024b19267378d37'
   $runRoot      = 'D:\transport-report-backups\staging\field_passport_uat'
-  $backupDir    = Join-Path $runRoot (Get-Date -Format 'yyyyMMdd_HHmmss')
+  $pageRoot     = 'C:\VehicleSoft_FieldPassport_UAT'
+  $runName      = Get-Date -Format 'yyyyMMdd_HHmmss'
+  $backupDir    = Join-Path $runRoot $runName
+  $pageDir      = Join-Path $pageRoot $runName
 
   $open = @(Get-ChildItem $runRoot -Directory -ErrorAction SilentlyContinue | Where-Object { -not (Test-Path (Join-Path $_.FullName 'returned.txt')) })
   if ($open.Count -gt 0) { throw "STEP FAILED: run $($open[0].Name) was not returned -- run the block 'Vernut ploshchadku' first" }
@@ -454,8 +464,8 @@ Get-Service -Name TransportBot003Staging, TransportBotStaging | Format-Table Nam
   $freeC = (Get-PSDrive -Name C).Free
   $freeD = (Get-PSDrive -Name D).Free
   Write-Output ("SIZES_MB prod=" + [math]::Round($prodBytes / 1MB) + " staging=" + [math]::Round($stagingBytes / 1MB) + " freeC=" + [math]::Round($freeC / 1MB) + " freeD=" + [math]::Round($freeD / 1MB))
-  if ($freeD -lt 1.2 * ($stagingBytes + 2 * $prodBytes)) { throw "STEP FAILED: not enough free space on D:" }
-  if ($freeC -lt 1.2 * $prodBytes) { throw "STEP FAILED: not enough free space on C:" }
+  if ($freeD -lt 1.2 * ($stagingBytes + $prodBytes)) { throw "STEP FAILED: not enough free space on D:" }
+  if ($freeC -lt 1.2 * 2 * $prodBytes) { throw "STEP FAILED: not enough free space on C: (production copy for staging + page copy)" }
 
   New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
   Set-Content -Path "$backupDir\before_head.txt" -Value $before -Encoding ASCII
@@ -477,8 +487,10 @@ Get-Service -Name TransportBot003Staging, TransportBotStaging | Format-Table Nam
   & $python -m py_compile $probe
   if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: the probe did not compile after extraction" }
   $prodCopy = Get-ChildItem (Join-Path $backupDir 'prod_copy') -Filter '*.db' | Select-Object -First 1
-  Copy-Item $prodCopy.FullName (Join-Path $probeDir 'page_copy.db')
+  New-Item -ItemType Directory -Force -Path $pageDir | Out-Null
+  Copy-Item $prodCopy.FullName (Join-Path $pageDir 'page_copy.db')
   Write-Output ("PROBE=" + $probe)
+  Write-Output ("PAGE_COPY=" + (Join-Path $pageDir 'page_copy.db'))
 
   git checkout --detach $sha
   if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: git checkout" }
@@ -534,7 +546,8 @@ Get-Service -Name TransportBot003Staging, TransportBotStaging | Format-Table Nam
 * до изменений: `STAGING_LOGIN_BEFORE`, `BEFORE_HEAD`, `STAGING_DB`,
   `PROD_HEAD`, `PROD_SERVICES`, `PROD_DB_BYTES`;
 * проверки: `STAGING_ROW`, `KIT_FILES_AFTER_SHA`, две строки
-  `COPY … integrity=ok`, `AFTER_HEAD`, `DB_LOCK_EXIT`, `DRIFT_EXIT`;
+  `COPY … integrity=ok`, `PAGE_COPY`, `AFTER_HEAD`, `DB_LOCK_EXIT`,
+  `DRIFT_EXIT`;
 * итог: `SMOKE_LOGIN=200`, `FIELDS_ANONYMOUS`, `PROD_HEAD_AFTER`,
   `PROD_SERVICES_AFTER`, `RUN`, `STEP=PASS`.
 
@@ -591,9 +604,17 @@ JSON ложатся в папку прогона, `census\`.
 ### 14.4 Зонд: случаи, сверка итогов, двойной счёт, история, страницы, время
 
 Часть данных зонд выполняет только чтением базы площадки. Страницы он рисует
-тестовым клиентом на `page_copy.db`, выбрасываемой копии в папке прогона.
-Импорт приложения пишет в эту копию (WAL, язык админа), поэтому в папке
-`transport-report*` зонд работать отказывается.
+тестовым клиентом на выбрасываемой копии
+`C:\VehicleSoft_FieldPassport_UAT\<прогон>\page_copy.db` (её кладёт 14.2).
+Импорт приложения пишет в эту копию (WAL, язык админа), поэтому копию в
+любой папке `transport-report*` зонд отвергает с кодом 1. Это касается и
+`D:\transport-report-backups`: туда копию класть нельзя.
+
+[REASON]: прогон 02.10.2026 первым запуском упал именно так. Прежняя
+редакция 14.2 клала копию в папку прогона на `D:\transport-report-backups`,
+и зонд правильно отказал. Проверку зонда не ослабляли: путь копии перенесён
+на `C:\VehicleSoft_FieldPassport_UAT`, тест сверяет путь из этого блока с
+правилом зонда.
 
 Код выхода зонда: `0` — все ворота прошли; `4` — упали ворота-блокеры
 (строки `GATE … FAIL BLOCKER`). Оба исхода — ответ: блок падает только на
@@ -613,8 +634,9 @@ JSON ложатся в папку прогона, `census\`.
   if ((git rev-parse HEAD) -ne $sha) { throw "STEP FAILED: staging is not on $sha" }
   $probeDir = Join-Path $open[0].FullName 'probe'
   $probe = Join-Path $probeDir 'dji_field_passport_uat.py'
-  $pageCopy = Join-Path $probeDir 'page_copy.db'
+  $pageCopy = Join-Path (Join-Path 'C:\VehicleSoft_FieldPassport_UAT' $open[0].Name) 'page_copy.db'
   if (-not (Test-Path $probe)) { throw "STEP FAILED: probe not found at $probe" }
+  if (-not (Test-Path $pageCopy)) { throw "STEP FAILED: page copy not found at $pageCopy -- run 14.2 first" }
   $ErrorActionPreference = 'Continue'
   & $python $probe --db "$root\instance\transport.db" --out-dir $probeDir --page-copy $pageCopy 2> (Join-Path $probeDir 'probe_stderr.log')
   $code = $LASTEXITCODE
@@ -739,6 +761,28 @@ JSON ложатся в папку прогона, `census\`.
 
 Копии на `D:` остаются; удалить их можно вручную, когда проверка закрыта.
 
+**Выбрасываемая копия страниц.** `C:\VehicleSoft_FieldPassport_UAT\<прогон>`
+содержит копию боевой базы, в которую писал зонд. Площадку она не затрагивает
+и после 14.6 не нужна. Удалить копии только тех прогонов, что уже возвращены
+(в их папке на `D:` есть `returned.txt`):
+
+```powershell
+& {
+  $ErrorActionPreference = 'Stop'
+  $pageRoot = 'C:\VehicleSoft_FieldPassport_UAT'
+  $runRoot  = 'D:\transport-report-backups\staging\field_passport_uat'
+  foreach ($d in @(Get-ChildItem $pageRoot -Directory -ErrorAction SilentlyContinue)) {
+    if (Test-Path (Join-Path (Join-Path $runRoot $d.Name) 'returned.txt')) {
+      Remove-Item $d.FullName -Recurse -Force
+      Write-Output ("REMOVED_PAGE_COPY=" + $d.FullName)
+    } else {
+      Write-Output ("KEPT (run not returned)=" + $d.FullName)
+    }
+  }
+  Write-Output "STEP=PASS"
+}
+```
+
 ### 14.7 Вернуть ботов площадки
 
 Только после `STEP=PASS` блока 14.6: база площадки снова своя. Вернуть так,
@@ -802,8 +846,11 @@ Get-Service -Name TransportBot003Staging, TransportBotStaging | Format-Table Nam
 
 ## 16. Проверки
 
-* `tests/test_dji_field_passport_uat.py` — 14 проверок живого UAT-зонда
-  `tools/dji_field_passport_uat.py` и блоков §14:
+* `tests/test_dji_field_passport_uat.py` — 16 проверок живого UAT-зонда
+  `tools/dji_field_passport_uat.py` и блоков §14. Две из них — регрессия
+  прогона 02.10.2026: каждый путь копии страниц, который строят блоки,
+  проходит правило зонда, а прежний путь на `D:\transport-report-backups`
+  по-прежнему отвергается. Правило зонда при этом не ослаблено:
   * файл зонда — чистый ASCII, строки экранов в нём равны строкам шаблонов;
   * на синтетике сценария ядра все ворота проходят и все классы случаев
     находятся запросом, база не пишется;
@@ -866,3 +913,127 @@ Get-Service -Name TransportBot003Staging, TransportBotStaging | Format-Table Nam
   маршрут паспорта и строки карточки не передают байты сейчас; список общей
   границы снова с вылетами без записи; безусловная фраза «учтён только в
   своей записи» в паспорте.
+
+## 17. Живой UAT 02.10.2026 — PASS
+
+Провёл владелец на площадке по §14. Код приложения — ровно
+`e7e97f1f3193eb7e5081478d2024b19267378d37`, база — online-копия production.
+Папка прогона: `D:\transport-report-backups\staging\field_passport_uat\20261002_111704`.
+
+### Подготовка и смоук — PASS
+
+| Что | Значение |
+|---|---|
+| площадка до UAT | HEAD `2013bed88c19b6383097d0c0b9b65442c85c26ce`, база 413 241 344 байт |
+| копия production | 499 499 008 байт, `integrity_check` = ok |
+| production HEAD до и после | `6ed931a5545cf4392b7a5672c0e0cea8a99b9bc3` |
+| службы production до и после | TransportBot, TransportBot003, TransportReport — Running |
+| тесты на площадке | 87 OK (ядро паспорта 39, страницы 31, принятая площадь 17) |
+| смоук | `/login` 200; `/drones/fields` без входа → форма входа; миграций нет |
+
+### Перепись на копии production
+
+| | Сентябрь 2026 | Август 2026 |
+|---|---|---|
+| вылетов | 7 240 | 8 196 |
+| с расчётом площади / с привязкой | 7 232 / 7 232 | — |
+| подтверждено (EXACT + IDENTIFIED) | **262 = 3,6 %** (115 + 147) | **2 110 = 25,7 %** (1 661 + 449) |
+| предположительно (PROBABLE) | 0 | 3 |
+| поле не определено | 6 970 = 96,3 % | 6 083 |
+| — карточка не собрана (NO_CARD) | **6 067 = 83,8 %** | 3 591 = 43,8 % |
+| — в карточке нет ключа (NO_KEY) | 433 = 6,0 % | 896 = 10,9 % |
+| — ключа нет в каталоге (NOT_IN_CATALOG) | 470 = 6,5 % | 1 596 = 19,5 % |
+| привязка не рассчитана (NOT_RESOLVED) | 8 | 0 |
+| IDENTIFIED ждёт пересчёта | 1 | — |
+
+Суммы сходятся с итогом:
+* сентябрь: 262 + 6 970 + 8 = 7 240; три причины: 6 067 + 433 + 470 = 6 970;
+* август: 2 110 + 3 + 3 591 + 896 + 1 596 = 8 196.
+
+Остальные состояния и причины (CANDIDATE, AMBIGUOUS, KEY_AFTER_RESOLUTION,
+UNPARSED, OTHER) в обоих месяцах — 0. Перепись последних 30 суток в отчёт
+владельца не вошла.
+
+Каталог полей DJI:
+* 6 456 записей, 6 461 ревизия, 6 441 различный md5;
+* тел границ 6 441, все сверены, без тела — 0;
+* md5 у нескольких записей — 15, затронуто записей 30;
+* последний полный снимок — 2026-10-02 01:24:54 UTC.
+
+**Вывод переписи.** Узкое место сентября — несобранные карточки вылетов
+(NO_CARD 83,8 %), а не резолвер и не каталог. Каталог полон и свеж: каждый
+md5 имеет сверенное тело, снимок суточный. Это ограничение покрытия данными,
+а не дефект паспорта поля: вылеты без карточки честно показаны как «карточка
+не собрана» и в гектары полей не входят.
+
+### Зонд — PASS
+
+`RESULT PASS`: ворот 49, упавших блокеров 0, `PROBE_EXIT=0`. На живой копии
+доказано:
+
+* **Членство и итоги:**
+  * ни один вылет не подтверждён в двух записях;
+  * членство карточки совпадает с независимым SQL;
+  * в итог входят только TIER1/TIER2, PROBABLE не входит;
+  * итоги = ручная сумма провайдера принятой площади, RAW = независимая
+    SQL-сумма.
+* **Конкретные случаи:**
+  * вылет `713858949` на общей границе учтён ровно один раз;
+  * исторический вылет хранит свой md5;
+  * TIER2 `717229280` с байтами, пришедшими позже, остаётся IDENTIFIED и
+    подтверждённым и просит пересчёт;
+  * у `717685196` без расчёта принятая — «не рассчитано».
+* **Страницы:** RU и UZ — 200, утечек координат, источников и секретов нет,
+  без входа — перенаправление, неизвестный UUID — 404.
+
+Время на копии production — рендер страницы на сервере:
+
+| Страница | Время |
+|---|---|
+| список за всё время | около 0,35 с |
+| список за сентябрь | 0,14–0,25 с |
+| поиск по UUID | около 0,38 с |
+| карточки полей | 6–11 мс |
+| паспорта | 6–8 мс |
+
+Узкого места по скорости нет.
+
+**Первый запуск зонда отказал (код 1) — дефект ранбука, не продукта.**
+Прежняя 14.2 клала выбрасываемую копию страниц в папку прогона на
+`D:\transport-report-backups`, и зонд правильно отказал: копия в папке
+`transport-report*`. Ничего не изменилось. Повторный запуск с копией в
+`C:\VehicleSoft_FieldPassport_UAT\20261002_111704\page_copy.db` прошёл.
+§14.2 и 14.4 исправлены, правило зонда не ослаблено, регрессия — в
+`tests/test_dji_field_passport_uat.py`.
+
+### Просмотр владельца — PASS
+
+| Случай | Что видно | Итог |
+|---|---|---|
+| REVIEW `714182611` | RAW 0.0800, исключено 0.0000, принято 0.0800, «требует решения»; разделы «Почему», «Поле», «Решения», «Происхождение» на месте | PASS |
+| без расчёта `717685196` | RAW 0.7973, принятая — «не рассчитано», RAW вместо неё не подставлен | PASS |
+| TIER2 позже байтов `717229280` | подтверждён; «граница получена после расчёта привязки», просит пересчёт; противоречивого «граница не сохранена» нет | PASS |
+| общая граница, вылет `713858949` | запись A `4cb20053-1a23-44ba-b3a2-541372974ab7`: один подтверждённый, около 0,49 га; запись B `911b90ef-ac29-4a66-af74-aef563bb3b66`: 0 подтверждённых, RAW 0 — двойного счёта нет | PASS |
+| поле EXACT `4ca02260-bfa4-4492-b005-3b69165c20c0`, без периода | подтверждено 36, RAW 78.10, принято 78.10, исключено 0.00 — совпадает со сверкой зонда | PASS |
+| узбекский интерфейс | страницы на кириллице, открываются | PASS |
+
+### Возврат площадки — PASS
+
+* База: `transport_20261002_111707_staging_before.db`, 413 241 344 байт,
+  `integrity_check` = ok.
+* HEAD: `2013bed88c19b6383097d0c0b9b65442c85c26ce`; `/login` — 200.
+* Боты площадки: `TransportBot003Staging` и `TransportBotStaging` — Running,
+  Automatic.
+* Production: `6ed931a5545cf4392b7a5672c0e0cea8a99b9bc3`, службы Running —
+  не изменён.
+* Строка `docs/STAGING.md` возвращается в «нет» отдельным PR #163.
+
+### Итог
+
+**PASS.** Ворот 49 из 49, блокеров 0; просмотр владельца PASS; возврат PASS;
+production не изменён.
+
+* **Известное ограничение:** поиск по кириллице чувствителен к регистру.
+* **Ограничение покрытия данными:** в сентябре подтверждено только 3,6 %
+  вылетов, главная причина — несобранные карточки (NO_CARD 83,8 %). Это не
+  дефект паспорта поля.
