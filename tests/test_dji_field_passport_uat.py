@@ -150,6 +150,15 @@ class DataPart(unittest.TestCase):
             gates['latest_revision.header_is_latest_observed']['status'],
             'FAIL')
 
+    def test_the_documented_page_copy_layout_is_accepted(self):
+        """Регрессия UAT 02.10.2026: копия в раскладке 14.2 принимается."""
+        safe = os.path.join(self.tmp, 'VehicleSoft_FieldPassport_UAT',
+                            '20261002_111704')
+        os.makedirs(safe)
+        page_copy = os.path.join(safe, 'page_copy.db')
+        shutil.copy(self.db, page_copy)
+        self.assertIsNone(probe.refuse_page_copy(page_copy, self.db))
+
     def test_refusals(self):
         missing = os.path.join(self.tmp, 'absent.db')
         code = probe.main(['--db', missing, '--out-dir', self.out],
@@ -163,12 +172,21 @@ class DataPart(unittest.TestCase):
         self.assertEqual(code, probe.EXIT_NO_TABLES)
         code = probe.main(['--db', self.db], out=io.StringIO())
         self.assertEqual(code, probe.EXIT_USAGE)
-        # Копия для страниц: не в папке transport-report и не сама база.
+        # Копия для страниц: не в папке transport-report* (площадка,
+        # production, их резервные копии на D:) и не сама база.
         live = os.path.join(self.tmp, 'transport-report-staging', 'instance')
         os.makedirs(live)
         live_db = os.path.join(live, 'transport.db')
         shutil.copy(self.db, live_db)
-        for page_copy in (live_db, self.db):
+        backups = os.path.join(self.tmp, 'transport-report-backups', 'staging',
+                               'field_passport_uat', '20261002_111704',
+                               'probe')
+        os.makedirs(backups)
+        backup_copy = os.path.join(backups, 'page_copy.db')
+        shutil.copy(self.db, backup_copy)
+        for page_copy in (live_db, backup_copy, self.db):
+            self.assertIsNotNone(probe.refuse_page_copy(page_copy, self.db),
+                                 page_copy)
             code = probe.main(['--db', self.db, '--out-dir', self.out,
                                '--page-copy', page_copy], out=io.StringIO())
             self.assertEqual(code, probe.EXIT_USAGE, page_copy)
@@ -195,8 +213,38 @@ class RunbookBlocks(unittest.TestCase):
                                 re.S)
         cls.big = [b for b in cls.blocks if b.startswith('& {')]
 
-    def test_there_are_four_main_blocks(self):
-        self.assertEqual(len(self.big), 4)   # 14.2, 14.3, 14.4, 14.6
+    def test_there_are_five_main_blocks(self):
+        # 14.2, 14.3, 14.4, 14.6 and the page-copy cleanup after 14.6.
+        self.assertEqual(len(self.big), 5)
+
+    def test_the_documented_page_copy_is_accepted_by_the_probe(self):
+        """UAT 02.10.2026: §14.2 put the copy under D:\\transport-report-
+        backups and the probe refused it (exit 1). The rule is right; the
+        runbook was wrong. Every page-copy path the runbook builds must pass
+        the probe's own rule, and the old path must still be refused."""
+        import re
+        roots = set()
+        for block in self.big:
+            roots.update(re.findall(r"'(C:\\VehicleSoft_FieldPassport_UAT)'",
+                                    block))
+            for line in block.splitlines():
+                if 'page_copy.db' in line:
+                    self.assertTrue('$pageDir' in line or
+                                    'VehicleSoft_FieldPassport_UAT' in line,
+                                    line)
+                    self.assertNotIn('$probeDir', line)
+                    self.assertNotIn('$backupDir', line)
+        self.assertEqual(roots, {'C:\\VehicleSoft_FieldPassport_UAT'})
+        documented = 'C:\\VehicleSoft_FieldPassport_UAT\\20261002_111704' \
+            '\\page_copy.db'
+        self.assertFalse(probe.inside_transport_report(documented))
+        old = ('D:\\transport-report-backups\\staging\\field_passport_uat'
+               '\\20261002_111704\\probe\\page_copy.db')
+        self.assertTrue(probe.inside_transport_report(old))
+        for live in ('C:\\transport-report\\instance\\transport.db',
+                     'C:\\transport-report-staging\\instance\\transport.db',
+                     'C:/Transport-Report-Staging/instance/x.db'):
+            self.assertTrue(probe.inside_transport_report(live), live)
 
     def test_blocks_are_ascii_without_placeholders(self):
         import re

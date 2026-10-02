@@ -35,7 +35,10 @@ tables missing; 4 at least one BLOCKER gate failed (see the GATE lines).
 
 Run (PowerShell, staging checkout as the working directory):
 
-  & "C:\\Program Files\\Python314\\python.exe" <probe.py> --db instance\\transport.db --out-dir <run folder>\\probe --page-copy <run folder>\\probe\\page_copy.db
+  & "C:\\Program Files\\Python314\\python.exe" <probe.py> --db instance\\transport.db --out-dir <run folder>\\probe --page-copy C:\\VehicleSoft_FieldPassport_UAT\\<run>\\page_copy.db
+
+The page copy must NOT sit under the run folder on D:\\transport-report-backups
+(or any other transport-report* folder): the probe refuses it there (exit 1).
 
 Output: ASCII summary on the console and in <out-dir>\\uat_summary.txt;
 everything in <out-dir>\\uat_report.json (ensure_ascii). Field names go to
@@ -756,14 +759,31 @@ def run_data(con, rep, sept, runs, version=None):
 
 # --- pages: Flask test client on a throwaway copy ---------------------------
 
+# Production (C:\transport-report), staging (C:\transport-report-staging)
+# and their backups (D:\transport-report-backups) all start with this. The
+# page copy is WRITTEN (create_all, WAL pragma, the admin's language), so it
+# may sit in none of them -- the runbook puts it under
+# C:\VehicleSoft_FieldPassport_UAT\<run>\page_copy.db.
+FORBIDDEN_FOLDER = 'transport-report'
+
+
+def inside_transport_report(path):
+    """True when any folder of ``path`` starts with ``transport-report``.
+
+    Pure string check on both separators, case-insensitive, so the same rule
+    can be tested against the Windows paths the runbook prints.
+    """
+    parts = [p.lower() for p in str(path).replace('\\', '/').split('/')]
+    return any(part.startswith(FORBIDDEN_FOLDER) for part in parts)
+
+
 def refuse_page_copy(page_copy, db_path):
     norm = lambda p: os.path.normcase(os.path.abspath(p))  # noqa: E731
     if not os.path.isfile(page_copy):
         return 'page copy not found: %s' % page_copy
     if norm(page_copy) == norm(db_path):
         return 'page copy is the --db file itself'
-    parts = [p.lower() for p in norm(page_copy).replace('\\', '/').split('/')]
-    if any(part.startswith('transport-report') for part in parts):
+    if inside_transport_report(norm(page_copy)):
         return ('page copy lies inside a transport-report folder - it must be '
                 'a throwaway file, never a live database')
     return None
