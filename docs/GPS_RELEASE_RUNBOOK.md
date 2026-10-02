@@ -71,7 +71,7 @@
 ## Шаг 1. Влить запрос выпуска на GitHub
 
 Блоки этого ранбука проверены вместе с кодом выпуска и лежат в запросе PR
-выпуска. «Влить» — сделать его основной версией, чтобы сервер мог её
+#162. «Влить» — сделать его основной версией, чтобы сервер мог её
 забрать. Сам сервер на этом шаге не меняется.
 
 **Важно: до конца шага 4 не вливайте другие PR с кодом** — например, PR #160
@@ -80,7 +80,7 @@
 появится другой код, шаги 2 и 3 остановятся сами и ничего не тронут — тогда
 напишите мне.
 
-1. Откройте запрос выпуска — ссылка в сообщении сессии.
+1. Откройте https://github.com/sINte3/vehicle-soft/pull/162
 2. Внизу — зелёная кнопка. Если на ней не написано «Merge pull request»,
    нажмите стрелку рядом с ней и выберите **«Create a merge commit»** (не
    «Squash» и не «Rebase»).
@@ -115,7 +115,7 @@ $py        = 'C:\Program Files\Python314\python.exe'
 $backupBat = 'C:\transport-report\backup_production_db.bat'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $baseline  = '6ed931a5545cf4392b7a5672c0e0cea8a99b9bc3'
-$reviewed  = '31c0f661ae01611e3b6e3ff80214927a93c45c2f'
+$reviewed  = '6443af1a8bb995d872b9c72fb60b7875ae596601'
 $work      = 'C:\VehicleSoft_Release'
 $log       = 'C:\VehicleSoft_Release\release_v121_step2.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -225,7 +225,7 @@ $errLog    = 'C:\transport-report\logs\error.log'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '6ed931a5545cf4392b7a5672c0e0cea8a99b9bc3'
-$reviewed  = '31c0f661ae01611e3b6e3ff80214927a93c45c2f'
+$reviewed  = '6443af1a8bb995d872b9c72fb60b7875ae596601'
 $work      = 'C:\VehicleSoft_Release'
 $log       = 'C:\VehicleSoft_Release\release_v121_step3.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -534,7 +534,7 @@ $prod      = 'C:\transport-report'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '6ed931a5545cf4392b7a5672c0e0cea8a99b9bc3'
-$reviewed  = '31c0f661ae01611e3b6e3ff80214927a93c45c2f'
+$reviewed  = '6443af1a8bb995d872b9c72fb60b7875ae596601'
 $work      = 'C:\VehicleSoft_Release'
 $log       = 'C:\VehicleSoft_Release\release_v121_rollback.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
