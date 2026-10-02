@@ -202,8 +202,11 @@
 
 <div class="vs-table-wrap vs-mb">
   <div class="vs-card-header">
-    <span class="vs-card-title">{{ 'Вылеты на тех же границах, учтённые в другой записи' if is_ru else 'Шу чегараларда, бошқа ёзувда ҳисобланган парвозлар' }}</span>
-    <span class="vs-muted">{{ 'диагностика: гектаров этой записи не добавляют' if is_ru else 'диагностика: бу ёзувга гектар қўшмайди' }}</span>
+    {# DRONE-FIELD-PASSPORT-001 REVIEW-FIX-1: only flights whose CURRENT
+       attribution names ANOTHER record. A flight with no field record on
+       the same md5 is counted nowhere, so it is not listed as «other». #}
+    <span class="vs-card-title">{{ 'Вылеты на тех же границах, привязанные к другим записям DJI' if is_ru else 'Шу чегараларда бошқа DJI ёзувларига боғланган парвозлар' }}</span>
+    <span class="vs-muted">{{ 'диагностика: в гектары этой записи не входят; подтверждённые учтены в своей записи' if is_ru else 'диагностика: бу ёзув гектарларига кирмайди; тасдиқланганлари ўз ёзувида ҳисобланган' }}</span>
   </div>
   {% if shared %}
   <div class="vs-table-scroll">
@@ -214,7 +217,7 @@
         <th>{{ 'Вылет DJI' if is_ru else 'DJI парвози' }}</th>
         <th>{{ 'Граница' if is_ru else 'Чегара' }}</th>
         <th>{{ 'Привязка к полю' if is_ru else 'Далага боғланиш' }}</th>
-        <th>{{ 'Учтён в записи' if is_ru else 'Ҳисобланган ёзув' }}</th>
+        <th>{{ 'Привязан к записи' if is_ru else 'Боғланган ёзув' }}</th>
       </tr>
     </thead>
     <tbody>

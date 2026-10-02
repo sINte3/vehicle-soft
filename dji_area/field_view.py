@@ -31,6 +31,12 @@ DRONE-FIELD-PASSPORT-001. Резолвер поля (`dji_area.field`) и его
 
 Отсутствие расчёта площади (Area Control) -- свойство площади, а не поля;
 его даёт `dji_area.accepted` («не рассчитано»), здесь оно не выводится.
+
+Две разные вещи не смешиваются: состояние -- вывод ПОСЛЕДНЕГО расчёта
+привязки (строка резолвера), а наличие байтов границы -- то, что лежит в
+`dji_land_geometries` СЕЙЧАС. Если байты пришли после расчёта, состояние
+не повышается (это дело пересчёта), но и «граница не сохранена» уже не
+пишется -- см. `awaiting_recalculation`.
 """
 
 import json
@@ -189,6 +195,46 @@ BOUNDARY_LABELS = {
                        'тарихий чегара сақланмаган'),
 }
 
+# IDENTIFIED, рассчитанный ДО того, как сверенные байты его границы попали
+# в каталог. Состояние то же (TIER2 остаётся TIER2 до пересчёта), меняются
+# только слова: «граница не сохранена» здесь была бы неправдой.
+AWAITING_LABEL = ('Подтверждено; граница получена после расчёта привязки',
+                  'Тасдиқланган; чегара боғланиш ҳисобидан кейин олинган')
+AWAITING_HELP = (
+    'Привязка была рассчитана до получения границы. Байты исторической '
+    'границы теперь сохранены и сверены по md5; нужен пересчёт привязки, '
+    'чтобы она перешла в «Подтверждено, граница сохранена». До пересчёта '
+    'вылет остаётся подтверждённым и в итоге поля учитывается как прежде.',
+    'Боғланиш чегара олинишидан олдин ҳисобланган. Тарихий чегара '
+    'байтлари энди сақланган ва md5 бўйича солиштирилган; «Тасдиқланган, '
+    'чегара сақланган» ҳолатига ўтиши учун боғланишни қайта ҳисоблаш '
+    'керак. Қайта ҳисобгача парвоз тасдиқланган бўлиб қолади ва дала '
+    'якунида аввалгидек ҳисобланади.')
+# Байты пришли позже, но ещё не сверены с contentMd5 каталога: резолвер
+# поднимет привязку только после сверки, «не сохранена» -- тоже неправда.
+UNVERIFIED_LABEL = ('Подтверждено; граница получена, ещё не сверена',
+                    'Тасдиқланган; чегара олинган, ҳали солиштирилмаган')
+UNVERIFIED_HELP = (
+    'Привязка была рассчитана до получения границы. Байты границы теперь '
+    'сохранены, но ещё не сверены с каталогом DJI по md5; после сверки и '
+    'пересчёта привязка перейдёт в «Подтверждено, граница сохранена». До '
+    'этого вылет остаётся подтверждённым и в итоге поля учитывается как '
+    'прежде.',
+    'Боғланиш чегара олинишидан олдин ҳисобланган. Чегара байтлари энди '
+    'сақланган, лекин ҳали DJI каталоги билан md5 бўйича солиштирилмаган; '
+    'солиштириш ва қайта ҳисобдан кейин боғланиш «Тасдиқланган, чегара '
+    'сақланган» ҳолатига ўтади. Ўшангача парвоз тасдиқланган бўлиб қолади ва '
+    'дала якунида аввалгидек ҳисобланади.')
+# Предупреждение резолвера «байтов нет» при байтах, пришедших позже.
+BYTES_LATE_WARNING = (
+    'байты границы получены после расчёта привязки; нужен пересчёт',
+    'чегара байтлари боғланиш ҳисобидан кейин олинган; қайта ҳисоб керак')
+BYTES_LATE_UNVERIFIED_WARNING = (
+    'байты границы получены после расчёта привязки; ещё не сверены по md5',
+    'чегара байтлари боғланиш ҳисобидан кейин олинган; ҳали md5 бўйича '
+    'солиштирилмаган')
+WARNING_BYTES_UNAVAILABLE = 'HISTORICAL_GEOMETRY_UNAVAILABLE'
+
 M2_PER_HA = 10000.0
 # Площадь каталога DJI -- в mu (у кабинета), 15 mu = 1 га.
 MU_PER_HA = 15.0
@@ -285,6 +331,41 @@ def boundary_state(geometry_row):
     return BOUNDARY_SAVED_UNVERIFIED
 
 
+def bytes_now(attr, geometry_row):
+    """Сверенные байты границы, названной привязкой, лежат в каталоге СЕЙЧАС.
+
+    ``geometry_row`` -- строка `dji_land_geometries` для md5 привязки (без
+    тела) либо None. Сверены -- `md5_verified`: ровно это резолвер требует
+    для TIER1 (`field.resolve_field`).
+    """
+    return bool(_get(attr, 'geometry_md5')) \
+        and boundary_state(geometry_row) == BOUNDARY_SAVED
+
+
+def bytes_after_resolution(attr, geometry_row):
+    """Резолвер байтов не застал, а сейчас они сохранены (сверены или нет).
+
+    Любое состояние привязки. Решает только одно: можно ли написать «байты
+    границы не сохранены» -- нельзя, если строка байтов этого md5 есть.
+    """
+    return bool(_get(attr, 'geometry_md5')) and geometry_row is not None \
+        and not _get(attr, 'historical_geometry_available')
+
+
+def awaiting_recalculation(attr, geometry_row, evidence=None):
+    """IDENTIFIED, чьи байты границы пришли после расчёта привязки.
+
+    [REASON]: состояние НЕ повышается до EXACT здесь -- это вывод резолвера,
+    и сменит его только пересчёт (отпечаток каталога учитывает
+    `md5_verified`, суточный цикл пересчитает). Признак нужен, чтобы экран
+    не утверждал «граница не сохранена» рядом с «сохранена и сверена», а
+    перепись -- чтобы такие вылеты было видно числом.
+    """
+    return classify(attr, evidence)[0] == STATE_IDENTIFIED \
+        and bytes_after_resolution(attr, geometry_row) \
+        and bytes_now(attr, geometry_row)
+
+
 def short_hash(value, length=12):
     if not value:
         return ''
@@ -301,15 +382,28 @@ def mu_to_ha(value):
         return None
 
 
-def attribution_view(attr, evidence=None, lang='ru'):
+def attribution_view(attr, evidence=None, lang='ru', geometry=None):
     """Привязка одного вылета для шаблона: состояние, причина, подписи.
 
     Ничего не вычисляется заново: каждое поле -- из записанной строки
     резолвера. ``geometry_md5`` -- версия границы, названная карточкой
     вылета; ею, а не сегодняшней ревизией, определяется историческая
-    граница вылета.
+    граница вылета. ``geometry`` -- строка `dji_land_geometries` этого md5
+    СЕЙЧАС (без тела) либо None: только она решает, писать ли «граница не
+    сохранена»; состояние от неё не меняется.
     """
     state, reason = classify(attr, evidence)
+    late = bytes_after_resolution(attr, geometry)
+    verified = bytes_now(attr, geometry)
+    # Тот же признак, что считает перепись (`census_add`).
+    awaiting = awaiting_recalculation(attr, geometry, evidence)
+    unverified = state == STATE_IDENTIFIED and late and not verified
+    if awaiting:
+        label, help_text = AWAITING_LABEL, AWAITING_HELP
+    elif unverified:
+        label, help_text = UNVERIFIED_LABEL, UNVERIFIED_HELP
+    else:
+        label, help_text = STATE_LABELS[state], STATE_HELP[state]
     method = _get(attr, 'field_attribution_method')
     reason_text = pick(REASON_LABELS[reason], lang) if reason else ''
     if reason == REASON_NO_KEY and method == METHOD_MANUAL_NO_KEY:
@@ -319,15 +413,26 @@ def attribution_view(attr, evidence=None, lang='ru'):
     for code in warnings:
         if code.startswith('TIER4_CANDIDATE_ONLY_'):
             continue
+        if code == WARNING_BYTES_UNAVAILABLE and late:
+            # Резолвер байтов не застал, но сейчас они есть: «не
+            # сохранены» было бы неправдой.
+            warning_texts.append(pick(
+                BYTES_LATE_WARNING if verified
+                else BYTES_LATE_UNVERIFIED_WARNING, lang))
+            continue
         pair = WARNING_LABELS.get(code)
         warning_texts.append(pick(pair, lang) if pair else code)
     confidence = _get(attr, 'field_confidence')
     return {
         'state': state,
         'reason': reason,
-        'state_label': pick(STATE_LABELS[state], lang),
+        'state_label': pick(label, lang),
         'state_badge': STATE_BADGES[state],
-        'state_help': pick(STATE_HELP[state], lang),
+        'state_help': pick(help_text, lang),
+        'bytes_now': verified,
+        'bytes_after_resolution': late,
+        'awaiting_recalculation': awaiting,
+        'awaiting_verification': unverified,
         'reason_text': reason_text,
         'confirmed': state in CONFIRMED_STATES,
         'provisional': state in PROVISIONAL_STATES,
@@ -367,17 +472,24 @@ def empty_census():
         'with_attribution': 0,
         'with_historical_bytes': 0,
         'md5_without_bytes': 0,
+        'bytes_now': 0,
+        'awaiting_recalculation': 0,
         'states': dict.fromkeys(STATES, 0),
         'reasons': dict.fromkeys(REASONS, 0),
     }
     return out
 
 
-def census_add(bucket, attr, evidence, has_calc, count=1):
+def census_add(bucket, attr, evidence, has_calc, count=1, geometry=None):
     """Добавить ``count`` вылетов одного вида в корзину переписи.
 
     Вид -- то, что классификация читает: строка привязки (или её значимые
-    поля) и указатели карточки. Так перепись и экраны делят одну функцию.
+    поля), указатели карточки и строка байтов границы СЕЙЧАС
+    (``geometry``). Так перепись и экраны делят одни функции.
+
+    ``with_historical_bytes`` / ``md5_without_bytes`` -- как застал
+    резолвер; ``bytes_now`` -- сверенные байты есть сейчас;
+    ``awaiting_recalculation`` -- IDENTIFIED, чьи байты пришли позже.
     """
     state, reason = classify(attr, evidence)
     bucket['flights'] += count
@@ -389,6 +501,10 @@ def census_add(bucket, attr, evidence, has_calc, count=1):
             bucket['with_historical_bytes'] += count
         elif _get(attr, 'geometry_md5'):
             bucket['md5_without_bytes'] += count
+        if bytes_now(attr, geometry):
+            bucket['bytes_now'] += count
+        if awaiting_recalculation(attr, geometry, evidence):
+            bucket['awaiting_recalculation'] += count
     bucket['states'][state] += count
     if reason:
         bucket['reasons'][reason] += count

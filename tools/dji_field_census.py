@@ -159,12 +159,17 @@ def bucket_lines(bucket, indent='  '):
             r[fv.REASON_OTHER], _pct(r[fv.REASON_OTHER], n)),
         'NOT_RESOLVED (no attribution)    %8d  %s' % (
             s[fv.STATE_NOT_RESOLVED], _pct(s[fv.STATE_NOT_RESOLVED], n)),
-        'with historical boundary bytes   %8d  %s' % (
+        'boundary bytes at resolution     %8d  %s' % (
             bucket['with_historical_bytes'],
             _pct(bucket['with_historical_bytes'], n)),
-        'with boundary md5 but no bytes   %8d  %s' % (
+        'boundary md5, no bytes at resol. %8d  %s' % (
             bucket['md5_without_bytes'],
             _pct(bucket['md5_without_bytes'], n)),
+        'boundary bytes available NOW     %8d  %s' % (
+            bucket['bytes_now'], _pct(bucket['bytes_now'], n)),
+        '  IDENTIFIED awaiting recalc     %8d  %s' % (
+            bucket['awaiting_recalculation'],
+            _pct(bucket['awaiting_recalculation'], n)),
     ]
     return [indent + line for line in lines]
 

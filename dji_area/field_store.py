@@ -157,6 +157,26 @@ def _address_sql(con, alias='r'):
             "json_extract(%s.raw_json, '$.address') END" % (alias, alias))
 
 
+def _latest_order(alias):
+    """ORDER BY последней наблюдавшейся ревизии записи поля DJI.
+
+    [REASON]: ЕДИНСТВЕННОЕ место, где решено, какая ревизия записи текущая.
+    Не MAX(id): `store.upsert_land_revision` на повторе уже известного
+    `raw_sha256` новой строки не создаёт, а двигает `last_seen_snapshot_id`
+    у старой. После A -> B -> A текущая -- A с меньшим id, и MAX(id) выбрал
+    бы B. Порядок -- тот же, что у резолвера (`SqliteCatalog.land_revisions`
+    + `field._latest_revision`): по снимку последнего наблюдения, затем по id.
+    """
+    return '%s.last_seen_snapshot_id DESC, %s.id DESC' % (alias, alias)
+
+
+def _latest_revision_id_sql(uuid_expr):
+    """Подзапрос: id последней наблюдавшейся ревизии записи ``uuid_expr``."""
+    return ('(SELECT lr.id FROM dji_land_revisions lr '
+            'WHERE lr.land_uuid = %s ORDER BY %s LIMIT 1)'
+            % (uuid_expr, _latest_order('lr')))
+
+
 # ─── Привязки и доказательства вылетов ───────────────────────────────────────
 
 def current_attributions(con, flight_ids, version=None):
@@ -256,22 +276,27 @@ def snapshots(con, snapshot_ids):
 
 
 def land_header(con, land_uuid):
-    """Последняя ревизия записи поля DJI и её сводка; None -- записи нет."""
+    """Последняя наблюдавшаяся ревизия записи поля DJI и её сводка.
+
+    None -- записи нет. «Последняя» -- `_latest_order`, не MAX(id).
+    """
     agg = con.execute(
-        'SELECT MAX(id) AS last_id, COUNT(*) AS revisions, '
+        'SELECT COUNT(*) AS revisions, '
         'COUNT(DISTINCT geometry_md5) AS boundaries, '
         'MIN(first_seen_snapshot_id) AS first_snapshot_id, '
         'MAX(last_seen_snapshot_id) AS last_snapshot_id '
         'FROM dji_land_revisions WHERE land_uuid = ?',
         (land_uuid,)).fetchone()
-    if agg is None or agg['last_id'] is None:
+    if agg is None or not agg['revisions']:
         return None
     row = dict(con.execute(
         'SELECT r.id, r.land_uuid, r.external_id, r.serial_number, r.name, '
         'r.total_area_raw, r.work_area_raw, r.area_unit, r.geometry_md5, '
         'r.land_type, r.created_at_source, r.updated_at_source, '
-        '%s AS address FROM dji_land_revisions r WHERE r.id = ?'
-        % _address_sql(con), (agg['last_id'],)).fetchone())
+        'r.last_seen_snapshot_id, '
+        '%s AS address FROM dji_land_revisions r WHERE r.land_uuid = ? '
+        'ORDER BY %s LIMIT 1' % (_address_sql(con), _latest_order('r')),
+        (land_uuid,)).fetchone())
     row.update({'revisions': agg['revisions'],
                 'boundaries': agg['boundaries'],
                 'first_snapshot_id': agg['first_snapshot_id'],
@@ -322,10 +347,10 @@ def land_list(con, query='', utc_start=None, utc_end_excl=None,
               only_with_flights=False, page=1, page_size=50, version=None):
     """Страница списка записей полей DJI. Геометрии и площадей вылетов нет.
 
-    Последняя ревизия каждой записи, число ревизий и версий границы, число
-    вылетов периода с подтверждённой и с предположительной привязкой и
-    последний подтверждённый вылет. Принятая площадь здесь не считается:
-    это список, а не отчёт по 6 000 полей.
+    Последняя наблюдавшаяся ревизия каждой записи (`_latest_order`), число
+    ревизий и версий границы, число вылетов периода с подтверждённой и с
+    предположительной привязкой и последний подтверждённый вылет. Принятая
+    площадь здесь не считается: это список, а не отчёт по 6 000 полей.
     """
     version = version or FIELD_RESOLVER_VERSION
     period_sql, period_params = _period('f.started_at', utc_start,
@@ -347,9 +372,10 @@ def land_list(con, query='', utc_start=None, utc_end_excl=None,
         ' GROUP BY a.field_land_uuid')
     att_params = confirmed + provisional + confirmed + [version] + \
         period_params
-    cur = ('SELECT land_uuid, MAX(id) AS last_id, COUNT(*) AS revisions, '
-           'COUNT(DISTINCT geometry_md5) AS boundaries '
-           'FROM dji_land_revisions GROUP BY land_uuid')
+    cur = ('SELECT g.land_uuid, %s AS last_id, COUNT(*) AS revisions, '
+           'COUNT(DISTINCT g.geometry_md5) AS boundaries '
+           'FROM dji_land_revisions g GROUP BY g.land_uuid'
+           % _latest_revision_id_sql('g.land_uuid'))
     address = _address_sql(con)
     where, where_params = [], []
     term = (query or '').strip()
@@ -450,10 +476,16 @@ def provisional_members(rows, land_uuid):
 
 def shared_geometry_flights(con, land_uuid, md5s, utc_start=None,
                             utc_end_excl=None, version=None, limit=100):
-    """Вылеты на ТЕХ ЖЕ границах, учтённые НЕ в этой записи. Диагностика.
+    """Вылеты на ТЕХ ЖЕ границах, привязанные к ДРУГОЙ записи. Диагностика.
 
-    ({'rows': [...], 'total': n}). Гектаров записи они не добавляют --
-    см. правило членства в шапке модуля.
+    ({'rows': [...], 'total': n}). Только строки, у которых текущая привязка
+    несёт `field_land_uuid` другой записи -- в любом состоянии (EXACT,
+    IDENTIFIED, PROBABLE, CANDIDATE); гектаров этой записи они не добавляют
+    -- см. правило членства в шапке модуля.
+
+    [REASON]: вылет без `field_land_uuid` (поле не определено, противоречие
+    родства) сюда не попадает: он не «учтён в другой записи», он не учтён
+    нигде, и совпадение md5 этого не меняет.
     """
     version = version or FIELD_RESOLVER_VERSION
     md5s = sorted({m for m in md5s if m})
@@ -466,7 +498,7 @@ def shared_geometry_flights(con, land_uuid, md5s, utc_start=None,
             'LEFT JOIN drone_flights f ON f.dji_flight_id = a.flight_id '
             'WHERE a.geometry_md5 IN (%s) AND a.superseded_at IS NULL '
             'AND a.field_resolver_version = ? '
-            'AND (a.field_land_uuid IS NULL OR a.field_land_uuid <> ?)%s'
+            'AND a.field_land_uuid IS NOT NULL AND a.field_land_uuid <> ?%s'
             % (marks, period_sql))
     params = md5s + [version, land_uuid] + period_params
     total = con.execute('SELECT COUNT(*) ' + base, params).fetchone()[0]
@@ -503,6 +535,11 @@ def flight_census(con, utc_start, utc_end_excl, version=None,
         'CASE WHEN a.historical_geometry_available = 1 THEN 1 ELSE 0 END '
         'AS bytes, '
         'CASE WHEN a.geometry_md5 IS NOT NULL THEN 1 ELSE 0 END AS has_md5, '
+        # Сверенные байты границы привязки есть СЕЙЧАС (уникальный индекс
+        # по content_md5): вместе с `bytes` даёт «байты пришли позже».
+        'CASE WHEN EXISTS (SELECT 1 FROM dji_land_geometries g WHERE '
+        'g.content_md5 = a.geometry_md5 AND g.md5_verified = 1) THEN 1 '
+        'ELSE 0 END AS bytes_now, '
         'CASE WHEN e.card_revision_id IS NULL THEN 0 ELSE 1 END AS has_card, '
         "CASE WHEN COALESCE(e.card_geometry_md5, '') = '' THEN 0 ELSE 1 END "
         'AS card_key, '
@@ -515,7 +552,7 @@ def flight_census(con, utc_start, utc_end_excl, version=None,
         'AND a.superseded_at IS NULL AND a.field_resolver_version = ? '
         'LEFT JOIN dji_flight_evidence e ON e.flight_id = f.dji_flight_id '
         'WHERE 1 = 1' + period_sql +
-        ' GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10',
+        ' GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11',
         [calc_version, version] + period_params).fetchall()
     total = fv.empty_census()
     months = {}
@@ -530,10 +567,11 @@ def flight_census(con, utc_start, utc_end_excl, version=None,
                     'geometry_md5': 'present' if r['has_md5'] else None}
         evidence = {'card_revision_id': 1 if r['has_card'] else None,
                     'card_geometry_md5': 'present' if r['card_key'] else None}
+        geometry = {'md5_verified': 1} if r['bytes_now'] else None
         for bucket in (total, months.setdefault(r['month'],
                                                 fv.empty_census())):
             fv.census_add(bucket, attr, evidence, bool(r['has_calc']),
-                          count=r['n'])
+                          count=r['n'], geometry=geometry)
     return total, months
 
 
@@ -618,17 +656,19 @@ def census(con, utc_start, utc_end_excl, now_utc=None, version=None,
 
 
 def fields_of_flights(con, land_uuids):
-    """{land_uuid: последняя ревизия (имя, серийный)} -- подписи ссылок."""
+    """{land_uuid: последняя наблюдавшаяся ревизия (имя, серийный)}.
+
+    Подписи ссылок на записи полей; «последняя» -- `_latest_order`.
+    """
     uuids = sorted({u for u in land_uuids if u})
     out = {}
     for start in range(0, len(uuids), CHUNK):
         chunk = uuids[start:start + CHUNK]
         for row in con.execute(
                 'SELECT r.land_uuid, r.name, r.serial_number FROM '
-                'dji_land_revisions r JOIN (SELECT land_uuid, MAX(id) AS '
-                'last_id FROM dji_land_revisions WHERE land_uuid IN (%s) '
-                'GROUP BY land_uuid) cur ON cur.last_id = r.id'
-                % ','.join('?' * len(chunk)), chunk).fetchall():
+                'dji_land_revisions r WHERE r.land_uuid IN (%s) AND r.id = %s'
+                % (','.join('?' * len(chunk)),
+                   _latest_revision_id_sql('r.land_uuid')), chunk).fetchall():
             out[row['land_uuid']] = dict(row)
     return out
 

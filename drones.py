@@ -10217,11 +10217,17 @@ def _drone_field_coverage_view(bucket):
     }
 
 
-def _drone_field_flight_view(row, item, lang):
-    """Строка вылета на карточке поля: дата, машина, площадь, привязка."""
+def _drone_field_flight_view(row, item, lang, geometries):
+    """Строка вылета на карточке поля: дата, машина, площадь, привязка.
+
+    ``geometries`` -- {md5: строка `dji_land_geometries` без тела} СЕЙЧАС:
+    по ней подпись не скажет «граница не сохранена», если байты пришли
+    после расчёта привязки.
+    """
     from dji_area import field_view as dji_field_view
 
-    attr = dji_field_view.attribution_view(row, lang=lang)
+    attr = dji_field_view.attribution_view(
+        row, lang=lang, geometry=geometries.get(row.get('geometry_md5')))
     return {
         'flight_id': int(row['flight_id']),
         'started_s': _drone_field_local(row.get('started_at')),
@@ -10332,11 +10338,15 @@ def field_card(land_uuid):
         by_flight = control_store.accepted_for(con, raw) if raw else {}
         md5s = [r['geometry_md5'] for r in revisions if r['geometry_md5']]
         md5s += [r['geometry_md5'] for r in confirmed if r['geometry_md5']]
-        geometries = field_store.geometry_rows(con, md5s)
         holders = field_store.other_holders(con, md5s, land_uuid)
         shared = field_store.shared_geometry_flights(
             con, land_uuid, md5s, filters['utc_start'],
             filters['utc_end_excl'], limit=DRONE_FIELD_SHARED_LIMIT)
+        # Байты границ СЕЙЧАС -- одним запросом для версий и для подписей
+        # всех строк страницы (подтверждённых, предположительных, общих).
+        geometries = field_store.geometry_rows(
+            con, md5s + [r['geometry_md5'] for r in provisional
+                         + shared['rows'] if r['geometry_md5']])
         labels = field_store.fields_of_flights(
             con, [u for us in holders.values() for u in us]
             + [r['field_land_uuid'] for r in shared['rows']])
@@ -10410,12 +10420,14 @@ def field_card(land_uuid):
     page = min(max(1, page), pages)
     shown = confirmed[(page - 1) * per_page:page * per_page]
     flights_view = [_drone_field_flight_view(
-        r, by_flight[int(r['flight_id'])], lang) for r in shown]
+        r, by_flight[int(r['flight_id'])], lang, geometries) for r in shown]
     provisional_view = [_drone_field_flight_view(
-        r, by_flight[int(r['flight_id'])], lang) for r in provisional]
+        r, by_flight[int(r['flight_id'])], lang, geometries)
+        for r in provisional]
     shared_view = []
     for r in shared['rows']:
-        attr = dji_field_view.attribution_view(r, lang=lang)
+        attr = dji_field_view.attribution_view(
+            r, lang=lang, geometry=geometries.get(r.get('geometry_md5')))
         other = r.get('field_land_uuid')
         shared_view.append({
             'flight_id': int(r['flight_id']),
@@ -10539,7 +10551,8 @@ def flight_passport(dji_flight_id):
         limitation = _drone_area_limitation(row)
     history = _drone_area_history_rows(chain, active, why, lang)
 
-    field = dji_field_view.attribution_view(attr, evidence, lang)
+    field = dji_field_view.attribution_view(attr, evidence, lang,
+                                            geometry=geometry)
     boundary_state = (dji_field_view.boundary_state(geometry)
                       if md5 else None)
     source_labels = {
