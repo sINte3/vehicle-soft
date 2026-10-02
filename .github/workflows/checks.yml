@@ -507,7 +507,15 @@ jobs:
       # the owner's links surviving a re-import, and the pasteable runbook.
       # The screen (tests/test_agro_work_screen.py) needs Flask and runs
       # locally with the discover command above.
+      #
+      # AGRO_WORK_POWERSHELL runs the release runbook's blocks -- the ones that
+      # stop the production services -- against stand-ins for git, the
+      # services, python and the site (tests/agro_work_release_harness.ps1).
+      # pwsh 7 is on the ubuntu image; the Windows job below runs the same
+      # scenarios on Windows PowerShell 5.1, the console of the server.
       - name: agro-work import, markup, reconciliation, runbook (stdlib + openpyxl)
+        env:
+          AGRO_WORK_POWERSHELL: pwsh
         run: |
           python -m unittest tests.test_agro_work_client tests.test_agro_work_migration tests.test_agro_work_import tests.test_agro_work_links tests.test_agro_work_methods tests.test_agro_work_reconcile tests.test_agro_work_reconcile_tool tests.test_agro_work_copy_db tests.test_agro_work_runbook
 
@@ -556,3 +564,14 @@ jobs:
       - name: Pilot kit blob manifest matches the worktree
         shell: powershell
         run: python ops/pilot_useful_area_001/pilot_blob_manifest.py --check
+
+      # agro-work release (docs/AGRO_WORK_RELEASE_RUNBOOK.md): the owner pastes
+      # its blocks into Windows PowerShell 5.1 on the production server, and
+      # step 3 stops the three services. Every stop path runs here against
+      # stand-ins, on the interpreter the server has; the tool outputs the
+      # stand-ins replay come from the real tools. Stdlib only.
+      - name: agro-work release blocks on Windows PowerShell 5.1
+        shell: powershell
+        env:
+          AGRO_WORK_POWERSHELL: powershell
+        run: python -m unittest tests.test_agro_work_runbook.ReleaseToolFormats tests.test_agro_work_runbook.ReleaseBlocksInPowerShell

@@ -68,8 +68,12 @@ def connect(db_path):
     return con
 
 
+# [REASON]: подсказка не называет папку. Те же инструменты работают и на копии
+# (C:\VehicleSoft_AgroWork), и на боевой базе (C:\transport-report); прежний
+# текст «cd C:\VehicleSoft_AgroWork» отправил бы человека с боевого сервера
+# повторять команду на копии -- запись ушла бы не в ту базу.
 READONLY_HINT = ('the database is read-only for this window - open PowerShell '
-                 'as administrator, cd C:\\VehicleSoft_AgroWork and repeat; '
+                 'as administrator, go to the same folder and repeat; '
                  'nothing was written')
 
 
