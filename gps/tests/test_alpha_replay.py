@@ -210,6 +210,23 @@ class Production(World):
         self.assertEqual(roads['alpha_cap'], 10.0)
         self.assertGreater(roads['spacing'], SPACING_CAP_M)
 
+    def test_the_measure_takes_only_the_work_window_like_the_engine(self):
+        """Fast transit votes for nothing: the engine never sees it.
+
+        A field in 6 m passes and six laps of the roads at 40 km/h. The engine
+        takes the 1-15 km/h points only, so the spacing is the field's; a
+        measure taking every point would hear the roads 300 m apart.
+        """
+        field = shuttle_track(300.0, 300.0, pass_spacing_m=6.0)
+        roads = slow_loop([(e + 1000.0, n + 1000.0) for e, n in TWO_ROADS],
+                          loops=6, speed=40.0, start_time=field[-1][0] + 600)
+        track = field + roads
+        sites, _quality = replay.work_sites(track)
+        spacing, _capped, alpha, _alpha_cap = replay.measure(track)
+        self.assertEqual(spacing, sites[0].pass_spacing_m)
+        self.assertEqual(alpha, sites[0].alpha_used_m)
+        self.assertLess(spacing, 7.0)
+
     def test_the_control_makes_the_run_invalid_not_failed(self):
         verdicts, out = self.run_production(named=(('2026-09-26', ROADS),
                                                    ('2026-09-28', MIXED)))
@@ -492,6 +509,27 @@ class Sets(unittest.TestCase):
         self.assertNotRegex(out, r'unit 1 ')
         self.assertIn('CONDITION 1: OWNER CHECK -- 2 row(s) above changed or '
                       'triggered', out)
+
+    def test_a_triggered_row_is_shown_even_when_nothing_changed(self):
+        """The amendment: the run prints whether the rule triggered.
+
+        A day with no site either way stays «same» while the rule fired on
+        it; the owner still sees it, with the contour name.
+        """
+        quiet = {'set': 'x.csv', 'unit': 7, 'day': '2026-08-01', 'path': 'day',
+                 'zone': None, 'zone_name': '', 'ha_today': 0.0, 'ha_cap': 0.0,
+                 'spacing': 60.0, 'spacing_cap': None, 'triggered': True,
+                 'same': True, 'sites_today': [], 'sites_cap': []}
+        zone = dict(quiet, path='zone', zone=101, zone_name='Поле 1',
+                    triggered=False)
+        out = []
+        verdict = replay.report_sets([quiet, zone], {101: 'Поле 1'}, out.append)
+        self.assertEqual(verdict, replay.OWNER_CHECK)
+        text = '\n'.join(out)
+        self.assertRegex(text, r'day\s+unit 7\s+day 2026-08-01 zone -\s+'
+                               r'spacing 60\.00 -> -\s+ha 0\.0000 -> 0\.0000\s+same')
+        self.assertIn('triggered 1, changed 0', text)
+        self.assertIn('OWNER CHECK -- 1 row(s)', text)
 
     def test_an_empty_set_is_not_checked(self):
         tracks = self.write_tracks('empty.csv', [])
