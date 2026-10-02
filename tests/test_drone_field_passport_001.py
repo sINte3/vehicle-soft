@@ -32,12 +32,15 @@ from models import (db, DroneFlight, User, UserModulePermission,
 from dji_area import accepted as acc
 from dji_area import control_store
 from dji_area import field as fld
+from dji_area import field_view as fv
 from dji_area import resolver as rs
 from dji_area import store as dji_store
 import drones
 import tests.test_drone_field_passport_core as core
 
 ALL = '?date_from=&date_to='
+# REVIEW-FIX-1: только вылеты, привязанные к ДРУГОЙ записи.
+SHARED_TITLE = 'Вылеты на тех же границах, привязанные к другим записям DJI'
 
 FORBIDDEN = (
     core.SECRET_TOKEN, core.SIGNED_URL, 'X-Amz-Signature', core.STORAGE_PATH,
@@ -68,6 +71,14 @@ def section(html, title):
         return None
     return html.split(marker, 1)[1].split('<span class="vs-card-title">',
                                           1)[0]
+
+
+def stats(html):
+    """{подпись плитки итога: число} карточки поля."""
+    out = {}
+    for label, value in STAT_RE.findall(html):
+        out[label.strip()] = number(value)
+    return out
 
 
 def passports(fragment):
@@ -129,10 +140,7 @@ class Seeded(Base):
 class FieldTotals(Seeded):
 
     def stats(self, html):
-        out = {}
-        for label, value in STAT_RE.findall(html):
-            out[label.strip()] = number(value)
-        return out
+        return stats(html)
 
     def test_the_field_total_is_the_provider_total_of_its_confirmed_flights(self):
         html = self.card(core.LAND_A)
@@ -181,9 +189,14 @@ class FieldTotals(Seeded):
         html_b = self.card(core.LAND_B)
         self.assertEqual(passports(section(html_b, 'Подтверждённые работы')),
                          {core.F_B_EXACT})
-        shared = section(html_b,
-                         'Вылеты на тех же границах, учтённые в другой записи')
+        shared = section(html_b, SHARED_TITLE)
         self.assertIn(core.F_A_EXACT, passports(shared))
+        # Предположительный в записи A -- тоже в списке, со своим состоянием.
+        self.assertIn(core.F_A_PROBABLE, passports(shared))
+        self.assertIn('Предположительно', shared)
+        # Тот же md5, но без записи поля -- не «привязан к другой записи».
+        self.assertNotIn(core.F_AMBIGUOUS, passports(shared))
+        self.assertNotIn('учтённые в другой записи', html_b)
         self.assertEqual(self.stats(html_b)['DJI RAW, га'], '0.70')
         # Сумма двух записей -- сумма их подтверждённых, без повторов.
         html_a = self.card(core.LAND_A)
@@ -218,6 +231,16 @@ class Passport(Seeded):
         self.assertEqual(number(row_of(html, 'Принято, га')), '1.0000')
         # Та же граница у B -- названа, но вылет учтён в одной записи.
         self.assertIn('Та же граница у других записей DJI', html)
+        self.assertIn('вылет учтён только в своей записи', html)
+
+    def test_an_unassigned_flight_on_a_shared_boundary_is_counted_nowhere(self):
+        """REVIEW-FIX-1: вылет без записи поля не «учтён в одной записи»."""
+        html = self.passport(core.F_AMBIGUOUS)
+        field = section(html, 'Поле')
+        self.assertIn('Эту границу держат записи DJI', field)
+        self.assertIn('ни одной из этих записей вылет не входит', field)
+        self.assertNotIn('учтён только', field)
+        self.assertNotIn('Та же граница у других записей DJI', field)
 
     def test_identified_flight_says_the_historical_boundary_is_missing(self):
         html = self.passport(core.F_A_IDENT)
@@ -290,6 +313,88 @@ class Passport(Seeded):
         self.assertIn('/drones/flights/%d/passport' % core.F_A_EXACT, journal)
         reports = self.get('/drones/reports')
         self.assertIn('/drones/fields', reports)
+
+
+# ─── REVIEW-FIX-1: байты границы пришли после расчёта привязки ───────────────
+
+class BytesAfterResolution(Seeded):
+    """TIER2 остаётся TIER2, но страница не пишет «граница не сохранена»."""
+
+    def setUp(self):
+        super(BytesAfterResolution, self).setUp()
+        core.add_geometry_later(TEST_DB_PATH, core.MD5_NO_BYTES, verified=1)
+
+    def test_the_passport_says_recalculation_is_needed(self):
+        html = self.passport(core.F_A_IDENT)
+        field = section(html, 'Поле')
+        self.assertIn(fv.AWAITING_LABEL[0], field)
+        self.assertIn('нужен пересчёт привязки', field)
+        self.assertIn('сохранена и сверена', field)
+        self.assertIn('байты получены после расчёта привязки', field)
+        # Противоречия нет: «не сохранена» рядом с «сохранена» не стоит.
+        self.assertNotIn('не сохранен', field)
+        uz = section(self.passport(core.F_A_IDENT, 'uz'), 'Дала')
+        self.assertIn(fv.AWAITING_LABEL[1], uz)
+        self.assertNotIn('сақланмаган', uz)
+
+    def test_the_card_keeps_it_confirmed_and_the_total_unchanged(self):
+        html = self.card(core.LAND_A)
+        confirmed = section(html, 'Подтверждённые работы')
+        self.assertEqual(passports(confirmed), core.A_CONFIRMED)
+        self.assertIn(fv.AWAITING_LABEL[0], confirmed)
+        self.assertNotIn('историческая граница не сохранена', confirmed)
+        tiles = stats(html)
+        self.assertEqual((tiles['DJI RAW, га'], tiles['Принято, га'],
+                          tiles['Исключено, га']), ('3.75', '1.50', '2.00'))
+
+
+# ─── REVIEW-FIX-1: запись, которую DJI вернул в прежнее состояние ───────────
+
+F_R = 950041
+
+
+class RevisitedLand(Seeded):
+    """A -> B -> A: страницы показывают A, последнюю НАБЛЮДАВШУЮСЯ ревизию."""
+
+    def setUp(self):
+        super(RevisitedLand, self).setUp()
+        with app.app_context():
+            db.session.add(self.journal(F_R, core.SEP, 0.3))
+            db.session.commit()
+        con = sqlite3.connect(TEST_DB_PATH)
+        try:
+            self.ids = core.seed_revisited_land(con)
+            core.Seed(con).attribution(
+                F_R, fld.TIER1_EXACT, 'COMPOSITE_UUID_CURRENT_GEOMETRY',
+                core.LAND_R, core.MD5_RA, 1, linked=core.LAND_R,
+                name='SYNTHETIC name at resolution')
+            con.commit()
+        finally:
+            con.close()
+
+    def test_the_list_shows_revision_a(self):
+        html = self.get('/drones/fields?q=field+R')
+        rows = section(html, 'Записи полей DJI')
+        self.assertIn(core.NAME_RA, rows)
+        self.assertIn('SER-RA', rows)
+        self.assertNotIn(core.NAME_RB, rows)
+
+    def test_the_card_header_shows_revision_a_last_seen_at_snapshot_3(self):
+        html = self.card(core.LAND_R)
+        header = section(html, 'Запись поля DJI')
+        self.assertIn(core.NAME_RA, header)
+        self.assertIn('SER-RA', header)
+        self.assertIn('SYNTHETIC village RA', header)
+        self.assertNotIn(core.NAME_RB, header)
+        self.assertNotIn('SER-RB', header)
+        # Последнее наблюдение -- снимок 3: 28.09.2026 03:00 UTC = 08:00 UTC+5.
+        self.assertIn('28.09.2026 08:00', header)
+        self.assertIn('Поле DJI: %s' % core.NAME_RA, html)
+
+    def test_the_passport_link_label_is_revision_a(self):
+        field = section(self.passport(F_R), 'Поле')
+        self.assertIn('>%s</a>' % core.NAME_RA, field)
+        self.assertNotIn(core.NAME_RB, field)
 
 
 # ─── Безопасность вывода ─────────────────────────────────────────────────────

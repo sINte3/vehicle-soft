@@ -42,6 +42,7 @@ if REPO_ROOT not in sys.path:
 
 from dji_area import accepted as acc  # noqa: E402
 from dji_area import control_store  # noqa: E402
+from dji_area import evidence as dji_evidence  # noqa: E402
 from dji_area import field as fld  # noqa: E402
 from dji_area import field_store as fs  # noqa: E402
 from dji_area import field_view as fv  # noqa: E402
@@ -343,6 +344,55 @@ def seed_scenario(con, with_flights=True):
     return s
 
 
+# ─── Запись поля, которую DJI вернул в прежнее состояние: A -> B -> A ───────
+
+LAND_R = 'aaaaaaaa-0000-4000-8000-000000000009'
+MD5_RA = '7' * 32
+MD5_RB = '8' * 32
+NAME_RA = 'SYNTHETIC field R version A'
+NAME_RB = 'SYNTHETIC field R version B'
+
+
+def observe_land(con, snapshot_id, name, serial, md5, address):
+    """Наблюдение записи поля ТЕМ ЖЕ путём, что у приёма каталога.
+
+    `evidence.parse_land_node` + `store.upsert_land_revision` (оба
+    заморожены): повтор уже известного содержимого не создаёт строку, а
+    двигает `last_seen_snapshot_id` у старой.
+    """
+    parsed = dji_evidence.parse_land_node({
+        'uuid': LAND_R, 'name': name, 'serialNumber': serial,
+        'address': address, 'geometry': {'storage': {'contentMd5': md5}}})
+    previous = con.row_factory
+    con.row_factory = sqlite3.Row
+    try:
+        return dji_store.upsert_land_revision(con, snapshot_id, parsed)
+    finally:
+        con.row_factory = previous
+
+
+def seed_revisited_land(con):
+    """A (снимок 1) -> B (снимок 2) -> снова A (снимок 3).
+
+    Возвращает {'a': id ревизии A, 'b': id B, 's3': id третьего снимка,
+    's3_at': его время}. Текущая -- A, хотя её id меньше.
+    """
+    s = Seed(con)
+    s1 = s.snapshot(datetime(2026, 9, 26, 3, 0))
+    s2 = s.snapshot(datetime(2026, 9, 27, 3, 0))
+    s3 = s.snapshot(datetime(2026, 9, 28, 3, 0))
+    kind_a, rev_a = observe_land(con, s1, NAME_RA, 'SER-RA', MD5_RA,
+                                 'SYNTHETIC village RA')
+    kind_b, rev_b = observe_land(con, s2, NAME_RB, 'SER-RB', MD5_RB,
+                                 'SYNTHETIC village RB')
+    kind_again, rev_again = observe_land(con, s3, NAME_RA, 'SER-RA', MD5_RA,
+                                         'SYNTHETIC village RA')
+    assert (kind_a, kind_b, kind_again) == ('new', 'new', 'seen')
+    assert rev_again == rev_a < rev_b
+    con.commit()
+    return {'a': rev_a, 'b': rev_b, 's3': s3, 's3_at': '2026-09-28 03:00:00'}
+
+
 class Scenario(unittest.TestCase):
 
     def setUp(self):
@@ -462,12 +512,33 @@ class Membership(Scenario):
         self.assertNotIn(F_A_EXACT, self.members(LAND_B))
         seen = assert_no_double_count(self, self.members)
         self.assertEqual(seen[F_A_EXACT], LAND_A)
-        # B видит вылет A диагностикой «та же граница», без гектаров.
+        # B видит вылеты, привязанные к A на той же границе, диагностикой
+        # «та же граница», без гектаров -- в любом состоянии привязки.
         shared = fs.shared_geometry_flights(self.con, LAND_B, [MD5_SHARED])
         ids = {int(r['flight_id']) for r in shared['rows']}
         self.assertIn(F_A_EXACT, ids)
-        self.assertIn(F_AMBIGUOUS, ids)
+        self.assertIn(F_A_PROBABLE, ids)
         self.assertNotIn(F_B_EXACT, ids)
+        self.assertEqual({r['field_land_uuid'] for r in shared['rows']},
+                         {LAND_A})
+        self.assertEqual(shared['total'], len(ids))
+
+    def test_an_unassigned_flight_on_the_same_boundary_is_not_listed(self):
+        """Тот же md5, но `field_land_uuid` пуст: вылет не учтён нигде.
+
+        Отрицательная сторона контракта «привязан к другой записи»: такой
+        вылет не должен попадать в список ни у A, ни у B.
+        """
+        attr = fs.current_attributions(self.con, [F_AMBIGUOUS])[F_AMBIGUOUS]
+        self.assertEqual(attr['geometry_md5'], MD5_SHARED)
+        self.assertIsNone(attr['field_land_uuid'])
+        for land in (LAND_A, LAND_B):
+            shared = fs.shared_geometry_flights(self.con, land, [MD5_SHARED])
+            self.assertNotIn(F_AMBIGUOUS,
+                             {int(r['flight_id']) for r in shared['rows']},
+                             land)
+            self.assertNotIn(None,
+                             {r['field_land_uuid'] for r in shared['rows']})
 
     def test_negative_control_md5_membership_is_caught(self):
         """Членство «uuid ИЛИ md5 его границ» удвоило бы вылет A в B."""
@@ -541,6 +612,171 @@ class Membership(Scenario):
         self.assertTrue(item['is_open'])
         self.assertEqual(item['status'], acc.ST_NEEDS_DECISION)
         self.assertAlmostEqual(item['accepted_m2'], 5000.0)
+
+
+# ─── TIER2, байты границы которого пришли после расчёта привязки ─────────────
+
+def add_geometry_later(path, md5, verified=1):
+    """Байты границы попали в каталог ПОСЛЕ расчёта привязки (без пересчёта)."""
+    con = sqlite3.connect(path)
+    try:
+        Seed(con).geometry(md5, verified)
+        con.commit()
+    finally:
+        con.close()
+
+
+class BytesAfterResolution(Scenario):
+    """Состояние -- вывод резолвера; байты -- то, что лежит СЕЙЧАС.
+
+    F_A_IDENT -- TIER2 записи A на границе MD5_NO_BYTES, рассчитан, когда
+    байтов не было. Потом байты приходят, привязка не пересчитана.
+    """
+
+    def view(self, fid, lang='ru'):
+        attr = fs.current_attributions(self.con, [fid])[fid]
+        md5 = attr['geometry_md5']
+        geometry = fs.geometry_rows(self.con, [md5]).get(md5)
+        return attr, geometry, fv.attribution_view(attr, None, lang,
+                                                   geometry=geometry)
+
+    def census(self):
+        return fs.flight_census(self.con, None, None)[0]
+
+    @staticmethod
+    def words(view):
+        return ' '.join([view['state_label'], view['state_help']]
+                        + view['warning_texts'])
+
+    def test_before_the_bytes_arrive_it_says_they_are_missing(self):
+        """Контроль: до прихода байтов подпись «не сохранена» -- правда."""
+        _attr, geometry, view = self.view(F_A_IDENT)
+        self.assertIsNone(geometry)
+        self.assertEqual(view['state'], fv.STATE_IDENTIFIED)
+        self.assertIn('историческая граница не сохранена', view['state_label'])
+        self.assertFalse(view['awaiting_recalculation'])
+        self.assertFalse(view['bytes_after_resolution'])
+        total = self.census()
+        self.assertEqual(total['awaiting_recalculation'], 0)
+        self.assertEqual(total['bytes_now'], 8)
+
+    def test_verified_bytes_after_resolution(self):
+        before = self.census()
+        add_geometry_later(self.path, MD5_NO_BYTES, verified=1)
+        attr, geometry, view = self.view(F_A_IDENT)
+        # 1-3. Привязка та же, состояние то же, членство то же.
+        self.assertFalse(attr['historical_geometry_available'])
+        self.assertEqual(fv.classify(attr), (fv.STATE_IDENTIFIED, None))
+        self.assertTrue(view['confirmed'])
+        self.assertIn(F_A_IDENT, self.members(LAND_A))
+        self.assertEqual(self.members(LAND_A), A_CONFIRMED)
+        # 4-5. Байты есть -- «не сохранена» не пишется нигде; нужен пересчёт.
+        self.assertEqual(fv.boundary_state(geometry), fv.BOUNDARY_SAVED)
+        self.assertTrue(view['awaiting_recalculation'])
+        self.assertEqual(view['state_label'], fv.AWAITING_LABEL[0])
+        self.assertNotIn('не сохранен', self.words(view))
+        self.assertIn('нужен пересчёт привязки', view['state_help'])
+        self.assertIn(fv.BYTES_LATE_WARNING[0], view['warning_texts'])
+        uz = self.view(F_A_IDENT, 'uz')[2]
+        self.assertEqual(uz['state_label'], fv.AWAITING_LABEL[1])
+        self.assertNotIn('сақланмаган', self.words(uz))
+        self.assertIn('қайта ҳисоблаш керак', uz['state_help'])
+        # 6. Перепись видит этот случай отдельно.
+        after = self.census()
+        self.assertEqual(after['awaiting_recalculation'], 1)
+        self.assertEqual(after['bytes_now'], before['bytes_now'] + 1)
+        self.assertEqual(after['states'], before['states'])
+        self.assertEqual(after['md5_without_bytes'],
+                         before['md5_without_bytes'])
+
+    def test_the_old_label_is_what_the_check_rejects(self):
+        """Отрицательный контроль: прежняя подпись проверку не прошла бы."""
+        add_geometry_later(self.path, MD5_NO_BYTES, verified=1)
+        attr, geometry, _view = self.view(F_A_IDENT)
+        old = fv.attribution_view(attr, None, 'ru', geometry=None)
+        self.assertIn('не сохранен', self.words(old))
+        self.assertFalse(old['awaiting_recalculation'])
+
+    def test_unverified_bytes_after_resolution(self):
+        before = self.census()
+        add_geometry_later(self.path, MD5_NO_BYTES, verified=0)
+        _attr, geometry, view = self.view(F_A_IDENT)
+        self.assertEqual(fv.boundary_state(geometry),
+                         fv.BOUNDARY_SAVED_UNVERIFIED)
+        self.assertEqual(view['state'], fv.STATE_IDENTIFIED)
+        self.assertFalse(view['awaiting_recalculation'])
+        self.assertTrue(view['awaiting_verification'])
+        self.assertEqual(view['state_label'], fv.UNVERIFIED_LABEL[0])
+        self.assertNotIn('не сохранен', self.words(view))
+        # Резолвер поднимет только сверенные: в «ждёт пересчёта» не входит.
+        after = self.census()
+        self.assertEqual(after['awaiting_recalculation'], 0)
+        self.assertEqual(after['bytes_now'], before['bytes_now'])
+
+
+# ─── Текущая ревизия записи: A -> B -> A ─────────────────────────────────────
+
+class LatestRevision(unittest.TestCase):
+    """Текущая ревизия -- последняя НАБЛЮДАВШАЯСЯ, а не с наибольшим id."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix='field_passport_latest_')
+        self.path = os.path.join(self.tmp, 'latest.db')
+        con = make_schema(self.path)
+        self.ids = seed_revisited_land(con)
+        con.close()
+        self.con = dji_store.connect(self.path, read_only=True)
+
+    def tearDown(self):
+        self.con.close()
+        shutil.rmtree(self.tmp, True)
+
+    def test_the_data_tells_the_two_rules_apart(self):
+        """Отрицательный контроль: на этих данных MAX(id) выбирает B.
+
+        Без него зелёные проверки ниже ничего бы не доказывали: если бы
+        MAX(id) и «последняя наблюдавшаяся» совпадали, тест прошёл бы и на
+        неверном коде.
+        """
+        by_max_id = self.con.execute(
+            'SELECT name FROM dji_land_revisions WHERE id = (SELECT MAX(id) '
+            'FROM dji_land_revisions WHERE land_uuid = ?)',
+            (LAND_R,)).fetchone()[0]
+        self.assertEqual(by_max_id, NAME_RB)
+        row = self.con.execute(
+            'SELECT last_seen_snapshot_id, seen_count FROM dji_land_revisions '
+            'WHERE id = ?', (self.ids['a'],)).fetchone()
+        self.assertEqual((row[0], row[1]), (self.ids['s3'], 2))
+
+    def test_the_header_is_revision_a_last_seen_at_snapshot_3(self):
+        header = fs.land_header(self.con, LAND_R)
+        self.assertEqual(header['id'], self.ids['a'])
+        self.assertEqual(header['name'], NAME_RA)
+        self.assertEqual(header['serial_number'], 'SER-RA')
+        self.assertEqual(header['geometry_md5'], MD5_RA)
+        self.assertEqual(header['address'], 'SYNTHETIC village RA')
+        self.assertEqual(header['last_seen_snapshot_id'], self.ids['s3'])
+        self.assertEqual(header['last_seen_at'], self.ids['s3_at'])
+        self.assertEqual((header['revisions'], header['boundaries']), (2, 2))
+
+    def test_the_list_shows_revision_a(self):
+        rows = fs.land_list(self.con)['rows']
+        self.assertEqual([(r['land_uuid'], r['name'], r['serial_number'])
+                          for r in rows], [(LAND_R, NAME_RA, 'SER-RA')])
+        self.assertEqual(rows[0]['revisions'], 2)
+        found = fs.land_list(self.con, 'village RA')['rows']
+        self.assertEqual([r['land_uuid'] for r in found], [LAND_R])
+
+    def test_link_labels_use_revision_a(self):
+        labels = fs.fields_of_flights(self.con, [LAND_R])
+        self.assertEqual(labels[LAND_R]['name'], NAME_RA)
+        self.assertEqual(labels[LAND_R]['serial_number'], 'SER-RA')
+
+    def test_versions_keep_both_boundaries_with_a_seen_last(self):
+        versions = fs.land_revisions(self.con, LAND_R)
+        self.assertEqual([v['geometry_md5'] for v in versions],
+                         [MD5_RA, MD5_RB])
+        self.assertEqual(versions[0]['last_seen_at'], self.ids['s3_at'])
 
 
 # ─── 6. Историчность ─────────────────────────────────────────────────────────
@@ -708,6 +944,9 @@ class Census(Scenario):
         self.assertEqual(total['with_historical_bytes'], 5)
         # IDENT (md5 без байтов), PROBABLE, AMBIGUOUS, NOT_IN_CATALOG.
         self.assertEqual(total['md5_without_bytes'], 4)
+        # Сверенные байты СЕЙЧАС: SHARED x6 и V2; ждущих пересчёта нет.
+        self.assertEqual(total['bytes_now'], 7)
+        self.assertEqual(total['awaiting_recalculation'], 0)
         self.assertEqual(sorted(months), ['2026-09'])
         self.assertEqual(sum(st.values()), total['flights'])
 
