@@ -45,7 +45,7 @@ from gps_collector import storage
 from tests.test_gps_units_inventory import DDL
 
 ROADS, FIELD, MIXED, TAMPERED, NO_POINTS, OLD = 393, 387, 388, 389, 390, 391
-EXCLUDED, WIDE = 392, 394
+EXCLUDED, WIDE, LATE, SPECIAL, EXCLUDED_WIDE = 392, 394, 395, 396, 397
 ROADMAP = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))), 'docs', 'GPS_PLAN_FAKT_VISION_ROADMAP.md')
 
@@ -90,9 +90,10 @@ class World(unittest.TestCase):
                         "equipment_id, skip) VALUES ('МТЗ 239', ?, 1, 0)",
                         (ROADS,))
             # «не наша»: человек пометил строку -- план-факт её не считает
-            con.execute("INSERT INTO vialon_mappings (vialon_name, wialon_id, "
-                        "equipment_id, skip) VALUES ('Чужой', ?, NULL, 1)",
-                        (EXCLUDED,))
+            for unit in (EXCLUDED, EXCLUDED_WIDE):
+                con.execute("INSERT INTO vialon_mappings (vialon_name, "
+                            "wialon_id, equipment_id, skip) VALUES "
+                            "(?, ?, NULL, 1)", ('Чужой %d' % unit, unit))
             con.commit()
             self.day(con, '2026-09-26', ROADS, slow_loop(TWO_ROADS))
             self.day(con, '2026-09-24', EXCLUDED, slow_loop(TWO_ROADS))
@@ -100,6 +101,13 @@ class World(unittest.TestCase):
                      shuttle_track(300.0, 300.0, pass_spacing_m=14.0))
             self.day(con, '2026-09-23', WIDE,
                      shuttle_track(300.0, 300.0, pass_spacing_m=40.0))
+            # исключённый объект у порога: в отчёт условия 5 он идти не должен
+            self.day(con, '2026-09-22', EXCLUDED_WIDE,
+                     shuttle_track(300.0, 300.0, pass_spacing_m=40.0))
+            # за границей периода и с причиной: в прогон не входят вовсе
+            self.day(con, '2026-10-01', LATE, slow_loop(TWO_ROADS))
+            self.day(con, '2026-09-21', SPECIAL, slow_loop(TWO_ROADS),
+                     track_only=True)
             self.day(con, '2026-09-28', MIXED, field_and_roads())
             self.day(con, '2026-09-29', TAMPERED,
                      shuttle_track(300.0, 300.0, pass_spacing_m=6.0))
@@ -119,11 +127,12 @@ class World(unittest.TestCase):
         finally:
             con.close()
 
-    def day(self, con, day, unit, track):
+    def day(self, con, day, unit, track, track_only=False):
         points = shifted(track, day)
         storage.write_points(self.folder, [(unit, t, lon, lat, speed, None, sats)
                                            for t, lon, lat, speed, sats in points])
-        write_day(con, day, unit, compute_day(points), '2026-10-01 01:00:00')
+        write_day(con, day, unit, compute_day(points, track_only=track_only),
+                  '2026-10-02 01:00:00')
 
     def untamper(self):
         con = sqlite3.connect(self.db)
@@ -264,7 +273,7 @@ class Production(World):
         verdicts, out = self.run_production(named=(('2026-09-27', FIELD),
                                                    ('2026-09-01', ROADS)))
         self.assertEqual(verdicts, [replay.PASS, replay.FAIL])
-        self.assertEqual(replay.verdict_code(verdicts), 1)
+        self.assertEqual(replay.verdict_code(verdicts), 4)
         self.assertIn('triggered NO', out)
         self.assertIn('DID NOT FALL', out)
 
@@ -272,7 +281,8 @@ class Production(World):
         """«Strictly fall»: triggering alone is not enough."""
         kept = {'day': '2026-09-26', 'unit': ROADS, 'triggered': True,
                 'alpha_today': 360.0, 'alpha_cap': 10.0,
-                'ha_today': 5.0, 'ha_cap': 5.0}
+                'ha_today': 5.0, 'ha_cap': 5.0, 'control': True,
+                'consistent': True}
         out = []
         with unittest.mock.patch.object(replay, 'NAMED_DAYS',
                                         (('2026-09-26', ROADS),)):
@@ -289,10 +299,12 @@ class Production(World):
         self.assertTrue(rows[EXCLUDED]['triggered'])
         verdicts, out = self.run_production(named=(('2026-09-26', ROADS),))
         self.assertEqual(verdicts, [replay.PASS, replay.PASS])
-        self.assertIn('counted 5, excluded objects 1', out)
+        self.assertIn('machine-days replayed: 7 (points gone from disk: 1); '
+                      'counted 5, excluded objects 2', out)
         self.assertNotIn('2026-09-24 %6d' % EXCLUDED, out)
         self.assertIn('machine-days triggered: 2 of 5 counted', out)
-        counted = [r for unit, r in rows.items() if unit != EXCLUDED]
+        counted = [r for unit, r in rows.items()
+                   if unit not in (EXCLUDED, EXCLUDED_WIDE)]
         today = sum(r['ha_today'] for r in counted)
         capped = sum(r['ha_cap'] for r in counted)
         self.assertIn('plan-fact of the period, counted objects: %.2f ha today '
@@ -302,10 +314,13 @@ class Production(World):
         self.assertGreater(everything, today + 50.0)   # the control has teeth
 
     def test_untouched_days_near_the_cap_are_reported(self):
+        """Counted objects only: the excluded twin at 40 m stays out."""
         self.untamper()
-        wide = self.judged()[WIDE]
+        rows = self.judged()
+        wide = rows[WIDE]
         self.assertFalse(wide['triggered'])
         self.assertGreater(wide['alpha_today'], SPACING_CAP_M)
+        self.assertGreater(rows[EXCLUDED_WIDE]['alpha_today'], SPACING_CAP_M)
         _verdicts, out = self.run_production(named=(('2026-09-26', ROADS),))
         self.assertIn('hectares on untouched machine-days with alpha '
                       '44.64-53.568 m: %.2f (1 machine-days)' % wide['ha_today'],
@@ -322,13 +337,109 @@ class Production(World):
         # исключённый объект в потери не идёт
         self.assertEqual(len(folders), 2)
         self.assertIn('было / эди 60.00 га → стало / бўлди 0.00 га', names[0])
-        marks = [p.find('k:name', ns).text
-                 for p in folders[1].findall('k:Placemark', ns)]
-        self.assertTrue(any(m.startswith('Было / эди: участок / участка')
-                            for m in marks))
-        self.assertTrue(any(m.startswith('Стало / бўлди: участок / участка')
-                            for m in marks))
-        self.assertTrue(any(m.startswith('Трек в работе') for m in marks))
+        def marks(folder):
+            return [(p.find('k:name', ns).text, p.find('k:styleUrl', ns).text)
+                    for p in folder.findall('k:Placemark', ns)]
+
+        def sites(folder, prefix):
+            return [(name.rsplit('— ', 1)[1], style)
+                    for name, style in marks(folder) if name.startswith(prefix)]
+
+        was, now = 'Было / эди: участок / участка', 'Стало / бўлди: участок / участка'
+        # дороги: было -- один оранжевый участок 60 га, стало -- ничего
+        self.assertEqual(len(sites(folders[0], was)), 1)
+        self.assertRegex(sites(folders[0], was)[0][0], r'^60\.\d\d га$')
+        self.assertEqual(sites(folders[0], was)[0][1], '#site')
+        self.assertEqual(sites(folders[0], now), [])
+        # смешанные сутки: было -- все участки сегодня, стало -- поле 2,88 га
+        mixed = self.judged()[MIXED]
+        self.assertEqual(sites(folders[1], was),
+                         [('%.2f га' % r['area_ha'], '#site')
+                          for r in mixed['today']])
+        self.assertEqual(sites(folders[1], now),
+                         [('%.2f га' % r['area_ha'], '#new')
+                          for r in mixed['capped']])
+        self.assertTrue(any(name.startswith('Трек в работе')
+                            for name, _style in marks(folders[1])))
+
+    def test_only_published_days_of_the_period_are_replayed(self):
+        """The period and «reason is empty» are the declared population.
+
+        October's row is outside --until, the special machine's row carries a
+        reason: both have points on disk, neither may be replayed. Replayed
+        without its category, the special machine would even get sites.
+        """
+        con = sqlite3.connect('file:%s?mode=ro' % self.db, uri=True)
+        try:
+            units = {unit for _day, unit, _version
+                     in replay.published_days(con, '2026-09-01', '2026-09-30')}
+            reasons = dict(con.execute(
+                'SELECT wialon_id, reason FROM gps_daily_aggregates '
+                'WHERE wialon_id IN (?, ?)', (LATE, SPECIAL)).fetchall())
+        finally:
+            con.close()
+        self.assertEqual(reasons, {LATE: None, SPECIAL: 'spetstekhnika'})
+        self.assertNotIn(LATE, units)
+        self.assertNotIn(SPECIAL, units)
+        self.assertTrue(replay.read_day_readonly(self.folder, LATE, '2026-10-01'))
+        self.assertTrue(replay.read_day_readonly(self.folder, SPECIAL,
+                                                 '2026-09-21'))
+        self.assertEqual(units, {ROADS, EXCLUDED, FIELD, WIDE, EXCLUDED_WIDE,
+                                 MIXED, TAMPERED, OLD, NO_POINTS})
+
+    def test_a_violation_stands_even_when_another_day_fails_the_control(self):
+        """The invariant is the replay's own: the database plays no part.
+
+        A violation on a day the replay reproduces is a FAIL, whatever the
+        control says about another day; a violation only on a day where the
+        replay disagrees with the engine is not trusted.
+        """
+        broken = replay.judge_day('2026-09-10', 1, METHOD_VERSION,
+                                  [(2.0, 360.0, 300.0)],
+                                  [row(2.0, 360.0, 300.0)],
+                                  [row(3.0, 10.0, 6.0)], METHOD_VERSION,
+                                  (300.0, 6.0, 360.0, 10.0))
+        stale = replay.judge_day('2026-09-11', 2, METHOD_VERSION,
+                                 [(9.0, 10.0, 6.0)], [row(2.0, 10.0, 6.0)],
+                                 [row(2.0, 10.0, 6.0)], METHOD_VERSION,
+                                 (6.0, 6.0, 10.0, 10.0))
+        self.assertTrue(broken['control'])
+        self.assertFalse(stale['control'])
+        out = []
+        self.assertEqual(replay.condition_2([broken, stale], out.append),
+                         replay.FAIL)
+        self.assertIn('control mismatch 2026-09-11 2', '\n'.join(out))
+        lying = dict(broken, consistent=False)
+        self.assertEqual(replay.condition_2([lying, stale], [].append),
+                         replay.RUN_INVALID)
+
+    def test_a_named_day_the_replay_does_not_reproduce_is_not_judged(self):
+        """Condition 3 on numbers the control rejected: neither PASS nor FAIL.
+
+        The tampered day is a 6 m field: it does not trigger, so judged it
+        would be DID NOT FALL and reject the rule. But its stored rows are
+        not what the replay gives -- it is not the day that was named.
+        """
+        verdicts, out = self.run_production(named=(('2026-09-29', TAMPERED),))
+        self.assertEqual(verdicts, [replay.RUN_INVALID, replay.RUN_INVALID])
+        self.assertEqual(replay.verdict_code(verdicts), 3)
+        self.assertIn('UNTRUSTED, the replay does not reproduce this day', out)
+        self.assertNotIn('DID NOT FALL', out)
+
+    def test_condition_4_shows_the_largest_losses_largest_first(self):
+        def result(unit, loss, triggered=True):
+            return {'day': '2026-09-%02d' % (unit % 28 + 1), 'unit': unit,
+                    'triggered': triggered, 'ha_today': 100.0,
+                    'ha_cap': 100.0 - loss}
+        results = [result(1000 + i, 0.1 * (i + 1)) for i in range(10)]
+        results += [result(2000, 60.0), result(2001, 40.0),
+                    result(2002, 80.0, triggered=False), result(2003, 0.0),
+                    result(2004, 90.0)]
+        kinds = {2004: 'excluded'}
+        with unittest.mock.patch.object(replay, 'TOP_LOSSES', 3), \
+                unittest.mock.patch.object(replay, 'NAMED_DAYS', ()):
+            picked = replay.top_losses(results, kinds)
+        self.assertEqual([r['unit'] for r in picked], [2000, 2001, 1009])
 
     def test_nothing_is_written(self):
         points = storage.points_path(self.folder, '202609')
@@ -352,7 +463,7 @@ class Production(World):
             self.assertEqual(self.run_main(*base)[0], 0)
             with unittest.mock.patch.object(replay, 'judge_day',
                                             side_effect=broken):
-                self.assertEqual(self.run_main(*base)[0], 1)
+                self.assertEqual(self.run_main(*base)[0], 4)
 
     def test_a_missing_kml_folder_is_refused_before_anything_runs(self):
         with unittest.mock.patch.object(replay, 'replay_production',
@@ -412,8 +523,9 @@ class Invariants(unittest.TestCase):
 
     def test_the_verdict_code(self):
         self.assertEqual(replay.verdict_code([replay.PASS, replay.PASS]), 0)
+        # 1 -- код любого необработанного исключения Python: FAIL его не берёт
         self.assertEqual(replay.verdict_code([replay.PASS, replay.FAIL,
-                                              replay.RUN_INVALID]), 1)
+                                              replay.RUN_INVALID]), 4)
         for other in (replay.NOT_CHECKED, replay.RUN_INVALID,
                       replay.NOT_EVALUATED, replay.OWNER_CHECK):
             self.assertEqual(replay.verdict_code([replay.PASS, other]), 3, other)
@@ -442,9 +554,16 @@ class NamedDays(unittest.TestCase):
 
 
 class Sets(unittest.TestCase):
+    """Condition 1: both sets, the 12.08 works by name, the rest by contour."""
+
+    WORK = (1, 'MTZ test', '2026-08-01')
+
     def setUp(self):
         self.folder = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.folder, True)
+        patch = unittest.mock.patch.object(replay, 'WORK_DAYS_1208', (self.WORK,))
+        patch.start()
+        self.addCleanup(patch.stop)
         self.zones = self.write_zones({
             '101': ('Поле 1', [(-20, -20), (320, -20), (320, 320), (-20, 320)]),
             '102': ('Дорога 7', [(-50, -50), (2050, -50), (2050, 350),
@@ -460,7 +579,8 @@ class Sets(unittest.TestCase):
             json.dump(raw, handle, ensure_ascii=False)
         return path
 
-    def write_tracks(self, name, days):
+    def write_1208(self, name, days):
+        """The 12.08 layout (wialon_probe5_spraying.py): with a date."""
         path = os.path.join(self.folder, name)
         with open(path, 'w', encoding='utf-8-sig', newline='') as handle:
             handle.write('unit_id;date;time;lat;lon;speed;course;sats\n')
@@ -472,6 +592,28 @@ class Sets(unittest.TestCase):
                                     lat, lon, speed))
         return path
 
+    def write_0727(self, name, units):
+        """The 27.07 layout: one day, no date column."""
+        path = os.path.join(self.folder, name)
+        with open(path, 'w', encoding='utf-8-sig', newline='') as handle:
+            handle.write('unit_id;time;lon;lat;speed\n')
+            for unit, track in units:
+                for t, lon, lat, speed in track:
+                    t = int(t) + 8 * 3600
+                    handle.write('%d;%02d:%02d:%02d;%.7f;%.7f;%.1f\n'
+                                 % (unit, t // 3600, t % 3600 // 60, t % 60,
+                                    lon, lat, speed))
+        return path
+
+    def field(self, spacing=6.0):
+        return shuttle_track(300.0, 300.0, pass_spacing_m=spacing)
+
+    def run_sets(self, *tracks, zones=None):
+        argv = []
+        for path in tracks:
+            argv += ['--tracks', path]
+        return self.run_main(*argv, '--zones', zones or self.zones)
+
     def digest(self, path):
         with open(path, 'rb') as handle:
             return hashlib.sha256(handle.read()).hexdigest()
@@ -482,22 +624,37 @@ class Sets(unittest.TestCase):
             code = replay.main(list(argv))
         return code, out.getvalue(), err.getvalue()
 
-    def test_a_set_of_field_work_is_bit_identical(self):
-        tracks = self.write_tracks('fields.csv', [
-            (1, '2026-08-01', shuttle_track(300.0, 300.0, pass_spacing_m=6.0)),
-            (2, '2026-08-02', shuttle_track(300.0, 300.0, pass_spacing_m=37.2))])
-        code, out, _err = self.run_main('--tracks', tracks, '--zones', self.zones)
+    def test_two_sets_of_field_work_pass(self):
+        early = self.write_0727('verify_tracks.csv', [(11, self.field())])
+        late = self.write_1208('verify2_tracks.csv',
+                               [(1, '2026-08-01', self.field(37.2))])
+        code, out, _err = self.run_sets(early, late)
         self.assertEqual(code, 0, out)
-        self.assertIn('fields.csv: machine-days 2, zone works 4 (a superset of '
-                      'the hand-measured works), triggered 0, changed 0', out)
-        self.assertIn('CONDITION 1 (no row of the sets changed or triggered, so '
-                      'none of the 32 works did): PASS', out)
+        self.assertIn('verify_tracks.csv: machine-days 1 (day rows), contours '
+                      'entered 2 (zone rows); triggered: 0 day row(s), 0 zone '
+                      'row(s); changed: 0 day row(s), 0 zone row(s)', out)
+        self.assertIn('CONDITION 1 (no row of the two sets changed or triggered, '
+                      'so none of the 32 works did): PASS', out)
+        self.assertNotIn('superset', out)
 
-    def test_a_road_day_in_a_set_goes_to_the_owner_with_the_zone_name(self):
-        tracks = self.write_tracks('mixed.csv', [
-            (1, '2026-08-01', shuttle_track(300.0, 300.0, pass_spacing_m=6.0)),
+    def test_a_changed_work_of_1208_fails_without_asking(self):
+        """A 12.08 work is a whole machine-day: if the day changed, it did."""
+        early = self.write_0727('verify_tracks.csv', [(11, self.field())])
+        late = self.write_1208('verify2_tracks.csv',
+                               [(1, '2026-08-01', field_and_roads())])
+        code, out, _err = self.run_sets(early, late)
+        self.assertEqual(code, 4, out)
+        self.assertRegex(out, r'day\s+unit 1\s+day 2026-08-01 zone -\s+'
+                              r'spacing \d+\.\d\d -> 6\.\d\d .*CHANGED\s+MTZ test')
+        self.assertIn('CONDITION 1: FAIL -- 1 of the 15 works of 12.08 changed',
+                      out)
+
+    def test_other_rows_go_to_the_owner_with_names_alpha_and_step(self):
+        early = self.write_0727('verify_tracks.csv', [(11, self.field())])
+        late = self.write_1208('verify2_tracks.csv', [
+            (1, '2026-08-01', self.field()),
             (5, '2026-08-01', slow_loop(TWO_ROADS))])
-        code, out, _err = self.run_main('--tracks', tracks, '--zones', self.zones)
+        code, out, _err = self.run_sets(early, late)
         self.assertEqual(code, 3, out)
         self.assertRegex(out, r'day\s+unit 5\s+day 2026-08-01 zone -\s+'
                               r'spacing 299\.\d\d -> -\s+ha 60\.\d+ -> 0\.0000\s+'
@@ -505,69 +662,136 @@ class Sets(unittest.TestCase):
         self.assertRegex(out, r'zone\s+unit 5\s+day 2026-08-01 zone 102\s+'
                               r'spacing 299\.\d\d -> -\s+ha 60\.\d+ -> 0\.\d+\s+'
                               r'CHANGED\s+Doroga 7')
-        self.assertRegex(out, r'was: site 60\.\d+ ha\s+zone 102\s+Doroga 7')
+        self.assertRegex(out, r'was: site 60\.\d+ ha\s+alpha 359\.\d\d\s+'
+                              r'spacing 299\.\d\d\s+zone 102\s+Doroga 7')
         self.assertNotRegex(out, r'unit 1 ')
+        self.assertIn('verify2_tracks.csv: machine-days 2 (day rows), contours '
+                      'entered 4 (zone rows); triggered: 1 day row(s), 1 zone '
+                      'row(s); changed: 1 day row(s), 1 zone row(s)', out)
         self.assertIn('CONDITION 1: OWNER CHECK -- 2 row(s) above changed or '
-                      'triggered', out)
+                      'triggered. A DAY row: the rule changed the step and alpha '
+                      'of EVERY site of that machine-day', out)
+
+    def test_the_now_line_names_the_work_contour(self):
+        """A field between two roads: the work shows up only as «now».
+
+        Today the day's one site is the whole corridor, named after the road
+        contour; with the cap it is the field, named after the field. The
+        field's own contour row does not change, so the «now» line is the only
+        place its name appears.
+        """
+        zones = self.write_zones({
+            '101': ('Поле 1', [(80, 80), (220, 80), (220, 220), (80, 220)]),
+            '102': ('Дорога 7', [(-50, -50), (2050, -50), (2050, 350),
+                                 (-50, 350)])}, name='corridor.json')
+        work = shuttle_track(100.0, 100.0, pass_spacing_m=6.0)
+        work = [(t, *xy_to_lonlat(*self.east_north(lon, lat, 100.0)), speed)
+                for t, lon, lat, speed in work]
+        roads = slow_loop(TWO_ROADS, loops=6, start_time=work[-1][0] + 600)
+        early = self.write_0727('verify_tracks.csv', [(11, self.field())])
+        late = self.write_1208('verify2_tracks.csv',
+                               [(1, '2026-08-01', self.field()),
+                                (5, '2026-08-01', work + roads)])
+        _code, out, _err = self.run_sets(early, late, zones=zones)
+        self.assertRegex(out, r'was: site \d+\.\d+ ha .*zone 102\s+Doroga 7')
+        self.assertRegex(out, r'now: site 0\.\d+ ha\s+alpha 10\.00\s+'
+                              r'spacing 6\.\d\d\s+zone 101\s+Pole 1')
+
+    @staticmethod
+    def east_north(lon, lat, shift):
+        from gps.tests.test_area import BASE_LAT, BASE_LON, M_PER_DEG_LAT, \
+            M_PER_DEG_LON
+        return ((lon - BASE_LON) * M_PER_DEG_LON + shift,
+                (lat - BASE_LAT) * M_PER_DEG_LAT + shift)
 
     def test_a_triggered_row_is_shown_even_when_nothing_changed(self):
         """The amendment: the run prints whether the rule triggered.
 
         A day with no site either way stays «same» while the rule fired on
-        it; the owner still sees it, with the contour name.
+        it; the owner still sees it.
         """
-        quiet = {'set': 'x.csv', 'unit': 7, 'day': '2026-08-01', 'path': 'day',
+        quiet = {'set': 'x.csv', 'unit': 7, 'day': '-', 'path': 'day',
                  'zone': None, 'zone_name': '', 'ha_today': 0.0, 'ha_cap': 0.0,
                  'spacing': 60.0, 'spacing_cap': None, 'triggered': True,
                  'same': True, 'sites_today': [], 'sites_cap': []}
-        zone = dict(quiet, path='zone', zone=101, zone_name='Поле 1',
-                    triggered=False)
+        work = dict(quiet, unit=1, day='2026-08-01', spacing=6.0,
+                    spacing_cap=6.0, triggered=False)
+        zone = dict(work, path='zone', zone=101, zone_name='Поле 1')
         out = []
-        verdict = replay.report_sets([quiet, zone], {101: 'Поле 1'}, out.append)
+        verdict = replay.report_sets([('x.csv', [quiet, work, zone])],
+                                     {101: 'Поле 1'}, out.append)
         self.assertEqual(verdict, replay.OWNER_CHECK)
         text = '\n'.join(out)
-        self.assertRegex(text, r'day\s+unit 7\s+day 2026-08-01 zone -\s+'
+        self.assertRegex(text, r'day\s+unit 7\s+day -\s+zone -\s+'
                                r'spacing 60\.00 -> -\s+ha 0\.0000 -> 0\.0000\s+same')
-        self.assertIn('triggered 1, changed 0', text)
+        self.assertIn('triggered: 1 day row(s), 0 zone row(s); changed: 0 day '
+                      'row(s), 0 zone row(s)', text)
         self.assertIn('OWNER CHECK -- 1 row(s)', text)
 
-    def test_an_empty_set_is_not_checked(self):
-        tracks = self.write_tracks('empty.csv', [])
-        code, out, _err = self.run_main('--tracks', tracks, '--zones', self.zones)
+    def test_one_set_alone_is_not_checked(self):
+        early = self.write_0727('verify_tracks.csv', [(11, self.field())])
+        code, out, _err = self.run_sets(early)
         self.assertEqual(code, 3)
-        self.assertIn('CONDITION 1: NOT CHECKED -- no machine-day', out)
+        self.assertIn('not checked: 1 of the 1 works of 12.08 were not read: '
+                      '1 2026-08-01', out)
+        self.assertIn('CONDITION 1: NOT CHECKED', out)
+        late = self.write_1208('verify2_tracks.csv',
+                               [(1, '2026-08-01', self.field())])
+        code, out, _err = self.run_sets(late)
+        self.assertEqual(code, 3)
+        self.assertIn('not checked: the 27.07 set (17 works, tracks without a '
+                      'date column) was not read', out)
+
+    def test_an_empty_set_next_to_a_good_one_is_not_checked(self):
+        early = self.write_0727('verify_tracks.csv', [(11, self.field())])
+        late = self.write_1208('verify2_tracks.csv', [])
+        code, out, _err = self.run_sets(early, late)
+        self.assertEqual(code, 3)
+        self.assertIn('not checked: verify2_tracks.csv gave no machine-day', out)
 
     def test_a_set_that_never_enters_a_contour_is_not_checked(self):
-        far = self.write_zones({'9': ('Далеко', [(5000, 5000), (5100, 5000),
-                                                 (5100, 5100), (5000, 5100)])},
-                               name='far.json')
-        tracks = self.write_tracks('fields.csv', [
-            (1, '2026-08-01', shuttle_track(300.0, 300.0, pass_spacing_m=6.0))])
-        code, out, _err = self.run_main('--tracks', tracks, '--zones', far)
-        self.assertEqual(code, 3)
-        self.assertIn('CONDITION 1: NOT CHECKED -- no contour was entered', out)
+        early = self.write_0727('verify_tracks.csv', [(11, self.field())])
+        late = self.write_1208('verify2_tracks.csv', [
+            (1, '2026-08-01', [(t, *xy_to_lonlat(e + 5000.0, n + 5000.0), v)
+                               for t, (e, n), v in self.moved(self.field())])])
+        code, out, _err = self.run_sets(early, late)
+        self.assertEqual(code, 3, out)
+        self.assertIn('not checked: verify2_tracks.csv entered no contour', out)
+
+    def moved(self, track):
+        return [(t, self.east_north(lon, lat, 0.0), v) for t, lon, lat, v in track]
+
+    def test_a_file_without_a_needed_column_is_bad_input(self):
+        early = self.write_0727('verify_tracks.csv', [(11, self.field())])
+        broken = os.path.join(self.folder, 'verify2_tracks.csv')
+        with open(broken, 'w', encoding='utf-8') as handle:
+            handle.write('unit_id;date;time;lat;lon;course\n'
+                         '1;2026-08-01;08:00:00;39.7;64.4;0\n')
+        code, _out, err = self.run_sets(early, broken)
+        self.assertEqual(code, 2)
+        self.assertIn('verify2_tracks.csv has no column(s) speed', err)
 
     def test_an_unreadable_row_is_skipped_and_counted(self):
-        """A blank speed cell (Wialon gave none) must not kill the run."""
-        tracks = self.write_tracks('fields.csv', [
-            (1, '2026-08-01', shuttle_track(300.0, 300.0, pass_spacing_m=6.0))])
-        with open(tracks, 'a', encoding='utf-8', newline='') as handle:
+        """A blank or missing cell (Wialon gave none) must not kill the run."""
+        late = self.write_1208('verify2_tracks.csv',
+                               [(1, '2026-08-01', self.field())])
+        with open(late, 'a', encoding='utf-8', newline='') as handle:
             handle.write('1;2026-08-01;12:00:00;39.7;64.4;;0;10\n')
             handle.write('1;2026-08-01;;39.7;64.4;5.0;0;10\n')
-        days, skipped = replay.load_csv_days(tracks)
-        self.assertEqual(skipped, 2)
-        clean = replay.load_csv_days(self.write_tracks('clean.csv', [
-            (1, '2026-08-01', shuttle_track(300.0, 300.0,
-                                            pass_spacing_m=6.0))]))
+            handle.write('1;2026-08-01\n')
+        days, skipped = replay.load_csv_days(late)
+        self.assertEqual(skipped, 3)
+        clean = replay.load_csv_days(self.write_1208(
+            'clean.csv', [(1, '2026-08-01', self.field())]))
         self.assertEqual(clean[1], 0)
         self.assertEqual(days, clean[0])
-        code, out, _err = self.run_main('--tracks', tracks, '--zones', self.zones)
+        early = self.write_0727('verify_tracks.csv', [(11, self.field())])
+        code, out, _err = self.run_sets(early, late)
         self.assertEqual(code, 0, out)
-        self.assertIn('fields.csv: unreadable rows skipped 2', out)
+        self.assertIn('verify2_tracks.csv: unreadable rows skipped 3', out)
 
     def test_bad_input_is_refused_and_nothing_is_written(self):
-        tracks = self.write_tracks('fields.csv', [
-            (1, '2026-08-01', shuttle_track(300.0, 300.0, pass_spacing_m=6.0))])
+        tracks = self.write_1208('fields.csv', [(1, '2026-08-01', self.field())])
         before = (self.digest(tracks), self.digest(self.zones))
         self.assertEqual(self.run_main('--tracks', tracks)[0], 2)          # no zones
         self.assertEqual(self.run_main('--tracks', tracks, '--zones',
@@ -578,6 +802,28 @@ class Sets(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.folder, 'no.db')))
         self.run_main('--tracks', tracks, '--zones', self.zones)
         self.assertEqual((self.digest(tracks), self.digest(self.zones)), before)
+
+
+class WorkDays(unittest.TestCase):
+
+    def test_the_1208_works_are_the_ones_the_probe_pulled(self):
+        """WORK_DAYS_1208 is copied from wialon_probe5_spraying.UNIT_DAYS.
+
+        Read from the probe's source as a literal, not imported: the probe
+        is a network script, and the test needs only its list.
+        """
+        import ast
+        path = os.path.join(os.path.dirname(ROADMAP), '..', 'tools',
+                            'wialon_probe5_spraying.py')
+        with open(path, encoding='utf-8') as handle:
+            tree = ast.parse(handle.read())
+        found = [node.value for node in tree.body
+                 if isinstance(node, ast.Assign)
+                 and any(getattr(t, 'id', '') == 'UNIT_DAYS' for t in node.targets)]
+        self.assertEqual(len(found), 1)
+        self.assertEqual(tuple(tuple(item) for item in ast.literal_eval(found[0])),
+                         replay.WORK_DAYS_1208)
+        self.assertEqual(len(replay.WORK_DAYS_1208), 15)
 
 
 if __name__ == '__main__':

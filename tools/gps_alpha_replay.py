@@ -14,12 +14,15 @@
 ДВА РЕЖИМА
   --tracks ... --zones ...  наборы с ручными замерами (условие 1). Треки --
       CSV с разделителем «;» и столбцами unit_id, [date,] time, lat, lon,
-      speed (`verify_tracks.csv` 27.07, `verify2_tracks.csv` 12.08); зоны --
-      `wialon_zones.json`. Каждые машино-сутки считаются по суткам
-      (`work_sites`) и по каждому контуру, куда машина заехала хотя бы 10
-      точками в движении (`worked_area`). Это НАДМНОЖЕСТВО 32 работ с ручным
-      замером: какие строки -- работы, знает книга владельца, поэтому каждая
-      строка несёт номер и название контура.
+      speed (`verify_tracks.csv` 27.07 без даты, `verify2_tracks.csv` 12.08 с
+      датой); зоны -- `wialon_zones.json`. Каждые машино-сутки считаются по
+      суткам (`work_sites`, строка «day») и по каждому контуру, куда машина
+      заехала хотя бы 10 точками в движении (`worked_area`, строка «zone»).
+      Работа на земле без контура видна только в строке «day». Пятнадцать
+      машино-суток 12.08 -- сами работы (`WORK_DAYS_1208`), поэтому их
+      изменение -- FAIL без вопроса владельцу; прочие изменившиеся строки
+      печатаются с номером и названием контура, и решает книга владельца.
+      Оба набора обязательны: без любого из них условие не проверено.
   --db ... --dir ...  production (условия 2, 3, 5 и выгрузка для 3 и 4).
       Опубликованные машино-сутки периода (причина пуста), чьи точки ещё на
       диске. Контроль прогона: действующий код, пересчитанный по точкам,
@@ -30,8 +33,10 @@
   (пустой ввод); RUN INVALID -- контроль прогона не сошёлся, чинить
   инструмент и повторять; NOT EVALUATED -- названные сутки не пересчитаны;
   OWNER CHECK -- нужен глаз владельца. Код выхода: 0 -- всё машинное PASS,
-  1 -- есть FAIL, 3 -- FAIL нет, но есть невыполненная проверка или нужен
-  владелец, 2 -- неверный ввод (тогда ничего не считалось).
+  4 -- есть FAIL, 3 -- FAIL нет, но есть невыполненная проверка или нужен
+  владелец, 2 -- неверный ввод (тогда ничего не считалось), 1 -- инструмент
+  упал (так Python завершает любое необработанное исключение; о правиле это
+  ничего не говорит).
 
 [REASON]: база и файлы точек открываются `mode=ro`, KML пишется только в файл,
 указанный ключом. Решения здесь нет: включение правила в ночной расчёт --
@@ -41,11 +46,12 @@ SQLite, открывая базу в режиме WAL только на чтен
 
 Запуск -- из окружения расчёта (нужна геометрия), PowerShell, из C:\\gps-tools:
 
-    & C:\\gps_venv\\Scripts\\python.exe tools\\gps_alpha_replay.py --tracks C:\\diag\\wialon\\verify_tracks.csv --tracks C:\\diag\\wialon\\verify2_tracks.csv --zones C:\\diag\\wialon\\wialon_zones.json
+    & C:\\gps_venv\\Scripts\\python.exe -u tools\\gps_alpha_replay.py --tracks C:\\diag\\wialon\\verify_tracks.csv --tracks C:\\diag\\wialon\\verify2_tracks.csv --zones C:\\diag\\wialon\\wialon_zones.json
 
-    & C:\\gps_venv\\Scripts\\python.exe tools\\gps_alpha_replay.py --db C:\\transport-report\\instance\\transport.db --dir C:\\transport-report\\instance --since 2026-09-01 --until 2026-09-30 --kml C:\\gps-tools\\check\\a7_replay.kml
+    & C:\\gps_venv\\Scripts\\python.exe -u tools\\gps_alpha_replay.py --db C:\\transport-report\\instance\\transport.db --dir C:\\transport-report\\instance --since 2026-09-01 --until 2026-09-30 --kml C:\\gps-tools\\check\\a7_replay.kml
 
-Вывод -- только ASCII.
+Вывод -- только ASCII. `-u` -- чтобы строки хода прогона доходили до файла
+сразу, а не по окончании.
 """
 
 import argparse
@@ -78,6 +84,23 @@ ALPHA_CEILING_M = ALPHA_SPACING_FACTOR * SPACING_CAP_M      # 53.568
 # заново; тест сверяет его с текстом раздела 2.11.
 NAMED_DAYS = (('2026-09-26', 393), ('2026-09-26', 330), ('2026-09-26', 3188),
               ('2026-09-03', 411), ('2026-09-21', 10322), ('2026-09-05', 337))
+# [REASON]: пятнадцать работ с ручным замером набора 12.08 -- это машино-сутки
+# целиком (`tools/wialon_probe5_spraying.py`, UNIT_DAYS; тест сверяет списки).
+# Все участки одних суток получают один шаг и одну альфу, поэтому сработавшее
+# или изменившееся правило на таких сутках изменило саму работу, и по
+# поправке условия 1 это отказ правилу, а не вопрос к книге владельца.
+WORK_DAYS_1208 = (
+    (1729, 'MTZ 261 EA', '2026-08-08'), (1729, 'MTZ 261 EA', '2026-08-07'),
+    (3100, 'MTZ 25 GA 691 (575 HA)', '2026-08-07'),
+    (1729, 'MTZ 261 EA', '2026-08-05'), (1729, 'MTZ 261 EA', '2026-08-01'),
+    (1729, 'MTZ 261 EA', '2026-07-31'), (3453, 'MTZ 266 EA', '2026-07-20'),
+    (1730, 'MTZ 873 GA', '2026-07-17'), (1730, 'MTZ 873 GA', '2026-07-16'),
+    (6824, 'TD5 681 GA (187)', '2026-07-13'),
+    (952, 'MTZ-80 X 540 GA', '2026-07-07'), (942, 'MTZ-80 X 514 GA', '2026-07-07'),
+    (1730, 'MTZ 873 GA', '2026-07-07'), (1730, 'MTZ 873 GA', '2026-07-04'),
+    (1730, 'MTZ 873 GA', '2026-07-01'))
+WORKS_0727 = 17
+REQUIRED_COLUMNS = ('unit_id', 'time', 'lat', 'lon', 'speed')
 TOP_LOSSES = 10
 MIN_MOVING_POINTS_IN_ZONE = 10
 # [REASON]: допуск на сложение чисел с плавающей точкой при сравнении сумм
@@ -114,13 +137,17 @@ def measure(track):
 
 def verdict_code(verdicts):
     if FAIL in verdicts:
-        return 1
+        return 4
     if any(v != PASS for v in verdicts):
         return 3
     return 0
 
 
 # --- наборы с ручными замерами (условие 1) ------------------------------------
+
+class BadInput(Exception):
+    """Файл набора нельзя прочитать как набор -- код выхода 2."""
+
 
 def load_csv_days(path):
     """((unit_id, дата или '') -> [(t, lon, lat, speed)] по времени, пропущено).
@@ -129,11 +156,19 @@ def load_csv_days(path):
     значения (`wialon_probe5_spraying.py`), и одна такая строка не должна
     обрывать прогон всех 32 работ. Строка без времени, координат или
     скорости пропускается -- обоими методами одинаково, сравнения она не
-    меняет, -- но число пропущенных печатается, а не теряется молча.
+    меняет, -- но число пропущенных печатается, а не теряется молча. Файл
+    без нужного столбца -- другое дело: это не набор, а неверный ввод, и
+    пропуск всех его строк выдал бы непрочитанный набор за проверенный.
     """
     days, skipped = defaultdict(list), 0
     with open(path, encoding='utf-8-sig', newline='') as handle:
-        for row in csv.DictReader(handle, delimiter=';'):
+        reader = csv.DictReader(handle, delimiter=';')
+        absent = [name for name in REQUIRED_COLUMNS
+                  if name not in (reader.fieldnames or [])]
+        if absent:
+            raise BadInput('%s has no column(s) %s'
+                           % (console(os.path.basename(path)), ', '.join(absent)))
+        for row in reader:
             try:
                 day = (row.get('date') or '').strip()
                 hh, mm, ss = row['time'].strip().split(':')
@@ -143,11 +178,16 @@ def load_csv_days(path):
                 point = (t, float(row['lon']), float(row['lat']),
                          float(row['speed']))
                 unit = int(row['unit_id'])
-            except (KeyError, TypeError, ValueError):
+            except (AttributeError, KeyError, TypeError, ValueError):
                 skipped += 1
                 continue
             days[(unit, day)].append(point)
     return {key: sorted(track) for key, track in days.items()}, skipped
+
+
+def site_list(sites):
+    return [(s.contour_id, s.area_ha, s.alpha_used_m, s.pass_spacing_m)
+            for s in sites]
 
 
 def sites_key(sites):
@@ -170,8 +210,8 @@ def compare_set(name, days, zones, zone_names):
                      'spacing': today_s, 'spacing_cap': cap_s,
                      'triggered': today_s is not None and today_s > SPACING_CAP_M,
                      'same': sites_key(today) == sites_key(capped),
-                     'sites_today': [(s.contour_id, s.area_ha) for s in today],
-                     'sites_cap': [(s.contour_id, s.area_ha) for s in capped]})
+                     'sites_today': site_list(today),
+                     'sites_cap': site_list(capped)})
         for zone_id, _inside in candidate_contours(
                 track, zones, min_moving_points=MIN_MOVING_POINTS_IN_ZONE):
             one = worked_area(track, zones[zone_id], zone_id)
@@ -199,21 +239,47 @@ def _spacing(value):
     return '-' if value is None else '%.2f' % value
 
 
-def report_sets(rows, zone_names, out=print):
-    """Условие 1 в редакции поправки 02.10. Возвращает вердикт."""
-    if not rows:
-        out('CONDITION 1: %s -- no machine-day was read from the tracks'
-            % NOT_CHECKED)
-        return NOT_CHECKED
-    for name in sorted({row['set'] for row in rows}):
-        mine = [row for row in rows if row['set'] == name]
-        out('%s: machine-days %d, zone works %d (a superset of the hand-measured '
-            'works), triggered %d, changed %d'
-            % (console(name), sum(1 for r in mine if r['path'] == 'day'),
-               sum(1 for r in mine if r['path'] == 'zone'),
-               sum(1 for r in mine if r['triggered']),
-               sum(1 for r in mine if not r['same'])))
+def _counts(rows, key):
+    return ('%d day row(s), %d zone row(s)'
+            % (sum(1 for r in rows if r['path'] == 'day' and key(r)),
+               sum(1 for r in rows if r['path'] == 'zone' and key(r))))
+
+
+def report_sets(sets, zone_names, out=print):
+    """Условие 1 в редакции поправки 02.10. Возвращает вердикт.
+
+    `sets` -- [(имя файла, строки compare_set)] по каждому --tracks.
+    """
+    rows = [row for _name, mine in sets for row in mine]
+    work_days = {(unit, day): name for unit, name, day in WORK_DAYS_1208}
+    gaps = []
+    for name, mine in sets:
+        days = sum(1 for r in mine if r['path'] == 'day')
+        out('%s: machine-days %d (day rows), contours entered %d (zone rows); '
+            'triggered: %s; changed: %s'
+            % (console(name), days, sum(1 for r in mine if r['path'] == 'zone'),
+               _counts(mine, lambda r: r['triggered']),
+               _counts(mine, lambda r: not r['same'])))
+        if not days:
+            gaps.append('%s gave no machine-day' % console(name))
+        elif not any(r['path'] == 'zone' for r in mine):
+            gaps.append('%s entered no contour: its per-contour half was not '
+                        'compared' % console(name))
+    read = {(r['unit'], r['day']) for r in rows if r['path'] == 'day'}
+    absent = [(unit, day) for unit, _name, day in WORK_DAYS_1208
+              if (unit, day) not in read]
+    if absent:
+        gaps.append('%d of the %d works of 12.08 were not read: %s'
+                    % (len(absent), len(WORK_DAYS_1208),
+                       ', '.join('%d %s' % pair for pair in absent)))
+    if not any(r['day'] == '-' for r in rows if r['path'] == 'day'):
+        gaps.append('the 27.07 set (%d works, tracks without a date column) was '
+                    'not read' % WORKS_0727)
+    out('Works on ground without a contour appear only in day rows (zone -), '
+        'by unit and day.')
     changed = [row for row in rows if not row['same'] or row['triggered']]
+    failed = [row for row in changed if row['path'] == 'day'
+              and (row['unit'], row['day']) in work_days]
     for row in changed:
         out('  %-4s unit %-6d day %-10s zone %-6s spacing %s -> %s  ha %.4f -> '
             '%.4f  %s  %s'
@@ -222,24 +288,35 @@ def report_sets(rows, zone_names, out=print):
                _spacing(row['spacing']), _spacing(row['spacing_cap']),
                row['ha_today'], row['ha_cap'],
                'same' if row['same'] else 'CHANGED',
-               console(row['zone_name'])))
+               console(row['zone_name']
+                       or work_days.get((row['unit'], row['day']), ''))))
         for label, sites in (('was', row['sites_today']), ('now', row['sites_cap'])):
-            for contour_id, area in sites:
-                out('       %s: site %.4f ha  zone %s  %s'
-                    % (label, area, '-' if contour_id is None else contour_id,
+            for contour_id, area, alpha, spacing in sites:
+                out('       %s: site %.4f ha  alpha %.2f  spacing %s  zone %s  %s'
+                    % (label, area, alpha, _spacing(spacing),
+                       '-' if contour_id is None else contour_id,
                        console(zone_names.get(contour_id, ''))))
-    if not any(r['path'] == 'zone' for r in rows):
-        out('CONDITION 1: %s -- no contour was entered: the per-contour half '
-            'was not compared' % NOT_CHECKED)
+    for gap in gaps:
+        out('  not checked: %s' % gap)
+    if failed:
+        out('CONDITION 1: %s -- %d of the 15 works of 12.08 changed: each is a '
+            'whole machine-day, and the rule changed its step and alpha'
+            % (FAIL, len(failed)))
+        return FAIL
+    if gaps:
+        out('CONDITION 1: %s -- see the lines above; both sets must be compared '
+            'in full' % NOT_CHECKED)
         return NOT_CHECKED
     if not changed:
-        out('CONDITION 1 (no row of the sets changed or triggered, so none of the '
-            '32 works did): PASS')
+        out('CONDITION 1 (no row of the two sets changed or triggered, so none of '
+            'the 32 works did): PASS')
         return PASS
-    out('CONDITION 1: %s -- %d row(s) above changed or triggered. The rule is '
-        'rejected if ANY of them is one of the 32 hand-measured works (compare '
-        'zone numbers and names with the workbook); other rows are passages and '
-        'unmeasured contours and go to the report.' % (OWNER_CHECK, len(changed)))
+    out('CONDITION 1: %s -- %d row(s) above changed or triggered. A DAY row: the '
+        'rule changed the step and alpha of EVERY site of that machine-day, so it '
+        'is rejected if the machine did any of the 32 works that day. A ZONE row: '
+        'it is rejected if that contour is one of the works (compare zone numbers '
+        'and names with the workbook). Rows that are neither go to the report.'
+        % (OWNER_CHECK, len(changed)))
     return OWNER_CHECK
 
 
@@ -462,17 +539,24 @@ def condition_2(results, out):
     for row in violations[:20]:
         out('  VIOLATION %s %d: %s' % (row['day'], row['unit'],
                                        '; '.join(row['violations'])))
+    # [REASON]: нарушение инварианта считается по одному повтору точек, база
+    # в нём не участвует. Поэтому несошедшийся контроль на других сутках его
+    # не отменяет: правило отвергается, а контроль чинится отдельно. Не
+    # доверяются только сутки, где повтор разошёлся с самим движком.
+    standing = [row for row in violations if row['consistent']]
     if not results:
         verdict, note = NOT_CHECKED, 'no machine-day was replayed'
+    elif standing:
+        verdict, note = FAIL, ('%d of %d machine-days break an invariant'
+                               % (len(standing), len(results)))
     elif mismatched or inconsistent:
         verdict, note = RUN_INVALID, ('the control failed on %d machine-day(s), '
                                       'the measure on %d: fix the replay and '
                                       'run it again'
                                       % (len(mismatched), inconsistent))
     else:
-        verdict = PASS if not violations else FAIL
-        note = '%d violation(s) on %d machine-day(s)' % (len(violations),
-                                                         len(results))
+        verdict, note = PASS, ('no invariant broken on %d machine-days'
+                               % len(results))
     out('CONDITION 2 (invariants on every machine-day): %s -- %s'
         % (verdict, note))
     return verdict
@@ -481,7 +565,7 @@ def condition_2(results, out):
 def condition_3(results, names, out):
     out('condition 3, the six named machine-days:')
     by_key = {(row['day'], row['unit']): row for row in results}
-    missing, failed = [], []
+    missing, failed, untrusted = [], [], []
     for day, unit in NAMED_DAYS:
         row = by_key.get((day, unit))
         if row is None:
@@ -489,16 +573,27 @@ def condition_3(results, names, out):
             out('  %s %6d  not replayed (no published row or no points)'
                 % (day, unit))
             continue
+        # [REASON]: названные сутки выбраны по тому, что лежит в базе (допуск
+        # 300-981 м). Если повтор не воспроизвёл базу или разошёлся с
+        # движком, пересчитаны другие сутки, чем те, что названы, и судить
+        # по ним правило нельзя -- ни в плюс, ни в минус.
+        trusted = row['control'] is not False and row['consistent']
         fell = row['triggered'] and row['ha_cap'] < row['ha_today'] - EPSILON
-        if not fell:
+        if not trusted:
+            untrusted.append((day, unit))
+        elif not fell:
             failed.append((day, unit))
         out('  %s %6d  triggered %-3s  alpha %.1f -> %.1f  ha %.2f -> %.2f  %s  %s'
             % (day, unit, 'yes' if row['triggered'] else 'NO',
                row['alpha_today'], row['alpha_cap'], row['ha_today'],
-               row['ha_cap'], 'fell' if fell else 'DID NOT FALL',
+               row['ha_cap'],
+               ('UNTRUSTED, the replay does not reproduce this day' if not trusted
+                else 'fell' if fell else 'DID NOT FALL'),
                console(names.get(unit) or '')))
     if failed:
         verdict = FAIL
+    elif untrusted:
+        verdict = RUN_INVALID
     elif missing:
         verdict = NOT_EVALUATED
     else:
@@ -577,13 +672,18 @@ def main(argv=None):
         loaded = load_zones(args.zones)
         zones = {zone_id: polygon for zone_id, (_name, polygon) in loaded.items()}
         zone_names = {zone_id: name for zone_id, (name, _polygon) in loaded.items()}
-        rows = []
-        for path in args.tracks:
-            days, skipped = load_csv_days(path)
-            print('%s: unreadable rows skipped %d'
-                  % (console(os.path.basename(path)), skipped))
-            rows += compare_set(os.path.basename(path), days, zones, zone_names)
-        verdict = report_sets(rows, zone_names)
+        loaded_sets = []
+        try:
+            for path in args.tracks:
+                loaded_sets.append((os.path.basename(path), load_csv_days(path)))
+        except BadInput as error:
+            sys.stderr.write('ERROR: %s\n' % error)
+            return 2
+        sets = []
+        for name, (days, skipped) in loaded_sets:
+            print('%s: unreadable rows skipped %d' % (console(name), skipped))
+            sets.append((name, compare_set(name, days, zones, zone_names)))
+        verdict = report_sets(sets, zone_names)
         print('nothing was written: the tracks and zones were only read')
         return verdict_code([verdict])
     since = _day('--since', args.since or '')
@@ -597,7 +697,7 @@ def main(argv=None):
         sys.stderr.write('ERROR: the folder for --kml does not exist\n')
         return 2
     verdicts = replay_production(args.db, args.dir, since, until, args.kml,
-                                 progress=print)
+                                 progress=lambda line: print(line, flush=True))
     print('nothing was written to the database or the point files: they were '
           'opened mode=ro')
     return verdict_code(verdicts)

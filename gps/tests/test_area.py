@@ -567,6 +567,37 @@ class OverflowCapTests(unittest.TestCase):
         just_above = math.nextafter(SPACING_CAP_M, math.inf)
         self.assertIsNone(self.votes_give([just_above] * 10 + [300.0] * 30))
 
+    def test_on_overflow_the_kept_votes_give_their_median(self):
+        """Step 3 says median: not the least, not the mean, not a quartile.
+
+        A sprayer day with refill trips: retraces of one road (3 m), the
+        field (14 m) and roads far apart (300 m). The median of the kept
+        votes is the field's 14 m; the least would be 3, the mean 9.29, the
+        lower quartile 3 -- each a different alpha and a different area.
+        """
+        votes = [3.0] * 30 + [14.0] * 40 + [300.0] * 100
+        self.assertEqual(self.votes_give(votes), 14.0)
+        self.assertEqual(self.votes_give([5.0, 7.0, 9.0, 40.0] + [300.0] * 10),
+                         8.0)
+
+    def test_on_overflow_alpha_keeps_the_margin(self):
+        """Alpha = 1.2 x the kept spacing, whenever that beats the 10 m floor.
+
+        A field in 20 m passes and six laps of the roads 1 km away: today the
+        roads give 100 m and alpha 120 m; with the cap the field keeps its own
+        20 m, and alpha is 24 m -- not 20, not the 10 m floor.
+        """
+        field = shuttle_track(300.0, 300.0, pass_spacing_m=20.0,
+                              point_step_m=100.0)
+        roads = slow_loop([(e + 1000.0, n + 1000.0) for e, n in TWO_ROADS],
+                          loops=6, start_time=field[-1][0] + 600)
+        today, _ = work_sites(field + roads)
+        capped, _ = work_sites(field + roads, overflow_cap=True)
+        self.assertGreater(today[0].pass_spacing_m, SPACING_CAP_M)
+        self.assertAlmostEqual(capped[0].pass_spacing_m, 20.0, delta=0.5)
+        self.assertEqual(capped[0].alpha_used_m,
+                         ALPHA_SPACING_FACTOR * capped[0].pass_spacing_m)
+
     def test_the_daily_computation_passes_the_switch_through(self):
         from gps.daily import compute_day
         points = [(t, lon, lat, speed, 10)
