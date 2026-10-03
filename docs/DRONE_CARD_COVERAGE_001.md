@@ -129,8 +129,8 @@ online-копии production** (шаг B0 ниже): сентябрь и авг�
   запускает сборщик из venv production и с общими
   `C:\transport-report\drone_collector\data\storage_state.json` и
   `collector.lock`. Сейчас это не меняется. Отключённая задача на время
-  пилота не берёт ни сессию, ни замок. Разведка рабочей машины и план
-  канарейки (W1) обязаны отдельно учесть общий замок и общую сессию: сбор
+  пилота не берёт ни сессию, ни замок. Разведка рабочей машины (W0) и
+  план канарейки (W1) обязаны отдельно учесть общий замок и общую сессию: сбор
   пилота не должен идти одновременно со сбором production
   (`DroneCollectorDaily`). Расписание сборщика production B1 не трогает.
 * **Чего B1 не закрывает, и чем это ловится.** Приёмники `/drones/api/*`
@@ -240,6 +240,7 @@ NO_KEY или NOT_IN_CATALOG, это отдельный следующий ан�
 | B0 | SRV-YOQSH | онлайн-копия production, перепись сентября и августа, замороженная выборка, отпечатки | только папка пилота на D: и C:\VehicleSoft_CardPilot |
 | B1 | SRV-YOQSH | после мержа PR занятия площадки: задача `DjiAreaRefreshStaging` сверяется с D1 и отключается первым изменением, всё для точного возврата и две онлайн-копии базы площадки, боты площадки — стоп и `Disabled`, кнопка DJI площадки выключена, закреплённая ревизия, база площадки = копия B0 (сверка sha256 и отпечатком до и после пуска), пуск только службы | площадка |
 | D1 | SRV-YOQSH | только чтение: задача планировщика `DjiAreaRefreshStaging`, на которой встал первый B1 — действие, триггеры, учётная запись, прогоны, что она пишет в базу площадки, связь с кнопкой | только журнал блока в C:\VehicleSoft_CardPilot |
+| W0 | рабочая машина | только чтение: клоны сборщика, python, сессия DJI, замок, очереди, задачи и процессы, окружение, связь с площадкой; общие ли сессия и замок с production-сборщиком SRV-YOQSH и когда production собирает (с сервера — только метаданные) | только журнал блока в C:\VehicleSoft_CardPilot |
 | W1 | рабочая машина | канарейка 50: `--sources --ids-file canary_ids.txt --send-sources` только на `:5051`, своя очередь, разбор журнала | площадка, DJI — 50 посещений |
 | S1 | SRV-YOQSH | служба площадки стоп → `dji_area_recalc.py --apply --flight-id` (50) → `measure --stage canary` → пуск | площадка |
 | W2 | рабочая машина | только по решению владельца: тот же сбор по `pilot_ids.txt` (канарейка пропускается) | площадка, DJI — до 450 посещений |
@@ -868,6 +869,19 @@ Production только читается (HEAD и три службы — до �
 
 Прислать весь вывод.
 
+**Живой вывод 03.10.2026 — PASS** (проверен независимо). Прогон
+`D:\transport-report-backups\staging\card_pilot\staging_20261003_160830`.
+
+* Production: `8df5683`, три службы `Running`.
+* Площадка: `39eab50`, `TransportReportStaging` — `Running`, оба бота —
+  `Stopped Disabled`.
+* Барьеры: `DjiAreaRefreshStaging` — `Disabled`, `DJI_REFRESH_LAUNCHER` в
+  окружении площадки нет.
+* `staging_before` и `staging_final` — по 413 241 344 байт, sha256
+  `cbedf7b3…0751`, `integrity=ok`.
+* База пилота — ровно копия B0 (sha256 `13d10bd5…0018`). Отпечаток после
+  размещения и после пуска площадки равен B0; миграций 60 до и после пуска.
+
 ### D1 — SRV-YOQSH: разведка задачи `DjiAreaRefreshStaging` (только чтение)
 
 **Почему.** Первый живой B1 (03.10.2026) встал на проверке задач
@@ -1113,6 +1127,627 @@ con.close()
 циклов площадки 3 ручных и 1 плановый прогон. Кнопка площадки запускает
 именно её (`DJI_REFRESH_LAUNCHER=schtasks`, `BUTTON_STARTS_THIS_TASK=yes`).
 Отпечатки действия, триггеров, XML и sha256 обёртки зашиты в B1.
+
+### W0 — рабочая машина: разведка перед канарейкой (только чтение)
+
+**Зачем.** Сбор W1 пойдёт с рабочей машины, а там своя история: клоны
+квалификации и holdout разных ревизий, своя сессия DJI, свои задачи. Пути
+на ней не угадываются — W0 их находит. Ещё W0 отвечает на вопрос из §5:
+общие ли у неё сессия и замок с production-сборщиком SRV-YOQSH
+(`C:\transport-report\drone_collector\data\storage_state.json` и
+`collector.lock`) и когда production собирает сам.
+
+**Где.** На той машине, с которой пойдёт сбор W1. Окно PowerShell того
+пользователя Windows, под которым работает сборщик; лучше «от имени
+администратора» — тогда видны командные строки процессов других
+пользователей.
+
+**Что W0 не делает.** Не запускает ни сборщик, ни python, ни браузер. К DJI
+не обращается. Ни одного POST. Не трогает замки, очереди, сессии, задачи,
+службы и реестр. Из git — только чтение: `rev-parse`, `symbolic-ref`,
+`tag --points-at`, `status` без замка индекса, `remote get-url`,
+`cat-file -e`, `diff --quiet`; ничего не скачивает. Пишет только свой
+журнал в `C:\VehicleSoft_CardPilot`.
+
+**С SRV-YOQSH — только метаданные**, из фонового задания с потолком 90 с:
+
+* размер и время изменения `storage_state.json` и `collector.lock`;
+* подсказка владельца замка (`collector.lock.owner`: назначение, начало,
+  машина);
+* задачи планировщика, связанные со сборщиком: имя, состояние, расписание,
+  следующий и последний запуск, исполняемый файл без аргументов.
+
+Содержимое сессии не читается ни на сервере, ни на рабочей машине: только
+размер, время и sha256. Если сервер отсюда не читается (нет прав, закрыт
+брандмауэр), это печатается и остановкой не считается.
+
+**Что печатает** (по пунктам задания):
+
+1. Машина: имя, Windows, PowerShell, пользователь и права, диски, время и
+   пояс.
+2. Окружение: имена `DJI_*`, `DRONE_*`, `VEHICLE_SOFT_*`, `PLAYWRIGHT_*` и
+   прокси — на уровне машины, пользователя и этой консоли. Значения —
+   только у путей, переключателей и адреса приёмника, и то без
+   логина/пароля в адресе. Токены — только «задан».
+3. Поиск по локальным дискам на глубину 5:
+   * клоны (`drone_collector\main.py`);
+   * venv (`pyvenv.cfg`);
+   * файлы `storage_state.json`;
+   * папки браузеров Playwright.
+
+   Пропускаются системные папки, `AppData`, `node_modules`, `.git` и
+   ссылки-перенаправления. Потолок поиска — 180 с.
+4. Что может запустить сборщик: задачи планировщика (кроме
+   `\Microsoft\`), службы, процессы, автозапуск.
+   * У связанных задач: действие (секреты в аргументах скрыты), триггеры,
+     последний и следующий запуск.
+   * У обёрток (`.ps1`/`.bat`/`.cmd`): sha256, что упоминают, каким
+     переменным присваивают значения (только имена), какой python.
+   * Остальные задачи — одной строкой имён.
+
+   Клон из рабочей папки задачи добавляется, даже если поиск до него не
+   дошёл.
+5. Каждый клон:
+   * git: HEAD, ветка, теги, изменённые отслеживаемые файлы, `origin` без
+     учётных данных; совпадает ли код сборщика с пином пилота `39eab50`;
+   * что поддерживает: `--sources`, `--ids-file`, `--send-sources`, замок,
+     `DRONE_OUTBOX_DIR`;
+   * имена в `.env`; действующие адрес приёмника, токен (только «задан»),
+     сессия, замок, очередь, `DJI_HEADLESS` — и откуда каждое значение
+     (окружение пользователя или машины перекрывает `.env`);
+   * сессия — размер, время, sha256;
+   * замок и подсказка владельца;
+   * очередь — `pending`/`sent`/`corrupt` по видам и `.tmp`;
+   * журналы.
+6. Python: каждый venv — версия, `home`, Playwright, python-dotenv,
+   requests. Python, который называют задачи и процессы. Папки браузеров.
+7. Общее с production:
+   * каждый `storage_state.json`: `SAME_FILE`, `LIKELY_COPY` (тот же
+     размер и время), `NOT_THE_SAME` или «сравнить отсюда нельзя»; одинаковые
+     байты между файлами этой машины;
+   * замки: на рабочей машине замок не останавливает сбор на SRV-YOQSH, и
+     наоборот;
+   * держит ли production свой замок сейчас;
+   * задачи сбора production с расписанием.
+8. Сеть: GET `/login` на 5051 (ожидается 200 с формой входа) и на 5050
+   (только связность).
+9. Для W1:
+   * клоны-кандидаты;
+   * предлагаемая папка пилота `C:\VehicleSoft_CardPilot\w1`: существует
+     ли, пересекается ли с клонами, очередями и сессиями;
+   * существующие очереди и замки.
+
+   Ничего не создаётся.
+
+**Итог.** Строки `ATTENTION` — то, что план W1 обязан учесть:
+
+* включённая задача сбора на этой машине;
+* сборщик, идущий сейчас;
+* занятый замок;
+* переменная окружения, перекрывающая `.env`;
+* клон, который шлёт на production;
+* площадка не отвечает;
+* поиск не уложился во время.
+
+`ATTENTION` — не остановка. Последняя строка — одна из двух:
+
+* `STEP=PASS (read only: nothing operational was changed)` — разведка
+  полная;
+* `STEP=STOP - …` — не найден ни один клон сборщика или раздел не
+  прочитался (`SECTION_FAILED`). Всё остальное напечатано и в этом случае.
+
+```powershell
+& {
+  $ErrorActionPreference = 'Stop'
+  $ProgressPreference = 'SilentlyContinue'
+  $server       = 'srv-yoqsh'
+  $serverData   = 'C:\transport-report\drone_collector\data'
+  $stagingLogin = 'http://10.103.25.14:5051/login'
+  $prodLogin    = 'http://10.103.25.14:5050/login'
+  $pin          = '39eab503069b7bb01a8342542edcbebbfc2210c2'
+  $work         = 'C:\VehicleSoft_CardPilot'
+  $pilotDir     = 'C:\VehicleSoft_CardPilot\w1'
+  $maxDepth     = 5
+  $budgetSec    = 180
+  $remoteWait   = 90
+  $stamp        = Get-Date -Format 'yyyyMMdd_HHmmss'
+  $showValue    = @('VEHICLE_SOFT_BASE_URL', 'DJI_STORAGE_STATE', 'DJI_COLLECTOR_LOCK_PATH', 'DJI_COLLECTOR_LOCK_WAIT_S', 'DJI_HEADLESS', 'DRONE_OUTBOX_DIR', 'DJI_SOURCE_PAUSE_MS', 'DJI_SOURCE_WAIT_MS', 'DJI_SOURCE_BATCH_SIZE', 'DJI_EXPECTED_REGION', 'DJI_TZ_OFFSET_HOURS', 'PLAYWRIGHT_BROWSERS_PATH')
+  $skipDirs     = @('Windows', 'Program Files', 'Program Files (x86)', '$Recycle.Bin', 'System Volume Information', 'Recovery', 'Config.Msi', 'PerfLogs', 'AppData', 'node_modules', '.git', '__pycache__', 'site-packages', 'ms-playwright', 'playwright-browsers', 'Package Cache', 'WinSxS')
+  $collectorRx  = 'drone_collector|dji_area_daily|dji_area_backfill|dji_area_recalc|--save-session'
+  $relevantRx   = 'drone_collector|dji_area|djiag|storage_state|collector\.lock|VehicleSoft|vehicle-soft|transport-report|Transport(Report|Bot)|Holdout|playwright|:505[01]\b|10\.103\.25\.14|srv-yoqsh'
+  function Hide-Secret([string]$s) {
+    if (-not $s) { return '' }
+    $s = [regex]::Replace($s, '(?i)((token|secret|password|passwd|pwd|apikey|api_key|api-key|cookie|bearer|authorization)[A-Za-z0-9_]*\s*[=:]\s*)("[^"]*"|''[^'']*''|\S+)', '$1[hidden]')
+    $s = [regex]::Replace($s, '(?i)(-(token|password|secret|apikey|key)\s+)("[^"]*"|''[^'']*''|\S+)', '$1[hidden]')
+    [regex]::Replace($s, '[A-Za-z0-9+/_=-]{32,}', { param($m) $v = $m.Value; if ((($v -replace '[^0-9]', '').Length -ge 6) -or ($v -notmatch '[_/-]')) { '[hidden ' + $v.Length + ' chars]' } else { $v } })
+  }
+  function Get-CimLine($o) {
+    $parts = @()
+    foreach ($p in @($o.CimInstanceProperties | Sort-Object Name)) {
+      $v = $p.Value
+      if (($null -eq $v) -or ([string]$v -eq '')) { continue }
+      if ($v.CimInstanceProperties) {
+        foreach ($q in @($v.CimInstanceProperties | Sort-Object Name)) { if (($null -ne $q.Value) -and ([string]$q.Value -ne '')) { $parts += ($p.Name + '.' + $q.Name + '=' + (@($q.Value) -join ',')) } }
+      } else {
+        $parts += ($p.Name + '=' + (@($v) -join ','))
+      }
+    }
+    [string]$o.CimClass.CimClassName + ' ' + ($parts -join ' ')
+  }
+  function Get-ScriptPaths([string]$text, [string[]]$baseDirs) {
+    $found = @()
+    foreach ($m in [regex]::Matches($text, '"([^"]+\.(ps1|bat|cmd|py))"|([^\s"'';&|<>]+\.(ps1|bat|cmd|py))\b')) {
+      $p = if ($m.Groups[1].Success) { $m.Groups[1].Value } else { $m.Groups[3].Value }
+      if (-not [System.IO.Path]::IsPathRooted($p)) {
+        $dirs = @($baseDirs | Where-Object { $_ } | Select-Object -Unique)
+        $hit = @($dirs | ForEach-Object { Join-Path $_ $p } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1)
+        $p = if ($hit.Count -gt 0) { $hit[0] } else { $p + ' (relative; looked in ' + ($dirs -join ', ') + ')' }
+      }
+      if ($found -notcontains $p) { $found += $p }
+    }
+    $found
+  }
+  function Show-Url([string]$u) {
+    $x = $null
+    if ([uri]::TryCreate($u.Trim(), [UriKind]::Absolute, [ref]$x) -and $x.Host) { return ($x.Scheme + '://' + $x.Host + ':' + $x.Port + $x.AbsolutePath) }
+    '[not a URL; value not shown]'
+  }
+  function Show-Value([string]$name, $value) {
+    if ($null -eq $value) { return 'absent' }
+    if ([string]$value -eq '') { return 'empty' }
+    if ($showValue -notcontains $name) { return 'set (value not shown)' }
+    if ($name -like '*_URL') { return (Show-Url ([string]$value)) }
+    Hide-Secret ([string]$value)
+  }
+  function Read-DotEnv([string]$path) {
+    $h = @{}
+    foreach ($line in [System.IO.File]::ReadAllLines($path)) {
+      $m = [regex]::Match($line, '^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$')
+      if (-not $m.Success) { continue }
+      $v = $m.Groups[2].Value
+      if (($v -match '^"(.*)"$') -or ($v -match "^'(.*)'$")) { $v = $Matches[1] } else { $v = $v -replace '\s+#.*$', '' }
+      $h[$m.Groups[1].Value] = $v
+    }
+    $h
+  }
+  function Get-Effective([string]$name, $dot) {
+    if ($userEnv.ContainsKey($name)) { return [pscustomobject]@{ Value = $userEnv[$name]; Source = 'user environment' } }
+    if ($machineEnv.ContainsKey($name)) { return [pscustomobject]@{ Value = $machineEnv[$name]; Source = 'machine environment' } }
+    if ($dot.ContainsKey($name)) { return [pscustomobject]@{ Value = $dot[$name]; Source = '.env' } }
+    [pscustomobject]@{ Value = $null; Source = 'default' }
+  }
+  function Get-Under([string]$base, [string]$value, [string[]]$default) {
+    if ($value) { if ([System.IO.Path]::IsPathRooted($value)) { return $value } else { return [System.IO.Path]::Combine($base, $value) } }
+    [System.IO.Path]::Combine([string[]](@($base) + $default))
+  }
+  function Get-FileFacts([string]$p) {
+    $f = [pscustomobject]@{ Path = $p; Exists = $false; Bytes = 0; Changed = ''; ChangedUtc = ''; Sha = '' }
+    if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { return $f }
+    $f.Exists = $true
+    try {
+      $it = Get-Item -LiteralPath $p -Force
+      $f.Bytes = $it.Length
+      $f.Changed = $it.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')
+      $f.ChangedUtc = $it.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ss')
+      $f.Sha = (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLower()
+    } catch { $f.Sha = 'not readable now' }
+    $f
+  }
+  function Read-Text([string]$p) { try { [System.IO.File]::ReadAllText($p) } catch { '' } }
+  function Get-DirLine([string]$dir) {
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { return 'absent' }
+    $files = @(Get-ChildItem -LiteralPath $dir -File -Recurse -Force -ErrorAction SilentlyContinue)
+    if ($files.Count -eq 0) { return 'files=0' }
+    $new = $files | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    'files=' + $files.Count + ' newest=' + $new.Name + ' ' + $new.LastWriteTime.ToString('yyyy-MM-dd HH:mm')
+  }
+  function Get-OutboxLine([string]$dir) {
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { return 'absent' }
+    try { [void][System.IO.Directory]::GetDirectories($dir) } catch { return 'not readable' }
+    $parts = @()
+    foreach ($sub in @('pending', 'sent', 'corrupt')) {
+      $p = Join-Path $dir $sub
+      if (-not (Test-Path -LiteralPath $p -PathType Container)) { $parts += ($sub + '=none'); continue }
+      $names = @([System.IO.Directory]::GetFiles($p, '*.json') | ForEach-Object { [System.IO.Path]::GetFileName($_) })
+      $kinds = @($names | ForEach-Object { if ($_ -match '^(source|route|field_geometry|land_snapshot)_') { $Matches[1] } else { 'other' } } | Group-Object | Sort-Object Name | ForEach-Object { $_.Name + '=' + $_.Count })
+      $parts += ($sub + '=' + $names.Count + $(if ($kinds.Count) { ' (' + ($kinds -join ' ') + ')' } else { '' }))
+    }
+    ($parts -join ' ') + ' tmp=' + @([System.IO.Directory]::GetFiles($dir, '*.tmp', [System.IO.SearchOption]::AllDirectories)).Count
+  }
+  function Get-LockLine([string]$lock) {
+    $l = $lock
+    $f = Get-FileFacts $lock
+    if ($f.Exists) { $l += ' file=present changed=' + $f.Changed } else { $l += ' file=absent' }
+    if (Test-Path -LiteralPath ($lock + '.owner') -PathType Leaf) {
+      try {
+        $o = Get-Content -LiteralPath ($lock + '.owner') -Raw | ConvertFrom-Json
+        $alive = [bool](Get-Process -Id ([int]$o.pid) -ErrorAction SilentlyContinue)
+        $l += ' owner_hint=present pid=' + $o.pid + ' host=' + $o.host + ' purpose=' + $o.purpose + ' since_utc=' + $o.since_utc + ' pid_running_here=' + $(if ($alive) { 'yes' } else { 'no' })
+      } catch { $l += ' owner_hint=present, not readable' }
+    } else { $l += ' owner_hint=none (by the collector rule nobody holds it)' }
+    $l
+  }
+  function Get-PyVersion([string]$exe) {
+    if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { return 'missing' }
+    try {
+      $cfg = Join-Path (Split-Path -Parent (Split-Path -Parent $exe)) 'pyvenv.cfg'
+      if (Test-Path -LiteralPath $cfg) { $m = @(Select-String -LiteralPath $cfg -Pattern '^\s*version(_info)?\s*=\s*(\S+)'); if ($m.Count) { return ('venv ' + $m[0].Matches[0].Groups[2].Value) } }
+      $v = (Get-Item -LiteralPath $exe).VersionInfo.ProductVersion
+      if ($v) { $v } else { 'unknown' }
+    } catch { 'unknown' }
+  }
+  function Get-PythonRefs([string]$text) { @([regex]::Matches($text, '(?i)[A-Za-z]:\\[^"''<>|\r\n]*?\\pythonw?\.exe') | ForEach-Object { $_.Value } | Select-Object -Unique) }
+  function Invoke-Git([string]$dir, [string[]]$gitArgs) {
+    $ErrorActionPreference = 'Continue'
+    $out = @(& git -c 'core.fsmonitor=false' -c 'safe.directory=*' -C $dir @gitArgs 2>&1 | ForEach-Object { [string]$_ })
+    [pscustomobject]@{ Code = $LASTEXITCODE; Lines = $out }
+  }
+  $log = Join-Path $work ('card_pilot_w0_' + $stamp + '.log')
+  try { New-Item -ItemType Directory -Force -Path $work | Out-Null; Start-Transcript -Path $log -Append | Out-Null } catch { Write-Output ('NOTE: the log file could not be started: ' + $_.Exception.Message) }
+  $attention = New-Object System.Collections.ArrayList
+  $failed = New-Object System.Collections.ArrayList
+  $userEnv = @{}
+  $machineEnv = @{}
+  $checkouts = @()
+  $venvs = @()
+  $sessionFiles = @()
+  $browserDirs = @()
+  $pyRefs = @()
+  $remote = $null
+  $hostName = [string](hostname)
+  $onServer = ($hostName -eq $server)
+
+  Write-Output '== 1. This machine (W0 is read only: nothing operational is changed)'
+  try {
+    Write-Output ("HOST=" + $hostName)
+    Write-Output ("HOST_ROLE=" + $(if ($onServer) { 'SRV-YOQSH itself, the production server -- not a separate workstation' } else { 'workstation, not SRV-YOQSH' }))
+    $os = Get-CimInstance -ClassName Win32_OperatingSystem
+    Write-Output ("WINDOWS=" + $os.Caption + " version=" + $os.Version + " build=" + $os.BuildNumber + " " + $os.OSArchitecture)
+    $elevated = 'unknown'
+    try { $elevated = [string]([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) } catch { }
+    Write-Output ("POWERSHELL=" + $PSVersionTable.PSVersion + " USER=" + [Environment]::UserDomainName + '\' + [Environment]::UserName + " ELEVATED=" + $elevated)
+    Write-Output ("TIME_LOCAL=" + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') + " UTC=" + (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss') + " ZONE=" + [TimeZoneInfo]::Local.Id)
+    $drives = @(Get-PSDrive -PSProvider FileSystem | Where-Object { (-not $_.DisplayRoot) -and ($null -ne $_.Free) })
+    foreach ($d in $drives) { Write-Output ("DRIVE " + $d.Root + " free_gb=" + [math]::Round($d.Free / 1GB, 1) + " used_gb=" + [math]::Round($d.Used / 1GB, 1)) }
+    $git = Get-Command git -ErrorAction SilentlyContinue
+    Write-Output ("GIT=" + $(if ($git) { $git.Source } else { 'not installed' }))
+  } catch { [void]$failed.Add('1 machine: ' + $_.Exception.Message + ' [block line ' + $_.InvocationInfo.ScriptLineNumber + ']'); Write-Output ('SECTION_FAILED ' + $failed[$failed.Count - 1]) }
+  if (-not $onServer) {
+    # Metadata only, from SRV-YOQSH: size and time of the production session and lock files, the owner hint of the lock,
+    # and the task list. Started now, read in section 7; nothing on the server is opened for writing or run.
+    try {
+      $remote = Start-Job -ArgumentList $server, $serverData, $collectorRx -ScriptBlock {
+        param($srv, $dataDir, $rx)
+        $out = @()
+        $share = '\\' + $srv + '\' + ($dataDir -replace '^([A-Za-z]):', '$1$')
+        try {
+          if (Test-Path -LiteralPath $share) {
+            foreach ($f in @('storage_state.json', 'collector.lock', 'collector.lock.owner')) {
+              $p = Join-Path $share $f
+              if (Test-Path -LiteralPath $p) { $it = Get-Item -LiteralPath $p -Force; $out += ('FILE|' + $f + '|' + $it.Length + '|' + $it.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ss')) } else { $out += ('FILE|' + $f + '|absent') }
+            }
+            $hint = Join-Path $share 'collector.lock.owner'
+            if (Test-Path -LiteralPath $hint) { $o = Get-Content -LiteralPath $hint -Raw | ConvertFrom-Json; $out += ('OWNER|purpose=' + $o.purpose + ' since_utc=' + $o.since_utc + ' host=' + $o.host) }
+          } else { $out += ('SHARE|' + $share) }
+        } catch { $out += ('SHARE|' + $share + ' (' + $_.Exception.Message + ')') }
+        try {
+          $sched = New-Object -ComObject Schedule.Service
+          $sched.Connect($srv)
+          $folders = New-Object System.Collections.Queue
+          $folders.Enqueue($sched.GetFolder('\'))
+          $states = @('unknown', 'disabled', 'queued', 'ready', 'running')
+          while ($folders.Count -gt 0) {
+            $fo = $folders.Dequeue()
+            if ($fo.Path -like '\Microsoft*') { continue }
+            foreach ($sub in @($fo.GetFolders(0))) { $folders.Enqueue($sub) }
+            foreach ($t in @($fo.GetTasks(1))) {
+              $acts = @($t.Definition.Actions | ForEach-Object { [string]$_.Path + ' ' + [string]$_.Arguments + ' ' + [string]$_.WorkingDirectory })
+              if (([string]$t.Name + ' ' + ($acts -join ' ')) -notmatch ($rx + '|DroneCollector|DroneArea|DjiArea')) { continue }
+              $trs = @($t.Definition.Triggers | ForEach-Object { 'type' + $_.Type + ' start=' + $_.StartBoundary + ' enabled=' + $_.Enabled + $(if ($_.Repetition.Interval) { ' every=' + $_.Repetition.Interval } else { '' }) })
+              $exe = @($t.Definition.Actions | ForEach-Object { [string]$_.Path }) -join ' ; '
+              $out += ('TASK|' + $t.Path + ' state=' + $states[[int]$t.State] + ' enabled=' + $t.Enabled + ' next=' + $t.NextRunTime + ' last=' + $t.LastRunTime + ' result=' + $t.LastTaskResult + ' triggers=' + ($trs -join ' ; ') + ' exe=' + $exe)
+            }
+          }
+          $out += 'SCHED|ok'
+        } catch { $out += ('SCHED|' + $_.Exception.Message) }
+        $out
+      }
+    } catch { Write-Output ("REMOTE_READ=not started: " + $_.Exception.Message) }
+  }
+
+  Write-Output '== 2. Environment: names; values only for paths, switches and the receiver address'
+  try {
+    foreach ($pair in @(@('machine', 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment'), @('user', 'HKCU:\Environment'))) {
+      try {
+        $p = Get-ItemProperty -LiteralPath $pair[1] -ErrorAction Stop
+        foreach ($q in $p.PSObject.Properties) { if ($q.Name -notmatch '^PS(Path|ParentPath|ChildName|Drive|Provider)$') { if ($pair[0] -eq 'machine') { $machineEnv[$q.Name] = [string]$q.Value } else { $userEnv[$q.Name] = [string]$q.Value } } }
+      } catch { Write-Output ("ENV_SCOPE " + $pair[0] + " not readable: " + $_.Exception.Message) }
+    }
+    $console = @{}
+    foreach ($e in @(Get-ChildItem Env:)) { $console[$e.Name] = [string]$e.Value }
+    $names = @(@($machineEnv.Keys) + @($userEnv.Keys) + @($console.Keys) | Where-Object { ($_ -match '^(DJI_|DRONE_|VEHICLE_SOFT_|PLAYWRIGHT_)') -or ($_ -match '^(HTTPS?_PROXY|NO_PROXY|ALL_PROXY)$') } | ForEach-Object { $_.ToUpper() } | Sort-Object -Unique)
+    foreach ($n in $names) {
+      $m = if ($machineEnv.ContainsKey($n)) { $machineEnv[$n] } else { $null }
+      $u = if ($userEnv.ContainsKey($n)) { $userEnv[$n] } else { $null }
+      $c = if ($console.ContainsKey($n)) { $console[$n] } else { $null }
+      Write-Output ("ENV " + $n + " machine=" + (Show-Value $n $m) + " user=" + (Show-Value $n $u) + " this_console=" + (Show-Value $n $c))
+      if (($n -match '^(VEHICLE_SOFT_BASE_URL|DRONE_API_TOKEN|DJI_STORAGE_STATE|DJI_COLLECTOR_LOCK_PATH|DRONE_OUTBOX_DIR)$') -and (($null -ne $m) -or ($null -ne $u))) { [void]$attention.Add($n + ' is set in the ' + $(if ($null -ne $u) { 'user' } else { 'machine' }) + ' environment: it overrides the .env of every checkout on this machine (config.py: the process environment wins)') }
+      elseif (($n -match '^(VEHICLE_SOFT_BASE_URL|DRONE_API_TOKEN)$') -and ($null -ne $c)) { [void]$attention.Add($n + ' is set in this console only (inherited): a collector started from this console would use it instead of .env') }
+    }
+    if ($names.Count -eq 0) { Write-Output 'ENV=no DJI_, DRONE_, VEHICLE_SOFT_, PLAYWRIGHT_ or proxy variables in the machine, user or console environment' }
+  } catch { [void]$failed.Add('2 environment: ' + $_.Exception.Message + ' [block line ' + $_.InvocationInfo.ScriptLineNumber + ']'); Write-Output ('SECTION_FAILED ' + $failed[$failed.Count - 1]) }
+
+  Write-Output ("== 3. Collector checkouts: local drives scanned to depth " + $maxDepth + " (folder names only)")
+  try {
+    $queue = New-Object System.Collections.Queue
+    foreach ($d in $drives) { $queue.Enqueue(@([string]$d.Root, 0)) }
+    $seen = 0
+    $denied = 0
+    $cut = $false
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($queue.Count -gt 0) {
+      if ($clock.Elapsed.TotalSeconds -gt $budgetSec) { $cut = $true; break }
+      $item = $queue.Dequeue()
+      $dir = [string]$item[0]
+      $depth = [int]$item[1]
+      $seen++
+      if ([System.IO.File]::Exists([System.IO.Path]::Combine($dir, 'drone_collector', 'main.py'))) { $checkouts += $dir }
+      if ([System.IO.File]::Exists([System.IO.Path]::Combine($dir, 'pyvenv.cfg'))) { $venvs += $dir; continue }
+      if ([System.IO.File]::Exists([System.IO.Path]::Combine($dir, 'storage_state.json'))) { $sessionFiles += [System.IO.Path]::Combine($dir, 'storage_state.json') }
+      if ($depth -ge $maxDepth) { continue }
+      try { $subs = [System.IO.Directory]::GetDirectories($dir) } catch { $denied++; continue }
+      foreach ($s in $subs) {
+        $name = [System.IO.Path]::GetFileName($s)
+        if ($skipDirs -contains $name) { if ($name -match 'playwright') { $browserDirs += $s }; continue }
+        try { if (([System.IO.File]::GetAttributes($s) -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { continue } } catch { continue }
+        $queue.Enqueue(@($s, ($depth + 1)))
+      }
+    }
+    Write-Output ("SCAN roots=" + (@($drives | ForEach-Object { $_.Root }) -join ',') + " folders=" + $seen + " not_readable=" + $denied + " seconds=" + [math]::Round($clock.Elapsed.TotalSeconds) + " complete=" + $(if ($cut) { 'no (time limit ' + $budgetSec + ' s)' } else { 'yes' }))
+    if ($cut) { [void]$attention.Add('the folder scan stopped at its time limit: a checkout deeper on the disk may be missing from this list') }
+    Write-Output ("FOUND checkouts=" + $checkouts.Count + " venvs=" + $venvs.Count + " storage_state.json=" + $sessionFiles.Count + " playwright_browser_folders=" + $browserDirs.Count)
+  } catch { [void]$failed.Add('3 scan: ' + $_.Exception.Message + ' [block line ' + $_.InvocationInfo.ScriptLineNumber + ']'); Write-Output ('SECTION_FAILED ' + $failed[$failed.Count - 1]) }
+
+  Write-Output '== 4. What may start a collector here: scheduled tasks, services, processes, logon entries'
+  try {
+    $other = @()
+    foreach ($t in @(Get-ScheduledTask | Where-Object { [string]$_.TaskPath -notlike '\Microsoft\*' })) {
+      $acts = @($t.Actions)
+      $wds = @($acts | ForEach-Object { [string]$_.WorkingDirectory } | Where-Object { $_ })
+      $text = [string]$t.TaskName + ' ' + (@($acts | ForEach-Object { [string]$_.Execute + ' ' + [string]$_.Arguments + ' ' + [string]$_.WorkingDirectory }) -join ' ')
+      $scripts = @(Get-ScriptPaths $text $wds | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+      $all = $text + "`n" + (@($scripts | Where-Object { $_ -notmatch '\.py$' } | ForEach-Object { Read-Text $_ }) -join "`n")
+      $hit = $all -match $relevantRx
+      foreach ($c in $checkouts) { if ($all.ToLower().Contains($c.ToLower())) { $hit = $true } }
+      if (-not $hit) { $other += ([string]$t.TaskPath + [string]$t.TaskName); continue }
+      $collects = $all -match $collectorRx
+      $ports = @([regex]::Matches($all, ':(505[01])\b') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
+      Write-Output ("TASK " + $t.TaskPath + $t.TaskName + " state=" + $t.State + " enabled=" + $t.Settings.Enabled + " user=" + $t.Principal.UserId + " logon=" + $t.Principal.LogonType + " runlevel=" + $t.Principal.RunLevel + " runs_collector=" + $(if ($collects) { 'yes' } else { 'no' }) + " ports=" + $(if ($ports.Count) { $ports -join ',' } else { 'none' }))
+      $i = 0
+      foreach ($a in $acts) { $i++; Write-Output ("  ACTION " + $i + " exe=" + (Hide-Secret ([string]$a.Execute)) + " args=" + (Hide-Secret ([string]$a.Arguments)) + " wd=" + [string]$a.WorkingDirectory) }
+      $i = 0
+      foreach ($tr in @($t.Triggers)) { $i++; Write-Output ("  TRIGGER " + $i + " " + (Get-CimLine $tr)) }
+      if ($i -eq 0) { Write-Output '  TRIGGERS=none (runs only when started by hand or by another program)' }
+      $next = ''
+      try { $info = Get-ScheduledTaskInfo -TaskName $t.TaskName -TaskPath $t.TaskPath; $next = [string]$info.NextRunTime; Write-Output ("  RUNS last=" + $info.LastRunTime + " result=" + $info.LastTaskResult + " next=" + $info.NextRunTime) } catch { Write-Output ("  RUNS not readable: " + $_.Exception.Message) }
+      foreach ($s in $scripts) {
+        $f = Get-FileFacts $s
+        $st = if ($s -match '\.py$') { '' } else { Read-Text $s }
+        $refs = @(@('drone_collector', '--sources', '--ids-file', '--send-sources', '--save-session', 'dji_area_daily', '--run-queued', 'dji_area_recalc', 'storage_state', 'collector.lock', 'DJI_STORAGE_STATE', 'DJI_COLLECTOR_LOCK_PATH', 'DRONE_OUTBOX_DIR', 'PLAYWRIGHT_BROWSERS_PATH') | Where-Object { $st.Contains($_) })
+        $setsEnv = @(@([regex]::Matches($st, '(?i)\$env:([A-Za-z_][A-Za-z0-9_]*)\s*=') | ForEach-Object { $_.Groups[1].Value }) + @([regex]::Matches($st, '(?im)^\s*set\s+"?([A-Za-z_][A-Za-z0-9_]*)=') | ForEach-Object { $_.Groups[1].Value }) | Select-Object -Unique)
+        Write-Output ("  SCRIPT " + $s + " bytes=" + $f.Bytes + " sha256=" + $f.Sha + " mentions=" + ($refs -join ',') + " sets_env=" + ($setsEnv -join ',') + " python=" + ((Get-PythonRefs $st) -join ','))
+      }
+      foreach ($py in @(Get-PythonRefs $all)) { $pyRefs += ('task ' + $t.TaskName + '|' + $py) }
+      foreach ($w in $wds) {
+        $d = $w
+        for ($k = 0; ($k -lt 4) -and $d; $k++) {
+          if ([System.IO.File]::Exists([System.IO.Path]::Combine($d, 'drone_collector', 'main.py'))) { if (@($checkouts | Where-Object { $_.TrimEnd('\') -eq $d.TrimEnd('\') }).Count -eq 0) { $checkouts += $d; Write-Output ("  CHECKOUT_FROM_TASK " + $d) }; break }
+          $d = Split-Path -Parent $d
+        }
+      }
+      if ($collects -and ([string]$t.Settings.Enabled -eq 'True')) { [void]$attention.Add('enabled scheduled task ' + $t.TaskName + ' runs the collector or the daily cycle here (next run ' + $next + '): a pilot run must not overlap it') }
+      if ($ports -contains '5050') { [void]$attention.Add('scheduled task ' + $t.TaskName + ' names port 5050 (production)') }
+    }
+    Write-Output ("OTHER_TASKS=" + $other.Count + $(if ($other.Count) { ': ' + ($other -join ', ') } else { '' }))
+    $svcs = @(Get-CimInstance -ClassName Win32_Service | Where-Object { ([string]$_.Name + ' ' + [string]$_.PathName) -match $relevantRx })
+    foreach ($s in $svcs) { Write-Output ("SERVICE " + $s.Name + " state=" + $s.State + " start=" + $s.StartMode + " account=" + $s.StartName + " path=" + (Hide-Secret ([string]$s.PathName))) }
+    if ($svcs.Count -eq 0) { Write-Output 'SERVICES=none related to the collector or Vehicle Soft' }
+    $procs = @(Get-CimInstance -ClassName Win32_Process)
+    $running = @($procs | Where-Object { [string]$_.CommandLine -match $collectorRx })
+    foreach ($p in $running) {
+      $cmd = Hide-Secret ([string]$p.CommandLine)
+      if ($cmd.Length -gt 300) { $cmd = $cmd.Substring(0, 300) + ' ...' }
+      Write-Output ("PROCESS pid=" + $p.ProcessId + " name=" + $p.Name + " started=" + $p.CreationDate + " cmd=" + $cmd)
+      foreach ($py in @(Get-PythonRefs ([string]$p.CommandLine + ' ' + [string]$p.ExecutablePath))) { $pyRefs += ('process ' + $p.ProcessId + '|' + $py) }
+    }
+    $browsersNow = @($procs | Where-Object { [string]$_.CommandLine -match 'ms-playwright|playwright-browsers|--remote-debugging-pipe' }).Count
+    Write-Output ("COLLECTOR_PROCESSES_NOW=" + $running.Count + " PLAYWRIGHT_BROWSER_PROCESSES_NOW=" + $browsersNow)
+    if ($running.Count -gt 0) { [void]$attention.Add($running.Count.ToString() + ' collector or cycle process(es) are running on this machine now') }
+    foreach ($k in @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Run', 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run')) {
+      try { $p = Get-ItemProperty -LiteralPath $k -ErrorAction Stop; foreach ($q in $p.PSObject.Properties) { if (($q.Name -notmatch '^PS(Path|ParentPath|ChildName|Drive|Provider)$') -and ([string]$q.Value -match $relevantRx)) { Write-Output ("LOGON_ENTRY " + $k + " " + $q.Name + "=" + (Hide-Secret ([string]$q.Value))) } } } catch { }
+    }
+    foreach ($f in @([Environment]::GetFolderPath('Startup'), [Environment]::GetFolderPath('CommonStartup'))) {
+      if ($f -and (Test-Path -LiteralPath $f)) { Write-Output ("STARTUP_FOLDER " + $f + " files=" + (@(Get-ChildItem -LiteralPath $f -File -Force | ForEach-Object { $_.Name }) -join ', ')) }
+    }
+  } catch { [void]$failed.Add('4 tasks and processes: ' + $_.Exception.Message + ' [block line ' + $_.InvocationInfo.ScriptLineNumber + ']'); Write-Output ('SECTION_FAILED ' + $failed[$failed.Count - 1]) }
+
+  Write-Output '== 5. Each checkout: git, what it supports, settings, session, lock, queue, logs'
+  $cands = @()
+  $n = 0
+  foreach ($c in $checkouts) {
+    $n++
+    try {
+      $dc = Join-Path $c 'drone_collector'
+      Write-Output ("CHECKOUT " + $n + " " + $c + $(if (Test-Path -LiteralPath (Join-Path $c 'app.py')) { ' (whole Vehicle Soft repository)' } else { ' (collector only)' }))
+      $head = 'none'
+      $code = 'not a git checkout'
+      if ((Test-Path -LiteralPath (Join-Path $c '.git')) -and (-not $git)) { Write-Output '  GIT=git is not installed on this machine: the checkout is not read' }
+      elseif (Test-Path -LiteralPath (Join-Path $c '.git')) {
+        $g = Invoke-Git $c @('rev-parse', 'HEAD')
+        if ($g.Code -ne 0) { Write-Output ("  GIT=error " + ($g.Lines -join ' ')) } else {
+          $head = $g.Lines[0]
+          $br = Invoke-Git $c @('symbolic-ref', '--short', '-q', 'HEAD')
+          $tags = Invoke-Git $c @('tag', '--points-at', 'HEAD')
+          $st = Invoke-Git $c @('--no-optional-locks', 'status', '--porcelain', '--untracked-files=no')
+          $org = Invoke-Git $c @('remote', 'get-url', 'origin')
+          if ((Invoke-Git $c @('cat-file', '-e', ($pin + '^{commit}'))).Code -eq 0) {
+            $df = Invoke-Git $c @('diff', '--quiet', '--no-ext-diff', $pin, 'HEAD', '--', 'drone_collector')
+            $code = if ($df.Code -eq 0) { 'same as the pilot pin' } elseif ($df.Code -eq 1) { 'differs from the pilot pin' } else { 'not compared' }
+          } else { $code = 'pilot pin not in this clone (nothing was fetched)' }
+          Write-Output ("  GIT HEAD=" + $head + " branch=" + $(if (($br.Code -eq 0) -and $br.Lines.Count) { $br.Lines[0] } else { 'detached' }) + " tags=" + $(if (($tags.Code -eq 0) -and $tags.Lines.Count) { $tags.Lines -join ',' } else { 'none' }) + " tracked_changes=" + $(if ($st.Code -eq 0) { $st.Lines.Count } else { 'not readable' }) + " origin=" + $(if (($org.Code -eq 0) -and $org.Lines.Count) { $org.Lines[0] -replace '://[^/@\s]+@', '://[hidden]@' } else { 'none' }))
+          Write-Output ("  COLLECTOR_CODE=" + $code)
+          if (($st.Code -eq 0) -and $st.Lines.Count) { Write-Output ("  TRACKED_CHANGES " + (@($st.Lines | Select-Object -First 5) -join ' ; ')) }
+        }
+      } else { Write-Output ("  GIT=not a git checkout; main.py sha256=" + (Get-FileFacts (Join-Path $dc 'main.py')).Sha) }
+      $mainText = Read-Text (Join-Path $dc 'main.py')
+      $cfgText = Read-Text (Join-Path $dc 'config.py')
+      $sup = [ordered]@{ sources = $mainText.Contains("'--sources'"); ids_file = $mainText.Contains("'--ids-file'"); send_sources = $mainText.Contains("'--send-sources'"); lock = $mainText.Contains('DJI_COLLECTOR_LOCK_PATH'); outbox_setting = $cfgText.Contains('DRONE_OUTBOX_DIR') }
+      Write-Output ("  SUPPORTS " + (@($sup.Keys | ForEach-Object { $_ + '=' + $(if ($sup[$_]) { 'yes' } else { 'no' }) }) -join ' ') + " logs=" + $(if ($cfgText.Contains("PACKAGE_ROOT / 'logs'")) { 'fixed to this checkout' } else { 'unknown' }))
+      if (-not $sup['lock']) { Write-Output '  LOCK_NOTE=this code predates the collector lock: its runs take no lock at all' }
+      $dot = @{}
+      $envFile = Join-Path $dc '.env'
+      if (Test-Path -LiteralPath $envFile -PathType Leaf) { $dot = Read-DotEnv $envFile; Write-Output ("  DOTENV " + $envFile + " names=" + (@($dot.Keys | Sort-Object) -join ',')) } else { Write-Output ("  DOTENV " + $envFile + " absent") }
+      $eff = @{}
+      foreach ($name in @('VEHICLE_SOFT_BASE_URL', 'DRONE_API_TOKEN', 'DJI_STORAGE_STATE', 'DJI_COLLECTOR_LOCK_PATH', 'DRONE_OUTBOX_DIR', 'DJI_HEADLESS')) {
+        $eff[$name] = Get-Effective $name $dot
+        Write-Output ("  EFFECTIVE " + $name + "=" + (Show-Value $name $eff[$name].Value) + " (from " + $eff[$name].Source + ")")
+      }
+      $url = [string]$eff['VEHICLE_SOFT_BASE_URL'].Value
+      $receiver = if (-not $url) { 'none' } elseif ($url -match ':5051(/|$)') { 'staging :5051' } elseif ($url -match ':5050(/|$)') { 'PRODUCTION :5050' } else { 'other ' + (Show-Url $url) }
+      Write-Output ("  RECEIVER=" + $receiver)
+      if ($receiver -like 'PRODUCTION*') { [void]$attention.Add('checkout ' + $c + ' sends to production :5050') }
+      $sessionPath = Get-Under $dc ([string]$eff['DJI_STORAGE_STATE'].Value) @('data', 'storage_state.json')
+      $sf = Get-FileFacts $sessionPath
+      Write-Output ("  SESSION " + $sessionPath + $(if ($sf.Exists) { " bytes=" + $sf.Bytes + " changed=" + $sf.Changed + " sha256=" + $sf.Sha } else { ' absent' }))
+      if ($sf.Exists -and (@($sessionFiles | Where-Object { $_ -eq $sessionPath }).Count -eq 0)) { $sessionFiles += $sessionPath }
+      $lockPath = Get-Under $dc ([string]$eff['DJI_COLLECTOR_LOCK_PATH'].Value) @('data', 'collector.lock')
+      $lockLine = Get-LockLine $lockPath
+      Write-Output ("  LOCK " + $lockLine)
+      if ($lockLine -match 'owner_hint=present') { [void]$attention.Add('the collector lock of checkout ' + $c + ' has an owner hint: a run may hold it now') }
+      $outbox = Get-Under $dc ([string]$eff['DRONE_OUTBOX_DIR'].Value) @('data', 'outbox')
+      Write-Output ("  OUTBOX " + $outbox + " " + (Get-OutboxLine $outbox))
+      foreach ($sub in @('logs', 'out')) { Write-Output ("  " + $sub.ToUpper() + " " + (Join-Path $dc $sub) + " " + (Get-DirLine (Join-Path $dc $sub))) }
+      $data = Join-Path $dc 'data'
+      if (Test-Path -LiteralPath $data -PathType Container) { Write-Output ("  DATA " + $data + " entries=" + (@(Get-ChildItem -LiteralPath $data -Force | ForEach-Object { $_.Name } | Sort-Object) -join ',')) } else { Write-Output ("  DATA " + $data + " absent") }
+      $cands += [pscustomobject]@{ N = $n; Path = $c; Head = $head; Code = $code; Sup = $sup; Receiver = $receiver; Session = $sessionPath; SessionOk = ($sf.Exists -and ($sf.Bytes -gt 0)); Lock = $lockPath; Outbox = $outbox }
+    } catch { [void]$failed.Add('5 checkout ' + $c + ': ' + $_.Exception.Message + ' [block line ' + $_.InvocationInfo.ScriptLineNumber + ']'); Write-Output ('SECTION_FAILED ' + $failed[$failed.Count - 1]) }
+  }
+
+  Write-Output '== 6. Python and browsers the collector can use'
+  try {
+    foreach ($v in $venvs) {
+      $cfg = @{}
+      foreach ($line in [System.IO.File]::ReadAllLines((Join-Path $v 'pyvenv.cfg'))) { $m = [regex]::Match($line, '^\s*([A-Za-z_-]+)\s*=\s*(.*?)\s*$'); if ($m.Success) { $cfg[$m.Groups[1].Value] = $m.Groups[2].Value } }
+      $site = [System.IO.Path]::Combine($v, 'Lib', 'site-packages')
+      $pk = @()
+      foreach ($pkg in @('playwright', 'python_dotenv', 'requests')) {
+        $dist = @(if (Test-Path -LiteralPath $site) { Get-ChildItem -LiteralPath $site -Directory -Filter ($pkg + '-*.dist-info') -ErrorAction SilentlyContinue })
+        $pk += ($pkg + '=' + $(if ($dist.Count) { $dist[0].Name.Substring($pkg.Length + 1) -replace '\.dist-info$', '' } else { 'absent' }))
+      }
+      $exe = [System.IO.Path]::Combine($v, 'Scripts', 'python.exe')
+      Write-Output ("VENV " + $v + " version=" + $(if ($cfg['version']) { $cfg['version'] } else { $cfg['version_info'] }) + " home=" + $cfg['home'] + " python=" + $exe + " python_present=" + (Test-Path -LiteralPath $exe -PathType Leaf) + " " + ($pk -join ' '))
+    }
+    if ($venvs.Count -eq 0) { Write-Output 'VENVS=none found' }
+    foreach ($r in @($pyRefs | Select-Object -Unique)) { $src, $exe = $r -split '\|', 2; Write-Output ("COLLECTOR_PYTHON " + $src + " exe=" + $exe + " version=" + (Get-PyVersion $exe)) }
+    if ($pyRefs.Count -eq 0) { Write-Output 'COLLECTOR_PYTHON=not named by any task or running process; the venvs above are the candidates' }
+    foreach ($cmd in @(Get-Command -Name 'python.exe', 'py.exe' -All -ErrorAction SilentlyContinue)) { Write-Output ("PYTHON_ON_PATH " + $cmd.Source + " version=" + (Get-PyVersion $cmd.Source)) }
+    $bdirs = @($browserDirs)
+    if ($env:LOCALAPPDATA) { $bdirs += (Join-Path $env:LOCALAPPDATA 'ms-playwright') }
+    foreach ($scope in @($machineEnv, $userEnv)) { if ($scope.ContainsKey('PLAYWRIGHT_BROWSERS_PATH')) { $bdirs += $scope['PLAYWRIGHT_BROWSERS_PATH'] } }
+    foreach ($b in @($bdirs | Where-Object { $_ } | Select-Object -Unique)) {
+      if (Test-Path -LiteralPath $b -PathType Container) { Write-Output ("BROWSERS " + $b + " " + (@(Get-ChildItem -LiteralPath $b -Directory | ForEach-Object { $_.Name } | Sort-Object) -join ',')) }
+    }
+  } catch { [void]$failed.Add('6 python: ' + $_.Exception.Message + ' [block line ' + $_.InvocationInfo.ScriptLineNumber + ']'); Write-Output ('SECTION_FAILED ' + $failed[$failed.Count - 1]) }
+
+  Write-Output '== 7. Shared with the production collector on SRV-YOQSH? Session, lock, collection windows'
+  try {
+    $prodFiles = @{}
+    $prodOwner = ''
+    $remoteNote = ''
+    $prodTasks = @()
+    if ($onServer) { $remoteNote = 'this is SRV-YOQSH: the production files and tasks are the local ones above' }
+    elseif ($remote) {
+      if (-not (Wait-Job -Job $remote -Timeout $remoteWait)) { $remoteNote = 'SRV-YOQSH did not answer within ' + $remoteWait + ' s'; Stop-Job -Job $remote }
+      foreach ($line in @(Receive-Job -Job $remote -ErrorAction SilentlyContinue)) {
+        $kind, $rest = ([string]$line) -split '\|', 2
+        if ($kind -eq 'FILE') { $f = $rest -split '\|'; $prodFiles[$f[0]] = $f }
+        elseif ($kind -eq 'OWNER') { $prodOwner = $rest }
+        elseif ($kind -eq 'TASK') { $prodTasks += $rest }
+        elseif ($kind -eq 'SHARE') { $remoteNote = 'the production data folder is not readable from here: ' + $rest }
+        elseif (($kind -eq 'SCHED') -and ($rest -ne 'ok')) { Write-Output ("PROD_SCHEDULE=not readable from this machine: " + $rest) }
+        elseif ($kind -eq 'SCHED') { Write-Output ("PROD_SCHEDULE=read from " + $server + ": " + $prodTasks.Count + " collector-related task(s)") }
+      }
+      Remove-Job -Job $remote -Force
+    } else { $remoteNote = 'the read of SRV-YOQSH was not started' }
+    foreach ($k in @('storage_state.json', 'collector.lock', 'collector.lock.owner')) {
+      if ($prodFiles.ContainsKey($k)) { Write-Output ("PROD_FILE " + $k + " " + $(if ($prodFiles[$k][1] -eq 'absent') { 'absent' } else { 'bytes=' + $prodFiles[$k][1] + ' changed_utc=' + $prodFiles[$k][2] })) }
+    }
+    if ($remoteNote) { Write-Output ("PROD_FILES=" + $remoteNote) }
+    if ($prodFiles.ContainsKey('collector.lock.owner')) {
+      if ($prodFiles['collector.lock.owner'][1] -ne 'absent') { Write-Output ("PROD_LOCK=held now (owner hint " + $prodOwner + ")"); [void]$attention.Add('the production collector lock on SRV-YOQSH has an owner hint: production is collecting now') } else { Write-Output 'PROD_LOCK=no owner hint: the production collector is not running now' }
+    }
+    $prodSession = [System.IO.Path]::Combine($serverData, 'storage_state.json')
+    foreach ($s in @($sessionFiles | Select-Object -Unique)) {
+      $f = Get-FileFacts $s
+      $users = @($cands | Where-Object { $_.Session -eq $s } | ForEach-Object { $_.N })
+      $twins = @($sessionFiles | Where-Object { ($_ -ne $s) -and ((Get-FileFacts $_).Sha -eq $f.Sha) })
+      $verdict = if ($onServer -and ($s -eq $prodSession)) { 'SAME_FILE: this is the production collector session' }
+        elseif ($s -match '^\\\\(srv-yoqsh|10\.103\.25\.14)\\') { 'SAME_FILE: the production session over the network' }
+        elseif ($prodFiles.ContainsKey('storage_state.json') -and ($prodFiles['storage_state.json'][1] -ne 'absent')) { if (([string]$f.Bytes -eq $prodFiles['storage_state.json'][1]) -and ($f.ChangedUtc -eq $prodFiles['storage_state.json'][2])) { 'LIKELY_COPY of the production session: same size and change time (contents were not compared)' } else { 'NOT_THE_SAME: size or change time differ from the production session -- an own session or an older copy' } }
+        else { 'OWN_FILE_ON_THIS_MACHINE: the production session could not be compared from here' }
+      Write-Output ("SESSION_FILE " + $s + " bytes=" + $f.Bytes + " changed=" + $f.Changed + " sha256=" + $f.Sha + " used_by_checkout=" + $(if ($users.Count) { $users -join ',' } else { 'none' }) + " same_bytes_as=" + $(if ($twins.Count) { $twins -join ',' } else { 'none' }))
+      Write-Output ("  SESSION_VS_PRODUCTION=" + $verdict)
+    }
+    if ($sessionFiles.Count -eq 0) { Write-Output 'SESSION_FILES=none on this machine' }
+    $prodLock = [System.IO.Path]::Combine($serverData, 'collector.lock')
+    foreach ($c in $cands) {
+      $same = $onServer -and ($c.Lock -eq $prodLock)
+      Write-Output ("LOCK_VS_PRODUCTION checkout=" + $c.N + " " + $c.Lock + " -> " + $(if ($same) { 'SAME_LOCK as the production collector' } elseif ($c.Lock -match '^\\\\') { 'a network path: check by hand' } else { 'a lock on ' + $hostName + ' only: it does not stop a run on SRV-YOQSH, and the production lock does not stop runs here' }))
+    }
+    foreach ($t in $prodTasks) { Write-Output ("PROD_TASK " + $t) }
+    if ((-not $onServer) -and ($prodTasks.Count -eq 0)) { Write-Output 'PROD_SCHEDULE_DOCUMENTED=DroneCollectorDaily daily about 06:00 (docs/DJI_DAILY_EVIDENCE_RUN.md; not read live)' }
+  } catch { [void]$failed.Add('7 production: ' + $_.Exception.Message + ' [block line ' + $_.InvocationInfo.ScriptLineNumber + ']'); Write-Output ('SECTION_FAILED ' + $failed[$failed.Count - 1]) }
+
+  Write-Output '== 8. Network: GET of the login pages only'
+  foreach ($u in @(@('STAGING_5051_LOGIN', $stagingLogin), @('PRODUCTION_5050_LOGIN', $prodLogin))) {
+    try {
+      $r = Invoke-WebRequest -Uri $u[1] -Method Get -UseBasicParsing -TimeoutSec 20 -MaximumRedirection 0
+      $form = [string]$r.Content -match 'vs-login-form'
+      Write-Output ($u[0] + "=" + [int]$r.StatusCode + $(if ($form) { ' login form' } else { ' no login form' }) + " (GET only, connectivity)")
+      if (($u[0] -like 'STAGING*') -and (([int]$r.StatusCode -ne 200) -or (-not $form))) { [void]$attention.Add('the staging login page did not answer 200 with the login form') }
+    } catch {
+      Write-Output ($u[0] + "=ERROR " + $_.Exception.Message)
+      if ($u[0] -like 'STAGING*') { [void]$attention.Add('the staging site does not answer from this machine: W1 could not send there') }
+    }
+  }
+
+  Write-Output '== 9. For W1: candidates and a separate pilot queue, log and lock (nothing is run or created)'
+  try {
+    foreach ($c in $cands) { Write-Output ("CANDIDATE " + $c.N + " " + $c.Path + " head=" + $c.Head + " code=" + $c.Code + " sources=" + $c.Sup['sources'] + " ids_file=" + $c.Sup['ids_file'] + " send_sources=" + $c.Sup['send_sources'] + " lock=" + $c.Sup['lock'] + " outbox_setting=" + $c.Sup['outbox_setting'] + " receiver=" + $c.Receiver + " session_present=" + $c.SessionOk) }
+    Write-Output ("PILOT_FOLDER_PROPOSED=" + $pilotDir + " exists=" + (Test-Path -LiteralPath $pilotDir))
+    $inside = @(@($cands | ForEach-Object { $_.Path; $_.Outbox; (Split-Path -Parent $_.Session) }) + @($sessionFiles) | Where-Object { $_ -and ((($_ + '\').StartsWith($pilotDir + '\', [StringComparison]::OrdinalIgnoreCase)) -or (($pilotDir + '\').StartsWith(($_.TrimEnd('\') + '\'), [StringComparison]::OrdinalIgnoreCase))) } | Select-Object -Unique)
+    Write-Output ("PILOT_FOLDER_OVERLAP=" + $(if ($inside.Count) { $inside -join ', ' } else { 'none: no checkout, queue or session is inside it, and it is inside none of them' }))
+    $outboxes = @($cands | ForEach-Object { $_.Outbox } | Select-Object -Unique)
+    Write-Output ("EXISTING_QUEUES=" + $outboxes.Count + $(if ($outboxes.Count) { ': ' + ($outboxes -join ', ') } else { '' }))
+    $locks = @($cands | ForEach-Object { $_.Lock } | Select-Object -Unique)
+    Write-Output ("EXISTING_LOCKS=" + $locks.Count + $(if ($locks.Count) { ': ' + ($locks -join ', ') } else { '' }))
+  } catch { [void]$failed.Add('9 candidates: ' + $_.Exception.Message + ' [block line ' + $_.InvocationInfo.ScriptLineNumber + ']'); Write-Output ('SECTION_FAILED ' + $failed[$failed.Count - 1]) }
+
+  Write-Output '== 10. Summary'
+  if ($checkouts.Count -eq 0) { [void]$failed.Add('no drone_collector checkout was found on this machine' + $(if ($cut) { ' (the scan stopped at its time limit)' } else { '' })) }
+  foreach ($a in $attention) { Write-Output ("ATTENTION " + $a) }
+  Write-Output ("W0_ATTENTION=" + $attention.Count)
+  Write-Output ("LOG FILE: " + $log)
+  if ($failed.Count -gt 0) {
+    Write-Output ("STEP=STOP - " + ($failed -join ' | ') + " (read only: nothing operational was changed)")
+  } else {
+    Write-Output 'STEP=PASS (read only: nothing operational was changed)'
+  }
+  try { Stop-Transcript | Out-Null } catch { }
+}
+```
+
+Прислать весь вывод. После него — разбор и план W1; сбора до этого нет.
 
 ### R — SRV-YOQSH: возврат площадки
 
