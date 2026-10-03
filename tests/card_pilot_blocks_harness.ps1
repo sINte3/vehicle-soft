@@ -95,7 +95,7 @@ function Find-Task([string]$TaskName, [string]$TaskPath) { @($global:tasks | Whe
 function Disable-ScheduledTask {
   [CmdletBinding()] param([string]$TaskName, [string]$TaskPath)
   Add-Call ("Disable-ScheduledTask " + $TaskPath + $TaskName)
-  $hit = Find-Task $TaskName $TaskPath
+  $hit = @(Find-Task $TaskName $TaskPath)
   if ($hit.Count -ne 1) { throw "The system cannot find the file specified: $TaskPath$TaskName" }
   $hit[0].Enabled = $false
   if ($hit[0].State -ne 'Running') { $hit[0].State = 'Disabled' }
@@ -104,7 +104,7 @@ function Disable-ScheduledTask {
 function Enable-ScheduledTask {
   [CmdletBinding()] param([string]$TaskName, [string]$TaskPath)
   Add-Call ("Enable-ScheduledTask " + $TaskPath + $TaskName)
-  $hit = Find-Task $TaskName $TaskPath
+  $hit = @(Find-Task $TaskName $TaskPath)
   if ($hit.Count -ne 1) { throw "The system cannot find the file specified: $TaskPath$TaskName" }
   $hit[0].Enabled = $true
   if ($hit[0].State -eq 'Disabled') { $hit[0].State = 'Ready' }
@@ -114,7 +114,7 @@ function Start-ScheduledTask { [CmdletBinding()] param([string]$TaskName, [strin
 function Stop-ScheduledTask { [CmdletBinding()] param([string]$TaskName, [string]$TaskPath) Add-Call ("Stop-ScheduledTask " + $TaskPath + $TaskName) }
 function Export-ScheduledTask {
   [CmdletBinding()] param([string]$TaskName, [string]$TaskPath)
-  $hit = Find-Task $TaskName $TaskPath
+  $hit = @(Find-Task $TaskName $TaskPath)
   $hit[0].Xml + '<Enabled>' + ([string]$hit[0].Enabled).ToLower() + '</Enabled>'
 }
 function Get-CimInstance {
