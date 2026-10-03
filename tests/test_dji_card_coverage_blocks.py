@@ -608,23 +608,25 @@ class BlocksInPowerShell(unittest.TestCase):
         bed = Bed(os.path.join(self.tmp, 'bed'))
         before = sha(bed.db)
         # 1. snapshot is not what the plan was made on
+        # Binary reads and writes: text mode on Windows would turn the
+        # restored files into CRLF and change their sha256.
         plan_path = os.path.join(bed.plan_dir, 'plan.json')
-        original = open(plan_path).read()
-        doc = json.loads(original)
+        original = open(plan_path, 'rb').read()
+        doc = json.loads(original.decode('ascii'))
         doc['database']['sha256'] = 'f' * 64
-        open(plan_path, 'w').write(json.dumps(doc))
+        open(plan_path, 'wb').write(json.dumps(doc).encode('ascii'))
         out, calls, _, _ = self.run_block(bed, scenario())
         self.assertIn('the frozen plan was made on', out)
         self.assertUntouched(bed, calls, before, out)
-        open(plan_path, 'w').write(original)
+        open(plan_path, 'wb').write(original)
         # 2. the frozen canary file was edited
         canary = os.path.join(bed.plan_dir, 'canary_ids.txt')
-        saved = open(canary).read()
-        open(canary, 'a').write('123\n')
+        saved = open(canary, 'rb').read()
+        open(canary, 'ab').write(b'123\n')
         out, calls, _, _ = self.run_block(bed, scenario())
         self.assertIn('canary_ids.txt has sha256', out)
         self.assertUntouched(bed, calls, before, out)
-        open(canary, 'w').write(saved)
+        open(canary, 'wb').write(saved)
         # 3. an open staging run
         os.makedirs(os.path.join(bed.run_root, 'staging_20261003_000000'))
         out, calls, _, _ = self.run_block(bed, scenario())
