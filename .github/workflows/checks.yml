@@ -569,6 +569,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The card pilot blocks run against real commits of this
+          # repository (staging 2013bed, production 8df5683, pin 39eab50).
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -617,3 +621,13 @@ jobs:
         env:
           GPS_RELEASE_POWERSHELL: powershell
         run: python -m unittest tests.test_gps_release_runbook.GpsReleaseToolFormats tests.test_gps_release_runbook.GpsReleaseBlocksInPowerShell
+
+      # DRONE-CARD-COVERAGE-001 (docs/DRONE_CARD_COVERAGE_001.md, section 14):
+      # B1 prepares staging for the pilot, R returns it. Both are pasted into
+      # Windows PowerShell 5.1 on the server; every stop path and the return
+      # after it run here against stand-ins with real git, python and SQLite.
+      - name: DJI card coverage pilot blocks B1 and R on Windows PowerShell 5.1
+        shell: powershell
+        env:
+          CARD_PILOT_POWERSHELL: powershell
+        run: python -m unittest -v tests.test_dji_card_coverage_blocks

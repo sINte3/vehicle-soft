@@ -521,9 +521,18 @@ Production только читается (HEAD и три службы — до �
     if ($LASTEXITCODE -ne 0) { throw 'STEP FAILED: git fetch' }
     git merge-base --is-ancestor $before origin/main
     if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: staging runs $before, which is not in main -- someone may still use staging; send this line" }
-    $oldEncoding = [Console]::OutputEncoding
-    try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
-    try { $stagingDoc = @(git show origin/main:docs/STAGING.md) } finally { try { [Console]::OutputEncoding = $oldEncoding } catch { } }
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = 'git'
+    $psi.Arguments = 'show origin/main:docs/STAGING.md'
+    $psi.WorkingDirectory = $root
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $stagingText = $proc.StandardOutput.ReadToEnd()
+    $proc.WaitForExit()
+    if ($proc.ExitCode -ne 0) { throw 'STEP FAILED: git show origin/main:docs/STAGING.md' }
+    $stagingDoc = @($stagingText -split "`r?`n")
     $dataRows = @($stagingDoc | Where-Object { $_ -match '^\|' } | Select-Object -Skip 2)
     $yes = [string][char]0x0434 + [string][char]0x0430
     if ($dataRows.Count -ne 1) { throw "STEP FAILED: docs/STAGING.md on main has $($dataRows.Count) rows in the table, the rule is exactly one" }
