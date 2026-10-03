@@ -66,6 +66,17 @@ def blocks():
     return out
 
 
+def without_process_pattern(block):
+    """The block minus Get-IsoProcesses, whose regex names the cycle tools it looks for."""
+    return '\n'.join(l for l in block.splitlines() if 'function Get-IsoProcesses' not in l)
+
+
+def function_text(block, name):
+    m = re.search(r'^  function %s\b.*?(?=^  function |^  New-Item )' % re.escape(name), block, re.S | re.M)
+    assert m, name
+    return m.group(0)
+
+
 def const(block, name):
     m = re.search(r"^\s*\$%s\s*=\s*'([^']*)'\s*$" % name, block, re.M)
     return m.group(1) if m else None
@@ -129,7 +140,15 @@ class Text(unittest.TestCase):
         b1 = self.b['B1']
         for word in ('migrate_', 'dji_area_recalc', 'drone_collector.main', 'dji_area_daily',
                      'measure', '--apply'):
+            self.assertNotIn(word, without_process_pattern(b1))
+        # the staging refresh task: disabled once, by name and folder; never
+        # enabled, started, stopped, changed or re-registered by B1
+        self.assertEqual(b1.count('Disable-ScheduledTask'), 1)
+        self.assertIn('Disable-ScheduledTask -TaskName $isoTask -TaskPath $isoPath', b1)
+        for word in ('Enable-ScheduledTask', 'Start-ScheduledTask', 'Stop-ScheduledTask', 'Set-ScheduledTask',
+                     'Register-ScheduledTask', 'Unregister-ScheduledTask', 'Stop-Process'):
             self.assertNotIn(word, b1)
+        self.assertIsNone(re.search(r'schtasks(\.exe)?\s+/', b1))
         self.assertIn('Set-Service -Name $name -StartupType Disabled', b1)
         self.assertEqual(b1.count('Start-Service'), 1)
         self.assertIn('Start-Service -Name $service', b1)
@@ -142,7 +161,15 @@ class Text(unittest.TestCase):
         self.assertLess(b1.index("'bots_disabled.txt'"), b1.index('Set-Service -Name $name'))
         self.assertLess(b1.index("'refresh_launcher.txt'"), b1.index('Set-ItemProperty'))
         self.assertLess(b1.index("'swapped.txt'"), b1.index('Copy-Item -LiteralPath $snapshot'))
-        self.assertLess(b1.index("Save-Backup 'staging_before'"), b1.index('$touched = $true'))
+        # the task is verified, its state saved and the intent marked before it
+        # is disabled; that is the first change, before the backup and the bots
+        self.assertLess(b1.index("throw \"STEP FAILED: the $($c[0]) fingerprint of $isoTask"), b1.index("'task_before.txt'"))
+        self.assertLess(b1.index("'task_before.txt'"), b1.index("'task_isolation.txt'"))
+        self.assertLess(b1.index("'task_isolation.txt'"), b1.index('$touched = $true'))
+        self.assertLess(b1.index('$touched = $true'), b1.index('Disable-ScheduledTask'))
+        self.assertLess(b1.index('Disable-ScheduledTask'), b1.index("'task_disabled.txt'"))
+        self.assertLess(b1.index("'task_disabled.txt'"), b1.index("Save-Backup 'staging_before'"))
+        self.assertLess(b1.index("Save-Backup 'staging_before'"), b1.index('Set-Service -Name $name'))
         self.assertLess(b1.index('$touched = $true'), b1.index('Set-Service -Name $name'))
         self.assertLess(b1.index("Save-Backup 'staging_final'"), b1.index('git checkout --quiet --detach $pin'))
 
@@ -180,7 +207,49 @@ class Text(unittest.TestCase):
         self.assertLess(r.index('Set-Service -Name $name -StartupType $want.StartType'), r.index(write))
         self.assertLess(r.index('"PROD_HEAD_AFTER="'), r.index(write))
         for word in ('$pin', 'migrate_', 'dji_area_recalc', 'drone_collector.main'):
+            self.assertNotIn(word, without_process_pattern(r))
+        # the task: given back after the database, code, environment and
+        # services, before returned.txt; enabled or disabled as saved, never run
+        for word in ('Start-ScheduledTask', 'Stop-ScheduledTask', 'Set-ScheduledTask',
+                     'Register-ScheduledTask', 'Unregister-ScheduledTask'):
             self.assertNotIn(word, r)
+        self.assertIsNone(re.search(r'schtasks(\.exe)?\s+/', r))
+        self.assertEqual(r.count('Enable-ScheduledTask'), 1)
+        self.assertIn("Enable-ScheduledTask -TaskName $isoSaved['name'] -TaskPath $isoSaved['path']", r)
+        for marker in ("'== 3. The staging database", "'== 4. The staging code", "'== 5. The staging site environment",
+                       "'== 6. Staging services"):
+            self.assertLess(r.index(marker), r.index('Enable-ScheduledTask'))
+        self.assertLess(r.index('Enable-ScheduledTask'), r.index("'== 8. Production"))
+        # what does not depend on Enabled is proved before the task is enabled
+        self.assertLess(r.index("@('wrapper sha256'"), r.index('Enable-ScheduledTask'))
+        self.assertLess(r.index('Enable-ScheduledTask'), r.index('if ($cur.XmlSha -ne $isoSaved'))
+        self.assertLess(r.index('if ($cur.XmlSha -ne $isoSaved'), r.index(write))
+
+    def test_task_guard_is_the_live_d1_output(self):
+        b1 = self.b['B1']
+        for name, value in (('isoTask', 'DjiAreaRefreshStaging'), ('isoPath', '\\'), ('isoEnabled', 'True'),
+                            ('isoActionFp', 'ba8fe81d76697c38e7aa3e8f42069839365687652b00d45996d688b137845082'),
+                            ('isoTriggerFp', '36a9e7f1c95b82ffb99743e0c5c4ce95d83c9a430aac59f84ef3cbfab6145068'),
+                            ('isoXmlSha', 'ac522141953b6346ff76d2b0cad86f00ae10a52988984c2c4c5d8d91fc4f5117'),
+                            ('isoWrapper', 'C:\\ProgramData\\VehicleSoft\\DjiAreaRefreshStaging.ps1'),
+                            ('isoWrapperSha', '8ca2aeddfe664ce471bcdc991ea973ded9da2a2039e9de2ce8185b8c88b163c1')):
+            self.assertEqual(const(b1, name), value, name)
+        self.assertEqual(const(self.b['D1'], 'taskName'), const(b1, 'isoTask'))
+
+    def test_fingerprints_are_computed_by_the_same_text(self):
+        # D1 printed the fingerprints that B1 compares; R re-checks them. One
+        # function text for all three, or the comparison is not a comparison.
+        for name in ('Get-TextHash', 'Get-CimLine'):
+            text = function_text(self.b['D1'], name)
+            for block in ('B1', 'R'):
+                self.assertEqual(function_text(self.b[block], name), text, (name, block))
+        for name in ('Get-IsoState', 'Get-IsoProcesses'):
+            self.assertEqual(function_text(self.b['B1'], name), function_text(self.b['R'], name), name)
+        d1 = self.b['D1']
+        self.assertIn("$actionLines += ([string]$a.Execute + '|' + [string]$a.Arguments + '|' + [string]$a.WorkingDirectory)", d1)
+        self.assertIn("(Get-TextHash ($actionLines -join \"`n\"))", d1)
+        self.assertIn("(Get-TextHash ($triggerLines -join \"`n\"))", d1)
+        self.assertIn("Get-TextHash ([string](Export-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath))", self.b['B1'])
 
 
 MAIN = 'c34ea9aade48768cd6c0daaad9458972e869d335'
@@ -274,6 +343,10 @@ class Bed(object):
            os.path.join(self.plan_dir, 'fingerprint_before.json'))
         self.plan = json.load(open(os.path.join(self.plan_dir, 'plan.json')))
         self.work = os.path.join(root, 'work')
+        os.makedirs(os.path.join(root, 'ProgramData'))
+        self.wrapper = os.path.join(root, 'ProgramData', 'DjiAreaRefreshStaging.ps1')
+        with open(self.wrapper, 'wb') as fh:
+            fh.write(ISO_WRAPPER_TEXT.encode('ascii'))
 
     def restore_block(self, **override):
         text = blocks()['R']
@@ -296,7 +369,9 @@ class Bed(object):
             'manifestSha': self.plan['sample']['manifest_sha256'],
             'canarySha': self.plan['sample']['canary_ids_sha256'],
             'site': 'http://staging.invalid', 'work': self.work,
+            'isoWrapper': self.wrapper, 'isoWrapperSha': sha(self.wrapper),
         }
+        values.update(iso_fingerprints(iso_task()))
         values.update(override)
         for name, value in values.items():
             pat = re.compile(r"^(  \$%s\s*= )'[^']*'$" % name, re.M)
@@ -320,6 +395,53 @@ ENV_EXTRA = ['FLASK_ENV=sqlite_prod', 'PORT=5051', SECRET, 'DJI_REFRESH_LAUNCHER
              'DRONE_API_TOKEN=do-not-print-77aa']
 BOTS = ('TransportBotStaging', 'TransportBot003Staging')
 PROD_SERVICES = ('TransportReport', 'TransportBot', 'TransportBot003')
+# The staging refresh task as D1 found it live (03.10.2026); stand-in values.
+ISO = 'DjiAreaRefreshStaging'
+ISO_ARGS = ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File '
+            '"C:\\ProgramData\\VehicleSoft\\DjiAreaRefreshStaging.ps1"')
+ISO_TRIGGERS = [{'Class': 'MSFT_TaskDailyTrigger',
+                 # Not an ISO date: pwsh 7 would turn it into a DateTime when it reads the JSON.
+                 'Props': {'DaysInterval': '1', 'Enabled': 'True', 'StartBoundary': 'daily-0300',
+                           'Repetition': {'StopAtDurationEnd': 'False'}}}]
+ISO_XML = '<Task version="1.4"><Principal>S4U Highest</Principal><Actions>powershell.exe</Actions>'
+ISO_WRAPPER_TEXT = ('& C:\\transport-report\\drone_collector\\.venv\\Scripts\\python.exe '
+                    'C:\\transport-report-staging\\tools\\dji_area_daily.py --run-queued\n')
+
+
+def text_hash(text):
+    return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+
+def cim_line(trigger):
+    """Python twin of Get-CimLine for the stand-in triggers."""
+    parts = []
+    props = trigger['Props']
+    for name in sorted(props, key=str.lower):
+        value = props[name]
+        if isinstance(value, dict):
+            parts.extend('%s.%s=%s' % (name, k, value[k]) for k in sorted(value, key=str.lower) if value[k] != '')
+        elif value != '':
+            parts.append('%s=%s' % (name, value))
+    return trigger['Class'] + ' ' + ' '.join(parts)
+
+
+def iso_task(**changes):
+    task = {'TaskName': ISO, 'TaskPath': '\\', 'State': 'Ready', 'Enabled': True,
+            'Execute': 'powershell.exe', 'Arguments': ISO_ARGS, 'WorkingDirectory': '',
+            'Triggers': ISO_TRIGGERS, 'Xml': ISO_XML}
+    task.update(changes)
+    return task
+
+
+def iso_fingerprints(task):
+    return {'isoActionFp': text_hash('%s|%s|%s' % (task['Execute'], task['Arguments'], task['WorkingDirectory'])),
+            'isoTriggerFp': text_hash('\n'.join(cim_line(t) for t in task['Triggers'])),
+            'isoXmlSha': text_hash(task['Xml'] + '<Enabled>%s</Enabled>' % str(task['Enabled']).lower()),
+            'isoEnabled': str(task['Enabled'])}
+
+
+def tasks_plus(*extra):
+    return scenario()['Tasks'] + list(extra)
 
 
 def scenario(**changes):
@@ -335,6 +457,7 @@ def scenario(**changes):
         },
         'StopFails': [],
         'Tasks': [
+            iso_task(),
             {'TaskName': 'TransportDBBackupStaging', 'State': 'Ready',
              'Execute': 'C:\\Program Files\\Python314\\python.exe',
              'Arguments': 'C:\\transport-report-staging\\backup_transport_db.py --source C:\\transport-report-staging\\instance\\transport.db'},
@@ -349,6 +472,7 @@ def scenario(**changes):
         ],
         'Registry': {SITE_KEY: {'AppEnvironmentExtra': list(ENV_EXTRA)},
                      MACHINE_KEY: {'Path': 'C:\\Windows'}},
+        'Processes': [],
         'Web': {'/login': {'Status': 200, 'Body': LOGIN},
                 '/drones/fields': {'Status': 200, 'Body': LOGIN}},
     }
@@ -378,6 +502,8 @@ class BlocksInPowerShell(unittest.TestCase):
         calls = [l for l in open(cf).read().splitlines() if l]
         services = json.load(open(cf + '.services.json'))
         registry = json.load(open(cf + '.registry.json'))
+        tasks = json.load(open(cf + '.tasks.json'))
+        self.last_tasks = tasks if isinstance(tasks, list) else [tasks]
         return out, calls, services, registry
 
     def run_block(self, bed, sc, **override):
@@ -386,14 +512,31 @@ class BlocksInPowerShell(unittest.TestCase):
     def run_restore(self, bed, sc, **override):
         return self.run_text(bed.restore_block(**override), sc)
 
-    @staticmethod
-    def carry(sc, services, registry):
-        """The next block sees the services and registry the previous one left."""
+    def carry(self, sc, services, registry):
+        """The next block sees the services, registry and tasks the previous one left."""
         nxt = dict(sc)
         nxt['Services'] = services
         nxt['Registry'] = registry
+        left = {(t['TaskName'], t['TaskPath']): t for t in self.last_tasks}
+        tasks = []
+        for t in sc['Tasks']:
+            t = dict(t)
+            seen = left.get((t['TaskName'], t.get('TaskPath', '\\')))
+            if seen:
+                t['Enabled'], t['State'] = seen['Enabled'], seen['State']
+            t.pop('RunningFromRead', None)
+            tasks.append(t)
+        nxt['Tasks'] = tasks
         nxt.pop('HoldDb', None)
         return nxt
+
+    def iso_now(self):
+        hit = [t for t in self.last_tasks if t['TaskName'] == ISO]
+        self.assertEqual(len(hit), 1)
+        return hit[0]['Enabled'], hit[0]['State']
+
+    def task_calls(self, calls):
+        return [c for c in calls if 'ScheduledTask' in c]
 
     def staging_head(self, bed):
         return sh('git', 'rev-parse', 'HEAD', cwd=bed.staging)
@@ -408,6 +551,7 @@ class BlocksInPowerShell(unittest.TestCase):
         for c in calls:
             self.assertFalse(c.startswith(('Set-Service', 'Stop-Service', 'Start-Service',
                                            'Restart-Service', 'Set-ItemProperty')), c)
+        self.assertEqual(self.task_calls(calls), [])
         self.assertEqual(self.staging_head(bed), STAGING_HEAD)
         self.assertEqual(sha(bed.db), db_sha_before)
         self.assertIn('STAGING_CHANGED=no', out)
@@ -434,11 +578,15 @@ class BlocksInPowerShell(unittest.TestCase):
         self.assertEqual([c for c in calls if re.search(r' Transport(Report|Bot|Bot003)$', c)], [])
         order = [c for c in calls if not c.startswith('GET')]
         self.assertEqual(order, [
+            'Disable-ScheduledTask \\' + ISO,
             'Set-Service TransportBotStaging Disabled', 'Stop-Service TransportBotStaging',
             'Set-Service TransportBot003Staging Disabled', 'Stop-Service TransportBot003Staging',
             'Stop-Service TransportReportStaging',
             'Set-ItemProperty %s AppEnvironmentExtra MultiString' % SITE_KEY,
             'Start-Service TransportReportStaging'])
+        # The refresh task is disabled for the pilot; no other task is touched
+        # (the call list above has exactly one task call).
+        self.assertEqual(self.iso_now(), (False, 'Disabled'))
         # Every other entry of the site environment kept, in order; only the launcher is gone.
         self.assertEqual(reg[SITE_KEY]['AppEnvironmentExtra'],
                          [e for e in ENV_EXTRA if not e.startswith('DJI_REFRESH_LAUNCHER=')])
@@ -457,7 +605,13 @@ class BlocksInPowerShell(unittest.TestCase):
         self.assertEqual(env_before[0], str(len(ENV_EXTRA)))
         self.assertEqual(env_before[1], hashlib.sha256('\n'.join(ENV_EXTRA).encode('utf-8')).hexdigest())
         self.assertTrue(os.path.exists(os.path.join(run, 'placed.txt')))
-        for name in ('swapped.txt', 'bots_disabled.txt', 'fingerprint_placed.json',
+        task_before = dict(l.split('=', 1) for l in open(os.path.join(run, 'task_before.txt')).read().split())
+        self.assertEqual(task_before, dict(
+            name=ISO, path='\\', enabled='True', state='Ready', wrapper=bed.wrapper,
+            wrapper_sha=sha(bed.wrapper), **{k: v for k, v in zip(
+                ('action', 'trigger', 'xml'),
+                [iso_fingerprints(iso_task())[x] for x in ('isoActionFp', 'isoTriggerFp', 'isoXmlSha')])}))
+        for name in ('swapped.txt', 'bots_disabled.txt', 'fingerprint_placed.json', 'task_isolation.txt', 'task_disabled.txt',
                      'fingerprint_started.json', 'drift.log', 'drift_after_start.log'):
             self.assertTrue(os.path.exists(os.path.join(run, name)), name)
         rec = [l.split('|') for l in open(os.path.join(run, 'staging_backup.txt')).read().splitlines() if l]
@@ -482,7 +636,9 @@ class BlocksInPowerShell(unittest.TestCase):
                     'STAGING_ROW=occupied', 'DJI_REFRESH_LAUNCHER_BEFORE=subprocess',
                     'DJI_REFRESH_LAUNCHER_NOW=absent', 'TASK TransportDBBackupStaging Ready staging',
                     'TASK DroneCollectorDaily Ready production', 'TASK GoogleUpdate Ready other',
-                    'TASKS_CHECKED=3 enabled',
+                    'TASKS_CHECKED=4 enabled', 'TASK %s Ready KNOWN_AND_DISABLED_FOR_PILOT' % ISO,
+                    'ISOLATE_TASK_VERIFIED=', 'ISOLATE_TASK_NOW=Disabled (was enabled=True',
+                    'BARRIERS=%s Disabled, DJI_REFRESH_LAUNCHER absent' % ISO,
                     'BOT_FINAL TransportBotStaging Stopped Disabled',
                     'SITE_ENV_NAMES=FLASK_ENV,PORT,SECRET_KEY,DJI_REFRESH_LAUNCHER,DRONE_API_TOKEN (names only)'):
             self.assertIn(key, out)
@@ -542,7 +698,10 @@ class BlocksInPowerShell(unittest.TestCase):
             'Set-ItemProperty %s AppEnvironmentExtra MultiString' % SITE_KEY,
             'Set-Service TransportReportStaging Automatic', 'Start-Service TransportReportStaging',
             'Set-Service TransportBotStaging Automatic', 'Start-Service TransportBotStaging',
-            'Set-Service TransportBot003Staging Automatic', 'Start-Service TransportBot003Staging'])
+            'Set-Service TransportBot003Staging Automatic', 'Start-Service TransportBot003Staging',
+            'Enable-ScheduledTask \\' + ISO])
+        self.assertEqual(self.iso_now(), (True, 'Ready'))
+        self.assertIn('TASK_RESTORED %s enabled=True' % ISO, out)
         self.assertIn('STEP=PASS\n', out)
         for key in ('RESTORE_FROM staging_final', 'PILOT_DB_KEPT=', 'DB_RESTORED=',
                     'HEAD_RESTORED=' + STAGING_HEAD, 'DJI_REFRESH_LAUNCHER=restored', 'RETURNED='):
@@ -567,21 +726,34 @@ class BlocksInPowerShell(unittest.TestCase):
             ('host is', dict(sc=scenario(Host='OTHER'))),
             ('plan.json names manifest', dict(override=dict(manifestSha='0' * 64))),
             ('plan.json names canary', dict(override=dict(canarySha='0' * 64))),
-            ('may write to staging: StagingDroneDaily', dict(sc=scenario(Tasks=[
+            ('may write to staging: StagingDroneDaily', dict(sc=scenario(Tasks=tasks_plus(
                 {'TaskName': 'StagingDroneDaily', 'State': 'Ready',
-                 'Execute': 'C:\\transport-report-staging\\x.bat', 'Arguments': ''}]))),
-            ('may write to staging: HoldoutCollector', dict(sc=scenario(Tasks=[
+                 'Execute': 'C:\\transport-report-staging\\x.bat', 'Arguments': ''})))),
+            ('may write to staging: HoldoutCollector', dict(sc=scenario(Tasks=tasks_plus(
                 {'TaskName': 'HoldoutCollector', 'State': 'Ready',
                  'Execute': 'C:\\VehicleSoft_Holdout_Staging\\venv\\python.exe',
-                 'Arguments': '-m drone_collector.main --sources'}]))),
-            ('may write to staging: HoldoutSources', dict(sc=scenario(Tasks=[
+                 'Arguments': '-m drone_collector.main --sources'})))),
+            ('may write to staging: HoldoutSources', dict(sc=scenario(Tasks=tasks_plus(
                 {'TaskName': 'HoldoutSources', 'State': 'Ready',
                  'Execute': 'C:\\transport-report\\drone_collector\\.venv\\Scripts\\python.exe',
                  'Arguments': '-m drone_collector.main --sources --send-sources',
-                 'WorkingDirectory': 'C:\\VehicleSoft_Holdout_Staging'}]))),
-            ('may write to staging: TransportDBBackupStaging', dict(sc=scenario(Tasks=[
+                 'WorkingDirectory': 'C:\\VehicleSoft_Holdout_Staging'})))),
+            ('may write to staging: TransportDBBackupStaging', dict(sc=scenario(Tasks=[iso_task(),
                 {'TaskName': 'TransportDBBackupStaging', 'State': 'Ready',
                  'Execute': 'C:\\Users\\x\\evil.bat', 'Arguments': ''}]))),
+            # The staging refresh task: anything but the exact D1 picture stops B1.
+            ('is running now', dict(sc=scenario(Tasks=[iso_task(State='Running')]))),
+            ('process(es) of the staging refresh cycle are running', dict(sc=scenario(Processes=[
+                'python.exe C:\\transport-report-staging\\tools\\dji_area_daily.py --run-queued']))),
+            ('the action fingerprint of ' + ISO, dict(sc=scenario(Tasks=[iso_task(Arguments=ISO_ARGS + ' -X')]))),
+            ('the trigger fingerprint of ' + ISO, dict(sc=scenario(Tasks=[iso_task(Triggers=[dict(
+                ISO_TRIGGERS[0], Props=dict(ISO_TRIGGERS[0]['Props'], StartBoundary='daily-0400'))])]))),
+            ('the task XML fingerprint of ' + ISO, dict(sc=scenario(Tasks=[iso_task(Xml=ISO_XML + '<x/>')]))),
+            ('the wrapper fingerprint of ' + ISO, dict(override=dict(isoWrapperSha='1' * 64))),
+            ('the wrapper fingerprint of %s is missing' % ISO, dict(override=dict(isoWrapper='C:\\no\\such.ps1'))),
+            ('2 scheduled tasks are named ' + ISO, dict(sc=scenario(Tasks=[iso_task(), iso_task(TaskPath='\\Other\\')]))),
+            ('is in folder \\VehicleSoft\\', dict(sc=scenario(Tasks=[iso_task(TaskPath='\\VehicleSoft\\')]))),
+            ('Enabled=False, D1 saw True', dict(sc=scenario(Tasks=[iso_task(Enabled=False, State='Disabled')]))),
             ('start by themselves', dict(sc=scenario(Services=dict(
                 scenario()['Services'], TransportGpsStaging={'Status': 'Stopped', 'StartType': 'Automatic'})))),
             ('must be Running or Stopped', dict(sc=scenario(Services=dict(
@@ -677,20 +849,55 @@ class BlocksInPowerShell(unittest.TestCase):
         self.assertUntouched(bed, calls, before, out)
 
     def test_failure_before_first_change_closes_its_run(self):
-        # The first read of the staging database is the online backup
-        # (section 2): the run folder exists, nothing on staging changed, the
-        # block closes the run itself and can be run again.
+        # The task starts running between the checks and the isolation: B1
+        # stops before its first change, closes its own run, and can be run
+        # again at once.
+        bed = Bed(os.path.join(self.tmp, 'bed'))
+        before = sha(bed.db)
+        out, calls, _, _ = self.run_block(bed, scenario(Tasks=[iso_task(RunningFromRead=2)]))
+        self.assertIn('STEP=STOP - STEP FAILED: %s started running; nothing was changed' % ISO, out, out)
+        self.assertUntouched(bed, calls, before, out)
+        self.assertEqual(len(self.runs(bed)), 1)
+        self.assertTrue(os.path.exists(os.path.join(self.runs(bed)[0], 'task_before.txt')))
+        out, calls, svc, reg = self.run_block(bed, scenario())
+        self.assertIn('STEP=PASS', out, out)
+
+    def test_backup_failure_after_isolation_is_returned_by_r(self):
+        # The online backup comes after the task is disabled: its failure is
+        # a stop after the first change, and R gives the task back.
         bed = Bed(os.path.join(self.tmp, 'bed'))
         good = open(bed.db, 'rb').read()
         open(bed.db, 'wb').write(b'not a database ' * 100)
-        before = sha(bed.db)
-        out, calls, _, _ = self.run_block(bed, scenario())
-        self.assertIn('STEP=STOP - STEP FAILED: online backup staging_before', out, out)
-        self.assertUntouched(bed, calls, before, out)
-        self.assertEqual(len(self.runs(bed)), 1)
-        open(bed.db, 'wb').write(good)
+        broken = sha(bed.db)
         out, calls, svc, reg = self.run_block(bed, scenario())
+        self.assertIn('STEP=STOP - STEP FAILED: online backup staging_before', out, out)
+        self.assertIn('STAGING_CHANGED=yes', out)
+        self.assertEqual(self.task_calls(calls), ['Disable-ScheduledTask \\' + ISO])
+        self.assertEqual(self.iso_now(), (False, 'Disabled'))
+        out, calls, svc, reg = self.run_restore(bed, self.carry(scenario(), svc, reg))
         self.assertIn('STEP=PASS', out, out)
+        self.assertIn('DB_RESTORED=not needed', out)
+        self.assertEqual(sha(bed.db), broken)
+        self.assertEqual(self.task_calls(calls), ['Enable-ScheduledTask \\' + ISO])
+        self.assertEqual(self.iso_now(), (True, 'Ready'))
+        open(bed.db, 'wb').write(good)
+        out, calls, svc, reg = self.run_block(bed, self.carry(scenario(), svc, reg))
+        self.assertIn('STEP=PASS', out, out)
+
+    def test_initially_disabled_task_stays_disabled(self):
+        bed = Bed(os.path.join(self.tmp, 'bed'))
+        off = iso_task(Enabled=False, State='Disabled')
+        sc = scenario(Tasks=[off] + scenario()['Tasks'][1:])
+        out, calls, svc, reg = self.run_block(bed, sc, **iso_fingerprints(off))
+        self.assertIn('STEP=PASS', out, out)
+        self.assertIn('ISOLATE_TASK_NOW=Disabled (was enabled=False', out)
+        self.assertEqual(self.task_calls(calls), [])
+        self.assertEqual(self.iso_now(), (False, 'Disabled'))
+        out, calls, svc, reg = self.run_restore(bed, self.carry(sc, svc, reg))
+        self.assertIn('STEP=PASS', out, out)
+        self.assertIn('TASK_RESTORED %s enabled=False' % ISO, out)
+        self.assertEqual(self.task_calls(calls), [])
+        self.assertEqual(self.iso_now(), (False, 'Disabled'))
 
     def test_lock_held_stops_before_the_swap_and_restore(self):
         bed = Bed(os.path.join(self.tmp, 'bed'))
@@ -722,6 +929,7 @@ class BlocksInPowerShell(unittest.TestCase):
             self.assertEqual(svc[name], {'Status': 'Running', 'StartType': 'Automatic'}, name)
         # The lock stopped B1 before the environment edit: nothing to put back.
         self.assertIn('DJI_REFRESH_LAUNCHER=not touched by B1', out)
+        self.assertEqual(self.iso_now(), (True, 'Ready'))
         self.assertEqual(reg[SITE_KEY]['AppEnvironmentExtra'], ENV_EXTRA)
         self.assertNotIn('Set-ItemProperty %s AppEnvironmentExtra MultiString' % SITE_KEY, calls)
 
@@ -774,6 +982,38 @@ class BlocksInPowerShell(unittest.TestCase):
                  if l.startswith('staging_final|')][0]
         return run, final, self.carry(scenario(), svc, reg)
 
+    def test_both_barriers_are_checked_after_the_start(self):
+        # Something enables the task again while the site starts: B1 must not
+        # report PASS with one barrier down.
+        bed = Bed(os.path.join(self.tmp, 'bed'))
+        out, calls, svc, reg = self.run_block(bed, scenario(EnableTaskOnSiteStart=ISO))
+        self.assertIn('STEP=STOP - STEP FAILED: the barriers are not both in place: %s Enabled=True' % ISO, out, out)
+        self.assertIn('STAGING_CHANGED=yes', out)
+
+    def test_restore_refuses_a_changed_task(self):
+        # The task or its wrapper changed during the pilot: R leaves disabled
+        # what it cannot prove is the task it disabled, and keeps the run open.
+        for what in ('xml', 'wrapper'):
+            with self.subTest(what):
+                bed = Bed(os.path.join(self.tmp, 'bed_' + what))
+                run, final, nxt = self.b1_pass(bed)
+                if what == 'xml':
+                    nxt['Tasks'][0]['Xml'] = ISO_XML + '<Edited/>'
+                    needle = 'task XML sha256 is'
+                else:
+                    with open(bed.wrapper, 'ab') as fh:
+                        fh.write(b'# edited\n')
+                    needle = 'wrapper sha256 is'
+                out, calls, svc, reg = self.run_restore(bed, nxt)
+                self.assertIn('STEP=STOP - STEP FAILED: %s %s' % (ISO, needle), out, out)
+                self.assertIn('STAGING_CHANGED=yes', out)
+                self.assertFalse(os.path.exists(os.path.join(run, 'returned.txt')))
+                # left disabled: the wrapper is checked before enabling; the
+                # task XML only can be, so it is disabled again at once
+                self.assertEqual(self.iso_now(), (False, 'Disabled'))
+                self.assertEqual(self.task_calls(calls), [] if what == 'wrapper' else
+                                 ['Enable-ScheduledTask \\' + ISO, 'Disable-ScheduledTask \\' + ISO])
+
     def test_restore_converges_after_a_stop(self):
         bed = Bed(os.path.join(self.tmp, 'bed'))
         tasks = [
@@ -782,7 +1022,7 @@ class BlocksInPowerShell(unittest.TestCase):
             {'TaskName': 'TopazFuelAgent', 'State': 'Ready',
              'Execute': 'C:\\Program Files\\Python314\\python.exe', 'Arguments': 'C:\\topaz_agent.py'},
         ]
-        run, final, nxt = self.b1_pass(bed, scenario(Tasks=tasks))
+        run, final, nxt = self.b1_pass(bed, scenario(Tasks=tasks_plus(*tasks)))
         bad = dict(nxt, Web={'/login': {'Status': 500, 'Body': 'x'},
                              '/drones/fields': {'Status': 200, 'Body': LOGIN}})
         out, calls, svc, reg = self.run_restore(bed, bad)
@@ -790,9 +1030,16 @@ class BlocksInPowerShell(unittest.TestCase):
         self.assertIn('STAGING_CHANGED=yes', out)
         self.assertTrue(os.path.exists(os.path.join(run, 'db_restored.txt')))
         self.assertFalse(os.path.exists(os.path.join(run, 'returned.txt')))
+        self.assertEqual(self.iso_now(), (False, 'Disabled'))
         out, calls, svc, reg = self.run_restore(bed, self.carry(scenario(), svc, reg))
         self.assertIn('STEP=PASS', out, out)
         self.assertIn('DB_RESTORED=already', out)
+        self.assertEqual(self.task_calls(calls), ['Enable-ScheduledTask \\' + ISO])
+        self.assertEqual(self.iso_now(), (True, 'Ready'))
+        # A third run after the return: nothing open, no change, the task as it is.
+        out, calls, svc, reg = self.run_restore(bed, self.carry(scenario(), svc, reg))
+        self.assertIn('0 open staging runs', out)
+        self.assertEqual(calls, [])
         self.assertEqual(sha(bed.db), final[3])
         self.assertEqual(self.staging_head(bed), STAGING_HEAD)
         self.assertEqual(reg[SITE_KEY]['AppEnvironmentExtra'], ENV_EXTRA)
@@ -874,6 +1121,8 @@ class BlocksInPowerShell(unittest.TestCase):
 
 @unittest.skipUnless(POWERSHELL and os.name == 'nt', 'needs Windows and CARD_PILOT_POWERSHELL')
 class TaskDiscoveryOnWindows(unittest.TestCase):
+    registration = '-Settings (New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew)'
+
     """D1 against a REAL scheduled task on the Windows runner.
 
     [REASON]: D1 reads Task Scheduler objects (actions, CIM triggers,
@@ -910,8 +1159,8 @@ class TaskDiscoveryOnWindows(unittest.TestCase):
             '& python tools\\dji_area_daily.py --db instance\\transport.db\n')
         script = ('$a = New-ScheduledTaskAction -Execute powershell.exe -Argument \'-NoProfile -ExecutionPolicy Bypass -File "%s" -Token abcdefghabcdefghabcdefghabcdefgh99\' -WorkingDirectory \'%s\'\n'
                   '$t = New-ScheduledTaskTrigger -Daily -At 3am\n'
-                  'Register-ScheduledTask -TaskName \'%s\' -Action $a -Trigger $t -Settings (New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew) | Out-Null\n'
-                  % (self.wrapper, self.root, self.task))
+                  'Register-ScheduledTask -TaskName \'%s\' -Action $a -Trigger $t %s | Out-Null\n'
+                  % (self.wrapper, self.root, self.task, self.registration))
         self.ps(script)
         self.addCleanup(self.ps, "Unregister-ScheduledTask -TaskName '%s' -Confirm:$false" % self.task)
 
@@ -969,6 +1218,58 @@ class TaskDiscoveryOnWindows(unittest.TestCase):
         out = self.run_d1(task='CardPilotNoSuchTask%d' % os.getpid())
         self.assertIn('TASKS_WITH_THIS_NAME=0', out, out)
         self.assertIn('STEP=STOP - STEP FAILED: no scheduled task named', out)
+
+
+
+class TaskIsolationOnWindows(TaskDiscoveryOnWindows):
+    """B1's disable and R's enable on a REAL task registered like the live one.
+
+    [REASON]: R refuses to close the run unless the action, trigger and task
+    XML fingerprints after Enable-ScheduledTask equal the ones saved before
+    Disable-ScheduledTask. Whether Task Scheduler gives back the same
+    definition after that round trip is a property of Windows, not of the
+    block, so it is proved here on the real service, with the live task's
+    principal (S4U, Highest) and settings, by the functions B1 and R carry.
+    The D1 tests run again on this task as well.
+    """
+    registration = ('-Principal (New-ScheduledTaskPrincipal -UserId ($env:USERDOMAIN + \'\\\' + $env:USERNAME) '
+                    '-LogonType S4U -RunLevel Highest) '
+                    '-Settings (New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable)')
+
+    def test_disable_and_enable_round_trip(self):
+        d1 = self.run_d1()
+        self.assertIn('STEP=PASS', d1, d1)
+        self.assertIn('LogonType=S4U RunLevel=Highest', d1)
+        printed = dict(l.split('=', 1) for l in d1.splitlines()
+                       if l.startswith(('ACTION_FINGERPRINT=', 'TRIGGER_FINGERPRINT=')))
+        printed['TASK_XML_SHA256'] = [l for l in d1.splitlines() if l.startswith('TASK_XML_SHA256=')][0].split('=', 1)[1].split()[0]
+        b1 = blocks()['B1']
+        funcs = ''.join(function_text(b1, n) for n in ('Get-TextHash', 'Get-CimLine', 'Get-IsoState', 'Get-IsoProcesses'))
+        script = (funcs +
+                  "$n = '%s'\n$w = '%s'\n"
+                  "$a = Get-IsoState $n $w\n"
+                  "Disable-ScheduledTask -TaskName $n -TaskPath '\\' | Out-Null\n"
+                  "$b = Get-IsoState $n $w\n"
+                  "Enable-ScheduledTask -TaskName $n -TaskPath '\\' | Out-Null\n"
+                  "$c = Get-IsoState $n $w\n"
+                  "$p = @(Get-IsoProcesses $n).Count\n"
+                  "ConvertTo-Json -InputObject @($a, $b, $c, $p) -Depth 3\n") % (self.task, self.wrapper)
+        a, b, c, procs = json.loads(self.ps(script))
+        # What D1 printed is what B1 compares.
+        self.assertEqual(a['ActionFp'], printed['ACTION_FINGERPRINT'])
+        self.assertEqual(a['TriggerFp'], printed['TRIGGER_FINGERPRINT'])
+        self.assertEqual(a['XmlSha'], printed['TASK_XML_SHA256'])
+        self.assertEqual(a['WrapperSha'], sha(self.wrapper))
+        self.assertEqual((a['Path'], a['Enabled'], a['State']), ('\\', 'True', 'Ready'))
+        # Disabled for the pilot: the definition is the same, the task cannot start.
+        self.assertEqual((b['Enabled'], b['State']), ('False', 'Disabled'))
+        self.assertEqual((b['ActionFp'], b['TriggerFp']), (a['ActionFp'], a['TriggerFp']))
+        # Given back: exactly the definition that was saved, task XML included.
+        self.assertEqual((c['Enabled'], c['State']), ('True', 'Ready'))
+        for key in ('Path', 'ActionFp', 'TriggerFp', 'XmlSha', 'WrapperSha'):
+            self.assertEqual(c[key], a[key], key)
+        self.assertEqual(procs, 0)
+        self.assertNotIn('Running', self.ps("(Get-ScheduledTask -TaskName '%s').State" % self.task))
 
 
 if __name__ == '__main__':

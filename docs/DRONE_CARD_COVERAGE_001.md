@@ -109,10 +109,14 @@ online-копии production** (шаг B0 ниже): сентябрь и авг�
   помимо пилота** (шаг B1):
   * боты площадки остановлены и переведены в `Disabled` — копия production
     несёт очередь уведомлений, бот разослал бы их живым людям;
-  * кнопка «Обновить данные DJI» площадки выключена: `DJI_REFRESH_LAUNCHER`
-    убрана из окружения службы. В копии production — пользователи
-    production; одно нажатие запустило бы сбор и пересчёт вне манифеста и
-    лишние посещения DJI. Строка сохранена, блок R её возвращает;
+  * два независимых барьера против цикла обновления площади на площадке:
+    задача планировщика `DjiAreaRefreshStaging` (по расписанию и по
+    кнопке; D1, 03.10.2026: пишет в базу площадки через
+    `tools\dji_area_daily.py --run-queued`) отключена, и кнопка «Обновить
+    данные DJI» площадки выключена — `DJI_REFRESH_LAUNCHER` убрана из
+    окружения службы. В копии production — пользователи production; одно
+    нажатие запустило бы сбор и пересчёт вне манифеста и лишние посещения
+    DJI. Строка и состояние задачи сохранены, блок R их возвращает;
   * задачи планировщика: B1 печатает все включённые (кроме
     `\Microsoft\`) — имя, состояние, вид, исполняемый файл, рабочую папку,
     без аргументов. Отказ — если включённая задача относится к площадке
@@ -121,6 +125,14 @@ online-копии production** (шаг B0 ниже): сентябрь и авг�
     Строки вида `other` разбираются по выводу до канарейки;
   * другие службы площадки — остановлены и не запускаются сами (`Manual` /
     `Disabled`), иначе отказ.
+* **Общая сессия DJI и общий замок сборщика.** По D1 задача площадки
+  запускает сборщик из venv production и с общими
+  `C:\transport-report\drone_collector\data\storage_state.json` и
+  `collector.lock`. Сейчас это не меняется. Отключённая задача на время
+  пилота не берёт ни сессию, ни замок. Разведка рабочей машины и план
+  канарейки (W1) обязаны отдельно учесть общий замок и общую сессию: сбор
+  пилота не должен идти одновременно со сбором production
+  (`DroneCollectorDaily`). Расписание сборщика production B1 не трогает.
 * **Чего B1 не закрывает, и чем это ловится.** Приёмники `/drones/api/*`
   площадки принимают данные от любого владельца токена площадки. На время
   пилота на площадку шлёт только сбор W1/W2; разведка рабочей машины перед
@@ -226,13 +238,13 @@ NO_KEY или NOT_IN_CATALOG, это отдельный следующий ан�
 | Шаг | Где | Что | Пишет |
 |---|---|---|---|
 | B0 | SRV-YOQSH | онлайн-копия production, перепись сентября и августа, замороженная выборка, отпечатки | только папка пилота на D: и C:\VehicleSoft_CardPilot |
-| B1 | SRV-YOQSH | после мержа PR занятия площадки: всё для точного возврата и две онлайн-копии базы площадки, боты площадки — стоп и `Disabled`, кнопка DJI площадки выключена, закреплённая ревизия, база площадки = копия B0 (сверка sha256 и отпечатком до и после пуска), пуск только службы | площадка |
+| B1 | SRV-YOQSH | после мержа PR занятия площадки: задача `DjiAreaRefreshStaging` сверяется с D1 и отключается первым изменением, всё для точного возврата и две онлайн-копии базы площадки, боты площадки — стоп и `Disabled`, кнопка DJI площадки выключена, закреплённая ревизия, база площадки = копия B0 (сверка sha256 и отпечатком до и после пуска), пуск только службы | площадка |
 | D1 | SRV-YOQSH | только чтение: задача планировщика `DjiAreaRefreshStaging`, на которой встал первый B1 — действие, триггеры, учётная запись, прогоны, что она пишет в базу площадки, связь с кнопкой | только журнал блока в C:\VehicleSoft_CardPilot |
 | W1 | рабочая машина | канарейка 50: `--sources --ids-file canary_ids.txt --send-sources` только на `:5051`, своя очередь, разбор журнала | площадка, DJI — 50 посещений |
 | S1 | SRV-YOQSH | служба площадки стоп → `dji_area_recalc.py --apply --flight-id` (50) → `measure --stage canary` → пуск | площадка |
 | W2 | рабочая машина | только по решению владельца: тот же сбор по `pilot_ids.txt` (канарейка пропускается) | площадка, DJI — до 450 посещений |
 | S2 | SRV-YOQSH | пересчёт 500, `measure --stage pilot`, случаи для проверки глазами | площадка |
-| R | SRV-YOQSH | копия базы пилота сохраняется; база, HEAD, окружение и службы площадки — как до B1; production-сверка | площадка |
+| R | SRV-YOQSH | копия базы пилота сохраняется; база, HEAD, окружение, службы площадки и задача `DjiAreaRefreshStaging` — как до B1 (задача не запускается); production-сверка | площадка |
 
 Список вылетов на рабочую машину передаётся через блок. B0 печатает
 номера, блок W пишет файл и сверяет его sha256 с `plan.json`.
@@ -398,30 +410,50 @@ Production только читается (HEAD и три службы — до �
      их точно); другие службы площадки и задачи планировщика (§5);
    * окружение службы площадки читается (печатаются только имена
      переменных); `DJI_REFRESH_LAUNCHER` в окружении машины, в
-     `AppEnvironment` или в значении `Environment` службы — отказ.
+     `AppEnvironment` или в значении `Environment` службы — отказ;
+   * задачу `DjiAreaRefreshStaging` — ровно та, что показал D1: одна задача
+     с этим именем, папка `\`, `Enabled=True`, не `Running`, нет процессов
+     цикла площадки, отпечатки действия, триггеров и выгруженного XML
+     равны выводу D1, внешняя обёртка
+     `C:\ProgramData\VehicleSoft\DjiAreaRefreshStaging.ps1` есть и её
+     sha256 равен выводу D1 (XML задачи не меняется, когда меняется
+     обёртка, поэтому её sha256 проверяется отдельно). Любое расхождение —
+     отказ до изменений. В общей проверке задач она видна как
+     `KNOWN_AND_DISABLED_FOR_PILOT`, а не как разрешённая; любая другая
+     задача, пишущая в площадку, по-прежнему — отказ.
 2. **Пишет всё для точного возврата** в
    `D:\transport-report-backups\staging\card_pilot\staging_<время>`:
    HEAD и ветку, состояние и тип запуска трёх служб, размер базы,
-   production HEAD и службы. Затем — первая онлайн-копия базы площадки
-   (`staging_before`, с `integrity_check`, sha256 в
-   `staging_backup.txt`).
-3. **Боты** — `Disabled` и стоп, затем стоп службы площадки и проверка,
+   production HEAD и службы, состояние задачи (`task_before.txt`: папка,
+   `Enabled`, `State`, три отпечатка, путь и sha256 обёртки).
+3. **Задача отключается — это первое изменение.** Задача читается заново;
+   если она уже `Running` или идёт процесс цикла — отказ без изменений:
+   ни задача, ни процесс не останавливаются принудительно. Затем пишется
+   отметка `task_isolation.txt` («R вернёт задачу»), выполняется
+   `Disable-ScheduledTask` только для `\DjiAreaRefreshStaging`, повторное
+   чтение доказывает `Enabled=False` / `Disabled` и что процессов цикла
+   нет; затем — `task_disabled.txt`. Только после этого — первая
+   онлайн-копия базы площадки (`staging_before`, с `integrity_check`,
+   sha256 в `staging_backup.txt`).
+4. **Боты** — `Disabled` и стоп, затем стоп службы площадки и проверка,
    что базу никто не держит. `DJI_REFRESH_LAUNCHER` убирается из
    окружения службы: в `refresh_launcher.txt` — эта строка и её номер, в
    `env_extra_before.txt` — число строк и sha256 всего списка (значения
    других переменных не печатаются и не сохраняются). Вторая онлайн-копия
    (`staging_final`) — это то, что R вернёт: после остановки служб в базу
    больше никто не пишет.
-4. **Ревизия пилота** `39eab50`, `compileall`, тесты инструмента и ядра
+5. **Ревизия пилота** `39eab50`, `compileall`, тесты инструмента и ядра
    паспорта.
-5. **База площадки = копия B0**: проверка блокировки, файл копируется,
+6. **База площадки = копия B0**: проверка блокировки, файл копируется,
    sha256 равен копии (`placed.txt`), отпечаток (`fingerprint`) равен
    `plan\fingerprint_before.json` байт в байт, реестр — 60 миграций.
    Миграции не запускаются.
-6. **Пуск только службы площадки**: `/login` — 200, `/drones/fields` без
+7. **Пуск только службы площадки**: `/login` — 200, `/drones/fields` без
    входа ведёт на форму входа. Отпечаток после пуска снова равен B0,
-   реестр — 60. Боты — `Stopped` и `Disabled`.
-7. **Production после**: HEAD и три службы `Running` — как до.
+   реестр — 60. Боты — `Stopped` и `Disabled`. Оба барьера на месте:
+   задача `Disabled` и `DJI_REFRESH_LAUNCHER` нет в окружении службы.
+8. **Production после**: HEAD и три службы `Running` — как до. Задачи
+   production не трогаются.
 
 Если блок встал до первого изменения площадки, он сам закрывает свою папку
 (`returned.txt`) и печатает `STAGING_CHANGED=no`; повторить можно сразу.
@@ -453,6 +485,14 @@ Production только читается (HEAD и три службы — до �
   $work         = 'C:\VehicleSoft_CardPilot'
   $svcKey       = 'HKLM:\SYSTEM\CurrentControlSet\Services'
   $machineKey   = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment'
+  $isoTask      = 'DjiAreaRefreshStaging'
+  $isoPath      = '\'
+  $isoEnabled   = 'True'
+  $isoActionFp  = 'ba8fe81d76697c38e7aa3e8f42069839365687652b00d45996d688b137845082'
+  $isoTriggerFp = '36a9e7f1c95b82ffb99743e0c5c4ce95d83c9a430aac59f84ef3cbfab6145068'
+  $isoXmlSha    = 'ac522141953b6346ff76d2b0cad86f00ae10a52988984c2c4c5d8d91fc4f5117'
+  $isoWrapper   = 'C:\ProgramData\VehicleSoft\DjiAreaRefreshStaging.ps1'
+  $isoWrapperSha = '8ca2aeddfe664ce471bcdc991ea973ded9da2a2039e9de2ce8185b8c88b163c1'
   $planDir      = Join-Path $baseline 'plan'
   $stamp        = Get-Date -Format 'yyyyMMdd_HHmmss'
   $runDir       = Join-Path $runRoot ('staging_' + $stamp)
@@ -460,6 +500,31 @@ Production только читается (HEAD и три службы — до �
   $prodWant     = 'TransportBot=Running TransportBot003=Running TransportReport=Running'
   function Get-ProdServices { (@($prodNames | ForEach-Object { $s = Get-Service -Name $_ -ErrorAction SilentlyContinue; if ($s) { $_ + '=' + $s.Status } else { $_ + '=missing' } }) -join ' ') }
   function Get-ListHash([string[]]$list) { $h = [System.Security.Cryptography.SHA256]::Create(); -join ($h.ComputeHash([System.Text.Encoding]::UTF8.GetBytes(($list -join "`n"))) | ForEach-Object { $_.ToString('x2') }) }
+  function Get-TextHash([string]$text) { $h = [System.Security.Cryptography.SHA256]::Create(); -join ($h.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($text)) | ForEach-Object { $_.ToString('x2') }) }
+  function Get-CimLine($o) {
+    $parts = @()
+    foreach ($p in @($o.CimInstanceProperties | Sort-Object Name)) {
+      $v = $p.Value
+      if (($null -eq $v) -or ([string]$v -eq '')) { continue }
+      if ($v.CimInstanceProperties) {
+        foreach ($q in @($v.CimInstanceProperties | Sort-Object Name)) { if (($null -ne $q.Value) -and ([string]$q.Value -ne '')) { $parts += ($p.Name + '.' + $q.Name + '=' + (@($q.Value) -join ',')) } }
+      } else {
+        $parts += ($p.Name + '=' + (@($v) -join ','))
+      }
+    }
+    [string]$o.CimClass.CimClassName + ' ' + ($parts -join ' ')
+  }
+  function Get-IsoState([string]$name, [string]$wrapper) {
+    $all = @(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue)
+    if ($all.Count -ne 1) { throw "STEP FAILED: $($all.Count) scheduled tasks are named $name, expected exactly one -- send this output" }
+    $t = $all[0]
+    $actionLines = @(@($t.Actions) | ForEach-Object { [string]$_.Execute + '|' + [string]$_.Arguments + '|' + [string]$_.WorkingDirectory })
+    $triggerLines = @(@($t.Triggers) | ForEach-Object { Get-CimLine $_ })
+    $wrapperSha = 'missing'
+    if (Test-Path -LiteralPath $wrapper) { $wrapperSha = (Get-FileHash -LiteralPath $wrapper -Algorithm SHA256).Hash.ToLower() }
+    [pscustomobject]@{ Path = [string]$t.TaskPath; State = [string]$t.State; Enabled = [string]$t.Settings.Enabled; ActionFp = (Get-TextHash ($actionLines -join "`n")); TriggerFp = (Get-TextHash ($triggerLines -join "`n")); XmlSha = (Get-TextHash ([string](Export-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath))); WrapperSha = $wrapperSha }
+  }
+  function Get-IsoProcesses([string]$name) { @(Get-CimInstance -ClassName Win32_Process | Where-Object { $c = [string]$_.CommandLine; ($c -match [regex]::Escape($name)) -or (($c -match 'dji_area_daily|dji_area_recalc|drone_collector') -and ($c -match 'transport-report-staging')) }) }
   function Test-SameFile([string]$a, [string]$b) { (Get-FileHash -LiteralPath $a -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $b -Algorithm SHA256).Hash }
   function Save-Backup([string]$label) {
     $dir = Join-Path $runDir $label
@@ -569,6 +634,18 @@ Production только читается (HEAD и три службы — до �
     $liveOthers = @($others | Where-Object { ([string]$_.Status -ne 'Stopped') -or (@('Manual', 'Disabled') -notcontains [string]$_.StartType) })
     if ($liveOthers.Count -gt 0) { throw "STEP FAILED: other staging services are running or start by themselves and could touch the pilot database: $(($liveOthers | ForEach-Object { $_.Name }) -join ', ')" }
 
+    $iso = Get-IsoState $isoTask $isoWrapper
+    Write-Output ("ISOLATE_TASK " + $isoTask + " path=" + $iso.Path + " state=" + $iso.State + " enabled=" + $iso.Enabled + " wrapper=" + $iso.WrapperSha)
+    if ($iso.Path -ne $isoPath) { throw "STEP FAILED: $isoTask is in folder $($iso.Path), D1 saw $isoPath -- send this output" }
+    if ($iso.Enabled -ne $isoEnabled) { throw "STEP FAILED: $isoTask Enabled=$($iso.Enabled), D1 saw $isoEnabled -- send this output" }
+    if ($iso.State -eq 'Running') { throw "STEP FAILED: $isoTask is running now; nothing was changed -- run B1 again after it finishes" }
+    foreach ($c in @(@('action', $iso.ActionFp, $isoActionFp), @('trigger', $iso.TriggerFp, $isoTriggerFp), @('task XML', $iso.XmlSha, $isoXmlSha), @('wrapper', $iso.WrapperSha, $isoWrapperSha))) {
+      if ($c[1] -ne $c[2]) { throw "STEP FAILED: the $($c[0]) fingerprint of $isoTask is $($c[1]), D1 saw $($c[2]) -- send this output" }
+    }
+    $isoProcs = @(Get-IsoProcesses $isoTask)
+    if ($isoProcs.Count -gt 0) { throw "STEP FAILED: $($isoProcs.Count) process(es) of the staging refresh cycle are running; nothing was changed -- run B1 again after they finish" }
+    Write-Output 'ISOLATE_TASK_VERIFIED=action, triggers, task XML and wrapper equal D1; not running'
+
     $refused = @()
     $seen = 0
     foreach ($t in @(Get-ScheduledTask | Where-Object { ([string]$_.TaskPath -notlike '\Microsoft\*') -and ([string]$_.State -ne 'Disabled') })) {
@@ -581,12 +658,13 @@ Production только читается (HEAD и три службы — до �
       if (($text -match 'C:\\transport-report\\') -and (@($wds | Where-Object { $_ -notmatch '^C:\\transport-report(\\|$)' }).Count -eq 0)) { $kind = 'production' }
       if ($text -match 'VehicleSoft_|Holdout') { $kind = 'pilot-or-holdout' }
       if (($t.TaskName -match 'Staging') -or ($text -match 'transport-report-staging|:5051')) { $kind = 'staging' }
-      $ok = (@('production', 'other') -contains $kind) -or (($knownTasks -contains $t.TaskName) -and ($text -match 'backup_transport_db\.py|backup_staging_db\.bat'))
+      if (($t.TaskName -eq $isoTask) -and ([string]$t.TaskPath -eq $isoPath)) { $kind = 'KNOWN_AND_DISABLED_FOR_PILOT' }
+      $ok = (@('production', 'other', 'KNOWN_AND_DISABLED_FOR_PILOT') -contains $kind) -or (($knownTasks -contains $t.TaskName) -and ($text -match 'backup_transport_db\.py|backup_staging_db\.bat'))
       Write-Output ("TASK " + $t.TaskName + " " + $t.State + " " + $kind + " exe=" + $exe + " wd=" + ($wds -join ' ; ') + $(if ($ok) { '' } else { ' REFUSED' }))
       if (-not $ok) { $refused += $t.TaskName }
     }
     if ($refused.Count -gt 0) { throw "STEP FAILED: enabled scheduled task(s) that may write to staging: $($refused -join ', ') -- send this output" }
-    Write-Output ("TASKS_CHECKED=" + $seen + " enabled (" + ($knownTasks -join ', ') + " only backs up the staging database; production tasks write production only; 'other' lines are reviewed before the canary)")
+    Write-Output ("TASKS_CHECKED=" + $seen + " enabled (" + ($knownTasks -join ', ') + " only backs up the staging database; " + $isoTask + " is disabled for the pilot before any other change; production tasks write production only; 'other' lines are reviewed before the canary)")
 
     $params = Get-ItemProperty -LiteralPath $siteParams -ErrorAction SilentlyContinue
     $extra = @()
@@ -608,7 +686,7 @@ Production только читается (HEAD и три службы — до �
     if ($freeC -lt (1.5 * $snapBytes)) { throw 'STEP FAILED: not enough free space on C: for the pilot database' }
     try { $pre = Invoke-WebRequest -Uri ($site + '/login') -UseBasicParsing -TimeoutSec 30; Write-Output ("STAGING_LOGIN_BEFORE=" + $pre.StatusCode) } catch { Write-Output ("STAGING_LOGIN_BEFORE=ERROR " + $_.Exception.Message) }
 
-    Write-Output '== 2. Everything needed for the exact restore, then an online backup'
+    Write-Output '== 2. Everything needed for the exact restore (nothing is changed yet)'
     New-Item -ItemType Directory -Force -Path $runDir | Out-Null
     Set-Content -LiteralPath (Join-Path $runDir 'before_head.txt') -Value $before -Encoding ASCII
     Set-Content -LiteralPath (Join-Path $runDir 'before_ref.txt') -Value $beforeRef -Encoding ASCII
@@ -617,10 +695,23 @@ Production только читается (HEAD и три службы — до �
     Set-Content -LiteralPath (Join-Path $runDir 'prod_head.txt') -Value $prodHead -Encoding ASCII
     Set-Content -LiteralPath (Join-Path $runDir 'prod_services.txt') -Value $prodServices -Encoding ASCII
     Set-Content -LiteralPath (Join-Path $runDir 'baseline.txt') -Value @($baseline, $snapshot, $snapSha.ToLower()) -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $runDir 'task_before.txt') -Value @(('name=' + $isoTask), ('path=' + $iso.Path), ('enabled=' + $iso.Enabled), ('state=' + $iso.State), ('action=' + $iso.ActionFp), ('trigger=' + $iso.TriggerFp), ('xml=' + $iso.XmlSha), ('wrapper=' + $isoWrapper), ('wrapper_sha=' + $iso.WrapperSha)) -Encoding ASCII
+
+    Write-Output '== 3. The staging refresh task disabled for the pilot (the first change)'
+    $again = Get-IsoState $isoTask $isoWrapper
+    if (($again.Path -ne $isoPath) -or ($again.Enabled -ne $isoEnabled) -or ($again.ActionFp -ne $isoActionFp) -or ($again.TriggerFp -ne $isoTriggerFp) -or ($again.XmlSha -ne $isoXmlSha) -or ($again.WrapperSha -ne $isoWrapperSha)) { throw "STEP FAILED: $isoTask changed after the checks; nothing was changed -- send this output" }
+    if (($again.State -eq 'Running') -or (@(Get-IsoProcesses $isoTask).Count -gt 0)) { throw "STEP FAILED: $isoTask started running; nothing was changed -- run B1 again after it finishes" }
+    Set-Content -LiteralPath (Join-Path $runDir 'task_isolation.txt') -Value ("$isoTask is disabled for the pilot; block R gives it back enabled=" + $again.Enabled + " from task_before.txt and never starts it") -Encoding ASCII
+    $touched = $true
+    if ($again.Enabled -eq 'True') { Disable-ScheduledTask -TaskName $isoTask -TaskPath $isoPath | Out-Null }
+    $off = Get-IsoState $isoTask $isoWrapper
+    if (($off.Enabled -ne 'False') -or ($off.State -ne 'Disabled')) { throw "STEP FAILED: $isoTask is Enabled=$($off.Enabled) State=$($off.State) after it was disabled" }
+    if (@(Get-IsoProcesses $isoTask).Count -gt 0) { throw "STEP FAILED: a run of $isoTask is in progress -- send this output" }
+    Set-Content -LiteralPath (Join-Path $runDir 'task_disabled.txt') -Value ("$isoTask Enabled=False State=Disabled") -Encoding ASCII
+    Write-Output ("ISOLATE_TASK_NOW=Disabled (was enabled=" + $again.Enabled + "; block R gives that back, nothing here starts it)")
     Save-Backup 'staging_before'
 
-    Write-Output '== 3. Staging bots disabled and stopped, then the staging site stopped'
-    $touched = $true
+    Write-Output '== 4. Staging bots disabled and stopped, then the staging site stopped'
     Set-Content -LiteralPath (Join-Path $runDir 'bots_disabled.txt') -Value 'staging bots are set to Disabled and stopped for the pilot; services_before.txt has their state before' -Encoding ASCII
     foreach ($name in $bots) {
       Set-Service -Name $name -StartupType Disabled
@@ -648,7 +739,7 @@ Production только читается (HEAD и три службы — до �
     }
     Save-Backup 'staging_final'
 
-    Write-Output '== 4. The pilot revision of the code'
+    Write-Output '== 5. The pilot revision of the code'
     git checkout --quiet --detach $pin
     if ($LASTEXITCODE -ne 0) { throw 'STEP FAILED: git checkout of the pilot revision' }
     $head = [string](git rev-parse HEAD)
@@ -659,7 +750,7 @@ Production только читается (HEAD и три службы — до �
     & $python -m unittest tests.test_dji_card_coverage_pilot tests.test_drone_field_passport_core
     if ($LASTEXITCODE -ne 0) { throw 'STEP FAILED: pilot tool and field passport tests' }
 
-    Write-Output '== 5. The staging database becomes the exact B0 snapshot'
+    Write-Output '== 6. The staging database becomes the exact B0 snapshot'
     & $python tools\check_db_lock.py --db $db
     $lock = $LASTEXITCODE
     if (($lock -ne 0) -and ($lock -ne 3)) { throw "STEP FAILED: check_db_lock exit $lock -- another process holds the staging database (2) or it is missing" }
@@ -683,7 +774,7 @@ Production только читается (HEAD и три службы — до �
     Write-Output ("REGISTERED=" + ($registered -join ',') + " (no migrations are run; drift.log in the run folder)")
     if (($registered.Count -ne 1) -or ($registered[0] -ne '60')) { throw 'STEP FAILED: the pilot database does not report 60 registered migrations' }
 
-    Write-Output '== 6. Starting the staging site only'
+    Write-Output '== 7. Starting the staging site only'
     Start-Service -Name $service
     (Get-Service -Name $service).WaitForStatus('Running', (New-TimeSpan -Seconds 90))
     Start-Sleep -Seconds 8
@@ -711,7 +802,12 @@ Production только читается (HEAD и три службы — до �
       Write-Output ("BOT_FINAL " + $s.Name + " " + $s.Status + " " + $s.StartType)
     }
 
-    Write-Output '== 7. Production after -- must be exactly as before'
+    $fin = Get-IsoState $isoTask $isoWrapper
+    $launcherLeft = @(@((Get-ItemProperty -LiteralPath $siteParams).AppEnvironmentExtra) -match '^\s*DJI_REFRESH_LAUNCHER=').Count
+    if (($fin.Enabled -ne 'False') -or ($launcherLeft -ne 0)) { throw "STEP FAILED: the barriers are not both in place: $isoTask Enabled=$($fin.Enabled), DJI_REFRESH_LAUNCHER lines=$launcherLeft" }
+    Write-Output ("BARRIERS=" + $isoTask + " Disabled, DJI_REFRESH_LAUNCHER absent from the staging site")
+
+    Write-Output '== 8. Production after -- must be exactly as before'
     $prodHeadAfter = [string](git -C $prodRoot rev-parse HEAD)
     $prodServicesAfter = Get-ProdServices
     Write-Output ("PROD_HEAD_AFTER=" + $prodHeadAfter)
@@ -748,9 +844,14 @@ Production только читается (HEAD и три службы — до �
   `PROD_SERVICES=TransportBot=Running TransportBot003=Running TransportReport=Running`;
 * `BEFORE_HEAD=…`, `STAGING_DB=… BYTES=…`, `STAGING_ROW=occupied …`,
   `PIN_VS_PRODUCTION=8 file(s), application files 0`;
-* `SERVICE_BEFORE …` — три строки; строки `TASK …` (ни одной с `REFUSED`)
-  и `TASKS_CHECKED=…`; `SITE_ENV_NAMES=…` (только имена);
-  `DJI_REFRESH_LAUNCHER_BEFORE=…`;
+* `SERVICE_BEFORE …` — три строки;
+* `ISOLATE_TASK DjiAreaRefreshStaging path=\ state=Ready enabled=True wrapper=8ca2aedd…`,
+  `ISOLATE_TASK_VERIFIED=…`;
+* строки `TASK …` (ни одной с `REFUSED`), среди них
+  `TASK DjiAreaRefreshStaging Ready KNOWN_AND_DISABLED_FOR_PILOT`, и
+  `TASKS_CHECKED=…`; `SITE_ENV_NAMES=…` (только имена);
+  `DJI_REFRESH_LAUNCHER_BEFORE=schtasks (staging site; switched off for the pilot)`;
+* `ISOLATE_TASK_NOW=Disabled (was enabled=True; …)`;
 * `STAGING_BACKUP staging_before … integrity=ok`;
 * `BOT_NOW … Stopped Disabled` — две строки, `SERVICE_STOPPED=Stopped`,
   `DB_LOCK_AFTER_STOP=0` или `3`; если кнопка была включена —
@@ -760,7 +861,8 @@ Production только читается (HEAD и три службы — до �
 * `PLACED=… (equals the B0 snapshot)`, `FINGERPRINT_PLACED=equals …`,
   `REGISTERED=60`;
 * `SMOKE_LOGIN=200`, `FIELDS_ANONYMOUS=…`, `FINGERPRINT_STARTED=equals …`,
-  `REGISTERED_AFTER_START=60`, `BOT_FINAL … Stopped Disabled` — две строки;
+  `REGISTERED_AFTER_START=60`, `BOT_FINAL … Stopped Disabled` — две строки,
+  `BARRIERS=DjiAreaRefreshStaging Disabled, DJI_REFRESH_LAUNCHER absent from the staging site`;
 * `PROD_HEAD_AFTER=8df5683…`, `PROD_SERVICES_AFTER=` — три `Running`;
 * `FINAL_HEAD=39eab50…`, `SERVICE_FINAL=Running`, `RUN=…`.
 
@@ -1001,6 +1103,17 @@ con.close()
 весь вывод. По нему решается, как B1 изолирует задачу на время пилота и как R
 её возвращает.
 
+**Живой вывод 03.10.2026 — PASS, ничего не изменено.** Одна задача, папка
+`\`, `Ready`, `Enabled=True`, учётная запись `S4U`/`Highest`,
+`MultipleInstances=IgnoreNew`, `StartWhenAvailable=True`; действие —
+`powershell.exe -File "C:\ProgramData\VehicleSoft\DjiAreaRefreshStaging.ps1"`.
+Обёртка пишет в базу площадки через `tools\dji_area_daily.py --run-queued
+--stop-above 50`, приём — только на `127.0.0.1:5051`, сборщик — venv,
+сессия и замок production. `STAGING_WRITER=yes`, процессов нет; в журнале
+циклов площадки 3 ручных и 1 плановый прогон. Кнопка площадки запускает
+именно её (`DJI_REFRESH_LAUNCHER=schtasks`, `BUTTON_STARTS_THIS_TASK=yes`).
+Отпечатки действия, триггеров, XML и sha256 обёртки зашиты в B1.
+
 ### R — SRV-YOQSH: возврат площадки
 
 Выдаётся только после разбора: по окончании пилота или если B1 встал с
@@ -1027,6 +1140,14 @@ con.close()
   `STEP=PASS_WITH_NOTES` с пояснением, значения не печатаются.
 * Службы — тип запуска и состояние из `services_before.txt`; если служба
   площадки работала — `/login` 200.
+* Задача `DjiAreaRefreshStaging` — после базы, кода, окружения и служб, до
+  `returned.txt`, по `task_before.txt`: сначала папка, отпечатки действия и
+  триггеров и sha256 обёртки должны совпасть с записанными (иначе отказ,
+  задача остаётся как есть — отключённой); затем `Enable-ScheduledTask`,
+  если до B1 она была включена (была отключена — остаётся отключённой);
+  затем `Enabled` и sha256 выгруженного XML — как до B1 (XML не совпал —
+  задача отключается обратно, отказ). Вручную задача не запускается
+  никогда. Повтор R сходится: включённая задача второй раз не включается.
 * Production не трогается, HEAD и службы сверяются до и после.
 * `returned.txt` пишется последним. Если R встал посередине, его можно
   запустить снова: восстановленная база второй раз не перезаписывается
@@ -1051,6 +1172,31 @@ con.close()
   $siteParams   = $svcKey + '\' + $service + '\Parameters'
   $stamp        = Get-Date -Format 'yyyyMMdd_HHmmss'
   function Get-ListHash([string[]]$list) { $h = [System.Security.Cryptography.SHA256]::Create(); -join ($h.ComputeHash([System.Text.Encoding]::UTF8.GetBytes(($list -join "`n"))) | ForEach-Object { $_.ToString('x2') }) }
+  function Get-TextHash([string]$text) { $h = [System.Security.Cryptography.SHA256]::Create(); -join ($h.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($text)) | ForEach-Object { $_.ToString('x2') }) }
+  function Get-CimLine($o) {
+    $parts = @()
+    foreach ($p in @($o.CimInstanceProperties | Sort-Object Name)) {
+      $v = $p.Value
+      if (($null -eq $v) -or ([string]$v -eq '')) { continue }
+      if ($v.CimInstanceProperties) {
+        foreach ($q in @($v.CimInstanceProperties | Sort-Object Name)) { if (($null -ne $q.Value) -and ([string]$q.Value -ne '')) { $parts += ($p.Name + '.' + $q.Name + '=' + (@($q.Value) -join ',')) } }
+      } else {
+        $parts += ($p.Name + '=' + (@($v) -join ','))
+      }
+    }
+    [string]$o.CimClass.CimClassName + ' ' + ($parts -join ' ')
+  }
+  function Get-IsoState([string]$name, [string]$wrapper) {
+    $all = @(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue)
+    if ($all.Count -ne 1) { throw "STEP FAILED: $($all.Count) scheduled tasks are named $name, expected exactly one -- send this output" }
+    $t = $all[0]
+    $actionLines = @(@($t.Actions) | ForEach-Object { [string]$_.Execute + '|' + [string]$_.Arguments + '|' + [string]$_.WorkingDirectory })
+    $triggerLines = @(@($t.Triggers) | ForEach-Object { Get-CimLine $_ })
+    $wrapperSha = 'missing'
+    if (Test-Path -LiteralPath $wrapper) { $wrapperSha = (Get-FileHash -LiteralPath $wrapper -Algorithm SHA256).Hash.ToLower() }
+    [pscustomobject]@{ Path = [string]$t.TaskPath; State = [string]$t.State; Enabled = [string]$t.Settings.Enabled; ActionFp = (Get-TextHash ($actionLines -join "`n")); TriggerFp = (Get-TextHash ($triggerLines -join "`n")); XmlSha = (Get-TextHash ([string](Export-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath))); WrapperSha = $wrapperSha }
+  }
+  function Get-IsoProcesses([string]$name) { @(Get-CimInstance -ClassName Win32_Process | Where-Object { $c = [string]$_.CommandLine; ($c -match [regex]::Escape($name)) -or (($c -match 'dji_area_daily|dji_area_recalc|drone_collector') -and ($c -match 'transport-report-staging')) }) }
   function Get-ProdServices { (@($prodNames | ForEach-Object { $s = Get-Service -Name $_ -ErrorAction SilentlyContinue; if ($s) { $_ + '=' + $s.Status } else { $_ + '=missing' } }) -join ' ') }
   New-Item -ItemType Directory -Force -Path $work | Out-Null
   $log = Join-Path $work ('card_pilot_r_' + $stamp + '.log')
@@ -1096,6 +1242,18 @@ con.close()
       if ($freeD -lt (1.5 * $dbBytes + 100MB)) { throw 'STEP FAILED: not enough free space on D: to keep a copy of the pilot database' }
     } else {
       Write-Output 'RESTORE_FROM=none (the staging database was never replaced)'
+    }
+    $isoSaved = $null
+    $taskFile = Join-Path $run 'task_before.txt'
+    if (Test-Path -LiteralPath $taskFile) {
+      $isoSaved = @{}
+      foreach ($line in @(Get-Content -LiteralPath $taskFile | Where-Object { $_ -match '^[a-z_]+=' })) { $kv = $line.Split('=', 2); $isoSaved[$kv[0]] = $kv[1] }
+      foreach ($k in @('name', 'path', 'enabled', 'action', 'trigger', 'xml', 'wrapper', 'wrapper_sha')) { if (-not $isoSaved.ContainsKey($k)) { throw "STEP FAILED: task_before.txt has no $k -- send this output" } }
+      if (@('True', 'False') -notcontains $isoSaved['enabled']) { throw "STEP FAILED: task_before.txt says enabled=$($isoSaved['enabled'])" }
+      $pre = Get-IsoState $isoSaved['name'] $isoSaved['wrapper']
+      Write-Output ("TASK_BEFORE_B1 " + $isoSaved['name'] + " path=" + $isoSaved['path'] + " enabled=" + $isoSaved['enabled'] + "; now enabled=" + $pre.Enabled + " state=" + $pre.State)
+    } else {
+      Write-Output 'TASK_BEFORE_B1=none recorded (B1 stopped before it saved the task state)'
     }
     $launcherFile = Join-Path $run 'refresh_launcher.txt'
     $launcher = @()
@@ -1223,7 +1381,27 @@ con.close()
       Write-Output 'SMOKE_LOGIN=200'
     }
 
-    Write-Output '== 7. Production -- this block does not touch it'
+    Write-Output '== 7. The staging refresh task as it was before B1 (it is not started)'
+    if ($isoSaved) {
+      $cur = Get-IsoState $isoSaved['name'] $isoSaved['wrapper']
+      if ($cur.Path -ne $isoSaved['path']) { throw "STEP FAILED: $($isoSaved['name']) is in folder $($cur.Path), before B1 it was $($isoSaved['path'])" }
+      foreach ($c in @(@('action fingerprint', $cur.ActionFp, $isoSaved['action']), @('trigger fingerprint', $cur.TriggerFp, $isoSaved['trigger']), @('wrapper sha256', $cur.WrapperSha, $isoSaved['wrapper_sha']))) {
+        if ($c[1] -ne $c[2]) { throw "STEP FAILED: $($isoSaved['name']) $($c[0]) is $($c[1]), before B1 it was $($c[2]); the task is left as it is (enabled=$($cur.Enabled)) -- send this output" }
+      }
+      if (($isoSaved['enabled'] -eq 'True') -and ($cur.Enabled -ne 'True')) { Enable-ScheduledTask -TaskName $isoSaved['name'] -TaskPath $isoSaved['path'] | Out-Null }
+      if (($isoSaved['enabled'] -eq 'False') -and ($cur.Enabled -ne 'False')) { Disable-ScheduledTask -TaskName $isoSaved['name'] -TaskPath $isoSaved['path'] | Out-Null }
+      $cur = Get-IsoState $isoSaved['name'] $isoSaved['wrapper']
+      if ($cur.Enabled -ne $isoSaved['enabled']) { throw "STEP FAILED: $($isoSaved['name']) Enabled is $($cur.Enabled), before B1 it was $($isoSaved['enabled'])" }
+      if ($cur.XmlSha -ne $isoSaved['xml']) {
+        if ($cur.Enabled -eq 'True') { Disable-ScheduledTask -TaskName $isoSaved['name'] -TaskPath $isoSaved['path'] | Out-Null }
+        throw "STEP FAILED: $($isoSaved['name']) task XML sha256 is $($cur.XmlSha), before B1 it was $($isoSaved['xml']); the task is left disabled -- send this output"
+      }
+      Write-Output ("TASK_RESTORED " + $isoSaved['name'] + " enabled=" + $cur.Enabled + " state=" + $cur.State + " (action, triggers, task XML and wrapper equal the state before B1; not started)")
+    } else {
+      Write-Output 'TASK_RESTORED=not needed'
+    }
+
+    Write-Output '== 8. Production -- this block does not touch it'
     $prodHeadAfter = [string](git -C $prodRoot rev-parse HEAD)
     $prodServicesAfter = Get-ProdServices
     Write-Output ("PROD_HEAD_AFTER=" + $prodHeadAfter)
@@ -1252,7 +1430,7 @@ con.close()
 (unchanged since B1)` (или `none`, если база не заменялась),
 `PILOT_DB_KEPT=…`, `DB_RESTORED=…`, `HEAD_RESTORED=…`,
 `DJI_REFRESH_LAUNCHER=restored (the whole environment list equals …)` (или
-`not touched by B1`), три строки
+`not touched by B1`), `TASK_RESTORED DjiAreaRefreshStaging enabled=True …`, три строки
 `SERVICE_NOW …` как до B1, `SMOKE_LOGIN=200`, `RETURNED=…`. После — PR
 освобождения `docs/STAGING.md`.
 
