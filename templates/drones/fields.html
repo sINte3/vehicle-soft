@@ -1,0 +1,127 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Дроны — поля DJI' if is_ru else 'Дронлар — DJI далалари' }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+{# DRONE-FIELD-PASSPORT-001. Список записей полей каталога DJI: поиск,
+   период и сколько вылетов к записи привязано. Геометрии здесь нет вовсе,
+   принятая площадь по 6 000 полей не считается -- она в карточке поля.
+   Поле здесь -- ЗАПИСЬ каталога DJI (land uuid): правка поля в кабинете
+   может дать новую запись, и разные записи автоматически не сливаются. #}
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Поля DJI' if is_ru else 'DJI далалари' }}</div>
+    <div class="vs-hero-sub">{{ 'Записи полей из каталога DJI и вылеты, которые привязаны к ним по доказательствам. Откройте поле, чтобы увидеть его работы: DJI RAW, исключено, принято и почему.' if is_ru else 'DJI каталогидаги дала ёзувлари ва уларга далиллар бўйича боғланган парвозлар. Ишларини кўриш учун далани очинг: DJI RAW, чиқарилган, қабул қилинган ва нима учун.' }}</div>
+  </div>
+</div>
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-body">
+    <form method="get" action="{{ url_for('drones.fields') }}" class="vs-form-row">
+      <div class="vs-field">
+        <label class="vs-label" for="fieldQuery">{{ 'Поиск' if is_ru else 'Қидириш' }}</label>
+        <input type="search" name="q" id="fieldQuery" class="vs-input" value="{{ query }}" maxlength="100" placeholder="{{ 'название, серийный номер, UUID, адрес' if is_ru else 'номи, серия рақами, UUID, манзил' }}">
+      </div>
+      <div class="vs-field">
+        <label class="vs-label" for="fieldDateFrom">{{ 'Вылеты с' if is_ru else 'Парвозлар дан' }}</label>
+        <input type="date" name="date_from" id="fieldDateFrom" class="vs-input" value="{{ filters.date_from_s }}">
+      </div>
+      <div class="vs-field">
+        <label class="vs-label" for="fieldDateTo">{{ 'Вылеты по' if is_ru else 'Парвозлар гача' }}</label>
+        <input type="date" name="date_to" id="fieldDateTo" class="vs-input" value="{{ filters.date_to_s }}">
+      </div>
+      <div class="vs-field">
+        <label class="vs-check-card">
+          <input type="checkbox" name="flights" value="1" {% if only_with_flights %}checked{% endif %}>
+          <span>{{ 'Только поля с вылетами' if is_ru else 'Фақат парвозли далалар' }}</span>
+        </label>
+      </div>
+      <div class="vs-field-action">
+        <button type="submit" class="vs-btn">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if not ready %}
+<div class="vs-alert is-warning vs-mb" role="status">
+  <div>{{ 'Каталог полей DJI недоступен: таблицы слоя доказательств DJI (миграция DJI_AREA_EVIDENCE_001) в этой базе не созданы.' if is_ru else 'DJI далалар каталоги мавжуд эмас: бу базада DJI далиллар қатлами жадваллари (DJI_AREA_EVIDENCE_001 миграцияси) яратилмаган.' }}</div>
+</div>
+{% endif %}
+
+{% if coverage %}
+{# Строка покрытия: у скольких вылетов периода поле определено. Без неё
+   список полей читался бы как «все работы разложены по полям». #}
+<div class="vs-alert {{ 'is-info' if coverage.flights and coverage.confirmed == coverage.flights else 'is-warning' }} vs-mb" role="status">
+  <div>
+    <b>{{ 'Привязка вылетов к полям' if is_ru else 'Парвозларнинг далаларга боғланиши' }}{% if filters.date_from_s or filters.date_to_s %} ({{ filters.date_from_s or '…' }} — {{ filters.date_to_s or '…' }}){% else %} ({{ 'за всё время' if is_ru else 'бутун давр' }}){% endif %}:</b>
+    {{ 'вылетов' if is_ru else 'парвозлар' }} {{ coverage.flights|vs_num }};
+    {{ 'поле подтверждено' if is_ru else 'дала тасдиқланган' }} {{ coverage.confirmed|vs_num }}{% if coverage.confirmed_pct is not none %} ({{ '%.1f'|format(coverage.confirmed_pct) }}%){% endif %},
+    {{ 'из них с сохранённой границей' if is_ru else 'шундан чегараси сақланган' }} {{ coverage.exact|vs_num }};
+    {{ 'предположительно' if is_ru else 'тахминий' }} {{ coverage.provisional|vs_num }};
+    {{ 'неоднозначно' if is_ru else 'ноаниқ' }} {{ coverage.ambiguous|vs_num }};
+    {{ 'не определено' if is_ru else 'аниқланмаган' }} {{ coverage.unresolved|vs_num }} ({{ 'карточка не собрана' if is_ru else 'карточка йиғилмаган' }} {{ coverage.no_card|vs_num }}, {{ 'нет ключа поля' if is_ru else 'дала калити йўқ' }} {{ coverage.no_key|vs_num }});
+    {{ 'привязка не рассчитана' if is_ru else 'боғланиш ҳисобланмаган' }} {{ coverage.not_resolved|vs_num }}.
+    {{ 'Гектары поля складываются только из подтверждённых вылетов.' if is_ru else 'Дала гектарлари фақат тасдиқланган парвозлардан йиғилади.' }}
+  </div>
+</div>
+{% endif %}
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Записи полей DJI' if is_ru else 'DJI дала ёзувлари' }}</span>
+    <span class="vs-soft">{{ 'Всего' if is_ru else 'Жами' }}: {{ total|vs_num }}</span>
+  </div>
+  {% if rows %}
+  <div class="vs-table-scroll">
+  <table class="vs-table is-static">
+    <thead>
+      <tr>
+        <th>{{ 'Поле' if is_ru else 'Дала' }}</th>
+        <th>{{ 'Серийный №' if is_ru else 'Серия №' }}</th>
+        <th>{{ 'Адрес DJI' if is_ru else 'DJI манзили' }}</th>
+        <th class="right">{{ 'Площадь по каталогу DJI, га (справочно)' if is_ru else 'DJI каталоги бўйича майдон, га (маълумот учун)' }}</th>
+        <th class="right">{{ 'Версий границы' if is_ru else 'Чегара версиялари' }}</th>
+        <th class="right">{{ 'Подтверждённых вылетов' if is_ru else 'Тасдиқланган парвозлар' }}</th>
+        <th class="right">{{ 'Предположительных' if is_ru else 'Тахминий' }}</th>
+        <th>{{ 'Последний подтверждённый вылет (UTC+5)' if is_ru else 'Охирги тасдиқланган парвоз (UTC+5)' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td><a href="{{ url_for('drones.field_card', land_uuid=r.land_uuid, **link_args) }}">{{ r.name }}</a>{% if not r.has_name %} <span class="vs-muted">{{ '(без названия)' if is_ru else '(номсиз)' }}</span>{% endif %}</td>
+        <td>{{ r.serial or '—' }}</td>
+        <td class="vs-muted">{{ r.address or '—' }}</td>
+        <td class="right">{% if r.catalog_ha is not none %}{{ '%.2f'|format(r.catalog_ha)|vs_num }}{% else %}—{% endif %}</td>
+        <td class="right">{{ r.boundaries }}</td>
+        <td class="right">{{ r.confirmed|vs_num }}</td>
+        <td class="right">{% if r.provisional %}<span class="vs-badge vs-badge-sm vs-badge-warning">{{ r.provisional|vs_num }}</span>{% else %}—{% endif %}</td>
+        <td>{{ r.last_confirmed_s or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ 'Полей не найдено' if is_ru else 'Далалар топилмади' }}</div>
+    <div class="vs-empty-sub">{{ 'Измените поиск или период. Каталог полей пополняет ежедневный снимок каталога DJI.' if is_ru else 'Қидирув ёки даврни ўзгартиринг. Далалар каталогини DJI каталогининг кунлик сурати тўлдиради.' }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{% if pages > 1 %}
+<div class="vs-row vs-mb">
+  {% if page > 1 %}
+  <a href="{{ url_for('drones.fields', page=page-1, **link_args) }}" class="vs-btn vs-btn-sm">← {{ 'Предыдущая' if is_ru else 'Олдингиси' }}</a>
+  {% endif %}
+  <span class="vs-soft">{{ 'Страница' if is_ru else 'Саҳифа' }} {{ page }} / {{ pages }}</span>
+  {% if page < pages %}
+  <a href="{{ url_for('drones.fields', page=page+1, **link_args) }}" class="vs-btn vs-btn-sm">{{ 'Следующая' if is_ru else 'Кейингиси' }} →</a>
+  {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}

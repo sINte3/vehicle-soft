@@ -778,10 +778,19 @@ def register_wialon_routes(app, editor_required, admin_required):
             flash(_wialon_t('Wialon номи жуда қисқа', 'Название Wialon объекта слишком короткое'), 'warning')
             return redirect(url_for('wialon_mapping_list'))
 
-        duplicate_name = VialonMapping.query.filter(
-            VialonMapping.vialon_name == vname,
-            VialonMapping.id != getattr(m, 'id', 0)
-        ).first()
+        # [REASON]: проверка дубля не должна видеть саму сохраняемую строку.
+        # Новая строка к этому месту уже добавлена в сессию, и запрос с
+        # autoflush сначала записывал её, а потом находил её же: с 04.06.2026
+        # «Добавить» на экране всегда отвечал «Такой Wialon объект уже
+        # существует» и ничего не сохранял -- 01.10.2026 так не легли строки
+        # «Нет в системе» для легковых. Без autoflush новой строки в базе ещё
+        # нет, а свою сохранённую строку запрос исключает по id.
+        with db.session.no_autoflush:
+            duplicate_query = VialonMapping.query.filter(
+                VialonMapping.vialon_name == vname)
+            if m.id is not None:
+                duplicate_query = duplicate_query.filter(VialonMapping.id != m.id)
+            duplicate_name = duplicate_query.first()
         if duplicate_name:
             flash(_wialon_t('Бундай Wialon номи аллақачон мавжуд', 'Такой Wialon объект уже существует'), 'warning')
             return redirect(url_for('wialon_mapping_list'))
