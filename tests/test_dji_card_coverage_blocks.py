@@ -942,10 +942,14 @@ class TaskDiscoveryOnWindows(unittest.TestCase):
                     'ACTION 1 TYPE=MSFT_TaskExecAction', 'ACTION 1 EXECUTE=powershell.exe',
                     'TRIGGER 1 MSFT_TaskDailyTrigger', 'LAST_TASK_RESULT=', 'NEXT_RUN_TIME=',
                     'ACTION_FINGERPRINT=', 'TRIGGER_FINGERPRINT=', 'TASK_XML_SHA256=',
-                    'FILE ' + self.wrapper, 'POINTS_AT STAGING_FOLDER=yes', 'POINTS_AT DAILY_CYCLE=yes',
+                    'POINTS_AT STAGING_FOLDER=yes', 'POINTS_AT DAILY_CYCLE=yes',
                     'STAGING_WRITER=yes', 'CYCLE_RUNS_BY_KIND SCHEDULED count=1',
                     '[line hidden: it names TOKEN]', '-Token [hidden]', 'BUTTON_STARTS_THIS_TASK=no'):
             self.assertIn(key, out)
+        # Get-Item gives the long form of the temp folder (RUNNER~1 -> the
+        # account name), so the file lines are matched by their tail.
+        self.assertRegex(out, r'FILE \S*\\ops\\dji_area_daily_staging\.ps1 BYTES=')
+        self.assertRegex(out, r'FILE \S*\\tools\\dji_area_daily\.py BYTES=')
         for secret in ('abcdefabcdefabcdef', 'abcdefghabcdefgh', 'Person Name'):
             self.assertNotIn(secret, out)
         # read only: the task is exactly as registered
