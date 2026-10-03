@@ -227,6 +227,7 @@ NO_KEY или NOT_IN_CATALOG, это отдельный следующий ан�
 |---|---|---|---|
 | B0 | SRV-YOQSH | онлайн-копия production, перепись сентября и августа, замороженная выборка, отпечатки | только папка пилота на D: и C:\VehicleSoft_CardPilot |
 | B1 | SRV-YOQSH | после мержа PR занятия площадки: всё для точного возврата и две онлайн-копии базы площадки, боты площадки — стоп и `Disabled`, кнопка DJI площадки выключена, закреплённая ревизия, база площадки = копия B0 (сверка sha256 и отпечатком до и после пуска), пуск только службы | площадка |
+| D1 | SRV-YOQSH | только чтение: задача планировщика `DjiAreaRefreshStaging`, на которой встал первый B1 — действие, триггеры, учётная запись, прогоны, что она пишет в базу площадки, связь с кнопкой | только журнал блока в C:\VehicleSoft_CardPilot |
 | W1 | рабочая машина | канарейка 50: `--sources --ids-file canary_ids.txt --send-sources` только на `:5051`, своя очередь, разбор журнала | площадка, DJI — 50 посещений |
 | S1 | SRV-YOQSH | служба площадки стоп → `dji_area_recalc.py --apply --flight-id` (50) → `measure --stage canary` → пуск | площадка |
 | W2 | рабочая машина | только по решению владельца: тот же сбор по `pilot_ids.txt` (канарейка пропускается) | площадка, DJI — до 450 посещений |
@@ -764,6 +765,241 @@ Production только читается (HEAD и три службы — до �
 * `FINAL_HEAD=39eab50…`, `SERVICE_FINAL=Running`, `RUN=…`.
 
 Прислать весь вывод.
+
+### D1 — SRV-YOQSH: разведка задачи `DjiAreaRefreshStaging` (только чтение)
+
+**Почему.** Первый живой B1 (03.10.2026) встал на проверке задач
+планировщика до первого изменения (`STAGING_CHANGED=no`): включённая
+задача `DjiAreaRefreshStaging` (`Ready`, вид `staging`, `powershell.exe`).
+В список разрешённых она не добавляется: если она пишет в площадку, на время
+пилота её нужно отключить, а R — вернуть как было. Сначала — что она делает.
+
+D1 ничего не меняет: ни задачу, ни службы, ни базу, ни реестр, ни git.
+Пишет только свой журнал в `C:\VehicleSoft_CardPilot`. Показывает:
+
+* имя, папку, состояние, `Enabled`, учётную запись (`UserId`, `LogonType`,
+  `RunLevel`), настройки;
+* действия — `Execute`, `Arguments`, `WorkingDirectory`; триггеры;
+  `LastRunTime`, `LastTaskResult`, `NextRunTime`;
+* отпечатки действия, триггеров и выгруженного определения задачи — для
+  проверки «определение не изменилось» в следующем B1;
+* файлы, которые запускает действие (обёртки `.ps1`/`.bat`/`.cmd` — текстом,
+  `.py` — размер и sha256), на два уровня вглубь;
+* на что указывает: папка площадки, порт 5051, папка production, цикл
+  площади, сборщик, пересчёт, holdout — и итог `STAGING_WRITER`;
+* идёт ли она сейчас: процессы цикла и сборщика, файлы замков;
+* журнал циклов площади в базе площадки (`mode=ro`): сколько прогонов по
+  расписанию и вручную, последние 10;
+* связана ли с ней кнопка «Обновить данные DJI» площадки
+  (`DJI_REFRESH_LAUNCHER=schtasks` и `DJI_REFRESH_TASK_NAME`).
+
+Секреты не печатаются: строка обёртки, где упомянуты token, secret,
+password, cookie, bearer, authorization или api key, скрывается целиком; в
+аргументах и командных строках скрываются значения `ключ=значение`,
+`-Token значение` и длинные случайные строки. Из окружения службы —
+только имена переменных и режим кнопки.
+
+```powershell
+& {
+  $ErrorActionPreference = 'Stop'
+  $ProgressPreference = 'SilentlyContinue'
+  $expectedHost = 'srv-yoqsh'
+  $taskName     = 'DjiAreaRefreshStaging'
+  $root         = 'C:\transport-report-staging'
+  $prodRoot     = 'C:\transport-report'
+  $python       = 'C:\Program Files\Python314\python.exe'
+  $service      = 'TransportReportStaging'
+  $prodNames    = @('TransportBot', 'TransportBot003', 'TransportReport')
+  $db           = 'C:\transport-report-staging\instance\transport.db'
+  $work         = 'C:\VehicleSoft_CardPilot'
+  $svcKey       = 'HKLM:\SYSTEM\CurrentControlSet\Services'
+  $stamp        = Get-Date -Format 'yyyyMMdd_HHmmss'
+  $siteParams   = $svcKey + '\' + $service + '\Parameters'
+  function Get-ProdServices { (@($prodNames | ForEach-Object { $s = Get-Service -Name $_ -ErrorAction SilentlyContinue; if ($s) { $_ + '=' + $s.Status } else { $_ + '=missing' } }) -join ' ') }
+  function Get-TextHash([string]$text) { $h = [System.Security.Cryptography.SHA256]::Create(); -join ($h.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($text)) | ForEach-Object { $_.ToString('x2') }) }
+  function Hide-Secret([string]$s) {
+    if (-not $s) { return '' }
+    $s = [regex]::Replace($s, '(?i)((token|secret|password|passwd|pwd|apikey|api_key|api-key|cookie|bearer|authorization)[A-Za-z0-9_]*\s*[=:]\s*)("[^"]*"|''[^'']*''|\S+)', '$1[hidden]')
+    $s = [regex]::Replace($s, '(?i)(-(token|password|secret|apikey|key)\s+)("[^"]*"|''[^'']*''|\S+)', '$1[hidden]')
+    [regex]::Replace($s, '[A-Za-z0-9+/_=-]{32,}', { param($m) $v = $m.Value; if ((($v -replace '[^0-9]', '').Length -ge 6) -or ($v -notmatch '[_/-]')) { '[hidden ' + $v.Length + ' chars]' } else { $v } })
+  }
+  function Get-CimLine($o) {
+    $parts = @()
+    foreach ($p in @($o.CimInstanceProperties | Sort-Object Name)) {
+      $v = $p.Value
+      if (($null -eq $v) -or ([string]$v -eq '')) { continue }
+      if ($v.CimInstanceProperties) {
+        foreach ($q in @($v.CimInstanceProperties | Sort-Object Name)) { if (($null -ne $q.Value) -and ([string]$q.Value -ne '')) { $parts += ($p.Name + '.' + $q.Name + '=' + (@($q.Value) -join ',')) } }
+      } else {
+        $parts += ($p.Name + '=' + (@($v) -join ','))
+      }
+    }
+    [string]$o.CimClass.CimClassName + ' ' + ($parts -join ' ')
+  }
+  function Get-ScriptPaths([string]$text, [string[]]$baseDirs) {
+    $found = @()
+    foreach ($m in [regex]::Matches($text, '"([^"]+\.(ps1|bat|cmd|py))"|([^\s"'';&|<>]+\.(ps1|bat|cmd|py))\b')) {
+      $p = if ($m.Groups[1].Success) { $m.Groups[1].Value } else { $m.Groups[3].Value }
+      if (-not [System.IO.Path]::IsPathRooted($p)) {
+        $dirs = @($baseDirs | Where-Object { $_ } | Select-Object -Unique)
+        $hit = @($dirs | ForEach-Object { Join-Path $_ $p } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1)
+        $p = if ($hit.Count -gt 0) { $hit[0] } else { $p + ' (relative; looked in ' + ($dirs -join ', ') + ')' }
+      }
+      if ($found -notcontains $p) { $found += $p }
+    }
+    $found
+  }
+  New-Item -ItemType Directory -Force -Path $work | Out-Null
+  $log = Join-Path $work ('card_pilot_d1_' + $stamp + '.log')
+  try { Start-Transcript -Path $log -Append | Out-Null } catch { Write-Output 'NOTE: the log file could not be started' }
+  $failure = $null
+  try {
+    Write-Output '== 1. The scheduled task (read only)'
+    if ((hostname) -ne $expectedHost) { throw "STEP FAILED: host is $(hostname), expected $expectedHost" }
+    $prodHead = [string](git -C $prodRoot rev-parse HEAD)
+    $prodServices = Get-ProdServices
+    Write-Output ("PROD_HEAD=" + $prodHead)
+    Write-Output ("PROD_SERVICES=" + $prodServices)
+    $tasks = @(Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)
+    Write-Output ("TASKS_WITH_THIS_NAME=" + $tasks.Count)
+    if ($tasks.Count -eq 0) { throw "STEP FAILED: no scheduled task named $taskName -- send this output" }
+    $allText = ''
+    $wds = @()
+    foreach ($t in $tasks) {
+      Write-Output ("TASK_NAME=" + $t.TaskName)
+      Write-Output ("TASK_PATH=" + $t.TaskPath)
+      Write-Output ("STATE=" + $t.State)
+      Write-Output ("ENABLED=" + $t.Settings.Enabled)
+      Write-Output ("AUTHOR=" + (Hide-Secret ([string]$t.Author)) + " REGISTERED=" + $t.Date)
+      Write-Output ("DESCRIPTION=" + (Hide-Secret ([string]$t.Description)))
+      Write-Output ("PRINCIPAL UserId=" + $t.Principal.UserId + " LogonType=" + $t.Principal.LogonType + " RunLevel=" + $t.Principal.RunLevel + " GroupId=" + $t.Principal.GroupId)
+      Write-Output ("SETTINGS MultipleInstances=" + $t.Settings.MultipleInstances + " ExecutionTimeLimit=" + $t.Settings.ExecutionTimeLimit + " AllowDemandStart=" + $t.Settings.AllowDemandStart + " StartWhenAvailable=" + $t.Settings.StartWhenAvailable + " Hidden=" + $t.Settings.Hidden)
+      $actionLines = @()
+      $i = 0
+      foreach ($a in @($t.Actions)) {
+        $i++
+        $actionLines += ([string]$a.Execute + '|' + [string]$a.Arguments + '|' + [string]$a.WorkingDirectory)
+        Write-Output ("ACTION " + $i + " TYPE=" + $a.CimClass.CimClassName)
+        Write-Output ("ACTION " + $i + " EXECUTE=" + (Hide-Secret ([string]$a.Execute)))
+        Write-Output ("ACTION " + $i + " ARGUMENTS=" + (Hide-Secret ([string]$a.Arguments)))
+        Write-Output ("ACTION " + $i + " WORKING_DIRECTORY=" + [string]$a.WorkingDirectory)
+        $allText += ' ' + [string]$a.Execute + ' ' + [string]$a.Arguments + ' ' + [string]$a.WorkingDirectory
+        if ($a.WorkingDirectory) { $wds += [string]$a.WorkingDirectory }
+      }
+      $triggerLines = @()
+      $i = 0
+      foreach ($tr in @($t.Triggers)) {
+        $i++
+        $line = Get-CimLine $tr
+        $triggerLines += $line
+        Write-Output ("TRIGGER " + $i + " " + $line)
+      }
+      if ($i -eq 0) { Write-Output 'TRIGGERS=none (runs only when started by hand or by the site button)' }
+      $info = Get-ScheduledTaskInfo -TaskName $t.TaskName -TaskPath $t.TaskPath
+      Write-Output ("LAST_RUN_TIME=" + $info.LastRunTime)
+      Write-Output ("LAST_TASK_RESULT=" + $info.LastTaskResult + " (0x" + ('{0:X8}' -f [int64]$info.LastTaskResult) + ")")
+      Write-Output ("NEXT_RUN_TIME=" + $info.NextRunTime)
+      Write-Output ("MISSED_RUNS=" + $info.NumberOfMissedRuns)
+      Write-Output ("ACTION_FINGERPRINT=" + (Get-TextHash ($actionLines -join "`n")))
+      Write-Output ("TRIGGER_FINGERPRINT=" + (Get-TextHash ($triggerLines -join "`n")))
+      $xml = [string](Export-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath)
+      Write-Output ("TASK_XML_SHA256=" + (Get-TextHash $xml) + " (the exported definition; its text is not printed)")
+    }
+
+    Write-Output '== 2. The files the action runs (lines that may hold a secret are hidden)'
+    $queue = @(Get-ScriptPaths $allText (@($wds) + @($root)))
+    $seen = @()
+    for ($k = 0; $k -lt $queue.Count; $k++) {
+      $p = $queue[$k]
+      if ($seen -contains $p) { continue }
+      $seen += $p
+      if (-not (Test-Path -LiteralPath $p)) { Write-Output ("FILE " + $p + " NOT FOUND"); continue }
+      $item = Get-Item -LiteralPath $p
+      Write-Output ("FILE " + $item.FullName + " BYTES=" + $item.Length + " CHANGED=" + $item.LastWriteTime.ToString('yyyy-MM-dd HH:mm') + " SHA256=" + (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLower())
+      if ($p -match '\.py$') { continue }
+      $lines = @(Get-Content -LiteralPath $p -TotalCount 150)
+      for ($n = 0; $n -lt $lines.Count; $n++) {
+        $text = [string]$lines[$n]
+        if ($text -match '(?i)(token|secret|password|passwd|cookie|bearer|authorization|api.?key)') { Write-Output ("  " + ($n + 1) + ": [line hidden: it names " + $Matches[1] + "]") } else { Write-Output ("  " + ($n + 1) + ": " + (Hide-Secret $text)) }
+        $allText += ' ' + $text
+      }
+      if ($k -lt 8) { foreach ($q in @(Get-ScriptPaths (($lines | ForEach-Object { [string]$_ }) -join "`n") (@((Split-Path -Parent $item.FullName)) + @($wds) + @($root)))) { if ($queue -notcontains $q) { $queue += $q } } }
+    }
+    if ($queue.Count -eq 0) { Write-Output 'FILES=none named in the action' }
+
+    Write-Output '== 3. What the task points at'
+    $checks = [ordered]@{
+      'STAGING_FOLDER'   = 'transport-report-staging'
+      'PORT_5051'        = '5051'
+      'PRODUCTION_FOLDER' = 'C:\\transport-report\\'
+      'DAILY_CYCLE'      = 'dji_area_daily'
+      'RUN_QUEUED'       = '--run-queued'
+      'COLLECTOR'        = 'drone_collector'
+      'RECALC'           = 'dji_area_recalc'
+      'SOURCE_SYNC'      = 'source_sync|--sources'
+      'HOLDOUT'          = 'VehicleSoft_|Holdout'
+    }
+    foreach ($key in $checks.Keys) { Write-Output ("POINTS_AT " + $key + "=" + $(if ($allText -match $checks[$key]) { 'yes' } else { 'no' })) }
+    $writer = ($allText -match 'transport-report-staging|5051') -and ($allText -match 'dji_area_daily|drone_collector|dji_area_recalc|source_sync|--sources|--db')
+    Write-Output ("STAGING_WRITER=" + $(if ($writer) { 'yes' } else { 'not shown by the action text -- see the lines above' }))
+
+    Write-Output '== 4. Is it running now'
+    $procs = @(Get-CimInstance -ClassName Win32_Process | Where-Object { ([string]$_.CommandLine -match 'dji_area_daily|drone_collector|dji_area_recalc|DjiAreaRefresh') -and ([string]$_.CommandLine -notmatch 'card_pilot_d1_') })
+    foreach ($pr in $procs) { Write-Output ("PROCESS PID=" + $pr.ProcessId + " PARENT=" + $pr.ParentProcessId + " NAME=" + $pr.Name + " STARTED=" + $pr.CreationDate + " CMD=" + (Hide-Secret ([string]$pr.CommandLine))) }
+    Write-Output ("PROCESSES=" + $procs.Count)
+    foreach ($lk in @((Join-Path $root 'instance\dji_area_cycle.lock'), (Join-Path $root 'drone_collector\data\collector.lock'))) {
+      if (Test-Path -LiteralPath $lk) { Write-Output ("LOCK_FILE " + $lk + " CHANGED=" + (Get-Item -LiteralPath $lk).LastWriteTime.ToString('yyyy-MM-dd HH:mm') + " (a file, not proof of a holder)") } else { Write-Output ("LOCK_FILE " + $lk + " absent") }
+    }
+
+    Write-Output '== 5. What it wrote to the staging database (read only)'
+    $code = @'
+import sqlite3, sys
+path = sys.argv[1].replace('\\', '/')
+con = sqlite3.connect('file:' + path + '?mode=ro', uri=True)
+names = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+if 'drone_area_cycle_runs' not in names:
+    print('CYCLE_RUNS=table absent')
+else:
+    for kind, n, first, last in con.execute("SELECT trigger_kind, COUNT(*), MIN(requested_at), MAX(requested_at) FROM drone_area_cycle_runs GROUP BY trigger_kind ORDER BY trigger_kind"):
+        print('CYCLE_RUNS_BY_KIND %s count=%d first=%s last=%s' % (kind, n, first, last))
+    for row in con.execute("SELECT id, trigger_kind, status, requested_at, started_at, finished_at, current_step FROM drone_area_cycle_runs ORDER BY id DESC LIMIT 10"):
+        print('CYCLE_RUN ' + ' | '.join('' if v is None else str(v) for v in row))
+con.close()
+'@
+    $code | & $python - $db
+    if ($LASTEXITCODE -ne 0) { Write-Output ("CYCLE_RUNS=could not be read (exit " + $LASTEXITCODE + ")") }
+    $logDir = Join-Path $root 'instance\dji_refresh_logs'
+    if (Test-Path -LiteralPath $logDir) { foreach ($f in @(Get-ChildItem -LiteralPath $logDir -File | Sort-Object LastWriteTime -Descending | Select-Object -First 5)) { Write-Output ("REFRESH_LOG " + $f.Name + " CHANGED=" + $f.LastWriteTime.ToString('yyyy-MM-dd HH:mm') + " BYTES=" + $f.Length) } } else { Write-Output 'REFRESH_LOGS=absent' }
+
+    Write-Output '== 6. The staging site button (names and modes only, no values)'
+    $params = Get-ItemProperty -LiteralPath $siteParams -ErrorAction SilentlyContinue
+    $extra = @()
+    if ($params -and $params.AppEnvironmentExtra) { $extra = @($params.AppEnvironmentExtra) }
+    Write-Output ("SITE_ENV_NAMES=" + (@($extra | ForEach-Object { $n = ($_ -split '=', 2)[0].Trim(); if ($n -match '^[A-Za-z_][A-Za-z0-9_]*$') { $n } else { '?' } }) -join ','))
+    $launcher = @($extra | Where-Object { $_ -match '^\s*DJI_REFRESH_LAUNCHER=' } | ForEach-Object { ($_ -split '=', 2)[1].Trim().ToLower() })
+    $taskSetting = @($extra | Where-Object { $_ -match '^\s*DJI_REFRESH_TASK_NAME=' } | ForEach-Object { ($_ -split '=', 2)[1].Trim() })
+    Write-Output ("DJI_REFRESH_LAUNCHER=" + $(if ($launcher.Count -eq 0) { 'absent' } else { (@($launcher | ForEach-Object { if (@('schtasks', 'subprocess') -contains $_) { $_ } else { 'other value' } }) -join ',') }))
+    Write-Output ("DJI_REFRESH_TASK_NAME=" + $(if ($taskSetting.Count -eq 0) { 'absent' } else { (@($taskSetting | ForEach-Object { if ($_ -match '^[A-Za-z0-9_.\- \\]{1,120}$') { $_ } else { 'other value' } }) -join ',') }))
+    Write-Output ("BUTTON_STARTS_THIS_TASK=" + $(if (($launcher -contains 'schtasks') -and (@($taskSetting | Where-Object { ($_ -split '\\')[-1] -eq $taskName }).Count -gt 0)) { 'yes' } else { 'no' }))
+
+    Write-Output '== 7. Production after -- nothing here changes it'
+    $prodHeadAfter = [string](git -C $prodRoot rev-parse HEAD)
+    $prodServicesAfter = Get-ProdServices
+    Write-Output ("PROD_HEAD_AFTER=" + $prodHeadAfter)
+    Write-Output ("PROD_SERVICES_AFTER=" + $prodServicesAfter)
+    if (($prodHeadAfter -ne $prodHead) -or ($prodServicesAfter -ne $prodServices)) { throw 'STEP FAILED: production changed while this block ran -- send this output' }
+  } catch {
+    $failure = $_.Exception.Message + ' [block line ' + $_.InvocationInfo.ScriptLineNumber + ']'
+  }
+  if ($failure) { Write-Output ("STEP=STOP - " + $failure) } else { Write-Output 'STEP=PASS (read only: nothing was changed)' }
+  Write-Output ("LOG FILE: " + $log)
+  try { Stop-Transcript | Out-Null } catch { }
+}
+```
+
+**Ожидается** в конце `STEP=PASS (read only: nothing was changed)`. Прислать
+весь вывод. По нему решается, как B1 изолирует задачу на время пилота и как R
+её возвращает.
 
 ### R — SRV-YOQSH: возврат площадки
 

@@ -58,7 +58,7 @@ WRITER = os.path.join(HERE, 'card_pilot_db_writer.py')
 def blocks():
     text = open(DOC, encoding='utf-8').read()
     out = {}
-    for name in ('B0', 'B1', 'R'):
+    for name in ('B0', 'B1', 'D1', 'R'):
         m = re.search(r'^### %s .*?\n```powershell\n(.*?)\n```' % name, text,
                       re.S | re.M)
         assert m, name
@@ -145,6 +145,27 @@ class Text(unittest.TestCase):
         self.assertLess(b1.index("Save-Backup 'staging_before'"), b1.index('$touched = $true'))
         self.assertLess(b1.index('$touched = $true'), b1.index('Set-Service -Name $name'))
         self.assertLess(b1.index("Save-Backup 'staging_final'"), b1.index('git checkout --quiet --detach $pin'))
+
+    def test_d1_is_read_only(self):
+        d1 = self.b['D1']
+        for word in ('Set-Service', 'Stop-Service', 'Start-Service', 'Restart-Service',
+                     'Disable-ScheduledTask', 'Enable-ScheduledTask', 'Register-ScheduledTask',
+                     'Unregister-ScheduledTask', 'Start-ScheduledTask', 'Stop-ScheduledTask',
+                     'Set-ScheduledTask', 'Set-ItemProperty', 'New-ItemProperty',
+                     'Remove-Item', 'Copy-Item', 'Move-Item', 'Set-Content', 'Add-Content',
+                     'Out-File', 'Stop-Process', 'git checkout', 'git fetch', 'git reset',
+                     'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'DROP', 'migrate_'):
+            self.assertNotIn(word, d1, word)
+        self.assertIsNone(re.search(r'schtasks(\.exe)?\s+/', d1))
+        for m in re.finditer(r'git -C \$prodRoot (\S+)', d1):
+            self.assertEqual(m.group(1), 'rev-parse')
+        self.assertIn("'file:' + path + '?mode=ro', uri=True", d1)
+        # the only write: its own log in the pilot work folder
+        self.assertEqual(re.findall(r'New-Item [^|]*', d1), ['New-Item -ItemType Directory -Force -Path $work '])
+        self.assertIn("Start-Transcript -Path $log", d1)
+        self.assertEqual(const(d1, 'taskName'), 'DjiAreaRefreshStaging')
+        for name in ('root', 'prodRoot', 'python', 'service', 'db', 'work', 'expectedHost'):
+            self.assertEqual(const(d1, name), const(self.b['B1'], name), name)
 
     def test_restore_order(self):
         r = self.b['R']
@@ -849,6 +870,101 @@ class BlocksInPowerShell(unittest.TestCase):
         self.assertEqual(calls, [])
         self.assertEqual(sha(bed.db), pilot_sha)
         self.assertEqual(self.staging_head(bed), PIN)
+
+
+@unittest.skipUnless(POWERSHELL and os.name == 'nt', 'needs Windows and CARD_PILOT_POWERSHELL')
+class TaskDiscoveryOnWindows(unittest.TestCase):
+    """D1 against a REAL scheduled task on the Windows runner.
+
+    [REASON]: D1 reads Task Scheduler objects (actions, CIM triggers,
+    principal, settings, Get-ScheduledTaskInfo, Export-ScheduledTask) that
+    no stand-in reproduces faithfully. Here only the constants change: the
+    task name (unique per run), the host, the folders, the python and the
+    database. Everything else is the block as printed.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.task = 'CardPilotD1Test%d' % os.getpid()
+        self.root = os.path.join(self.tmp, 'transport-report-staging')
+        os.makedirs(os.path.join(self.root, 'instance', 'dji_refresh_logs'))
+        os.makedirs(os.path.join(self.root, 'ops'))
+        os.makedirs(os.path.join(self.root, 'tools'))
+        open(os.path.join(self.root, 'tools', 'dji_area_daily.py'), 'w').write('# stand-in\n')
+        self.db = os.path.join(self.root, 'instance', 'transport.db')
+        con = sqlite3.connect(self.db)
+        con.execute('CREATE TABLE drone_area_cycle_runs (id INTEGER PRIMARY KEY, trigger_kind TEXT, '
+                    'status TEXT, requested_by_name TEXT, requested_at TEXT, started_at TEXT, '
+                    'finished_at TEXT, current_step TEXT)')
+        con.executemany('INSERT INTO drone_area_cycle_runs (trigger_kind, status, requested_by_name, '
+                        'requested_at, started_at, finished_at, current_step) VALUES (?,?,?,?,?,?,?)',
+                        [('SCHEDULED', 'SUCCESS', 'Person Name', '2026-10-02 03:00:00',
+                          '2026-10-02 03:00:01', '2026-10-02 03:20:00', 'RECALC')])
+        con.commit()
+        con.close()
+        self.wrapper = os.path.join(self.root, 'ops', 'dji_area_daily_staging.ps1')
+        open(self.wrapper, 'w').write(
+            '$env:DRONE_API_TOKEN = "abcdefabcdefabcdefabcdefabcdefabcdef1234"\n'
+            'Set-Location ' + self.root + '\n'
+            '& python tools\\dji_area_daily.py --db instance\\transport.db\n')
+        script = ('$a = New-ScheduledTaskAction -Execute powershell.exe -Argument \'-NoProfile -ExecutionPolicy Bypass -File "%s" -Token abcdefghabcdefghabcdefghabcdefgh99\' -WorkingDirectory \'%s\'\n'
+                  '$t = New-ScheduledTaskTrigger -Daily -At 3am\n'
+                  'Register-ScheduledTask -TaskName \'%s\' -Action $a -Trigger $t -Settings (New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew) | Out-Null\n'
+                  % (self.wrapper, self.root, self.task))
+        self.ps(script)
+        self.addCleanup(self.ps, "Unregister-ScheduledTask -TaskName '%s' -Confirm:$false" % self.task)
+
+    def ps(self, script):
+        path = os.path.join(self.tmp, 'ps_%d.ps1' % len(os.listdir(self.tmp)))
+        open(path, 'w').write(script)
+        p = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                            '-File', path], capture_output=True, text=True, timeout=300)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        return p.stdout
+
+    def run_d1(self, task=None):
+        import socket
+        block = blocks()['D1']
+        values = {'taskName': task or self.task, 'expectedHost': socket.gethostname(),
+                  'root': self.root, 'prodRoot': REPO_ROOT, 'python': sys.executable,
+                  'db': self.db, 'work': os.path.join(self.tmp, 'work')}
+        for name, value in values.items():
+            pat = re.compile(r"^(  \$%s\s*= )'[^']*'$" % name, re.M)
+            self.assertEqual(len(pat.findall(block)), 1, name)
+            block = pat.sub(lambda m: m.group(1) + "'" + value + "'", block)
+        return self.ps(block)
+
+    def test_real_task(self):
+        out = self.run_d1()
+        self.assertIn('STEP=PASS (read only: nothing was changed)', out, out)
+        for key in ('TASKS_WITH_THIS_NAME=1', 'TASK_NAME=' + self.task, 'ENABLED=True',
+                    'ACTION 1 TYPE=MSFT_TaskExecAction', 'ACTION 1 EXECUTE=powershell.exe',
+                    'TRIGGER 1 MSFT_TaskDailyTrigger', 'LAST_TASK_RESULT=', 'NEXT_RUN_TIME=',
+                    'ACTION_FINGERPRINT=', 'TRIGGER_FINGERPRINT=', 'TASK_XML_SHA256=',
+                    'FILE ' + self.wrapper, 'POINTS_AT STAGING_FOLDER=yes', 'POINTS_AT DAILY_CYCLE=yes',
+                    'STAGING_WRITER=yes', 'CYCLE_RUNS_BY_KIND SCHEDULED count=1',
+                    '[line hidden: it names TOKEN]', '-Token [hidden]', 'BUTTON_STARTS_THIS_TASK=no'):
+            self.assertIn(key, out)
+        for secret in ('abcdefabcdefabcdef', 'abcdefghabcdefgh', 'Person Name'):
+            self.assertNotIn(secret, out)
+        # read only: the task is exactly as registered
+        self.assertIn('Ready', self.ps("(Get-ScheduledTask -TaskName '%s').State" % self.task))
+        # the same fingerprints on a second read
+        again = self.run_d1()
+        pick = lambda text, key: [l for l in text.splitlines() if l.startswith(key)]
+        for key in ('ACTION_FINGERPRINT=', 'TRIGGER_FINGERPRINT=', 'TASK_XML_SHA256='):
+            self.assertEqual(pick(out, key), pick(again, key), key)
+        # a disabled task reads as disabled
+        self.ps("Disable-ScheduledTask -TaskName '%s' | Out-Null" % self.task)
+        off = self.run_d1()
+        self.assertIn('ENABLED=False', off)
+        self.assertIn('STATE=Disabled', off)
+
+    def test_missing_task_is_a_stop(self):
+        out = self.run_d1(task='CardPilotNoSuchTask%d' % os.getpid())
+        self.assertIn('TASKS_WITH_THIS_NAME=0', out, out)
+        self.assertIn('STEP=STOP - STEP FAILED: no scheduled task named', out)
 
 
 if __name__ == '__main__':
