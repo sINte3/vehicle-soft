@@ -223,10 +223,10 @@ jobs:
       - name: DJI card coverage pilot -- sample, cap, gates (pure)
         run: python -m unittest tests.test_dji_card_coverage_pilot
 
-      # The owner blocks B0, B1 and R are pasted verbatim into Windows
+      # The owner blocks B0, B1, D1, R and W0 are pasted verbatim into Windows
       # PowerShell 5.1; their text invariants (ASCII, one staging, production
-      # only read, markers before changes) break silently.
-      - name: DJI card coverage pilot -- owner blocks B0, B1, R (text)
+      # only read, markers before changes, W0 read only) break silently.
+      - name: DJI card coverage pilot -- owner blocks B0, B1, D1, R, W0 (text)
         run: python -m unittest tests.test_dji_card_coverage_blocks
 
       - name: DJI area evidence migration (four paths, DDL columns)
@@ -626,7 +626,7 @@ jobs:
       # B1 prepares staging for the pilot, R returns it. Both are pasted into
       # Windows PowerShell 5.1 on the server; every stop path and the return
       # after it run here against stand-ins with real git, python and SQLite.
-      - name: DJI card coverage pilot blocks B1 and R on Windows PowerShell 5.1
+      - name: DJI card coverage pilot blocks B1, R, D1 and W0 on Windows PowerShell 5.1
         shell: powershell
         env:
           CARD_PILOT_POWERSHELL: powershell

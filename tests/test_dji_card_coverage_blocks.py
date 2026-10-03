@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Блоки владельца B0, B1 и R из docs/DRONE_CARD_COVERAGE_001.md.
+"""Блоки владельца B0, B1, D1, R и W0 из docs/DRONE_CARD_COVERAGE_001.md.
 
 [REASON]: блоки вставляются в консоль Windows PowerShell 5.1 ВЕРБАТИМ.
 Свойства ниже ломаются молча -- ни глаз при чтении диффа, ни py_compile их не
@@ -25,6 +25,11 @@ BlocksInPowerShell исполняет B1 и R, как они напечатан�
 check_migration_drift.py, инструмент пилота и SQLite. Пути: PASS, возврат и
 повтор; отказы до первого изменения; каждая остановка после него и R после
 неё; повторяемость R; повреждённая и отсутствующая база.
+W0InPowerShell исполняет W0 (разведка рабочей машины) против подставной
+рабочей машины (tests/card_pilot_w0_harness.ps1): ни один файл не меняется,
+ни один секрет, мимо которого W0 проходит (сессия, .env, обёртки, процессы,
+окружение, автозапуск, origin), не попадает ни в вывод, ни в журнал.
+W0OnWindows исполняет W0 без подмен на Windows-раннере.
 Нужен PowerShell и полная история git: CARD_PILOT_POWERSHELL=powershell (на
 сервере -- Windows PowerShell 5.1, в CI -- задача windows-powershell-51) или
 pwsh. Без переменной класс пропускается.
@@ -56,9 +61,10 @@ WRITER = os.path.join(HERE, 'card_pilot_db_writer.py')
 
 
 def blocks():
-    text = open(DOC, encoding='utf-8').read()
+    with open(DOC, encoding='utf-8') as fh:
+        text = fh.read()
     out = {}
-    for name in ('B0', 'B1', 'D1', 'R'):
+    for name in ('B0', 'B1', 'D1', 'R', 'W0'):
         m = re.search(r'^### %s .*?\n```powershell\n(.*?)\n```' % name, text,
                       re.S | re.M)
         assert m, name
@@ -101,7 +107,8 @@ class Text(unittest.TestCase):
                 # python lives under 'Program Files': a call without '&' is a
                 # string expression, not a command, and runs nothing.
                 self.assertIsNone(re.search(r'(?m)(^|[;{]\s*)\$(python|py)\s+[^=\s]', block))
-                self.assertRegex(block, r'& \$(python|exe) ')
+                if name != 'W0':  # W0 runs no python at all (test_w0_is_read_only)
+                    self.assertRegex(block, r'& \$(python|exe) ')
 
     def test_same_staging_and_pins(self):
         b0, b1, r = self.b['B0'], self.b['B1'], self.b['R']
@@ -250,6 +257,60 @@ class Text(unittest.TestCase):
         self.assertIn("(Get-TextHash ($actionLines -join \"`n\"))", d1)
         self.assertIn("(Get-TextHash ($triggerLines -join \"`n\"))", d1)
         self.assertIn("Get-TextHash ([string](Export-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath))", self.b['B1'])
+
+    def test_w0_is_read_only(self):
+        w0 = self.b['W0']
+        for word in ('Set-Service', 'Stop-Service', 'Start-Service', 'Restart-Service',
+                     'Disable-ScheduledTask', 'Enable-ScheduledTask', 'Register-ScheduledTask',
+                     'Unregister-ScheduledTask', 'Start-ScheduledTask', 'Stop-ScheduledTask',
+                     'Set-ScheduledTask', 'Set-ItemProperty', 'New-ItemProperty', 'Remove-ItemProperty',
+                     'Remove-Item', 'Copy-Item', 'Move-Item', 'Rename-Item', 'Set-Content', 'Add-Content',
+                     'Out-File', 'Stop-Process', 'Start-Process', 'Invoke-RestMethod', 'Invoke-Expression',
+                     'WriteAll', 'ExecQuery', 'https://', 'drone_collector.main', '.RegisterTaskDefinition',
+                     '.DeleteTask', '.Run(', '.Stop('):
+            self.assertFalse(word in w0, word)
+        # The only programs it starts: git, for reading (the subcommands are
+        # pinned below), and its own background job.
+        self.assertEqual(re.findall(r'(?m)&\s+(?!\{)(\S+)', w0), ['git'])
+        self.assertIn("& git -c 'core.fsmonitor=false' -c 'safe.directory=*' -C $dir @gitArgs 2>&1", w0)
+        calls = re.findall(r"Invoke-Git \$c @\(([^)]*)\)", w0)
+        allowed = {"'rev-parse', 'HEAD'", "'symbolic-ref', '--short', '-q', 'HEAD'", "'tag', '--points-at', 'HEAD'",
+                   "'--no-optional-locks', 'status', '--porcelain', '--untracked-files=no'",
+                   "'remote', 'get-url', 'origin'", "'cat-file', '-e', ($pin + '^{commit}'",
+                   "'diff', '--quiet', '--no-ext-diff', $pin, 'HEAD', '--', 'drone_collector'"}
+        self.assertEqual(set(calls), allowed)
+        self.assertEqual(w0.count('Start-Job'), 1)
+        # Writes: the folder of its own log and the transcript, nothing else.
+        self.assertEqual(re.findall(r'New-Item [^|]*', w0), ['New-Item -ItemType Directory -Force -Path $work '])
+        self.assertEqual(w0.count('Start-Transcript'), 1)
+        # The web: GET of the two login pages, no redirects followed.
+        self.assertEqual(w0.count('Invoke-WebRequest'), 1)
+        self.assertIn('Invoke-WebRequest -Uri $u[1] -Method Get -UseBasicParsing -TimeoutSec 20 -MaximumRedirection 0', w0)
+        self.assertEqual(const(w0, 'stagingLogin'), const(self.b['B1'], 'site') + '/login')
+        self.assertEqual(const(w0, 'prodLogin'), 'http://10.103.25.14:5050/login')
+        # The DJI session is never opened as text: size, time and sha256 only.
+        for m in re.finditer(r'(Get-Content|ReadAllText|ReadAllLines|Read-Text|Select-String)[^\n]*', w0):
+            self.assertNotRegex(m.group(0), r'(?i)session|storage_state', m.group(0))
+        # Values are printed only for names that cannot hold a secret.
+        shown = re.search(r"\$showValue\s*= @\(([^)]*)\)", w0).group(1)
+        names = re.findall(r"'([A-Z_]+)'", shown)
+        self.assertIn('VEHICLE_SOFT_BASE_URL', names)
+        for name in names:
+            self.assertNotRegex(name, r'TOKEN|SECRET|PASS|PWD|KEY|COOKIE|AUTH|CRED|PROXY')
+        # Task Scheduler of SRV-YOQSH: connect and read, nothing else.
+        job = w0[w0.index('Start-Job'):w0.index("Write-Output '== 2.")]
+        self.assertEqual(sorted(set(re.findall(r'\$(?:sched|fo)\.(\w+)\(', job))),
+                         ['Connect', 'GetFolder', 'GetFolders', 'GetTasks'])
+        self.assertIn("'STEP=PASS (read only: nothing operational was changed)'", w0)
+        self.assertIn('STEP=STOP - ', w0)
+
+    def test_w0_names_what_the_server_blocks_name(self):
+        w0, b1 = self.b['W0'], self.b['B1']
+        self.assertEqual(const(w0, 'server'), const(b1, 'expectedHost'))
+        self.assertEqual(const(w0, 'serverData'), const(b1, 'prodRoot') + '\\drone_collector\\data')
+        self.assertEqual(const(w0, 'pin'), const(b1, 'pin'))
+        self.assertEqual(const(w0, 'work'), const(b1, 'work'))
+        self.assertTrue(const(w0, 'pilotDir').startswith(const(w0, 'work') + '\\'))
 
 
 MAIN = 'c34ea9aade48768cd6c0daaad9458972e869d335'
@@ -1119,6 +1180,381 @@ class BlocksInPowerShell(unittest.TestCase):
         self.assertEqual(self.staging_head(bed), PIN)
 
 
+W0_HARNESS = os.path.join(HERE, 'card_pilot_w0_harness.ps1')
+# Every one of these sits somewhere on the stand-in workstation; none may be printed or logged.
+W0_SECRETS = ('tok-SECRET-1', 'COOKIE-SECRET-2', 'WRAPPER-SECRET-3', 'PROC-SECRET-4', 'USER-SECRET-5',
+              'CONSOLE-SECRET-6', 'RUN-SECRET-7', 'origin-pass-8', 'abcdefabcdefabcdef')
+W0_NOHOST = 'card-pilot-w0.invalid'
+STAGING_LOGIN_URL = 'http://10.103.25.14:5051/login'
+PROD_LOGIN_URL = 'http://10.103.25.14:5050/login'
+HOLDOUT_PY = 'C:\\VehicleSoft_Holdout\\session_venv\\Scripts\\python.exe'
+
+
+def write(path, text, mode='w'):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, mode, encoding=None if 'b' in mode else 'utf-8') as fh:
+        fh.write(text)
+
+
+def read(path):
+    with open(path, encoding='utf-8', errors='replace') as fh:
+        return fh.read()
+
+
+def sparse_clone(path, commit):
+    """The repository at `commit`, only the root files and drone_collector/."""
+    sh('git', 'clone', '-q', '--shared', '--no-checkout', REPO_ROOT, path)
+    sh('git', 'sparse-checkout', 'set', 'drone_collector', cwd=path)
+    sh('git', '-c', 'advice.detachedHead=false', 'checkout', '-q', '--detach', commit, cwd=path)
+
+
+def tree_state(root, skip):
+    """Every file and folder under root (but `skip`): size, mtime and sha256."""
+    state = {}
+    for base, dirs, files in os.walk(root):
+        if os.path.abspath(base).startswith(os.path.abspath(skip)):
+            continue
+        state[os.path.relpath(base, root)] = 'dir'
+        for name in files:
+            p = os.path.join(base, name)
+            if os.path.islink(p):
+                continue
+            st = os.stat(p)
+            state[os.path.relpath(p, root)] = (st.st_size, st.st_mtime_ns, sha(p))
+    return state
+
+
+class Workstation(object):
+    """A disposable workstation like the one of the 21.09.2026 qualification."""
+
+    def __init__(self, root):
+        self.root = root
+        self.c = os.path.join(root, 'C')
+        self.d = os.path.join(root, 'D')
+        self.work = os.path.join(self.c, 'VehicleSoft_CardPilot')
+        # Named up front: the scenario mentions them whether or not they are built.
+        self.src = os.path.join(self.c, 'VehicleSoft_Holdout', 'src')
+        self.deep = os.path.join(self.d, 'l1', 'l2', 'l3', 'l4', 'l5', 'repo')
+        self.wrapper = os.path.join(self.c, 'ProgramData', 'VehicleSoft', 'area_daily.ps1')
+        self.browsers = os.path.join(self.c, 'VehicleSoft_Holdout', 'playwright-browsers')
+        os.makedirs(self.c)
+        os.makedirs(self.d)
+
+    def drives(self):
+        return [{'Name': 'C', 'Root': self.c + os.sep, 'Free': 2e11, 'Used': 1e11},
+                {'Name': 'D', 'Root': self.d + os.sep, 'Free': 5e11, 'Used': 2e11},
+                {'Name': 'Z', 'Root': 'Z:\\', 'Free': 1e9, 'Used': 1e9, 'DisplayRoot': '\\\\fileserver\\share'}]
+
+    def holdout(self):
+        """Git checkout of the holdout collector, its own session, venv and browsers."""
+        h = os.path.join(self.c, 'VehicleSoft_Holdout')
+        dc = os.path.join(self.src, 'drone_collector')
+        for name in ('main.py', 'config.py', '__init__.py'):
+            write(os.path.join(dc, name), read(os.path.join(REPO_ROOT, 'drone_collector', name)))
+        sh('git', 'init', '-q', '-b', 'main', cwd=self.src)
+        sh('git', 'add', 'drone_collector', cwd=self.src)
+        sh('git', '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'holdout', cwd=self.src)
+        sh('git', 'remote', 'add', 'origin', 'https://owner:origin-pass-8@github.com/sinte3/vehicle-soft.git', cwd=self.src)
+        self.src_head = sh('git', 'rev-parse', 'HEAD', cwd=self.src)
+        self.session = os.path.join(h, 'session', 'storage_state.json')
+        write(self.session, '{"cookies": [{"name": "sid", "value": "COOKIE-SECRET-2"}], "origins": []}')
+        write(os.path.join(dc, '.env'),
+              'VEHICLE_SOFT_BASE_URL=http://10.103.25.14:5051\n'
+              'DRONE_API_TOKEN=tok-SECRET-1\n'
+              'DJI_STORAGE_STATE=%s\n'
+              'DJI_HEADLESS=true   # unattended\n'
+              'export DJI_SOURCE_PAUSE_MS="1500"\n' % self.session)
+        self.venv = os.path.join(h, 'session_venv')
+        write(os.path.join(self.venv, 'pyvenv.cfg'), 'home = C:\\Program Files\\Python314\ninclude-system-site-packages = false\nversion = 3.14.0\n')
+        for dist in ('playwright-1.61.0', 'python_dotenv-1.0.1', 'requests-2.32.3'):
+            os.makedirs(os.path.join(self.venv, 'Lib', 'site-packages', dist + '.dist-info'))
+        write(os.path.join(self.venv, 'Scripts', 'python.exe'), '')
+        os.makedirs(os.path.join(self.browsers, 'chromium-1181'))
+        data = os.path.join(dc, 'data')
+        self.lock = os.path.join(data, 'collector.lock')
+        write(self.lock, '')
+        write(self.lock + '.owner', '{"pid": 999999, "host": "BAK-TEX11", "purpose": "sources", "since_utc": "2026-10-03T05:00:00"}')
+        self.outbox = os.path.join(data, 'outbox')
+        for rel in ('pending/source_1_a.json', 'pending/source_2_b.json', 'sent/source_0_c.json',
+                    'sent/route_9_d.json', 'pending/x.json.tmp'):
+            write(os.path.join(self.outbox, *rel.split('/')), '{}')
+        write(os.path.join(dc, 'logs', 'collector.log'), 'INFO run\n')
+
+    def area_daily(self):
+        """An older collector copy, not a git checkout, whose .env names production."""
+        self.area = os.path.join(self.c, 'VehicleSoft_AreaDaily', 'src')
+        write(os.path.join(self.area, 'drone_collector', 'main.py'), "parser.add_argument('--routes')\n")
+        write(os.path.join(self.area, 'drone_collector', '.env'),
+              'VEHICLE_SOFT_BASE_URL=http://10.103.25.14:5050\nDRONE_API_TOKEN=tok-SECRET-1\n')
+
+    def full_clone(self):
+        self.full = os.path.join(self.d, 'work', 'vehicle-soft')
+        sparse_clone(self.full, PIN)
+
+    def decoys(self):
+        """Where the scan must not look, and a checkout only a task can show."""
+        write(os.path.join(self.c, 'Windows', 'vs', 'drone_collector', 'main.py'), '# skipped\n')
+        write(os.path.join(self.deep, 'drone_collector', 'main.py'), "'--sources'\n")
+        self.backup = os.path.join(self.d, 'backup', 'storage_state.json')
+        os.makedirs(os.path.dirname(self.backup))
+        shutil.copy2(self.session, self.backup)
+        try:
+            os.symlink(self.c, os.path.join(self.c, 'loop'), target_is_directory=True)
+        except OSError:
+            pass
+        write(self.wrapper,
+              "$env:DRONE_API_TOKEN = 'WRAPPER-SECRET-3'\n"
+              "$env:DJI_STORAGE_STATE = 'C:\\VehicleSoft_Holdout\\session\\storage_state.json'\n"
+              "& '%s' -m drone_collector.main --sources --ids-file ids.txt --send-sources\n"
+              "# receiver http://10.103.25.14:5051\n" % HOLDOUT_PY)
+
+    def scenario(self, **changes):
+        daily = [{'Class': 'MSFT_TaskDailyTrigger', 'Props': {'DaysInterval': '1', 'Enabled': 'True', 'StartBoundary': 'daily-0700'}}]
+        value = {
+            'Host': 'BAK-TEX11',
+            'Drives': self.drives(),
+            'Tasks': [
+                {'TaskName': 'HoldoutSources', 'TaskPath': '\\', 'State': 'Ready', 'Enabled': True, 'UserId': 'BAK-TEX11\\owner',
+                 'Actions': [{'Execute': HOLDOUT_PY, 'WorkingDirectory': self.src,
+                              'Arguments': '-m drone_collector.main --sources --from 2026-09-01 --send-sources --token abcdefabcdefabcdefabcdefabcdef123456'}],
+                 'Triggers': daily, 'LastRunTime': 'last-0700', 'LastTaskResult': '0', 'NextRunTime': 'next-0700'},
+                {'TaskName': 'AreaWrapper', 'TaskPath': '\\VehicleSoft\\', 'State': 'Disabled', 'Enabled': False, 'UserId': 'BAK-TEX11\\owner',
+                 'Actions': [{'Execute': 'powershell.exe', 'Arguments': '-NoProfile -File "%s"' % self.wrapper, 'WorkingDirectory': ''}],
+                 'Triggers': daily},
+                {'TaskName': 'DeepRepoTask', 'TaskPath': '\\', 'State': 'Ready', 'Enabled': True, 'UserId': 'BAK-TEX11\\owner',
+                 'Actions': [{'Execute': 'C:\\Python314\\python.exe', 'Arguments': '-m drone_collector.main --dry-run', 'WorkingDirectory': self.deep}],
+                 'Triggers': [], 'NextRunTime': 'never'},
+                {'TaskName': 'GoogleUpdateTaskMachineUA', 'TaskPath': '\\', 'State': 'Ready', 'Enabled': True, 'UserId': 'SYSTEM',
+                 'Actions': [{'Execute': 'C:\\Program Files (x86)\\Google\\Update\\GoogleUpdate.exe', 'Arguments': '/ua', 'WorkingDirectory': ''}],
+                 'Triggers': daily},
+                {'TaskName': 'ScheduledDefrag', 'TaskPath': '\\Microsoft\\Windows\\Defrag\\', 'State': 'Ready', 'Enabled': True, 'UserId': 'SYSTEM',
+                 'Actions': [{'Execute': 'drone_collector_defrag.exe', 'Arguments': '', 'WorkingDirectory': ''}], 'Triggers': daily},
+            ],
+            'Processes': [
+                {'ProcessId': 4242, 'Name': 'python.exe', 'ExecutablePath': HOLDOUT_PY, 'CreationDate': 'started-0500',
+                 'CommandLine': HOLDOUT_PY + ' -m drone_collector.main --sources --ids-file ids.txt DRONE_API_TOKEN=PROC-SECRET-4'},
+                {'ProcessId': 4243, 'Name': 'chrome.exe', 'CommandLine': 'C:\\VehicleSoft_Holdout\\playwright-browsers\\chromium-1181\\chrome.exe --remote-debugging-pipe'},
+                {'ProcessId': 4244, 'Name': 'chrome.exe', 'CommandLine': 'C:\\Users\\o\\AppData\\Local\\ms-playwright\\chromium-1181\\chrome.exe --type=renderer'},
+                {'ProcessId': 4245, 'Name': 'explorer.exe', 'CommandLine': 'C:\\Windows\\explorer.exe'},
+            ],
+            'Services': [{'Name': 'Spooler', 'State': 'Running', 'StartMode': 'Auto', 'StartName': 'LocalSystem',
+                          'PathName': 'C:\\Windows\\System32\\spoolsv.exe'}],
+            'Registry': {
+                MACHINE_KEY: {'Path': 'C:\\Windows', 'PLAYWRIGHT_BROWSERS_PATH': self.browsers},
+                'HKCU:\\Environment': {'TEMP': 'C:\\Temp', 'DRONE_API_TOKEN': 'USER-SECRET-5'},
+                'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run': {
+                    'HoldoutTray': 'C:\\VehicleSoft_Holdout\\tray.exe --token RUN-SECRET-7',
+                    'OneDrive': 'C:\\OneDrive\\OneDrive.exe /background'},
+            },
+            'Web': {STAGING_LOGIN_URL: {'Status': 200, 'Body': LOGIN}, PROD_LOGIN_URL: {'Status': 200, 'Body': LOGIN}},
+        }
+        value.update(changes)
+        return value
+
+    def block(self, **override):
+        text = blocks()['W0']
+        values = {'server': W0_NOHOST, 'work': self.work, 'pilotDir': os.path.join(self.work, 'w1')}
+        values.update(override)
+        for name, value in values.items():
+            if isinstance(value, int):
+                text, n = re.subn(r'^(  \$%s\s*= )\d+$' % name, r'\g<1>%d' % value, text, flags=re.M)
+            else:
+                text, n = re.subn(r"^(  \$%s\s*= )'[^']*'$" % name, lambda m: m.group(1) + "'" + value + "'", text, flags=re.M)
+            assert n == 1, name
+        return text
+
+
+def line_with(out, prefix):
+    hits = [l for l in out.splitlines() if l.startswith(prefix)]
+    assert len(hits) == 1, (prefix, hits)
+    return hits[0]
+
+
+@unittest.skipUnless(POWERSHELL, 'CARD_PILOT_POWERSHELL is not set')
+class W0InPowerShell(unittest.TestCase):
+    """W0 as printed in the document, against a stand-in workstation.
+
+    [REASON]: W0 is the first block that runs on the workstation, where no
+    path is known in advance. What must hold whatever it finds: nothing on
+    the machine changes, no secret it walks past reaches the console or the
+    log, and the facts W1 is planned from (which checkout, session, lock,
+    queue and receiver) are the ones on disk.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.ws = Workstation(os.path.join(self.tmp, 'ws'))
+
+    def run_w0(self, sc, **override):
+        bf = os.path.join(self.tmp, 'w0.ps1')
+        sf = os.path.join(self.tmp, 'scenario.json')
+        cf = os.path.join(self.tmp, 'web.txt')
+        write(bf, self.ws.block(**override))
+        write(sf, json.dumps(sc))
+        env = {k: v for k, v in os.environ.items()
+               if not re.match(r'(?i)(DJI_|DRONE_|VEHICLE_SOFT_|PLAYWRIGHT_)', k)}
+        env.update({'DRONE_API_TOKEN': 'CONSOLE-SECRET-6',
+                    'VEHICLE_SOFT_BASE_URL': 'http://owner:CONSOLE-SECRET-6@10.103.25.14:5051/'})
+        before = tree_state(self.ws.root, self.ws.work)
+        p = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                            '-File', W0_HARNESS, '-BlockFile', bf, '-ScenarioFile', sf, '-CallsFile', cf],
+                           capture_output=True, text=True, timeout=900, env=env)
+        out = p.stdout + p.stderr
+        self.assertNotIn('BLOCK THREW', out, out)
+        # Read only: every file and folder of the machine is as it was.
+        self.assertEqual(tree_state(self.ws.root, self.ws.work), before)
+        logs = os.listdir(self.ws.work) if os.path.isdir(self.ws.work) else []
+        self.assertEqual(len(logs), 1, logs)
+        self.assertRegex(logs[0], r'^card_pilot_w0_\d{8}_\d{6}\.log$')
+        log = read(os.path.join(self.ws.work, logs[0]))
+        for secret in W0_SECRETS:
+            self.assertNotIn(secret, out)
+            self.assertNotIn(secret, log)
+        self.web = [l for l in read(cf).splitlines() if l]
+        return out
+
+    def test_workstation(self):
+        ws = self.ws
+        ws.holdout()
+        ws.area_daily()
+        ws.full_clone()
+        ws.decoys()
+        out = self.run_w0(ws.scenario())
+        last = [l for l in out.splitlines() if l.strip()][-1]
+        self.assertEqual(last, 'STEP=PASS (read only: nothing operational was changed)', out)
+        self.assertEqual(self.web, ['Get ' + STAGING_LOGIN_URL, 'Get ' + PROD_LOGIN_URL])
+        for key in ('HOST=BAK-TEX11', 'HOST_ROLE=workstation, not SRV-YOQSH',
+                    'ENV DRONE_API_TOKEN machine=absent user=set (value not shown) this_console=set (value not shown)',
+                    'ENV VEHICLE_SOFT_BASE_URL machine=absent user=absent this_console=http://10.103.25.14:5051/',
+                    'ENV PLAYWRIGHT_BROWSERS_PATH machine=' + ws.browsers + ' user=absent this_console=absent',
+                    # three checkouts on the disk; Windows\, the depth-6 one and the loop are not walked into
+                    'FOUND checkouts=3 venvs=1 storage_state.json=2 playwright_browser_folders=1',
+                    '  CHECKOUT_FROM_TASK ' + ws.deep,
+                    'TASK \\HoldoutSources state=Ready enabled=True user=BAK-TEX11\\owner logon=Interactive runlevel=Limited runs_collector=yes ports=none',
+                    '  TRIGGER 1 MSFT_TaskDailyTrigger DaysInterval=1 Enabled=True StartBoundary=daily-0700',
+                    '  RUNS last=last-0700 result=0 next=next-0700',
+                    'TASK \\VehicleSoft\\AreaWrapper state=Disabled enabled=False',
+                    '  TRIGGERS=none (runs only when started by hand or by another program)',
+                    'OTHER_TASKS=1: \\GoogleUpdateTaskMachineUA',
+                    'SERVICES=none related to the collector or Vehicle Soft',
+                    'COLLECTOR_PROCESSES_NOW=1 PLAYWRIGHT_BROWSER_PROCESSES_NOW=2',
+                    'LOGON_ENTRY HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run HoldoutTray=C:\\VehicleSoft_Holdout\\tray.exe --token [hidden]',
+                    'COLLECTOR_PYTHON task HoldoutSources exe=' + HOLDOUT_PY + ' version=missing',
+                    'BROWSERS ' + ws.browsers + ' chromium-1181',
+                    'STAGING_5051_LOGIN=200 login form (GET only, connectivity)',
+                    'PRODUCTION_5050_LOGIN=200 login form (GET only, connectivity)',
+                    'PROD_FILES=the production data folder is not readable from here: \\\\' + W0_NOHOST + '\\C$\\transport-report\\drone_collector\\data',
+                    'PROD_SCHEDULE_DOCUMENTED=DroneCollectorDaily daily about 06:00',
+                    'PILOT_FOLDER_PROPOSED=' + os.path.join(ws.work, 'w1') + ' exists=False',
+                    'PILOT_FOLDER_OVERLAP=none: ', 'EXISTING_QUEUES=4', 'W0_ATTENTION=7'):
+            self.assertIn(key, out)
+        self.assertIn('PROD_SCHEDULE=not readable from this machine: ', out)
+        self.assertNotIn('Windows' + os.sep + 'vs', out)
+        self.assertNotIn('ScheduledDefrag', out)
+        self.assertNotIn('OneDrive', out)
+        self.assertNotIn(os.path.join(ws.c, 'loop'), out)
+        self.assertIn('  ACTION 1 exe=' + HOLDOUT_PY + ' args=-m drone_collector.main --sources --from 2026-09-01 --send-sources --token [hidden] wd=' + ws.src, out)
+        self.assertRegex(out, r'PROCESS pid=4242 name=python\.exe started=started-0500 cmd=.*DRONE_API_TOKEN=\[hidden\]')
+        self.assertIn('  SCRIPT %s bytes=%d sha256=%s mentions=drone_collector,--sources,--ids-file,--send-sources,storage_state,DJI_STORAGE_STATE '
+                      'sets_env=DRONE_API_TOKEN,DJI_STORAGE_STATE python=%s' % (ws.wrapper, os.path.getsize(ws.wrapper), sha(ws.wrapper), HOLDOUT_PY), out)
+        # the holdout checkout: git, support, settings and where each comes from, session, lock, queue, logs
+        n = re.search(r'^CHECKOUT (\d+) %s \(collector only\)$' % re.escape(ws.src), out, re.M).group(1)
+        block = out[out.index('CHECKOUT %s %s' % (n, ws.src)):]
+        block = block[:block.index('\nCHECKOUT ', 1) if '\nCHECKOUT ' in block[1:] else block.index('== 6.')]
+        for key in ('  GIT HEAD=%s branch=main tags=none tracked_changes=0 origin=https://[hidden]@github.com/sinte3/vehicle-soft.git' % ws.src_head,
+                    '  COLLECTOR_CODE=pilot pin not in this clone (nothing was fetched)',
+                    '  SUPPORTS sources=yes ids_file=yes send_sources=yes lock=yes outbox_setting=yes logs=fixed to this checkout',
+                    '  DOTENV %s names=DJI_HEADLESS,DJI_SOURCE_PAUSE_MS,DJI_STORAGE_STATE,DRONE_API_TOKEN,VEHICLE_SOFT_BASE_URL' % os.path.join(ws.src, 'drone_collector', '.env'),
+                    '  EFFECTIVE VEHICLE_SOFT_BASE_URL=http://10.103.25.14:5051/ (from .env)',
+                    '  EFFECTIVE DRONE_API_TOKEN=set (value not shown) (from user environment)',
+                    '  EFFECTIVE DJI_STORAGE_STATE=%s (from .env)' % ws.session,
+                    '  EFFECTIVE DJI_COLLECTOR_LOCK_PATH=absent (from default)',
+                    '  EFFECTIVE DJI_HEADLESS=true (from .env)',
+                    '  RECEIVER=staging :5051',
+                    '  SESSION %s bytes=%d' % (ws.session, os.path.getsize(ws.session)),
+                    'sha256=' + sha(ws.session),
+                    '  LOCK %s file=present' % ws.lock,
+                    'owner_hint=present pid=999999 host=BAK-TEX11 purpose=sources',
+                    'pid_running_here=no',
+                    '  OUTBOX %s pending=2 (source=2) sent=2 (route=1 source=1) corrupt=none tmp=1' % ws.outbox,
+                    'newest=collector.log'):
+            self.assertIn(key, block)
+        self.assertRegex(out, r'(?m)^CHECKOUT \d+ %s \(collector only\)\n  GIT=not a git checkout; main\.py sha256=[0-9a-f]{64}\n'
+                              r'  SUPPORTS sources=no ids_file=no send_sources=no lock=no outbox_setting=no logs=unknown\n'
+                              r'  LOCK_NOTE=this code predates the collector lock' % re.escape(ws.area))
+        self.assertRegex(out, r'(?m)^CHECKOUT \d+ %s \(whole Vehicle Soft repository\)\n  GIT HEAD=%s branch=detached tags=none tracked_changes=0 origin=%s\n'
+                              r'  COLLECTOR_CODE=same as the pilot pin$' % (re.escape(ws.full), PIN, re.escape(REPO_ROOT)))
+        self.assertRegex(out, r'VENV %s version=3\.14\.0 home=C:\\Program Files\\Python314 python=\S+ python_present=True '
+                              r'playwright=1\.61\.0 python_dotenv=1\.0\.1 requests=2\.32\.3' % re.escape(ws.venv))
+        # the session: one file, a byte copy on D:, used by the holdout checkout; not comparable with production from here
+        s = line_with(out, 'SESSION_FILE ' + ws.session + ' ')
+        self.assertIn(' sha256=%s used_by_checkout=%s same_bytes_as=%s' % (sha(ws.session), n, ws.backup), s)
+        self.assertIn('  SESSION_VS_PRODUCTION=OWN_FILE_ON_THIS_MACHINE: the production session could not be compared from here', out)
+        self.assertIn('LOCK_VS_PRODUCTION checkout=%s %s -> a lock on BAK-TEX11 only' % (n, ws.lock), out)
+        self.assertIn('CANDIDATE %s %s head=%s code=pilot pin not in this clone (nothing was fetched) sources=True ids_file=True '
+                      'send_sources=True lock=True outbox_setting=True receiver=staging :5051 session_present=True' % (n, ws.src, ws.src_head), out)
+        for note in ('ATTENTION DRONE_API_TOKEN is set in the user environment',
+                     'ATTENTION VEHICLE_SOFT_BASE_URL is set in this console only',
+                     'ATTENTION enabled scheduled task HoldoutSources runs the collector or the daily cycle here (next run next-0700)',
+                     'ATTENTION enabled scheduled task DeepRepoTask runs the collector',
+                     'ATTENTION 1 collector or cycle process(es) are running on this machine now',
+                     'ATTENTION checkout %s sends to production :5050' % ws.area,
+                     'ATTENTION the collector lock of checkout %s has an owner hint' % ws.src):
+            self.assertIn(note, out)
+        self.assertNotIn('ATTENTION enabled scheduled task AreaWrapper', out)
+
+    def test_on_the_server_the_files_are_the_production_ones(self):
+        ws = self.ws
+        prod = os.path.join(ws.c, 'transport-report')
+        sparse_clone(prod, PROD)
+        data = os.path.join(prod, 'drone_collector', 'data')
+        write(os.path.join(data, 'storage_state.json'), '{"cookies": [{"value": "COOKIE-SECRET-2"}]}')
+        write(os.path.join(data, 'collector.lock'), '')
+        bat = os.path.join(prod, 'drone_daily.bat')
+        write(bat, 'cd /d C:\\transport-report\r\npython -m drone_collector.main\r\n')
+        sc = ws.scenario(Host=W0_NOHOST, Drives=ws.drives()[:1], Processes=[], Registry={}, Tasks=[
+            {'TaskName': 'DroneCollectorDaily', 'TaskPath': '\\', 'State': 'Ready', 'Enabled': True, 'UserId': 'SRV-YOQSH\\umid',
+             'Actions': [{'Execute': bat, 'Arguments': '', 'WorkingDirectory': prod}],
+             'Triggers': [{'Class': 'MSFT_TaskDailyTrigger', 'Props': {'DaysInterval': '1', 'StartBoundary': 'daily-0600'}}],
+             'NextRunTime': 'next-0600'}])
+        out = self.run_w0(sc, serverData=data)
+        self.assertTrue(out.rstrip().endswith('STEP=PASS (read only: nothing operational was changed)'), out)
+        for key in ('HOST_ROLE=SRV-YOQSH itself, the production server -- not a separate workstation',
+                    'PROD_FILES=this is SRV-YOQSH: the production files and tasks are the local ones above',
+                    '  SESSION_VS_PRODUCTION=SAME_FILE: this is the production collector session',
+                    '-> SAME_LOCK as the production collector', '  COLLECTOR_CODE=same as the pilot pin',
+                    'TASK \\DroneCollectorDaily state=Ready enabled=True', 'runs_collector=yes',
+                    'ATTENTION enabled scheduled task DroneCollectorDaily runs the collector or the daily cycle here (next run next-0600)'):
+            self.assertIn(key, out)
+        for key in ('PROD_SCHEDULE', 'REMOTE_READ'):
+            self.assertNotIn(key, out)
+
+    def test_no_checkout_is_a_stop(self):
+        out = self.run_w0(self.ws.scenario(Tasks=[], Processes=[]))
+        self.assertIn('FOUND checkouts=0', out)
+        self.assertTrue(out.rstrip().endswith('STEP=STOP - no drone_collector checkout was found on this machine '
+                                              '(read only: nothing operational was changed)'), out)
+
+    def test_scan_time_limit_is_said(self):
+        self.ws.holdout()
+        out = self.run_w0(self.ws.scenario(Tasks=[], Processes=[]), budgetSec=0)
+        self.assertIn('complete=no (time limit 0 s)', out)
+        self.assertIn('ATTENTION the folder scan stopped at its time limit', out)
+        self.assertTrue(out.rstrip().endswith('STEP=STOP - no drone_collector checkout was found on this machine '
+                                              '(the scan stopped at its time limit) (read only: nothing operational was changed)'), out)
+
+    def test_a_section_that_cannot_be_read_is_a_stop_the_rest_still_printed(self):
+        self.ws.holdout()
+        out = self.run_w0(self.ws.scenario(TasksFail='Access is denied', Web={}))
+        self.assertRegex(out, r'SECTION_FAILED 4 tasks and processes: Access is denied \[block line \d+\]')
+        self.assertIn('CHECKOUT 1 ' + self.ws.src, out)
+        self.assertIn('STAGING_5051_LOGIN=ERROR', out)
+        self.assertIn('ATTENTION the staging site does not answer from this machine', out)
+        self.assertRegex(out.rstrip().splitlines()[-1],
+                         r'^STEP=STOP - 4 tasks and processes: Access is denied \[block line \d+\] \(read only: nothing operational was changed\)$')
+
+
 @unittest.skipUnless(POWERSHELL and os.name == 'nt', 'needs Windows and CARD_PILOT_POWERSHELL')
 class TaskDiscoveryOnWindows(unittest.TestCase):
     registration = '-Settings (New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew)'
@@ -1271,6 +1707,82 @@ class TaskIsolationOnWindows(TaskDiscoveryOnWindows):
         self.assertEqual(procs, 0)
         self.assertNotIn('Running', self.ps("(Get-ScheduledTask -TaskName '%s').State" % self.task))
 
+
+
+@unittest.skipUnless(POWERSHELL and os.name == 'nt', 'needs Windows and CARD_PILOT_POWERSHELL')
+class W0OnWindows(unittest.TestCase):
+    """W0 with nothing replaced, on the Windows runner.
+
+    [REASON]: no stand-in reproduces Task Scheduler objects, CIM, the
+    registry, an admin share or the Task Scheduler COM service W0 reads on
+    SRV-YOQSH. Here only constants change: SRV-YOQSH is this runner
+    ('localhost'), its production data folder is a planted one, the scan
+    depth is 2 so the runner's disks are walked quickly, and the login pages
+    are a closed local port.
+    """
+
+    def setUp(self):
+        self.task = 'CardPilotW0Daily%d' % os.getpid()
+        self.top = 'C:\\CardPilotW0%d' % os.getpid()
+        self.addCleanup(shutil.rmtree, self.top, True)
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.src = os.path.join(self.top, 'src')
+        dc = os.path.join(self.src, 'drone_collector')
+        for name in ('main.py', 'config.py', '__init__.py'):
+            write(os.path.join(dc, name), read(os.path.join(REPO_ROOT, 'drone_collector', name)))
+        sh('git', 'init', '-q', '-b', 'main', cwd=self.src)
+        sh('git', 'add', 'drone_collector', cwd=self.src)
+        sh('git', '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'w0', cwd=self.src)
+        self.session = os.path.join(self.top, 'session', 'storage_state.json')
+        write(self.session, '{"cookies": [{"name": "sid", "value": "COOKIE-SECRET-2"}]}')
+        write(os.path.join(dc, '.env'), 'VEHICLE_SOFT_BASE_URL=http://10.103.25.14:5051\nDRONE_API_TOKEN=tok-SECRET-1\n'
+                                        'DJI_STORAGE_STATE=%s\n' % self.session)
+        self.prod = os.path.join(self.top, 'prod', 'transport-report', 'drone_collector', 'data')
+        os.makedirs(self.prod)
+        shutil.copy2(self.session, os.path.join(self.prod, 'storage_state.json'))
+        write(os.path.join(self.prod, 'collector.lock'), '')
+        self.ps("$a = New-ScheduledTaskAction -Execute python.exe -Argument '-m drone_collector.main --sources --send-sources "
+                "--token abcdefabcdefabcdefabcdefabcdef123456' -WorkingDirectory '%s'\n"
+                "Register-ScheduledTask -TaskName '%s' -Action $a -Trigger (New-ScheduledTaskTrigger -Daily -At 6am) | Out-Null\n"
+                % (self.src, self.task))
+        self.addCleanup(self.ps, "Unregister-ScheduledTask -TaskName '%s' -Confirm:$false" % self.task)
+
+    def ps(self, script):
+        path = os.path.join(self.tmp, 'ps_%d.ps1' % len(os.listdir(self.tmp)))
+        write(path, script)
+        p = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                            '-File', path], capture_output=True, text=True, timeout=600)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        return p.stdout
+
+    def test_real_machine(self):
+        ws = Workstation(os.path.join(self.tmp, 'unused'))
+        block = ws.block(server='localhost', serverData=self.prod, work=os.path.join(self.tmp, 'work'),
+                         pilotDir=os.path.join(self.tmp, 'work', 'w1'), maxDepth=2, budgetSec=240,
+                         stagingLogin='http://127.0.0.1:9/login', prodLogin='http://127.0.0.1:9/login')
+        before = tree_state(self.top, os.path.join(self.tmp, 'none'))
+        out = self.ps(block)
+        self.assertEqual([l for l in out.splitlines() if l.strip()][-1],
+                         'STEP=PASS (read only: nothing operational was changed)', out)
+        for key in ('HOST_ROLE=workstation, not SRV-YOQSH', 'CHECKOUT 1 %s (collector only)' % self.src,
+                    '  SUPPORTS sources=yes ids_file=yes send_sources=yes lock=yes outbox_setting=yes',
+                    '  RECEIVER=staging :5051', 'TASK \\%s state=Ready enabled=True' % self.task,
+                    '  TRIGGER 1 MSFT_TaskDailyTrigger', '--token [hidden]',
+                    'PROD_SCHEDULE=read from localhost: ', 'PROD_TASK \\%s state=ready enabled=True' % self.task,
+                    'STAGING_5051_LOGIN=ERROR', 'ATTENTION enabled scheduled task %s runs the collector' % self.task):
+            self.assertIn(key, out)
+        self.assertRegex(out, r'TASK \\%s state=Ready enabled=True [^\n]* runs_collector=yes' % self.task)
+        if 'PROD_FILE storage_state.json bytes=' in out:
+            # The admin share answered: the planted session is a byte copy with the same time.
+            self.assertIn('  SESSION_VS_PRODUCTION=LIKELY_COPY of the production session', out)
+            self.assertIn('PROD_LOCK=no owner hint: the production collector is not running now', out)
+        else:
+            self.assertIn('PROD_FILES=the production data folder is not readable from here', out)
+        for secret in ('tok-SECRET-1', 'COOKIE-SECRET-2', 'abcdefabcdefabcdef'):
+            self.assertNotIn(secret, out)
+        self.assertEqual(tree_state(self.top, os.path.join(self.tmp, 'none')), before)
+        self.assertIn('Ready', self.ps("(Get-ScheduledTask -TaskName '%s').State" % self.task))
 
 if __name__ == '__main__':
     unittest.main()
