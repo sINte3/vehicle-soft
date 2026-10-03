@@ -13,9 +13,11 @@
 
 ДВА РЕЖИМА
   --tracks ... --zones ...  наборы с ручными замерами (условие 1). Треки --
-      CSV с разделителем «;» и столбцами unit_id, [date,] time, lat, lon,
-      speed (`verify_tracks.csv` 27.07 без даты, `verify2_tracks.csv` 12.08 с
-      датой); зоны -- `wialon_zones.json`. Каждые машино-сутки считаются по
+      CSV зондов с разделителем «;» и столбцами unit_id, date, time, lat,
+      lon, speed (`verify_tracks.csv` -- 27.07, `verify2_tracks.csv` --
+      12.08; файл без столбца даты тоже читается); зоны --
+      `wialon_zones.json`. Набор 27.07 узнаётся по дате 2026-07-27, набор
+      12.08 -- по своим 15 машино-суткам. Каждые машино-сутки считаются по
       суткам (`work_sites`, строка «day») и по каждому контуру, куда машина
       заехала хотя бы 10 точками в движении (`worked_area`, строка «zone»).
       Работа на земле без контура видна только в строке «day». Пятнадцать
@@ -99,7 +101,16 @@ WORK_DAYS_1208 = (
     (952, 'MTZ-80 X 540 GA', '2026-07-07'), (942, 'MTZ-80 X 514 GA', '2026-07-07'),
     (1730, 'MTZ 873 GA', '2026-07-07'), (1730, 'MTZ 873 GA', '2026-07-04'),
     (1730, 'MTZ 873 GA', '2026-07-01'))
-WORKS_0727 = 17
+# [REASON]: набор 27.07 -- треки одного дня проверки, 2026-07-27: 7
+# тракторов, 17 440 точек (`tools/gps_area_method_repro.py`, раздел 2.2
+# дорожной карты); 12.08 -- 27 174 точки (раздел 2.3). Зонды пишут столбец
+# даты (`unit_id;date;time;...`), поэтому набор 27.07 узнаётся по дате, а не
+# по отсутствию столбца: на этом допущении первая редакция инструмента
+# 03.10 ложно сказала «набор 27.07 не прочитан». Файл без столбца даты тоже
+# принимается -- тогда весь он один день. Числа точек печатаются рядом с
+# записанными, чтобы личность набора была видна в выводе.
+WORKS_0727, DAY_0727, TRACTORS_0727, POINTS_0727 = 17, '2026-07-27', 7, 17440
+POINTS_1208 = 27174
 REQUIRED_COLUMNS = ('unit_id', 'time', 'lat', 'lon', 'speed')
 TOP_LOSSES = 10
 MIN_MOVING_POINTS_IN_ZONE = 10
@@ -205,6 +216,7 @@ def compare_set(name, days, zones, zone_names):
         capped, _ = work_sites(track, contours=zones, overflow_cap=True)
         rows.append({'set': name, 'unit': unit, 'day': day or '-',
                      'path': 'day', 'zone': None, 'zone_name': '',
+                     'points': len(track),
                      'ha_today': sum(s.area_ha for s in today),
                      'ha_cap': sum(s.area_ha for s in capped),
                      'spacing': today_s, 'spacing_cap': cap_s,
@@ -239,6 +251,13 @@ def _spacing(value):
     return '-' if value is None else '%.2f' % value
 
 
+def _dates(days):
+    days = sorted(set(days))
+    if len(days) <= 3:
+        return ', '.join(days) or 'none'
+    return '%d dates %s..%s' % (len(days), days[0], days[-1])
+
+
 def _counts(rows, key):
     return ('%d day row(s), %d zone row(s)'
             % (sum(1 for r in rows if r['path'] == 'day' and key(r)),
@@ -254,27 +273,43 @@ def report_sets(sets, zone_names, out=print):
     work_days = {(unit, day): name for unit, name, day in WORK_DAYS_1208}
     gaps = []
     for name, mine in sets:
-        days = sum(1 for r in mine if r['path'] == 'day')
-        out('%s: machine-days %d (day rows), contours entered %d (zone rows); '
-            'triggered: %s; changed: %s'
-            % (console(name), days, sum(1 for r in mine if r['path'] == 'zone'),
+        day_rows = [r for r in mine if r['path'] == 'day']
+        out('%s: machine-days %d (day rows), contours entered %d (zone rows), '
+            'points %d, dates %s; triggered: %s; changed: %s'
+            % (console(name), len(day_rows),
+               sum(1 for r in mine if r['path'] == 'zone'),
+               sum(r.get('points', 0) for r in day_rows),
+               _dates(r['day'] for r in day_rows),
                _counts(mine, lambda r: r['triggered']),
                _counts(mine, lambda r: not r['same'])))
-        if not days:
+        if not day_rows:
             gaps.append('%s gave no machine-day' % console(name))
         elif not any(r['path'] == 'zone' for r in mine):
             gaps.append('%s entered no contour: its per-contour half was not '
                         'compared' % console(name))
-    read = {(r['unit'], r['day']) for r in rows if r['path'] == 'day'}
+    day_rows = [r for r in rows if r['path'] == 'day']
+    read = {(r['unit'], r['day']) for r in day_rows}
     absent = [(unit, day) for unit, _name, day in WORK_DAYS_1208
               if (unit, day) not in read]
     if absent:
         gaps.append('%d of the %d works of 12.08 were not read: %s'
                     % (len(absent), len(WORK_DAYS_1208),
                        ', '.join('%d %s' % pair for pair in absent)))
-    if not any(r['day'] == '-' for r in rows if r['path'] == 'day'):
-        gaps.append('the 27.07 set (%d works, tracks without a date column) was '
-                    'not read' % WORKS_0727)
+    else:
+        out('12.08 set: all %d works read, %d points (recorded: %d)'
+            % (len(WORK_DAYS_1208),
+               sum(r.get('points', 0) for r in day_rows
+                   if (r['unit'], r['day']) in work_days), POINTS_1208))
+    early = [r for r in day_rows if r['day'] in (DAY_0727, '-')]
+    if early:
+        out('27.07 set: %d machine-days, %d points (recorded: %d tractors, %d '
+            'points)' % (len(early), sum(r.get('points', 0) for r in early),
+                         TRACTORS_0727, POINTS_0727))
+    else:
+        gaps.append('the 27.07 set (%d works: tracks of %s, %d tractors, %d '
+                    'points) was not read; dates seen: %s'
+                    % (WORKS_0727, DAY_0727, TRACTORS_0727, POINTS_0727,
+                       _dates(r['day'] for r in day_rows)))
     out('Works on ground without a contour appear only in day rows (zone -), '
         'by unit and day.')
     changed = [row for row in rows if not row['same'] or row['triggered']]

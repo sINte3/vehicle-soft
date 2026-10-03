@@ -592,8 +592,15 @@ class Sets(unittest.TestCase):
                                     lat, lon, speed))
         return path
 
-    def write_0727(self, name, units):
-        """The 27.07 layout: one day, no date column."""
+    def write_0727(self, name, units, day='2026-07-27'):
+        """The 27.07 set as the probes write it: dated 2026-07-27.
+
+        `day=None` writes the same tracks without a date column -- a layout
+        the tool still accepts as one day.
+        """
+        if day is not None:
+            return self.write_1208(name, [(unit, day, track)
+                                          for unit, track in units])
         path = os.path.join(self.folder, name)
         with open(path, 'w', encoding='utf-8-sig', newline='') as handle:
             handle.write('unit_id;time;lon;lat;speed\n')
@@ -630,12 +637,42 @@ class Sets(unittest.TestCase):
                                [(1, '2026-08-01', self.field(37.2))])
         code, out, _err = self.run_sets(early, late)
         self.assertEqual(code, 0, out)
+        points = len(self.field())
         self.assertIn('verify_tracks.csv: machine-days 1 (day rows), contours '
-                      'entered 2 (zone rows); triggered: 0 day row(s), 0 zone '
-                      'row(s); changed: 0 day row(s), 0 zone row(s)', out)
+                      'entered 2 (zone rows), points %d, dates 2026-07-27; '
+                      'triggered: 0 day row(s), 0 zone row(s); changed: 0 day '
+                      'row(s), 0 zone row(s)' % points, out)
+        self.assertIn('27.07 set: 1 machine-days, %d points (recorded: 7 '
+                      'tractors, 17440 points)' % points, out)
+        self.assertIn('12.08 set: all 1 works read, %d points (recorded: 27174)'
+                      % len(self.field(37.2)), out)
         self.assertIn('CONDITION 1 (no row of the two sets changed or triggered, '
                       'so none of the 32 works did): PASS', out)
         self.assertNotIn('superset', out)
+
+    def test_the_0727_set_is_known_by_its_date_not_by_a_missing_column(self):
+        """03.10: the owner's verify_tracks.csv carries a date column.
+
+        The first edition looked for a file WITHOUT dates, called the 27.07
+        set unread and gave NOT CHECKED on a run where both sets were read in
+        full. Dated 2026-07-27 or undated -- both are the 27.07 set; another
+        day is not, and the log says which days it saw.
+        """
+        late = self.write_1208('verify2_tracks.csv',
+                               [(1, '2026-08-01', self.field())])
+        for day in ('2026-07-27', None):
+            early = self.write_0727('verify_tracks.csv', [(11, self.field())],
+                                    day=day)
+            code, out, _err = self.run_sets(early, late)
+            self.assertEqual(code, 0, (day, out))
+            self.assertIn('27.07 set: 1 machine-days', out)
+        early = self.write_0727('verify_tracks.csv', [(11, self.field())],
+                                day='2026-07-26')
+        code, out, _err = self.run_sets(early, late)
+        self.assertEqual(code, 3, out)
+        self.assertIn('not checked: the 27.07 set (17 works: tracks of '
+                      '2026-07-27, 7 tractors, 17440 points) was not read; '
+                      'dates seen: 2026-07-26, 2026-08-01', out)
 
     def test_a_changed_work_of_1208_fails_without_asking(self):
         """A 12.08 work is a whole machine-day: if the day changed, it did."""
@@ -666,8 +703,10 @@ class Sets(unittest.TestCase):
                               r'spacing 299\.\d\d\s+zone 102\s+Doroga 7')
         self.assertNotRegex(out, r'unit 1 ')
         self.assertIn('verify2_tracks.csv: machine-days 2 (day rows), contours '
-                      'entered 4 (zone rows); triggered: 1 day row(s), 1 zone '
-                      'row(s); changed: 1 day row(s), 1 zone row(s)', out)
+                      'entered 4 (zone rows), points %d, dates 2026-08-01; '
+                      'triggered: 1 day row(s), 1 zone row(s); changed: 1 day '
+                      'row(s), 1 zone row(s)'
+                      % (len(self.field()) + len(slow_loop(TWO_ROADS))), out)
         self.assertIn('CONDITION 1: OWNER CHECK -- 2 row(s) above changed or '
                       'triggered. A DAY row: the rule changed the step and alpha '
                       'of EVERY site of that machine-day', out)
@@ -739,8 +778,9 @@ class Sets(unittest.TestCase):
                                [(1, '2026-08-01', self.field())])
         code, out, _err = self.run_sets(late)
         self.assertEqual(code, 3)
-        self.assertIn('not checked: the 27.07 set (17 works, tracks without a '
-                      'date column) was not read', out)
+        self.assertIn('not checked: the 27.07 set (17 works: tracks of '
+                      '2026-07-27, 7 tractors, 17440 points) was not read; '
+                      'dates seen: 2026-08-01', out)
 
     def test_an_empty_set_next_to_a_good_one_is_not_checked(self):
         early = self.write_0727('verify_tracks.csv', [(11, self.field())])
