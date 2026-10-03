@@ -342,6 +342,86 @@ class AdaptiveAlphaTests(unittest.TestCase):
                         "a 90 m unworked band must stay out of the area")
 
 
+def slow_loop(corners_m, loops=1, point_step_m=100.0, speed=12.0,
+              start_time=0):
+    """A machine driving a closed route slowly -- inside the work window.
+
+    100 m between points is a tracker writing every 30 s at 12 km/h. Each
+    lap starts again at the first corner, the way a machine shuttling between
+    the same two places does.
+    """
+    track, t = [], start_time
+    for _ in range(loops):
+        for (ea, na), (eb, nb) in zip(corners_m, corners_m[1:]):
+            length = math.hypot(eb - ea, nb - na)
+            steps = max(1, int(length // point_step_m))
+            for i in range(steps):
+                f = i / steps
+                lon, lat = xy_to_lonlat(ea + f * (eb - ea), na + f * (nb - na))
+                track.append((t, lon, lat, speed))
+                t += point_step_m / (speed / 3.6)
+    return track
+
+
+# Two straight roads 2 km long and 300 m apart, joined at both ends.
+TWO_ROADS = [(0.0, 0.0), (2000.0, 0.0), (2000.0, 300.0), (0.0, 300.0),
+             (0.0, 0.0)]
+
+
+class SlowRoadsTests(unittest.TestCase):
+    """A7, 2026-10-02: why some sites cover villages, without implement width.
+
+    The owner rejected the implement width as a notion: which implement was
+    used and how wide it is, nobody knows. The session's hypothesis puts the
+    cause in the method instead -- the pass spacing is measured over ALL slow
+    points of the day, so on a day of slow road driving the "pass alongside"
+    is the next road, and alpha = 1.2 x spacing stitches everything between
+    the roads. These two tests pin the mechanism on the engine itself.
+    """
+
+    def test_today_two_roads_measure_their_distance_as_the_spacing(self):
+        """What the engine does today: 300 m apart -> alpha 360 m -> 60 ha.
+
+        Not a wish but a characterisation of the defect A7 removes: a
+        machine that never left the roads gets the whole 2 km x 300 m
+        between them as one work site. When the fix lands this test changes
+        on purpose, together with the one below.
+        """
+        track = slow_loop(TWO_ROADS)
+        sites, _quality = work_sites(track)
+        self.assertEqual(len(sites), 1)
+        self.assertAlmostEqual(sites[0].pass_spacing_m, 300.0, delta=1.0)
+        self.assertAlmostEqual(sites[0].alpha_used_m, 360.0, delta=1.2)
+        self.assertAlmostEqual(sites[0].area_ha, 60.0, delta=0.5)
+
+    def test_field_work_on_the_same_day_keeps_the_field_spacing(self):
+        """The control: where passes dominate, the median is the field's.
+
+        A 300 x 300 m field worked in 6 m passes plus one lap of the roads:
+        the spacing stays 6 m, alpha stays 10 m and the roads add nothing --
+        the defect needs a day where slow road points outnumber the passes.
+        """
+        work = shuttle_track(300.0, 300.0, pass_spacing_m=6.0)
+        roads = slow_loop([(e + 1000.0, n + 1000.0) for e, n in TWO_ROADS],
+                          start_time=work[-1][0] + 600)
+        sites, _quality = work_sites(work + roads)
+        self.assertEqual(len(sites), 1)
+        self.assertAlmostEqual(sites[0].pass_spacing_m, 6.0, delta=0.6)
+        self.assertEqual(sites[0].alpha_used_m, ALPHA_M)
+        self.assertAlmostEqual(sites[0].area_ha, 9.0, delta=0.3)
+
+    @unittest.expectedFailure
+    def test_slow_roads_alone_are_not_a_work_site(self):
+        """The target A7 is held to: no field, no hectares.
+
+        Fails today (60 ha, see above). The fix must make it pass and drop
+        the decorator -- an unexpected success fails the run, so the change
+        cannot slip in unnoticed.
+        """
+        sites, _quality = work_sites(slow_loop(TWO_ROADS))
+        self.assertEqual([site.area_ha for site in sites], [])
+
+
 class DensifyTests(unittest.TestCase):
 
     def test_short_segment_is_filled(self):
