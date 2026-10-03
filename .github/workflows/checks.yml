@@ -216,6 +216,19 @@ jobs:
       - name: DJI field passport -- membership, states, history, census (pure)
         run: python -m unittest tests.test_drone_field_passport_core
 
+      # DRONE-CARD-COVERAGE-001: the pilot tool reads only -- frozen sample,
+      # fingerprints, collector log, measurement gates. Stdlib only; the
+      # end-to-end path through the real receiver and recalc needs Flask and
+      # runs in the full suite (tests/test_dji_card_coverage_pilot_e2e.py).
+      - name: DJI card coverage pilot -- sample, cap, gates (pure)
+        run: python -m unittest tests.test_dji_card_coverage_pilot
+
+      # The owner blocks B0, B1, D1, R and W0 are pasted verbatim into Windows
+      # PowerShell 5.1; their text invariants (ASCII, one staging, production
+      # only read, markers before changes, W0 read only) break silently.
+      - name: DJI card coverage pilot -- owner blocks B0, B1, D1, R, W0 (text)
+        run: python -m unittest tests.test_dji_card_coverage_blocks
+
       - name: DJI area evidence migration (four paths, DDL columns)
         run: python -m unittest tests.test_dji_area_migration_001
 
@@ -556,6 +569,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The card pilot blocks run against real commits of this
+          # repository (staging 2013bed, production 8df5683, pin 39eab50).
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -604,3 +621,13 @@ jobs:
         env:
           GPS_RELEASE_POWERSHELL: powershell
         run: python -m unittest tests.test_gps_release_runbook.GpsReleaseToolFormats tests.test_gps_release_runbook.GpsReleaseBlocksInPowerShell
+
+      # DRONE-CARD-COVERAGE-001 (docs/DRONE_CARD_COVERAGE_001.md, section 14):
+      # B1 prepares staging for the pilot, R returns it. Both are pasted into
+      # Windows PowerShell 5.1 on the server; every stop path and the return
+      # after it run here against stand-ins with real git, python and SQLite.
+      - name: DJI card coverage pilot blocks B1, R, D1 and W0 on Windows PowerShell 5.1
+        shell: powershell
+        env:
+          CARD_PILOT_POWERSHELL: powershell
+        run: python -m unittest -v tests.test_dji_card_coverage_blocks
