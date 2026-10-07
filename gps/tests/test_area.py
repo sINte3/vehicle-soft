@@ -459,6 +459,18 @@ class OverflowCapTests(unittest.TestCase):
         self.assertEqual(METHOD_VERSION, "overflow-cap-2026-10-07")
         self.assertEqual(PREVIOUS_METHOD_VERSION, "adaptive-alpha-2026-08-12")
 
+    def test_a_pinned_alpha_is_labelled_by_the_alpha_not_by_a_rule(self):
+        """alpha_m runs neither adaptive method; its result must not pass for one."""
+        track = shuttle_track(300.0, 300.0, pass_spacing_m=14.0)
+        contour = rectangle_contour(300.0, 300.0)
+        for cap in (True, False):
+            fixed = worked_area(track, contour, alpha_m=ALPHA_M, overflow_cap=cap)
+            self.assertEqual(fixed.method_version, "fixed-alpha-10m")
+            self.assertIsNone(fixed.pass_spacing_m)
+            sites, _ = work_sites(track, alpha_m=12.5, overflow_cap=cap)
+            self.assertEqual({site.method_version for site in sites},
+                             {"fixed-alpha-12.5m"})
+
     def test_the_cap_is_the_widest_validated_spacing_with_the_margin(self):
         """Literals on purpose: an expectation spelled with the constant
         moves when the constant moves."""

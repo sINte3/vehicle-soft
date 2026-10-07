@@ -348,7 +348,9 @@ class GpsReleaseRunbook(unittest.TestCase):
                         "'rows of counted objects still not on %s: %d'",
                         "'RESULT: RECOMPUTED %d day(s) by %s; rows of counted objects left on '",
                         "'another method: %d'",
-                        "'== %s (%d of %d)'"):
+                        "'== %s (%d of %d)'",
+                        "'days with points in %s: %d of %d'",
+                        "'rows of counted objects already on %s before this run: %d -- this '"):
             with self.subTest(line=printed):
                 self.assertIn(printed, tool)
         step = next(body for title, body in steps(RELEASE).items()
@@ -363,7 +365,8 @@ class GpsReleaseRunbook(unittest.TestCase):
                        '`rows of counted objects still not on overflow-cap-2026-10-07: 0`',
                        '`RESULT: RECOMPUTED ... day(s) by overflow-cap-2026-10-07; rows\n'
                        '  of counted objects left on another method: 0`',
-                       '`exit 0`'):
+                       '`exit 0`',
+                       '`days with points in C:\\transport-report\\instance:`'):
             with self.subTest(waited=waited):
                 self.assertIn(waited, step)
         # Пишущая команда -- одна, с --apply, и только после плана и копии.
@@ -379,6 +382,9 @@ class GpsReleaseRunbook(unittest.TestCase):
         self.assertLess(plan[0], backup[0])
         self.assertLess(backup[0], writes[0])
         self.assertTrue(lines[writes[0]].startswith(GEO_PYTHON + ' -u '))
+        # Повтор 4.3 дописывает журнал: сводка первого прогона не затирается.
+        self.assertIn(' --apply *>> C:\\VehicleSoft_Release\\'
+                      'release_v122_step4_recompute.log', lines[writes[0]])
 
 
 class GpsReleaseToolFormats(unittest.TestCase):

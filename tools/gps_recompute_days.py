@@ -30,12 +30,17 @@ r"""GPS: пересчитать прошедшие сутки действующ
 Пересчёт переносит ответ на новый участок по наложению, но ответ на участке,
 которого больше нет, теряется -- а ответ это ручной труд и обучающий набор.
 На 03.10 ответов за сентябрь не было ни одного; если они появились, решает
-сессия вместе с владельцем, а не инструмент.
+сессия вместе с владельцем, а не инструмент. Программа во время пересчёта
+работает, поэтому ответы проверяются не один раз, а перед каждыми сутками, и
+сообщение самого расчёта о потерянном ответе останавливает пересчёт.
 
 КОДЫ ВЫХОДА: 0 -- все сутки окна посчитаны (или план без записи); 2 --
-неверный ввод, ничего не делалось; 3 -- отказ, ничего не записано; 5 -- часть
-суток не посчиталась из-за сбоя: остальные посчитаны, сбойные перечислены, их
-можно пересчитать повтором той же команды.
+неверный ввод или в папке нет точек ни за один день окна, ничего не
+записано; 3 -- отказ из-за ответов операторов: до запуска -- ничего не
+записано, посреди окна -- сутки до названных пересчитаны, названные и
+дальше нет; 5 -- часть суток не посчиталась из-за сбоя: остальные
+посчитаны, сбойные перечислены, их можно пересчитать повтором той же
+команды (журнал лучше дописывать, а не перезаписывать: `*>>`).
 
 Запуск -- из окружения расчёта, PowerShell, из C:\transport-report после
 выпуска (пишет в рабочую базу только выпущенный код):
@@ -49,6 +54,8 @@ r"""GPS: пересчитать прошедшие сутки действующ
 """
 
 import argparse
+import contextlib
+import io
 import os
 import sqlite3
 import sys
@@ -63,12 +70,16 @@ from gps import daily                                               # noqa: E402
 from gps.area import METHOD_VERSION, PREVIOUS_METHOD_VERSION        # noqa: E402
 from gps.exclusion import excluded_units                            # noqa: E402
 from gps_collector import config as collector_config               # noqa: E402
+from gps_collector import storage                                    # noqa: E402
 
 # [REASON]: допуск на сложение гектаров с плавающей точкой: «стало больше»
 # -- признак, который печатается поимённо, и шум округления его не должен
 # поднимать.
 EPSILON = 1e-6
 LISTED = 20
+# [REASON]: строка, которой `gps.daily.run_day` сообщает о потерянных ответах
+# операторов. Её код возврата этого не несёт, а строка -- единственный след.
+DROPPED_MARK = 'otvetov operatora poteryano pri pereschete'
 
 
 def window(since, until):
@@ -156,7 +167,8 @@ def print_plan(days, rows, excluded, answers, verdicts, out):
                          for pair in sorted(info['versions'].items()))))
     out('operator answers (work/passage) in the window: %d' % len(answers))
     for day, unit, site, label in answers[:LISTED]:
-        out('  answer %s unit %d site %d: %s' % (day, unit, site, label))
+        out('  answer %s unit %d site %d: %s'
+            % (day, unit, site, collector_config.ascii_only(label)))
     out('work-order reviews in the window: %d (they keep their numbers, a '
         'recompute does not touch them)' % verdicts)
 
@@ -165,6 +177,11 @@ def compare(before, after, excluded, out):
     """Сводка «было -> стало» по месяцам; возвращает число непересчитанных."""
     months = defaultdict(lambda: [0.0, 0.0, 0, 0])
     increased, appeared, left_old = [], [], []
+    # [REASON]: «было» читается из базы в начале КАЖДОГО запуска. Если это
+    # повтор после прерванного или сбойного прогона, часть окна уже на новом
+    # методе, и сводка покажет только остаток -- это надо сказать прямо.
+    earlier = sum(1 for (day, unit), row in before.items()
+                  if unit not in excluded and row[1] == METHOD_VERSION)
     for key in sorted(set(before) | set(after)):
         day, unit = key
         if unit in excluded:
@@ -185,6 +202,10 @@ def compare(before, after, excluded, out):
         if new is not None and new[1] != METHOD_VERSION:
             left_old.append((key, new[1]))
     out('')
+    if earlier:
+        out('rows of counted objects already on %s before this run: %d -- this '
+            'run continues an earlier one, so "before" below is what was left'
+            % (METHOD_VERSION, earlier))
     out('counted objects, published machine-days and their hectares, before '
         '-> after:')
     for month, (ha_before, ha_after, days_before, days_after) in sorted(
@@ -213,8 +234,27 @@ def _day(option, value):
         return None
 
 
+def recompute_day(day, db, folder, out):
+    """Одни сутки путём ночного расчёта: (код, потеряно ответов, вывод)."""
+    buffer = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buffer):
+            code = daily.main(['--date', day, '--db', db, '--dir', folder])
+    except Exception as error:                          # noqa: BLE001
+        # [REASON]: падение одних суток не должно оборвать окно без сводки:
+        # сутки записываются в сбойные, остальные считаются дальше.
+        code = 'crash: %s' % type(error).__name__
+    text = buffer.getvalue()
+    for line in text.splitlines():
+        out(line)
+    dropped = sum(1 for line in text.splitlines() if DROPPED_MARK in line)
+    return code, dropped
+
+
 def main(argv=None, out=print, today=None):
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description='GPS: recompute past days by the current method - plan '
+                    'without --apply, write with it.')
     parser.add_argument('--since', required=True, help='first day, YYYY-MM-DD')
     parser.add_argument('--until', help='last day, YYYY-MM-DD (default: '
                                         'yesterday, local)')
@@ -253,6 +293,16 @@ def main(argv=None, out=print, today=None):
     before, excluded = snapshot(args.db, since, until)
     answers, verdicts = answers_in_window(args.db, since, until)
     print_plan(days, before, excluded, answers, verdicts, out)
+    with_points = [day for day in days if storage.units_with_points(folder, day)]
+    out('days with points in %s: %d of %d'
+        % (collector_config.ascii_only(folder), len(with_points), len(days)))
+    # [REASON]: папка без файлов точек -- не «пересчитано, ничего не
+    # изменилось»: ночной расчёт на каждом дне ответит «нет точек» и вернёт 0.
+    # Такой запуск -- неверный ввод, а не успех.
+    if not with_points:
+        out('ERROR: no point file holds any day of the window: is --dir the '
+            'folder with gps_points_YYYYMM.db?')
+        return 2
     if not args.apply:
         out('PLAN ONLY: nothing was written. Add --apply to recompute.')
         return 0
@@ -262,19 +312,35 @@ def main(argv=None, out=print, today=None):
             % len(answers))
         return 3
 
-    failed = []
+    failed, refused = [], None
     for index, day in enumerate(days, 1):
         out('')
         out('== %s (%d of %d)' % (day, index, len(days)))
-        code = daily.main(['--date', day, '--db', args.db, '--dir', folder])
+        appeared, _ = answers_in_window(args.db, day, day)
+        if appeared:
+            refused = ('%d operator answer(s) appeared on %s while the window '
+                       'was being recomputed; %s and the days after it were NOT '
+                       'recomputed' % (len(appeared), day, day))
+            break
+        code, dropped = recompute_day(day, args.db, folder, out)
         if code != 0:
             failed.append((day, code))
+        if dropped:
+            refused = ('the computation reports operator answers lost on %s: '
+                       'they are in the backup taken before the recompute; '
+                       'the days after %s were NOT recomputed' % (day, day))
+            break
     after, excluded_after = snapshot(args.db, since, until)
     left_old = compare(before, after, excluded | excluded_after, out)
+    out('days without points (nothing to recompute there): %d'
+        % (len(days) - len(with_points)))
     out('')
+    if refused:
+        out('REFUSED: %s. Ask the session.' % refused)
+        return 3
     if failed:
         out('days that did not compute completely: %s -- run the same command '
-            'again, it recomputes them' % ', '.join('%s (exit %d)' % pair
+            'again, it recomputes them' % ', '.join('%s (exit %s)' % pair
                                                      for pair in failed))
         out('RESULT: RECOMPUTED WITH FAILURES')
         return 5

@@ -7,10 +7,15 @@
   * запись пересчитывает считаемые объекты правилом и метит строки новой
     версией; сутки ниже порога выходят бит в бит прежними;
   * строки исключённых объектов и дни вне окна не трогаются;
-  * ответ оператора в окне -- отказ без единой записи;
-  * сбой одних суток не обрывает остальные и даёт код 5 с перечнем;
-  * окно не заходит в сегодня, неверный ввод -- код 2 без записи;
-  * строки, оставшиеся прежним методом, названы поимённо.
+  * ответ оператора в окне -- отказ без единой записи; ответ, появившийся
+    посреди пересчёта, или сообщение расчёта о потерянном ответе --
+    остановка с кодом 3 до следующих суток;
+  * сбой или падение одних суток не обрывает остальные и даёт код 5;
+  * окно не заходит в сегодня, неверный ввод и папка без точек -- код 2
+    без записи;
+  * строки, оставшиеся прежним методом, названы поимённо; повтор после
+    прерванного прогона говорит, что часть окна уже пересчитана;
+  * вывод -- только ASCII, в том числе кириллические ответы операторов.
 """
 import contextlib
 import hashlib
@@ -134,7 +139,42 @@ class Plan(Window):
                       out)
         self.assertIn('operator answers (work/passage) in the window: 0', out)
         self.assertIn('work-order reviews in the window: 0', out)
+        self.assertIn('days with points in %s: 3 of 30' % self.folder, out)
         self.assertIn('PLAN ONLY: nothing was written', out)
+
+    def test_a_folder_without_points_is_refused_not_a_success(self):
+        """A wrong --dir must not end in «recomputed, nothing changed»."""
+        empty = tempfile.mkdtemp(dir=self.folder)
+        before = self.files()
+        for extra in ([], ['--apply']):
+            out = []
+            with contextlib.redirect_stdout(io.StringIO()) as printed:
+                code = recompute.main(['--since', '2026-09-01', '--until',
+                                       '2026-09-30', '--db', self.db, '--dir',
+                                       empty] + extra, out=out.append,
+                                      today=TODAY)
+            self.assertEqual(code, 2, extra)
+            self.assertIn('ERROR: no point file holds any day of the window',
+                          '\n'.join(out))
+            self.assertEqual(printed.getvalue(), '')
+        self.assertEqual(self.files(), before)
+
+    def test_operator_answers_reach_the_console_in_ascii(self):
+        """The app stores «работа»/«проезд»; the console takes ASCII only."""
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute("UPDATE gps_work_polygons SET operator_label = 'проезд' "
+                        "WHERE wialon_id = ? AND work_date = '2026-09-26'",
+                        (ROADS,))
+            con.commit()
+        finally:
+            con.close()
+        code, out, _p, err = self.run_tool('--since', '2026-09-01',
+                                           '--until', '2026-09-30')
+        self.assertEqual(code, 0)
+        self.assertIn('answer 2026-09-26 unit %d site 1: proezd' % ROADS, out)
+        self.assertTrue(out.isascii())
+        self.assertTrue(err.isascii())
 
     def test_the_window_ends_yesterday_and_never_reaches_today(self):
         code, out, _p, _e = self.run_tool('--since', '2026-09-01',
@@ -199,6 +239,9 @@ class Apply(Window):
                       out)
         self.assertIn('RESULT: RECOMPUTED 30 day(s) by overflow-cap-2026-10-07; '
                       'rows of counted objects left on another method: 1', out)
+        self.assertIn('days without points (nothing to recompute there): 27', out)
+        self.assertNotIn('already on overflow-cap', out)
+        self.assertTrue(out.isascii())
 
     def test_an_operator_answer_in_the_window_refuses_without_writing(self):
         con = sqlite3.connect(self.db)
@@ -235,6 +278,97 @@ class Apply(Window):
                                           '--until', '2026-09-30', '--apply')
         self.assertEqual(code, 0, out)
         self.assertIn('work-order reviews in the window: 1', out)
+
+    def test_an_answer_given_during_the_run_stops_before_its_day(self):
+        """The program keeps running; an operator may answer mid-window.
+
+        The answer appears while 2026-09-01 is being computed; by 26.09 the
+        roads are recomputed, at 27.09 the check before the day finds it and
+        the run stops -- that day and the rest keep the previous method.
+        """
+        real = daily.main
+        calls = []
+
+        def answering(argv):
+            if not calls:
+                con = sqlite3.connect(self.db)
+                try:
+                    con.execute("UPDATE gps_work_polygons SET operator_label = "
+                                "'работа' WHERE wialon_id = ? AND work_date = "
+                                "'2026-09-27'", (FIELD,))
+                    con.commit()
+                finally:
+                    con.close()
+            calls.append(argv[1])
+            return real(argv)
+
+        with unittest.mock.patch.object(recompute.daily, 'main',
+                                        side_effect=answering):
+            code, out, _p, _e = self.run_tool('--since', '2026-09-01',
+                                              '--until', '2026-09-30', '--apply')
+        self.assertEqual(code, 3, out)
+        self.assertIn('REFUSED: 1 operator answer(s) appeared on 2026-09-27 '
+                      'while the window was being recomputed', out)
+        self.assertEqual(calls[-1], '2026-09-26')
+        self.assertEqual(self.rows(ROADS, '2026-09-26')[0][1], METHOD_VERSION)
+        self.assertEqual(self.rows(FIELD, '2026-09-27')[0][1],
+                         PREVIOUS_METHOD_VERSION)
+
+    def test_an_answer_the_computation_reports_lost_stops_the_run(self):
+        """daily's own line about a lost answer is a stop, not a log line."""
+        real = daily.main
+
+        def losing(argv):
+            code = real(argv)
+            if argv[1] == '2026-09-26':
+                print('    VNIMANIE: otvetov operatora poteryano pri pereschete: 1')
+            return code
+
+        with unittest.mock.patch.object(recompute.daily, 'main',
+                                        side_effect=losing):
+            code, out, _p, _e = self.run_tool('--since', '2026-09-01',
+                                              '--until', '2026-09-30', '--apply')
+        self.assertEqual(code, 3, out)
+        self.assertIn('the computation reports operator answers lost on '
+                      '2026-09-26', out)
+        self.assertIn('otvetov operatora poteryano', out)       # passed through
+        self.assertEqual(self.rows(FIELD, '2026-09-27')[0][1],
+                         PREVIOUS_METHOD_VERSION)
+
+    def test_a_crash_of_one_day_is_a_failure_not_an_abort(self):
+        real = daily.main
+
+        def crashing(argv):
+            if argv[1] == '2026-09-26':
+                raise RuntimeError('boom')
+            return real(argv)
+
+        with unittest.mock.patch.object(recompute.daily, 'main',
+                                        side_effect=crashing):
+            code, out, _p, _e = self.run_tool('--since', '2026-09-01',
+                                              '--until', '2026-09-30', '--apply')
+        self.assertEqual(code, 5, out)
+        self.assertIn('2026-09-26 (exit crash: RuntimeError)', out)
+        self.assertIn('counted objects, published machine-days', out)
+        self.assertEqual(self.rows(FIELD, '2026-09-27')[0][1], METHOD_VERSION)
+
+    def test_a_rerun_says_part_of_the_window_was_already_recomputed(self):
+        real = daily.main
+
+        def flaky(argv):
+            return 5 if argv[1] == '2026-09-26' else real(argv)
+
+        with unittest.mock.patch.object(recompute.daily, 'main',
+                                        side_effect=flaky):
+            self.assertEqual(self.run_tool('--since', '2026-09-01', '--until',
+                                           '2026-09-30', '--apply')[0], 5)
+        code, out, _p, _e = self.run_tool('--since', '2026-09-01',
+                                          '--until', '2026-09-30', '--apply')
+        self.assertEqual(code, 0, out)
+        self.assertIn('rows of counted objects already on overflow-cap-2026-10-07 '
+                      'before this run: 1 -- this run continues an earlier one',
+                      out)
+        self.assertEqual(self.rows(ROADS, '2026-09-26')[0][1], METHOD_VERSION)
 
     def test_a_failed_day_does_not_stop_the_others(self):
         real = daily.main

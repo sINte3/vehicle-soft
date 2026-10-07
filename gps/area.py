@@ -70,7 +70,8 @@ alpha cannot touch -- up to 8.8 ha worked on ground that has no geozone at
 all, and tracks losing up to 708 minutes of motion in a day. Those are
 input defects, both measured and reported by this module, not method error.
 
-To reproduce the old behaviour exactly, pass alpha_m=ALPHA_M explicitly.
+To reproduce the old behaviour exactly, pass alpha_m=ALPHA_M explicitly; such
+a result is labelled `fixed-alpha-10m`, never as one of the adaptive methods.
 
 THE OVERFLOW CAP -- the method since 2026-10-07 (A7), and its warrant.
 On a day of slow road driving the "pass alongside" the spacing estimator finds
@@ -193,8 +194,14 @@ METHOD_VERSION = "overflow-cap-2026-10-07"
 PREVIOUS_METHOD_VERSION = "adaptive-alpha-2026-08-12"
 
 
-def method_version(overflow_cap):
-    """The version string of the method a computation with this switch ran."""
+def method_version(overflow_cap, alpha_m=None):
+    """The version string of the method a computation with these switches ran.
+
+    A pinned alpha is neither adaptive method -- no spacing is measured and the
+    cap never runs -- so its result is named by the alpha itself.
+    """
+    if alpha_m is not None:
+        return "fixed-alpha-%gm" % alpha_m
     return METHOD_VERSION if overflow_cap else PREVIOUS_METHOD_VERSION
 
 # [REASON]: the tracker writes at most every 30 s while moving (parameter
@@ -573,7 +580,7 @@ def worked_area(track, contour, contour_id=None, alpha_m=None,
     since 2026-10-07; False reproduces the previous method exactly, and the
     result then carries PREVIOUS_METHOD_VERSION.
     """
-    version = method_version(overflow_cap)
+    version = method_version(overflow_cap, alpha_m)
     if contour is None or not track:
         return WorkArea(contour_id, 0.0, None,
                         track_quality([0.0], [0.0]) if not track
@@ -712,7 +719,7 @@ def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None,
                 if overlap > best:
                     best, contour_id = overlap, named[int(position)]
         sites.append(WorkArea(contour_id, area_ha, piece, quality, alpha, spacing,
-                              method_version(overflow_cap)))
+                              method_version(overflow_cap, alpha_m)))
     sites.sort(key=lambda s: -s.area_ha)
     return sites, quality
 

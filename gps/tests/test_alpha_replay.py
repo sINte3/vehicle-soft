@@ -254,9 +254,12 @@ class Production(World):
     def test_after_the_recompute_the_control_checks_the_rule(self):
         """Rows written by the rule are checked against the rule.
 
-        07.10 the window is recomputed by the new method; the same replay then
-        proves that what lies in the database is exactly the rule -- and a
-        row of the new version that is not the rule is a mismatch.
+        The control judges a row by its own label, so a row left on the
+        previous method passes as the previous method; what tells a
+        recomputed window from one that is not is the versions line. Together
+        they confirm the recompute: every row on the new version, each one
+        exactly the rule -- and a new-version row that is not the rule is a
+        mismatch.
         """
         self.untamper()
         con = sqlite3.connect(self.db)
@@ -277,6 +280,9 @@ class Production(World):
         self.assertTrue(rows[ROADS]['control'])
         self.assertTrue(rows[MIXED]['control'])
         self.assertTrue(rows[FIELD]['control'])     # still the previous method
+        _verdicts, out = self.run_production(named=(('2026-09-26', ROADS),))
+        self.assertIn('rows by method version: adaptive-alpha-2026-08-12 4, '
+                      'fixed-alpha-2026-07-29 1, overflow-cap-2026-10-07 2', out)
         con = sqlite3.connect(self.db)
         try:
             con.execute('UPDATE gps_work_polygons SET area_ha = area_ha + 1 '
@@ -345,8 +351,8 @@ class Production(World):
                    if unit not in (EXCLUDED, EXCLUDED_WIDE)]
         today = sum(r['ha_today'] for r in counted)
         capped = sum(r['ha_cap'] for r in counted)
-        self.assertIn('plan-fact of the period, counted objects: %.2f ha today '
-                      '-> %.2f ha with the rule (%+.2f)'
+        self.assertIn('plan-fact of the period, counted objects: %.2f ha by the '
+                      'previous method -> %.2f ha by the rule (%+.2f)'
                       % (today, capped, capped - today), out)
         everything = sum(r['ha_today'] for r in rows.values())
         self.assertGreater(everything, today + 50.0)   # the control has teeth

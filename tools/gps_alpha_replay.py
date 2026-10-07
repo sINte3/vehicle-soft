@@ -31,8 +31,11 @@
       Опубликованные машино-сутки периода (причина пуста), чьи точки ещё на
       диске. Контроль прогона: каждая строка базы, пересчитанная по точкам
       тем методом, который её записал (по `method_version`), обязана совпасть
-      с базой; иначе прогон недействителен. После пересчёта окна новым
-      методом тот же контроль подтверждает, что в базу легло ровно правило.
+      с базой; иначе прогон недействителен. Контроль судит строку по её же
+      метке, поэтому непересчитанная строка проходит его как прежний метод;
+      что окно пересчитано, говорит соседняя строка -- число строк по версиям
+      метода. После пересчёта обе вместе подтверждают: все строки новой
+      версии, и каждая из них ровно правило.
 
 ВЕРДИКТЫ И КОД ВЫХОДА
   PASS / FAIL -- условие проверено; NOT CHECKED -- проверять было нечего
@@ -439,7 +442,7 @@ def judge_day(day, unit, version, stored, today, capped, measures):
             'alpha_today': alpha_today, 'alpha_cap': alpha_cap,
             'triggered': triggered, 'violations': violations,
             'control': control, 'consistent': consistent,
-            'today': today, 'capped': capped}
+            'version': version, 'today': today, 'capped': capped}
 
 
 def _rows_carry(rows, spacing, alpha):
@@ -572,6 +575,12 @@ def condition_2(results, out):
         '%d same, %d different, %d not checked (another method version)'
         % (len(checked) - len(mismatched), len(checked), len(mismatched),
            len(results) - len(checked)))
+    versions = defaultdict(int)
+    for row in results:
+        versions[row.get('version')] += 1
+    out('rows by method version: %s'
+        % ', '.join('%s %d' % (name, count) for name, count
+                    in sorted(versions.items(), key=lambda item: str(item[0]))))
     for row in mismatched[:20]:
         out('  control mismatch %s %d' % (row['day'], row['unit']))
     for row in [row for row in results if not row['consistent']][:20]:
@@ -677,8 +686,9 @@ def report_production(results, missing, kinds, names, out=print):
         '(%d machine-days)' % (SPACING_CAP_M, ALPHA_CEILING_M,
                                sum(row['ha_today'] for row in untouched),
                                len(untouched)))
-    out('  plan-fact of the period, counted objects: %.2f ha today -> %.2f ha '
-        'with the rule (%+.2f)' % (ha_today, ha_cap, ha_cap - ha_today))
+    out('  plan-fact of the period, counted objects: %.2f ha by the previous '
+        'method -> %.2f ha by the rule (%+.2f)'
+        % (ha_today, ha_cap, ha_cap - ha_today))
     return verdicts
 
 
