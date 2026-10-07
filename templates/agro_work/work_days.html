@@ -8,6 +8,7 @@
   <div>
     <div class="vs-hero-title">{{ 'Работа по GPS → была ли заявка' if is_ru else 'GPS бўйича иш → буюртма бўлганми' }}</div>
     <div class="vs-hero-sub">{{ 'Каждые сутки периода, в которые машина работала по GPS. Покрыты — в окно попадает закрытая заявка этой машины. Работа без заявки — не может покрыть никакая: ни закрытая, ни открытая, ни заведённая позже задним числом. Если может — сутки без вердикта с причиной.' if is_ru else 'Машина GPS бўйича ишлаган даврнинг ҳар бир куни. Қопланган — ойнага шу машинанинг ёпилган буюртмаси тушади. Буюртмасиз иш — ҳеч бири қоплай олмайди: на ёпилган, на очиқ, на кейин орқа сана билан киритилган. Агар қоплаши мумкин бўлса — кун сабаби билан ҳукмсиз.' }}</div>
+    {% if lookback is not none %}<div class="vs-hero-sub">{{ ('Если заявку на эту машину завели задним числом позже, чем через %d сут., у суток названы её номер и опоздание, а сутки остаются без заявки: такой поздний ввод — нарушение.' if is_ru else 'Агар шу машинага буюртма %d кундан кечроқ орқа сана билан киритилган бўлса, кунда унинг рақами ва кечикиши кўрсатилади, кун эса буюртмасиз қолади: бундай кеч киритиш — қоидабузарлик.')|format(lookback) }}</div>{% endif %}
   </div>
 </div>
 
@@ -57,6 +58,7 @@
           <td>
             {% if row.coverage == 'pokryta' %}<span class="vs-badge vs-badge-success">{{ coverage_label(row.coverage) }}</span>
             {% elif row.coverage == 'bez_zayavki' %}<span class="vs-badge vs-badge-danger">{{ coverage_label(row.coverage) }}</span>
+              {% if row.late_app %}<div class="vs-soft">{{ ('заявка %s заведена задним числом через %d сут.' if is_ru else '%s буюртма %d кундан кейин орқа сана билан киритилган')|format(row.late_app.number, row.late_days) }}</div>{% endif %}
             {% else %}<span class="vs-badge">{{ coverage_label(row.coverage) }}</span>
               <div class="vs-soft">{{ reason_label(row.reason) }}</div>
             {% endif %}

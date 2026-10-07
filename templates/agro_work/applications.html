@@ -72,6 +72,7 @@
             {% elif row.verdict == 'rabota_net' %}<span class="vs-badge vs-badge-danger">{{ verdict_label(row.verdict) }}</span>
             {% else %}<span class="vs-badge">{{ verdict_label(row.verdict) }}</span>
               <div class="vs-soft">{{ reason_label(row.reason) }}{% if row.unknown_days %} ({{ row.unknown_days }}){% endif %}</div>
+              {% if row.days_open is not none %}<div class="vs-soft">{{ ('открыта %d сут. с ввода' if is_ru else 'киритилгандан бери %d кун очиқ')|format(row.days_open) }}</div>{% endif %}
             {% endif %}
           </td>
           <td class="right">{% if row.work_days %}{{ row.gps_ha }}{% else %}—{% endif %}</td>

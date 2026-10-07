@@ -11,10 +11,16 @@
 ЧТО В КНИГЕ
   Свод           -- организация x категория: машины, заявки (работа была /
                     не было / без вердикта), машино-сутки с работой по GPS
-                    (покрыты / без заявки / без вердикта);
+                    (покрыты / без заявки / без вердикта) и из суток без
+                    заявки -- те, у которых есть поздняя заявка задним
+                    числом (B4, пункт 4);
   Заявка-работа  -- каждая заявка периода: окно, вердикт или причина, сутки
                     с работой, гектары GPS в окне;
-  Работа-заявка  -- каждые машино-сутки с работой по GPS и их покрытие;
+  Работа-заявка  -- каждые машино-сутки с работой по GPS и их покрытие; у
+                    суток без заявки -- ближайшая заявка той же машины,
+                    заведённая задним числом позже, и через сколько суток;
+  Открытые заявки -- открытые заявки по организациям, от самой старой, с
+                    числом суток с ввода (B4, пункт 5);
   Причины        -- сколько строк без вердикта и почему;
   Замер N        -- распределение лага по трём выборкам и доля заявок,
                     которую покрыло бы окно для N = 0..14.
@@ -39,6 +45,7 @@ import argparse
 import os
 import sqlite3
 import sys
+from collections import Counter
 from datetime import date, datetime, timedelta
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -87,6 +94,16 @@ def _org(ctx, equipment_id):
     return ctx.orgs.get(org_id, '') if org_id else ''
 
 
+LATE_COLUMN = ('Без заявки: из них с поздней заявкой задним числом',
+               'Буюртмасиз: улардан кейин орқа сана билан киритилган '
+               'буюртмаси борлари')
+
+
+def _oldest(ctx):
+    rows = ctx.open_applications()
+    return rows[0]['days_open'] if rows else '—'
+
+
 def build_book(ctx, forward, reverse, lags, excluded, preview):
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font
@@ -119,12 +136,14 @@ def build_book(ctx, forward, reverse, lags, excluded, preview):
             counter['applications'], counter['app_' + rc.V_WORK],
             counter['app_' + rc.V_NO_WORK], counter['app_' + rc.V_NONE],
             counter['work_days'], counter['day_' + rc.C_COVERED],
-            counter['day_' + rc.C_UNCOVERED], counter['day_' + rc.C_NONE]))
+            counter['day_' + rc.C_UNCOVERED], counter['day_' + rc.C_NONE],
+            counter[rc.DAY_LATE]))
     summary_rows.append((bi(('Итого', 'Жами')), '', total['machines'],
                          total['applications'], total['app_' + rc.V_WORK],
                          total['app_' + rc.V_NO_WORK], total['app_' + rc.V_NONE],
                          total['work_days'], total['day_' + rc.C_COVERED],
-                         total['day_' + rc.C_UNCOVERED], total['day_' + rc.C_NONE]))
+                         total['day_' + rc.C_UNCOVERED], total['day_' + rc.C_NONE],
+                         total[rc.DAY_LATE]))
     sheet = sheet_with(
         'Свод',
         (bi(('Организация', 'Ташкилот')), bi(('Категория', 'Тоифа')),
@@ -133,13 +152,17 @@ def build_book(ctx, forward, reverse, lags, excluded, preview):
          bi(labels.VERDICTS[rc.V_NONE]),
          bi(('Машино-суток с работой по GPS', 'GPS бўйича иш бўлган машина-кунлар')),
          bi(labels.COVERAGE[rc.C_COVERED]), bi(labels.COVERAGE[rc.C_UNCOVERED]),
-         bi(labels.COVERAGE[rc.C_NONE])),
-        summary_rows, (28, 28, 10, 10, 14, 16, 14, 18, 16, 16, 14))
+         bi(labels.COVERAGE[rc.C_NONE]), bi(LATE_COLUMN)),
+        summary_rows, (28, 28, 10, 10, 14, 16, 14, 18, 16, 16, 14, 22))
     notes = [
         bi(('Период: %s — %s' % (ctx.date_from.strftime('%d.%m.%Y'),
                                  ctx.date_to.strftime('%d.%m.%Y')),
             'Давр: %s — %s' % (ctx.date_from.strftime('%d.%m.%Y'),
                                ctx.date_to.strftime('%d.%m.%Y')))),
+        bi(('Открытых заявок: %d; самая старая открыта %s сут. (лист «Открытые '
+            'заявки»)' % (len(ctx.open_applications()), _oldest(ctx)),
+            'Очиқ буюртмалар: %d; энг эскиси %s кундан бери очиқ («Открытые '
+            'заявки» варағи)' % (len(ctx.open_applications()), _oldest(ctx)))),
         bi(('Работа по GPS у объектов без машины в справочнике, объекто-суток: %d'
             % ctx.orphan_work_days(),
             'Маълумотномада машинаси йўқ объектларнинг GPS бўйича иши, '
@@ -216,14 +239,44 @@ def build_book(ctx, forward, reverse, lags, excluded, preview):
             row['gps_ha'], labels.pick(labels.COVERAGE, row['coverage'], True),
             labels.pick(labels.REASONS, row['reason'], True)
             if row['reason'] else '',
-            ', '.join(app.number for app in row['apps'][:5])))
+            ', '.join(app.number for app in row['apps'][:5]),
+            row['late_app'].number if row.get('late_app') else '',
+            row.get('late_days')))
     sheet_with(
         'Работа-заявка',
         (bi(('Сутки', 'Кун')), bi(('Машина', 'Машина')),
          bi(('Организация', 'Ташкилот')), bi(('Категория', 'Тоифа')),
          bi(('Га по GPS', 'GPS бўйича га')), bi(('Покрытие', 'Қопланиш')),
-         bi(('Причина', 'Сабаб')), bi(('Заявки', 'Буюртмалар'))),
-        reverse_rows, (12, 26, 20, 26, 10, 22, 48, 40))
+         bi(('Причина', 'Сабаб')), bi(('Заявки', 'Буюртмалар')),
+         bi(('Заявка задним числом, заведена позже',
+             'Кейин орқа сана билан киритилган буюртма')),
+         bi(('Через сколько суток после работы',
+             'Ишдан неча кун кейин'))),
+        reverse_rows, (12, 26, 20, 26, 10, 22, 48, 40, 24, 16))
+
+    # B4, пункт 5: открытые заявки по организациям, от самой старой.
+    open_rows = []
+    for row in sorted(ctx.open_applications(),
+                      key=lambda r: (_org(ctx, r['equipment_id']) == '',
+                                     _org(ctx, r['equipment_id']),
+                                     -r['days_open'], r['app'].number)):
+        app = row['app']
+        open_rows.append((
+            _org(ctx, row['equipment_id']), app.row.get('company_name') or '',
+            app.number, app.created_day,
+            labels.pick(labels.STATUSES, app.status, True),
+            _machine(ctx, row['equipment_id']),
+            app.row.get('plate_number') or '',
+            app.row.get('work_type_name') or '', row['days_open']))
+    sheet_with(
+        'Открытые заявки',
+        (bi(('Организация', 'Ташкилот')), bi(('Предприятие', 'Корхона')),
+         bi(('Номер заявки', 'Буюртма рақами')), bi(('Создана', 'Яратилган')),
+         bi(('Статус', 'Ҳолат')), bi(('Наша машина', 'Бизнинг машина')),
+         bi(('Госномер agro-work', 'agro-work давлат рақами')),
+         bi(('Вид работы', 'Иш тури')),
+         bi(('Открыта, суток с ввода', 'Очиқ, киритилгандан бери кун'))),
+        open_rows, (22, 26, 24, 12, 14, 24, 16, 36, 16))
 
     reason_rows = []
     counts = {}
@@ -275,6 +328,14 @@ def build_book(ctx, forward, reverse, lags, excluded, preview):
 
 def rc_category(slug):
     return labels.CATEGORIES.get(slug, slug or '')
+
+
+def print_reasons(title, counts, log=print):
+    """Одна строка: код причины и сколько строк отчёта её несут."""
+    if counts:
+        log('%s: %s' % (title, ' | '.join(
+            '%s %d' % (code, number) for code, number in sorted(
+                counts.items(), key=lambda item: (-item[1], item[0])))))
 
 
 def print_lags(lags, excluded, log=print):
@@ -350,6 +411,31 @@ def main(argv=None):
           '| no verdict %d' % (total['work_days'], total['day_' + rc.C_COVERED],
                                total['day_' + rc.C_UNCOVERED],
                                total['day_' + rc.C_NONE]))
+    late = [r['late_days'] for r in reverse if r.get('late_app') is not None]
+    print('  of them with a later backdated application: %d%s'
+          % (len(late), ' (days late: min %d, max %d)' % (min(late), max(late))
+             if late else ''))
+    if late:
+        # [REASON]: точные значения, а не корзины: корзина «поздно» -- это
+        # порог, которого владелец не называл (решение 4 раздела 8 трекового
+        # файла). Читать так: 3 -- явно поздний ввод той же работы, 29 --
+        # явно другая работа.
+        spread = Counter(late)
+        print('  days late -> machine-days: %s' % ' | '.join(
+            '%d -> %d' % (days, spread[days]) for days in sorted(spread)))
+    opened = ctx.open_applications()
+    print('open applications: %d%s' % (
+        len(opened), ' | oldest open %d days since entry'
+        % opened[0]['days_open'] if opened else ''))
+    # [REASON]: «без вердикта» -- самое большое число отчёта, и без причин
+    # оно ничего не говорит; те же числа лежат на листе «Причины» книги, но
+    # владелец присылает консоль, а не книгу.
+    print_reasons('no verdict, applications',
+                  Counter(row['reason'] or 'none' for row in forward
+                          if row['verdict'] == rc.V_NONE))
+    print_reasons('no verdict, machine-days',
+                  Counter(row['reason'] or 'none' for row in reverse
+                          if row['coverage'] == rc.C_NONE))
     print('object-days with work and no machine in our registry: %d'
           % ctx.orphan_work_days())
     print_lags(lags, excluded)
