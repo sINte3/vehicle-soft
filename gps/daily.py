@@ -121,6 +121,15 @@ REASON_INCOMPLETE = "sbor_nepolnyy"
 # dropped.
 LABEL_CARRY_MIN_SHARE = 0.5
 
+# The words of the line run_day prints when a recomputation dropped answers.
+# tools/gps_recompute_days.py looks for them, so they are defined once, here.
+DROPPED_MARK = "otvetov operatora poteryano pri pereschete"
+
+
+class AnswersWouldBeLost(Exception):
+    """write_day(keep_answers=True) refused: an answer would find no new site."""
+
+
 _TO_WGS84 = Transformer.from_crs(UTM_41N, "EPSG:4326", always_xy=True)
 
 
@@ -400,7 +409,7 @@ def _carry_labels(existing, sites):
     return carried
 
 
-def write_day(con, day, unit_id, result, computed_at=None):
+def write_day(con, day, unit_id, result, computed_at=None, keep_answers=False):
     """Replace the day's rows in one transaction. Returns (carried, dropped).
 
     A recomputation REPLACES: the aggregate is upserted and the polygons are
@@ -408,6 +417,10 @@ def write_day(con, day, unit_id, result, computed_at=None):
     five sites, not five rows and twenty-five sites. The operator's answers are
     carried across by overlap; any that find no home are counted and reported
     by the caller rather than disappearing.
+
+    keep_answers=True writes nothing at all when an answer would find no home:
+    AnswersWouldBeLost is raised and the transaction rolled back, so the old
+    rows and the answer stay exactly as they were.
     """
     computed_at = computed_at or datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
     con.execute("BEGIN")
@@ -420,6 +433,17 @@ def write_day(con, day, unit_id, result, computed_at=None):
                 "FROM gps_work_polygons WHERE work_date = ? AND wialon_id = ? "
                 "AND operator_label IS NOT NULL", (day, int(unit_id)))]
         carried = _carry_labels(existing, result.sites) if existing else {}
+        # [REASON]: the nightly run reports a lost answer and goes on -- its day
+        # is new and an answer rarely exists yet. A recompute of past days
+        # (tools/gps_recompute_days.py) runs while the program works, and an
+        # answer given meanwhile on a site the rule removes would be deleted by
+        # this very transaction: production data gone automatically. There the
+        # object-day is left untouched instead, and the run says why.
+        if keep_answers and len(carried) < len(existing):
+            raise AnswersWouldBeLost(
+                "%d of %d operator answer(s) of %s unit %s find no new site; "
+                "the old rows are kept" % (len(existing) - len(carried),
+                                           len(existing), day, unit_id))
 
         con.execute("DELETE FROM gps_work_polygons "
                     "WHERE work_date = ? AND wialon_id = ?", (day, int(unit_id)))
@@ -559,11 +583,13 @@ def mark_incomplete(con, day, unit_id, points_total, computed_at=None):
 
 
 def run_day(day, unit_id, folder=None, db_path=None, contours=None, log=print,
-            track_only=None):
+            track_only=None, keep_answers=False):
     """Compute and store one object-day. Returns the DayResult.
 
     `track_only` -- whether the object's category takes no hectares; None
     means "look it up", which the loops avoid by asking once per run.
+    `keep_answers` -- passed to write_day: raise AnswersWouldBeLost instead of
+    dropping an answer.
     """
     folder = folder or points_dir()
     db_path = db_path or DB_PATH
@@ -584,15 +610,15 @@ def run_day(day, unit_id, folder=None, db_path=None, contours=None, log=print,
         if contours is None:
             contours = load_contours(con)
         result = compute_day(points, contours=contours or None)
-        carried, dropped = write_day(con, day, unit_id, result)
+        carried, dropped = write_day(con, day, unit_id, result,
+                                     keep_answers=keep_answers)
     finally:
         con.close()
     if dropped:
         # [REASON]: an operator's answer is hand-entered data and the training
         # set for the work/transit rule. Losing one silently would shrink the
         # corpus invisibly, which is exactly how a set stops being trustworthy.
-        log("    VNIMANIE: otvetov operatora poteryano pri pereschete: %d"
-            % dropped)
+        log("    VNIMANIE: %s: %d" % (DROPPED_MARK, dropped))
     return result
 
 
@@ -700,7 +726,7 @@ def area_rule_drift(con, folder, days, track_only):
 
 
 def _guarded_day(day, unit_id, folder, db_path, contours, log, failures,
-                 track_only=None):
+                 track_only=None, keep_answers=False):
     """run_day, но сбой ОДНИХ суток не уносит весь прогон. None при сбое.
 
     [REASON]: дважды за два дня одна кривая строка убивала прогон по 400+
@@ -717,7 +743,8 @@ def _guarded_day(day, unit_id, folder, db_path, contours, log, failures,
     """
     try:
         return run_day(day, unit_id, folder=folder, db_path=db_path,
-                       contours=contours, log=log, track_only=track_only)
+                       contours=contours, log=log, track_only=track_only,
+                       keep_answers=keep_answers)
     except Exception as problem:                                   # noqa: BLE001
         failures.append((day, unit_id, type(problem).__name__,
                          ascii_only(str(problem))[:160]))
@@ -849,6 +876,12 @@ def main(argv=None):
     parser.add_argument("--dir", default=None,
                         help="where the point files live (default: instance/)")
     parser.add_argument("--db", default=None, help="path to transport.db")
+    parser.add_argument("--keep-answers", action="store_true",
+                        help="an object-day whose operator answer would find "
+                             "no new site is not written: it keeps its old "
+                             "rows and counts as failed (used by "
+                             "tools/gps_recompute_days.py); not with "
+                             "--catch-up")
     args = parser.parse_args(argv)
 
     # [REASON]: «вчера» считается здесь, а не в .bat-обёртке. В командном
@@ -875,6 +908,10 @@ def main(argv=None):
             # --date next to it would be silently ignored, and a silently
             # ignored argument is how a day gets computed twice by mistake.
             sys.stderr.write("ERROR: --catch-up takes no --date and no --unit\n")
+            return 2
+        if args.keep_answers:
+            sys.stderr.write("ERROR: --keep-answers is for a --date run, "
+                             "not --catch-up\n")
             return 2
         if args.window_days < 1:
             sys.stderr.write("ERROR: --window-days must be at least 1\n")
@@ -932,7 +969,8 @@ def main(argv=None):
     failures = []
     for unit_id in units:
         result = _guarded_day(day, unit_id, folder, db_path, contours, print,
-                              failures, track_only=unit_id in track_only)
+                              failures, track_only=unit_id in track_only,
+                              keep_answers=args.keep_answers)
         if result is None:
             continue
         if result.reason:

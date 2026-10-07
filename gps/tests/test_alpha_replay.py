@@ -9,7 +9,11 @@
     суток, где правило не оставило ни одного участка;
   * каждый инвариант, нарушенный нарочно, даёт FAIL;
   * контроль прогона и сверка повтора с движком делают прогон
-    недействительным, а не проваленным, и не судят строки старой версии;
+    недействительным, а не проваленным; строку судят методом её метки, и
+    строка с чужой меткой не проходит; строки иной версии, чем две
+    известные, не судятся;
+  * после настоящего пересчёта окна строки считаемых объектов -- новой
+    версии и ровно правило, строки исключённых -- прежней, отдельной строкой;
   * условие 3 не выносит PASS, пока не пересчитаны все шесть названных
     суток, и проваливается, если сработавшие сутки не потеряли гектаров;
   * исключённые объекты проходят инварианты, но не входят в потери и
@@ -281,8 +285,11 @@ class Production(World):
         self.assertTrue(rows[MIXED]['control'])
         self.assertTrue(rows[FIELD]['control'])     # still the previous method
         _verdicts, out = self.run_production(named=(('2026-09-26', ROADS),))
-        self.assertIn('rows by method version: adaptive-alpha-2026-08-12 4, '
-                      'fixed-alpha-2026-07-29 1, overflow-cap-2026-10-07 2', out)
+        self.assertIn('rows by method version, counted objects: '
+                      'adaptive-alpha-2026-08-12 2, fixed-alpha-2026-07-29 1, '
+                      'overflow-cap-2026-10-07 2; excluded objects (a recompute '
+                      'leaves them as they are): adaptive-alpha-2026-08-12 2',
+                      out)
         con = sqlite3.connect(self.db)
         try:
             con.execute('UPDATE gps_work_polygons SET area_ha = area_ha + 1 '
@@ -291,6 +298,76 @@ class Production(World):
         finally:
             con.close()
         self.assertFalse(self.judged()[MIXED]['control'])
+
+    def relabel(self, unit, version):
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute('UPDATE gps_daily_aggregates SET method_version = ? '
+                        'WHERE wialon_id = ?', (version, unit))
+            con.commit()
+        finally:
+            con.close()
+
+    def test_a_row_is_judged_by_its_own_label_not_by_either_method(self):
+        """A label that does not match the polygons fails the control.
+
+        The realistic broken recompute rewrites the label and not the sites.
+        A control that accepted a row matching EITHER method would pass it;
+        +1 ha (above) matches neither, so it cannot tell the two apart.
+        """
+        self.untamper()
+        # the previous method's 60 ha of roads, labelled as the rule
+        self.relabel(ROADS, METHOD_VERSION)
+        # the rule's sites of field-and-roads, labelled as the previous method
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute('DELETE FROM gps_work_polygons WHERE wialon_id = ?',
+                        (MIXED,))
+            con.commit()
+            self.day(con, '2026-09-28', MIXED, field_and_roads(),
+                     overflow_cap=True)
+        finally:
+            con.close()
+        self.relabel(MIXED, PREVIOUS_METHOD_VERSION)
+        rows = self.judged()
+        self.assertFalse(rows[ROADS]['control'])
+        self.assertFalse(rows[MIXED]['control'])
+        self.assertTrue(rows[FIELD]['control'])
+
+    def test_after_the_real_recompute_counted_rows_are_the_rule(self):
+        """The state the docstring promises, reached by the real tool."""
+        import tools.gps_recompute_days as recompute
+        self.untamper()
+        # the special machine as production knows it: by its category, so the
+        # computation keeps its day as a track without hectares
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute("INSERT INTO equipment (name, plate, category, "
+                        "organization_id, is_active) VALUES "
+                        "('Погрузчик', '01 001 AA', 'special', 1, 1)")
+            con.execute("INSERT INTO vialon_mappings (vialon_name, wialon_id, "
+                        "equipment_id, skip) VALUES ('Погрузчик', ?, 2, 0)",
+                        (SPECIAL,))
+            con.commit()
+        finally:
+            con.close()
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = recompute.main(['--since', '2026-09-01', '--until',
+                                   '2026-09-30', '--apply', '--db', self.db,
+                                   '--dir', self.folder], out=[].append,
+                                  today='2026-10-07')
+        self.assertEqual(code, 0)
+        rows = self.judged()
+        self.assertTrue(all(row['control'] for row in rows.values()), rows)
+        _verdicts, out = self.run_production(named=(('2026-09-26', ROADS),))
+        self.assertIn('machine-days replayed: 8 (points gone from disk: 1); '
+                      'counted 6, excluded objects 2', out)
+        self.assertIn('control, recomputed by the method that wrote the row == '
+                      'stored: 8 of 8 same', out)
+        self.assertIn('rows by method version, counted objects: '
+                      'overflow-cap-2026-10-07 6; excluded objects (a recompute '
+                      'leaves them as they are): adaptive-alpha-2026-08-12 2',
+                      out)
 
     def test_a_replay_measuring_other_numbers_than_the_engine_is_invalid(self):
         """Negative control of `consistent`: a measure that lies is caught."""

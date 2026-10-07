@@ -350,7 +350,12 @@ class GpsReleaseRunbook(unittest.TestCase):
                         "'another method: %d'",
                         "'== %s (%d of %d)'",
                         "'days with points in %s: %d of %d'",
-                        "'rows of counted objects already on %s before this run: %d -- this '"):
+                        "'rows of counted objects already on %s before this run: %d (an '",
+                        # три отказа посреди окна, которые разбирает таблица
+                        # «Если что-то пошло не так»
+                        "'%d operator answer(s) appeared on %s while the window '",
+                        "'%d operator answer(s) were given on %s while it was '",
+                        "'the computation reports %d operator answer(s) lost on '"):
             with self.subTest(line=printed):
                 self.assertIn(printed, tool)
         step = next(body for title, body in steps(RELEASE).items()

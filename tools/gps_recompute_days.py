@@ -28,19 +28,22 @@ r"""GPS: пересчитать прошедшие сутки действующ
 
 [REASON]: отказ (код 3), если в окне есть ответы операторов «работа/проезд».
 Пересчёт переносит ответ на новый участок по наложению, но ответ на участке,
-которого больше нет, теряется -- а ответ это ручной труд и обучающий набор.
+которого больше нет, терялся бы -- а ответ это ручной труд и обучающий набор.
 На 03.10 ответов за сентябрь не было ни одного; если они появились, решает
 сессия вместе с владельцем, а не инструмент. Программа во время пересчёта
-работает, поэтому ответы проверяются не один раз, а перед каждыми сутками, и
-сообщение самого расчёта о потерянном ответе останавливает пересчёт.
+работает, поэтому ответы проверяются перед каждыми сутками и после них, а
+сутки считаются с `gps.daily --keep-answers`: объект-сутки, чей ответ не нашёл
+бы нового участка, не перезаписываются вовсе и остаются прежними вместе с
+ответом.
 
 КОДЫ ВЫХОДА: 0 -- все сутки окна посчитаны (или план без записи); 2 --
 неверный ввод или в папке нет точек ни за один день окна, ничего не
 записано; 3 -- отказ из-за ответов операторов: до запуска -- ничего не
-записано, посреди окна -- сутки до названных пересчитаны, названные и
-дальше нет; 5 -- часть суток не посчиталась из-за сбоя: остальные
-посчитаны, сбойные перечислены, их можно пересчитать повтором той же
-команды (журнал лучше дописывать, а не перезаписывать: `*>>`).
+записано; посреди окна -- сутки до названных пересчитаны, ответ, данный во
+время пересчёта, остаётся в базе, сутки после названных не пересчитаны; 5 --
+часть суток не посчиталась из-за сбоя: остальные посчитаны, сбойные
+перечислены с причиной, их можно пересчитать повтором той же команды (журнал
+лучше дописывать, а не перезаписывать: `*>>`).
 
 Запуск -- из окружения расчёта, PowerShell, из C:\transport-report после
 выпуска (пишет в рабочую базу только выпущенный код):
@@ -59,6 +62,7 @@ import io
 import os
 import sqlite3
 import sys
+import traceback
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -78,8 +82,45 @@ from gps_collector import storage                                    # noqa: E40
 EPSILON = 1e-6
 LISTED = 20
 # [REASON]: строка, которой `gps.daily.run_day` сообщает о потерянных ответах
-# операторов. Её код возврата этого не несёт, а строка -- единственный след.
-DROPPED_MARK = 'otvetov operatora poteryano pri pereschete'
+# операторов. Сутки здесь считаются с --keep-answers, и ответ не теряется, а
+# объект-сутки остаются прежними; строка -- последняя страховка, если это
+# когда-нибудь сломается. Слова берутся из самого расчёта, а не копией.
+DROPPED_MARK = daily.DROPPED_MARK
+
+
+class _Lines(io.TextIOBase):
+    """Вывод `gps.daily` -- дальше построчно, по мере печати.
+
+    [REASON]: вывод суток копился целиком и печатался после них. Если процесс
+    умирал посреди суток (окно закрыли, Ctrl+C, перезагрузка), строки суток --
+    и строка о потерянном ответе, и причина сбоя -- не доходили до журнала.
+    """
+
+    def __init__(self, out, real):
+        super().__init__()
+        self.out, self.real, self.rest, self.dropped = out, real, '', 0
+
+    def writable(self):
+        return True
+
+    def write(self, text):
+        self.rest += text
+        while '\n' in self.rest:
+            line, self.rest = self.rest.split('\n', 1)
+            self._pass(line)
+        return len(text)
+
+    def finish(self):
+        if self.rest:
+            line, self.rest = self.rest, ''
+            self._pass(line)
+
+    def _pass(self, line):
+        if DROPPED_MARK in line:
+            self.dropped += 1
+        # `out` по умолчанию -- print, а sys.stdout сейчас -- этот объект.
+        with contextlib.redirect_stdout(self.real):
+            self.out(line)
 
 
 def window(since, until):
@@ -178,8 +219,10 @@ def compare(before, after, excluded, out):
     months = defaultdict(lambda: [0.0, 0.0, 0, 0])
     increased, appeared, left_old = [], [], []
     # [REASON]: «было» читается из базы в начале КАЖДОГО запуска. Если это
-    # повтор после прерванного или сбойного прогона, часть окна уже на новом
-    # методе, и сводка покажет только остаток -- это надо сказать прямо.
+    # повтор после прерванного или сбойного прогона -- или ночной расчёт уже
+    # посчитал новым кодом сутки после выпуска, -- часть окна уже на новом
+    # методе, и сводка покажет только остаток. Это надо сказать прямо, не
+    # угадывая, какая из двух причин.
     earlier = sum(1 for (day, unit), row in before.items()
                   if unit not in excluded and row[1] == METHOD_VERSION)
     for key in sorted(set(before) | set(after)):
@@ -203,9 +246,10 @@ def compare(before, after, excluded, out):
             left_old.append((key, new[1]))
     out('')
     if earlier:
-        out('rows of counted objects already on %s before this run: %d -- this '
-            'run continues an earlier one, so "before" below is what was left'
-            % (METHOD_VERSION, earlier))
+        out('rows of counted objects already on %s before this run: %d (an '
+            'earlier run of this tool, or the nightly computation since the '
+            'release) -- "before" below is what was left' % (METHOD_VERSION,
+                                                            earlier))
     out('counted objects, published machine-days and their hectares, before '
         '-> after:')
     for month, (ha_before, ha_after, days_before, days_after) in sorted(
@@ -235,20 +279,25 @@ def _day(option, value):
 
 
 def recompute_day(day, db, folder, out):
-    """Одни сутки путём ночного расчёта: (код, потеряно ответов, вывод)."""
-    buffer = io.StringIO()
+    """Одни сутки путём ночного расчёта: (код, потеряно ответов)."""
+    lines = _Lines(out, sys.stdout)
     try:
-        with contextlib.redirect_stdout(buffer):
-            code = daily.main(['--date', day, '--db', db, '--dir', folder])
+        with contextlib.redirect_stdout(lines):
+            code = daily.main(['--date', day, '--db', db, '--dir', folder,
+                               '--keep-answers'])
     except Exception as error:                          # noqa: BLE001
         # [REASON]: падение одних суток не должно оборвать окно без сводки:
-        # сутки записываются в сбойные, остальные считаются дальше.
-        code = 'crash: %s' % type(error).__name__
-    text = buffer.getvalue()
-    for line in text.splitlines():
-        out(line)
-    dropped = sum(1 for line in text.splitlines() if DROPPED_MARK in line)
-    return code, dropped
+        # сутки записываются в сбойные, остальные считаются дальше. Причина
+        # печатается целиком: по одному имени исключения не отличить
+        # занятую базу, которую лечит повтор, от ошибки, которую он не лечит.
+        lines.finish()
+        for line in traceback.format_exc().splitlines():
+            out(collector_config.ascii_only(line))
+        code = 'crash: %s: %s' % (type(error).__name__,
+                                  collector_config.ascii_only(str(error))[:160])
+    finally:
+        lines.finish()
+    return code, lines.dropped
 
 
 def main(argv=None, out=print, today=None):
@@ -326,22 +375,43 @@ def main(argv=None, out=print, today=None):
         if code != 0:
             failed.append((day, code))
         if dropped:
-            refused = ('the computation reports operator answers lost on %s: '
-                       'they are in the backup taken before the recompute; '
-                       'the days after %s were NOT recomputed' % (day, day))
+            # [REASON]: с --keep-answers этого быть не должно. Если всё же
+            # случилось, ответ дан во время пересчёта: в копии 4.2 его нет,
+            # вернуть его может только оператор.
+            refused = ('the computation reports %d operator answer(s) lost on '
+                       '%s: they were given during the recompute, so the backup '
+                       'taken before it does not hold them either - the '
+                       'operator has to answer again; %s was recomputed, the '
+                       'days after it were NOT' % (dropped, day, day))
+            break
+        # [REASON]: проверка перед сутками не видит ответа, данного, пока эти
+        # сутки считались. Такой ответ не теряется (объект-сутки с ним либо
+        # перенесли его на новый участок, либо остались прежними), но окно
+        # останавливается так же, как при ответе перед сутками.
+        given, _ = answers_in_window(args.db, day, day)
+        if given:
+            refused = ('%d operator answer(s) were given on %s while it was '
+                       'being recomputed; they are in the database - on the new '
+                       'site or, where it is gone, with the old rows of that '
+                       'object; the days after %s were NOT recomputed'
+                       % (len(given), day, day))
             break
     after, excluded_after = snapshot(args.db, since, until)
     left_old = compare(before, after, excluded | excluded_after, out)
     out('days without points (nothing to recompute there): %d'
         % (len(days) - len(with_points)))
     out('')
+    if failed:
+        # [REASON]: при отказе повтор упрётся в те же ответы, поэтому совет
+        # «повторить» печатается только без отказа.
+        out('days that did not compute completely: %s%s'
+            % (', '.join('%s (exit %s)' % pair for pair in failed),
+               '' if refused else ' -- run the same command again, it '
+               'recomputes them'))
     if refused:
         out('REFUSED: %s. Ask the session.' % refused)
         return 3
     if failed:
-        out('days that did not compute completely: %s -- run the same command '
-            'again, it recomputes them' % ', '.join('%s (exit %s)' % pair
-                                                     for pair in failed))
         out('RESULT: RECOMPUTED WITH FAILURES')
         return 5
     out('RESULT: RECOMPUTED %d day(s) by %s; rows of counted objects left on '

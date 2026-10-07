@@ -10,7 +10,11 @@
   * ответ оператора в окне -- отказ без единой записи; ответ, появившийся
     посреди пересчёта, или сообщение расчёта о потерянном ответе --
     остановка с кодом 3 до следующих суток;
-  * сбой или падение одних суток не обрывает остальные и даёт код 5;
+  * ответ, данный, пока его сутки считаются, не теряется: сутки идут с
+    `--keep-answers`, и объект-сутки с ним остаются прежними вместе с ответом;
+  * сбой или падение одних суток не обрывает остальные и даёт код 5, причина
+    падения -- в журнале целиком; вывод расчёта уходит в журнал построчно,
+    пока сутки ещё считаются;
   * окно не заходит в сегодня, неверный ввод и папка без точек -- код 2
     без записи;
   * строки, оставшиеся прежним методом, названы поимённо; повтор после
@@ -314,24 +318,85 @@ class Apply(Window):
         self.assertEqual(self.rows(FIELD, '2026-09-27')[0][1],
                          PREVIOUS_METHOD_VERSION)
 
-    def test_an_answer_the_computation_reports_lost_stops_the_run(self):
-        """daily's own line about a lost answer is a stop, not a log line."""
-        real = daily.main
+    def answer_inside_the_day(self, unit, day):
+        """write_day, but an operator answers the unit's day just before it.
 
-        def losing(argv):
-            code = real(argv)
-            if argv[1] == '2026-09-26':
-                print('    VNIMANIE: otvetov operatora poteryano pri pereschete: 1')
-            return code
+        The answer lands after every check of the tool and inside the
+        computation of its very day -- the window the checks cannot close.
+        """
+        real = daily.write_day
+        given = []
 
-        with unittest.mock.patch.object(recompute.daily, 'main',
-                                        side_effect=losing):
+        def answering(con, at_day, at_unit, result, *args, **kwargs):
+            if (at_day, int(at_unit)) == (day, unit) and not given:
+                other = sqlite3.connect(self.db)
+                try:
+                    other.execute("UPDATE gps_work_polygons SET operator_label "
+                                  "= 'проезд', decided_at = '2026-10-07 10:00' "
+                                  "WHERE wialon_id = ? AND work_date = ?",
+                                  (unit, day))
+                    other.commit()
+                finally:
+                    other.close()
+                given.append(day)
+            return real(con, at_day, at_unit, result, *args, **kwargs)
+
+        return unittest.mock.patch.object(daily, 'write_day',
+                                          side_effect=answering)
+
+    def answers(self, unit, day):
+        con = sqlite3.connect(self.db)
+        try:
+            return [row[0] for row in con.execute(
+                'SELECT operator_label FROM gps_work_polygons WHERE wialon_id '
+                '= ? AND work_date = ? AND operator_label IS NOT NULL',
+                (unit, day))]
+        finally:
+            con.close()
+
+    def test_an_answer_given_inside_its_day_is_kept_with_the_old_rows(self):
+        """The rule removes the roads site; its answer must not go with it."""
+        roads_before = self.rows(ROADS, '2026-09-26')
+        with self.answer_inside_the_day(ROADS, '2026-09-26'):
             code, out, _p, _e = self.run_tool('--since', '2026-09-01',
                                               '--until', '2026-09-30', '--apply')
         self.assertEqual(code, 3, out)
-        self.assertIn('the computation reports operator answers lost on '
-                      '2026-09-26', out)
-        self.assertIn('otvetov operatora poteryano', out)       # passed through
+        # the object-day was not written at all: old rows, old method, answer
+        self.assertEqual(self.rows(ROADS, '2026-09-26'), roads_before)
+        self.assertEqual(self.answers(ROADS, '2026-09-26'), ['проезд'])
+        self.assertIn('SBOY: AnswersWouldBeLost', out)
+        self.assertIn('days that did not compute completely: 2026-09-26 '
+                      '(exit 5)', out)
+        self.assertIn('REFUSED: 1 operator answer(s) were given on 2026-09-26 '
+                      'while it was being recomputed; they are in the database',
+                      out)
+        self.assertNotIn(daily.DROPPED_MARK, out)
+        # the run stopped: the next day keeps the previous method
+        self.assertEqual(self.rows(FIELD, '2026-09-27')[0][1],
+                         PREVIOUS_METHOD_VERSION)
+
+    def test_a_lost_answer_reported_by_the_computation_stops_the_run(self):
+        """The last line of defence, on the computation's own message.
+
+        Without --keep-answers the real gps.daily drops the answer and says
+        so; the tool must stop on exactly that line, whatever its wording.
+        """
+        real = daily.main
+
+        def without_keeping(argv):
+            return real([arg for arg in argv if arg != '--keep-answers'])
+
+        with self.answer_inside_the_day(ROADS, '2026-09-26'), \
+                unittest.mock.patch.object(recompute.daily, 'main',
+                                           side_effect=without_keeping):
+            code, out, _p, _e = self.run_tool('--since', '2026-09-01',
+                                              '--until', '2026-09-30', '--apply')
+        self.assertEqual(code, 3, out)
+        self.assertIn('    VNIMANIE: %s: 1' % daily.DROPPED_MARK, out)
+        self.assertIn('REFUSED: the computation reports 1 operator answer(s) '
+                      'lost on 2026-09-26: they were given during the '
+                      'recompute', out)
+        self.assertEqual(self.answers(ROADS, '2026-09-26'), [])
         self.assertEqual(self.rows(FIELD, '2026-09-27')[0][1],
                          PREVIOUS_METHOD_VERSION)
 
@@ -348,9 +413,60 @@ class Apply(Window):
             code, out, _p, _e = self.run_tool('--since', '2026-09-01',
                                               '--until', '2026-09-30', '--apply')
         self.assertEqual(code, 5, out)
-        self.assertIn('2026-09-26 (exit crash: RuntimeError)', out)
+        self.assertIn('2026-09-26 (exit crash: RuntimeError: boom)', out)
+        # the cause in full: a busy database and a schema error look alike
+        # by the name of the exception alone
+        self.assertIn('Traceback (most recent call last):', out)
+        self.assertIn('RuntimeError: boom', out.split('== 2026-09-27')[0])
         self.assertIn('counted objects, published machine-days', out)
         self.assertEqual(self.rows(FIELD, '2026-09-27')[0][1], METHOD_VERSION)
+
+    def test_the_output_of_a_day_reaches_the_log_while_the_day_runs(self):
+        """A run killed mid-day must leave that day's lines in the log."""
+
+        def interrupted(argv):
+            if argv[1] == '2026-09-26':
+                print('  393      half of the day is written')
+                raise KeyboardInterrupt
+            return 0
+
+        out = []
+        with unittest.mock.patch.object(recompute.daily, 'main',
+                                        side_effect=interrupted), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                self.assertRaises(KeyboardInterrupt):
+            recompute.main(['--since', '2026-09-01', '--until', '2026-09-30',
+                            '--apply', '--db', self.db, '--dir', self.folder],
+                           out=out.append, today=TODAY)
+        self.assertEqual(out[-1], '  393      half of the day is written')
+
+    def test_failed_days_are_named_even_when_the_run_is_refused(self):
+        real = daily.main
+
+        def failing_then_answered(argv):
+            if argv[1] == '2026-09-26':
+                con = sqlite3.connect(self.db)
+                try:
+                    con.execute("UPDATE gps_work_polygons SET operator_label = "
+                                "'работа' WHERE wialon_id = ? AND work_date = "
+                                "'2026-09-27'", (FIELD,))
+                    con.commit()
+                finally:
+                    con.close()
+                return 5
+            return real(argv)
+
+        with unittest.mock.patch.object(recompute.daily, 'main',
+                                        side_effect=failing_then_answered):
+            code, out, _p, _e = self.run_tool('--since', '2026-09-01',
+                                              '--until', '2026-09-30', '--apply')
+        self.assertEqual(code, 3, out)
+        failed = out.index('days that did not compute completely: 2026-09-26 '
+                           '(exit 5)')
+        self.assertLess(failed, out.index('REFUSED: 1 operator answer(s) '
+                                          'appeared on 2026-09-27'))
+        # a rerun would meet the same answer: no advice to rerun here
+        self.assertNotIn('run the same command again', out)
 
     def test_a_rerun_says_part_of_the_window_was_already_recomputed(self):
         real = daily.main
@@ -366,8 +482,8 @@ class Apply(Window):
                                           '--until', '2026-09-30', '--apply')
         self.assertEqual(code, 0, out)
         self.assertIn('rows of counted objects already on overflow-cap-2026-10-07 '
-                      'before this run: 1 -- this run continues an earlier one',
-                      out)
+                      'before this run: 1 (an earlier run of this tool, or the '
+                      'nightly computation since the release)', out)
         self.assertEqual(self.rows(ROADS, '2026-09-26')[0][1], METHOD_VERSION)
 
     def test_a_failed_day_does_not_stop_the_others(self):
@@ -383,8 +499,8 @@ class Apply(Window):
             code, out, _p, _e = self.run_tool('--since', '2026-09-01',
                                               '--until', '2026-09-30', '--apply')
         self.assertEqual(code, 5)
-        self.assertIn('days that did not compute completely: 2026-09-26 (exit 5)',
-                      out)
+        self.assertIn('days that did not compute completely: 2026-09-26 (exit 5) '
+                      '-- run the same command again, it recomputes them', out)
         self.assertIn('RESULT: RECOMPUTED WITH FAILURES', out)
         self.assertEqual(self.rows(ROADS, '2026-09-26')[0][1],
                          PREVIOUS_METHOD_VERSION)

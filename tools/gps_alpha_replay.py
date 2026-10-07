@@ -34,8 +34,10 @@
       с базой; иначе прогон недействителен. Контроль судит строку по её же
       метке, поэтому непересчитанная строка проходит его как прежний метод;
       что окно пересчитано, говорит соседняя строка -- число строк по версиям
-      метода. После пересчёта обе вместе подтверждают: все строки новой
-      версии, и каждая из них ровно правило.
+      метода, отдельно у считаемых и у исключённых объектов. После пересчёта
+      обе вместе подтверждают: все строки СЧИТАЕМЫХ объектов новой версии, и
+      каждая из них ровно правило. Строки исключённых объектов пересчёт не
+      трогает: они остаются прежней версией и судятся как прежний метод.
 
 ВЕРДИКТЫ И КОД ВЫХОДА
   PASS / FAIL -- условие проверено; NOT CHECKED -- проверять было нечего
@@ -568,19 +570,29 @@ def pick_for_review(results, kinds):
     return named + top_losses(results, kinds)
 
 
-def condition_2(results, out):
+def condition_2(results, out, kinds=None):
     checked = [row for row in results if row['control'] is not None]
     mismatched = [row for row in checked if not row['control']]
     out('control, recomputed by the method that wrote the row == stored: %d of '
         '%d same, %d different, %d not checked (another method version)'
         % (len(checked) - len(mismatched), len(checked), len(mismatched),
            len(results) - len(checked)))
-    versions = defaultdict(int)
+    # [REASON]: пересчёт прошлых суток, как и ночной расчёт, исключённые
+    # объекты не трогает: их строки остаются прежней версией по замыслу. В
+    # одной общей строке они выглядели бы как непересчитанные считаемые, и
+    # настоящая пропущенная строка в них бы потерялась.
+    versions = {False: defaultdict(int), True: defaultdict(int)}
     for row in results:
-        versions[row.get('version')] += 1
-    out('rows by method version: %s'
-        % ', '.join('%s %d' % (name, count) for name, count
-                    in sorted(versions.items(), key=lambda item: str(item[0]))))
+        excluded = (kinds or {}).get(row['unit']) == 'excluded'
+        versions[excluded][row.get('version')] += 1
+
+    def listed(part):
+        return ', '.join('%s %d' % (name, count) for name, count
+                         in sorted(part.items(), key=lambda item: str(item[0])))
+
+    out('rows by method version, counted objects: %s; excluded objects (a '
+        'recompute leaves them as they are): %s'
+        % (listed(versions[False]) or 'none', listed(versions[True]) or 'none'))
     for row in mismatched[:20]:
         out('  control mismatch %s %d' % (row['day'], row['unit']))
     for row in [row for row in results if not row['consistent']][:20]:
@@ -663,7 +675,7 @@ def report_production(results, missing, kinds, names, out=print):
     out('machine-days replayed: %d (points gone from disk: %d); counted %d, '
         'excluded objects %d' % (len(results), missing, len(mine),
                                  len(results) - len(mine)))
-    verdicts = [condition_2(results, out)]
+    verdicts = [condition_2(results, out, kinds)]
     out('')
     verdicts.append(condition_3(results, names, out))
     out('')
