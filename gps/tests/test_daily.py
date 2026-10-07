@@ -168,7 +168,7 @@ class FixtureDay(unittest.TestCase):
         self.assertEqual(aggregate["sats_median"], 14.0)
         self.assertEqual(aggregate["motion_gaps"], 0)
         self.assertEqual(aggregate["gps_jumps"], 0)
-        self.assertEqual(aggregate["method_version"], "adaptive-alpha-2026-08-12")
+        self.assertEqual(aggregate["method_version"], "overflow-cap-2026-10-07")
 
     def test_the_polygon_is_stored_in_degrees_and_survives_the_round_trip(self):
         site = self.result.sites[0]

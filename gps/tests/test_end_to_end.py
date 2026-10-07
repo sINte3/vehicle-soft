@@ -247,7 +247,7 @@ class WholeChain(unittest.TestCase):
         self.assertEqual(row["points_total"], 1598)
         self.assertEqual(row["interval_median_s"], 30.0)
         self.assertEqual(row["sats_median"], 14.0)
-        self.assertEqual(row["method_version"], "adaptive-alpha-2026-08-12")
+        self.assertEqual(row["method_version"], "overflow-cap-2026-10-07")
 
     def test_the_ingestion_journal_agrees_with_what_was_stored(self):
         runs = self.rows("gps_sync_log")

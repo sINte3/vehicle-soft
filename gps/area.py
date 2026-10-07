@@ -72,6 +72,30 @@ input defects, both measured and reported by this module, not method error.
 
 To reproduce the old behaviour exactly, pass alpha_m=ALPHA_M explicitly.
 
+THE OVERFLOW CAP -- the method since 2026-10-07 (A7), and its warrant.
+On a day of slow road driving the "pass alongside" the spacing estimator finds
+is the next road, hundreds of metres away, and alpha = 1.2 x that spacing
+stitched everything between the roads into one site: 805 ha on six September
+days, 285 ha for a tractor that never entered a field. The rule: when the
+day's median spacing is above SPACING_CAP_M, take the median again over the
+same votes that are not farther than the cap; none -- no spacing, the fixed
+10 m. It was written down on 2026-10-02 BEFORE any run on data, with its
+acceptance conditions (docs/GPS_PLAN_FAKT_VISION_ROADMAP.md section 2.11),
+and judged on 02-07.10 by `tools/gps_alpha_replay.py`:
+
+  32 hand-measured works (27.07 and 12.08)   none changed, bit for bit
+  5 198 machine-days of September            no invariant broken; the
+                                             replay reproduced the database
+                                             on all 5 198
+  the six days of alpha 300-981 m            804.76 ha -> 1.58 ha
+  16 days the owner looked at in the KML     974.30 ha -> 2.37 ha; the
+                                             owner: none of it was field work
+
+The owner adopted it on 2026-10-07. Below the cap a day is bit-identical to
+the previous method; above it nothing is ever added. `overflow_cap=False`
+reproduces the previous method exactly, and its results carry
+PREVIOUS_METHOD_VERSION, so a row always names the method that made it.
+
 WHAT THIS MODULE DOES NOT DO
 It contains no business rules. It does not decide what counts as work rather
 than passage, what deviation is acceptable, or when a track is too broken to
@@ -124,8 +148,8 @@ PASS_SPACING_SAMPLES = 400
 PASS_SPACING_NEIGHBOURS = 80
 
 # [REASON]: A7, pre-registered 2026-10-02 (docs/GPS_PLAN_FAKT_VISION_ROADMAP.md
-# section 2.11), NOT yet the method: selected by `overflow_cap=True` until the
-# owner accepts it on his hand-measured sets. On a day of slow road driving
+# section 2.11), the method since the owner adopted it on 2026-10-07 (see the
+# module docstring). On a day of slow road driving
 # the "pass alongside" is the next road: a median spacing of 252-818 m, alpha
 # 302-981 m, billed everything between the roads (805 ha on six September
 # days, `tools/gps_alpha_report.py` on production 02.10). 37.2 m
@@ -161,7 +185,17 @@ RETURN_SAMPLES = 400
 # anything; the engine only needs some floor to keep road slivers out.
 MIN_WORK_AREA_HA = 0.3
 
-METHOD_VERSION = "adaptive-alpha-2026-08-12"
+# [REASON]: a row names the method that made it, so a hectare stays
+# reproducible after the method changes. The previous version is kept because
+# `overflow_cap=False` still computes it -- recomputing a day that way must
+# not label the result as the new method.
+METHOD_VERSION = "overflow-cap-2026-10-07"
+PREVIOUS_METHOD_VERSION = "adaptive-alpha-2026-08-12"
+
+
+def method_version(overflow_cap):
+    """The version string of the method a computation with this switch ran."""
+    return METHOD_VERSION if overflow_cap else PREVIOUS_METHOD_VERSION
 
 # [REASON]: the tracker writes at most every 30 s while moving (parameter
 # 10050) and transmits every 60 s (10055), so 5 minutes between two CONSECUTIVE
@@ -465,8 +499,9 @@ def pass_spacing(points_xy, detour_ratio=PASS_SPACING_DETOUR_RATIO):
 def pass_spacing_on_overflow(points_xy, cap_m=SPACING_CAP_M):
     """`pass_spacing`, unless it says the pass alongside is beyond belief.
 
-    The pre-registered A7 rule (roadmap 2.11). Today's median is kept as it is
-    whenever it is at most `cap_m` -- such a day is bit-identical to today.
+    The A7 rule (roadmap 2.11), the method since 2026-10-07. The plain
+    median is kept as it is whenever it is at most `cap_m` -- such a day is
+    bit-identical to the previous method.
     Above it, the median is taken again over the same votes that are at most
     `cap_m`; no such vote means no pass alongside was found, and None sends the
     caller to the fixed alpha, exactly as for a cloud too small to measure.
@@ -527,21 +562,24 @@ def return_share(points_xy, radius_m=RETURN_RADIUS_M, along_track_m=RETURN_ALONG
 
 
 def worked_area(track, contour, contour_id=None, alpha_m=None,
-                overflow_cap=False):
+                overflow_cap=True):
     """The method for one machine, one interval, one contour.
 
     `track` is a sequence of (timestamp_seconds, lon, lat, speed_kmh).
     `contour` is a shapely Polygon already in UTM 41N.
     `alpha_m` pins alpha to a fixed value; the default None selects the
     adaptive rule max(ALPHA_M, ALPHA_SPACING_FACTOR x measured spacing).
-    `overflow_cap` measures the spacing by the pre-registered A7 rule
-    (`pass_spacing_on_overflow`); off, the method is exactly today's.
+    `overflow_cap` -- the A7 rule (`pass_spacing_on_overflow`), the method
+    since 2026-10-07; False reproduces the previous method exactly, and the
+    result then carries PREVIOUS_METHOD_VERSION.
     """
+    version = method_version(overflow_cap)
     if contour is None or not track:
         return WorkArea(contour_id, 0.0, None,
                         track_quality([0.0], [0.0]) if not track
                         else track_quality([r[0] for r in track],
-                                           [r[3] for r in track]))
+                                           [r[3] for r in track]),
+                        method_version=version)
 
     timestamps = [r[0] for r in track]
     speeds = [r[3] for r in track]
@@ -553,7 +591,7 @@ def worked_area(track, contour, contour_id=None, alpha_m=None,
     quality = track_quality(timestamps, speeds, points_used=len(used),
                             points_xy=list(zip(xs, ys)))
     if not used:
-        return WorkArea(contour_id, 0.0, None, quality)
+        return WorkArea(contour_id, 0.0, None, quality, method_version=version)
 
     if alpha_m is None:
         spacing, alpha = _adaptive_alpha(used, overflow_cap)
@@ -562,10 +600,10 @@ def worked_area(track, contour, contour_id=None, alpha_m=None,
 
     shape = alpha_shape(densify(used), alpha)
     if shape is None:
-        return WorkArea(contour_id, 0.0, None, quality, alpha, spacing)
+        return WorkArea(contour_id, 0.0, None, quality, alpha, spacing, version)
     clipped = shape.intersection(contour)
     return WorkArea(contour_id, clipped.area / 10000.0, clipped, quality,
-                    alpha, spacing)
+                    alpha, spacing, version)
 
 
 def repair_polygon(polygon):
@@ -599,7 +637,7 @@ def repair_polygon(polygon):
 
 
 def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None,
-               overflow_cap=False):
+               overflow_cap=True):
     """Every patch of ground worked in this interval -- geozone or not.
 
     This is the primary entry point, and it deliberately does NOT need a
@@ -618,8 +656,9 @@ def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None,
     contour_id None is real work on unregistered ground, and the caller must
     show it as such -- never as zero.
 
-    `overflow_cap` measures the pass spacing by the pre-registered A7 rule
-    (`pass_spacing_on_overflow`); off, the method is exactly today's.
+    `overflow_cap` -- the A7 rule (`pass_spacing_on_overflow`), the method
+    since 2026-10-07; False reproduces the previous method exactly, and the
+    sites then carry PREVIOUS_METHOD_VERSION.
 
     Returns (sites, quality), sites ordered by area, largest first.
     """
@@ -672,7 +711,8 @@ def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None,
                 overlap = probe.intersection(geom).area
                 if overlap > best:
                     best, contour_id = overlap, named[int(position)]
-        sites.append(WorkArea(contour_id, area_ha, piece, quality, alpha, spacing))
+        sites.append(WorkArea(contour_id, area_ha, piece, quality, alpha, spacing,
+                              method_version(overflow_cap)))
     sites.sort(key=lambda s: -s.area_ha)
     return sites, quality
 

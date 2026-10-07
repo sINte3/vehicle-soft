@@ -4,9 +4,11 @@
 ЗАЧЕМ
 Правило «допуск при переполнении» (docs/GPS_PLAN_FAKT_VISION_ROADMAP.md,
 2.11) записано 02.10.2026 до прогона на данных, вместе с условиями приёмки.
-Этот инструмент и есть прогон: он считает каждые машино-сутки действующим
-кодом и правилом (`overflow_cap=True` в `gps.area` / `gps.daily`) на одних и
-тех же точках и печатает вердикт по условиям, которые проверяет машина.
+Этот инструмент и есть прогон: он считает каждые машино-сутки прежним
+методом (`overflow_cap=False`, версия `adaptive-alpha-2026-08-12`) и
+правилом (`overflow_cap=True`) на одних и тех же точках и печатает вердикт
+по условиям, которые проверяет машина. С 07.10 правило -- действующий метод
+(`overflow-cap-2026-10-07`); «было» здесь по-прежнему прежний метод, явно.
 Условия, которые решает глаз владельца, он готовит: для условий 3 и 4
 выгружает KML, где у каждых суток рядом лежат участки «было» и «стало»
 поверх трека; для условия 1 печатает изменившиеся строки с названием контура.
@@ -27,8 +29,10 @@
       Оба набора обязательны: без любого из них условие не проверено.
   --db ... --dir ...  production (условия 2, 3, 5 и выгрузка для 3 и 4).
       Опубликованные машино-сутки периода (причина пуста), чьи точки ещё на
-      диске. Контроль прогона: действующий код, пересчитанный по точкам,
-      обязан совпасть с базой; иначе прогон недействителен.
+      диске. Контроль прогона: каждая строка базы, пересчитанная по точкам
+      тем методом, который её записал (по `method_version`), обязана совпасть
+      с базой; иначе прогон недействителен. После пересчёта окна новым
+      методом тот же контроль подтверждает, что в базу легло ровно правило.
 
 ВЕРДИКТЫ И КОД ВЫХОДА
   PASS / FAIL -- условие проверено; NOT CHECKED -- проверять было нечего
@@ -68,8 +72,9 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from gps.area import (ALPHA_M, ALPHA_SPACING_FACTOR, SPACING_CAP_M,  # noqa: E402
-                      _moving_mask, candidate_contours, pass_spacing,
+from gps.area import (ALPHA_M, ALPHA_SPACING_FACTOR, METHOD_VERSION,  # noqa: E402
+                      PREVIOUS_METHOD_VERSION, SPACING_CAP_M, _moving_mask,
+                      candidate_contours, pass_spacing,
                       pass_spacing_on_overflow, to_utm, work_sites,
                       worked_area)
 from gps.daily import compute_day, load_contours                     # noqa: E402
@@ -212,7 +217,7 @@ def compare_set(name, days, zones, zone_names):
     rows = []
     for (unit, day), track in sorted(days.items()):
         today_s, cap_s, today_a, cap_a = measure(track)
-        today, _ = work_sites(track, contours=zones)
+        today, _ = work_sites(track, contours=zones, overflow_cap=False)
         capped, _ = work_sites(track, contours=zones, overflow_cap=True)
         rows.append({'set': name, 'unit': unit, 'day': day or '-',
                      'path': 'day', 'zone': None, 'zone_name': '',
@@ -226,7 +231,7 @@ def compare_set(name, days, zones, zone_names):
                      'sites_cap': site_list(capped)})
         for zone_id, _inside in candidate_contours(
                 track, zones, min_moving_points=MIN_MOVING_POINTS_IN_ZONE):
-            one = worked_area(track, zones[zone_id], zone_id)
+            one = worked_area(track, zones[zone_id], zone_id, overflow_cap=False)
             two = worked_area(track, zones[zone_id], zone_id, overflow_cap=True)
             rows.append({'set': name, 'unit': unit, 'day': day or '-',
                          'path': 'zone', 'zone': zone_id,
@@ -390,17 +395,17 @@ def full_key(rows):
 
 
 def replay_day(points, contours):
-    today = compute_day(points, contours=contours)
+    """(участки прежнего метода, участки правила) одних суток."""
+    today = compute_day(points, contours=contours, overflow_cap=False)
     capped = compute_day(points, contours=contours, overflow_cap=True)
     return today.sites, capped.sites
 
 
-def judge_day(day, unit, version, stored, today, capped, current_version,
-              measures):
+def judge_day(day, unit, version, stored, today, capped, measures):
     """Одна строка прогона и её нарушения.
 
-    `measures` -- (шаг сегодня, шаг правила, альфа сегодня, альфа правила)
-    по сырым числам (`measure`).
+    `version` -- `method_version` строки в базе; `measures` -- (шаг сегодня,
+    шаг правила, альфа сегодня, альфа правила) по сырым числам (`measure`).
     """
     spacing, spacing_cap, alpha_today, alpha_cap = measures
     ha_today = sum(row['area_ha'] for row in today)
@@ -416,9 +421,14 @@ def judge_day(day, unit, version, stored, today, capped, current_version,
     if not triggered and (spacing_cap != spacing
                           or full_key(today) != full_key(capped)):
         violations.append('changed below the cap')
+    # [REASON]: строку сверяют с пересчётом тем методом, который её записал.
+    # До 07.10 в базе лежал прежний метод, после пересчёта окна -- правило;
+    # строка иной версии (старше прежнего метода) не судится вовсе.
+    written_by = {PREVIOUS_METHOD_VERSION: today, METHOD_VERSION: capped}
     control = None
-    if version == current_version:
-        control = row_key(today) == sorted(stored, key=lambda item: -item[0])
+    if version in written_by:
+        control = (row_key(written_by[version])
+                   == sorted(stored, key=lambda item: -item[0]))
     # [REASON]: `measure` повторяет отбор точек движка, а не вызывает его;
     # если повтор разошёлся с тем, что движок записал в строки, вердикт
     # опирался бы на чужие числа. Такое расхождение -- поломка прогона.
@@ -492,7 +502,6 @@ def kml_document(folders):
 def replay_production(db, folder, since, until, kml_path, out=print,
                       progress=None):
     """Прогон production. Возвращает список вердиктов машинных условий."""
-    from gps.daily import METHOD_VERSION
     con = open_readonly(db)
     try:
         days = published_days(con, since, until)
@@ -506,8 +515,7 @@ def replay_production(db, folder, since, until, kml_path, out=print,
             today, capped = replay_day(points, contours or None)
             results.append(judge_day(day, unit, version,
                                      stored_sites(con, day, unit), today,
-                                     capped, METHOD_VERSION,
-                                     measure([r[:4] for r in points])))
+                                     capped, measure([r[:4] for r in points])))
             if progress and index % 200 == 0:
                 progress('  %d of %d machine-days' % (index, len(days)))
         units = sorted({row['unit'] for row in results})
@@ -560,8 +568,8 @@ def pick_for_review(results, kinds):
 def condition_2(results, out):
     checked = [row for row in results if row['control'] is not None]
     mismatched = [row for row in checked if not row['control']]
-    out('control, today recomputed == stored: %d of %d same, %d different, '
-        '%d not checked (older method version)'
+    out('control, recomputed by the method that wrote the row == stored: %d of '
+        '%d same, %d different, %d not checked (another method version)'
         % (len(checked) - len(mismatched), len(checked), len(mismatched),
            len(results) - len(checked)))
     for row in mismatched[:20]:

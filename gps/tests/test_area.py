@@ -32,7 +32,8 @@ import unittest.mock
 
 import gps.area as area
 from gps.area import (ALPHA_M, ALPHA_SPACING_FACTOR, DENSIFY_MAX_SEG_M,
-                      MOTION_GAP_SECONDS, SPACING_CAP_M, SPEED_MAX_KMH,
+                      METHOD_VERSION, MOTION_GAP_SECONDS,
+                      PREVIOUS_METHOD_VERSION, SPACING_CAP_M, SPEED_MAX_KMH,
                       WIDEST_VALIDATED_SPACING_M, alpha_shape,
                       candidate_contours, densify, joint_work_check,
                       pass_spacing, pass_spacing_on_overflow, pass_votes,
@@ -323,7 +324,7 @@ class AdaptiveAlphaTests(unittest.TestCase):
                              contour)
         self.assertGreater(result.alpha_used_m, ALPHA_M)
         self.assertIsNotNone(result.pass_spacing_m)
-        self.assertEqual(result.method_version, "adaptive-alpha-2026-08-12")
+        self.assertEqual(result.method_version, "overflow-cap-2026-10-07")
 
     def test_hole_survives_the_adaptive_rule(self):
         """The danger of the rule, guarded explicitly.
@@ -383,20 +384,21 @@ class SlowRoadsTests(unittest.TestCase):
     the roads. These two tests pin the mechanism on the engine itself.
     """
 
-    def test_today_two_roads_measure_their_distance_as_the_spacing(self):
-        """What the engine does today: 300 m apart -> alpha 360 m -> 60 ha.
+    def test_the_previous_method_measured_the_roads_distance_as_the_spacing(self):
+        """What the method did until 2026-10-07: 300 m -> alpha 360 m -> 60 ha.
 
-        Not a wish but a characterisation of the defect A7 removes: a
-        machine that never left the roads gets the whole 2 km x 300 m
-        between them as one work site. When the fix lands this test changes
-        on purpose, together with the one below.
+        The characterisation of the defect A7 removed, kept on the previous
+        method (`overflow_cap=False`, which still reproduces it): a machine
+        that never left the roads got the whole 2 km x 300 m between them as
+        one work site.
         """
         track = slow_loop(TWO_ROADS)
-        sites, _quality = work_sites(track)
+        sites, _quality = work_sites(track, overflow_cap=False)
         self.assertEqual(len(sites), 1)
         self.assertAlmostEqual(sites[0].pass_spacing_m, 300.0, delta=1.0)
         self.assertAlmostEqual(sites[0].alpha_used_m, 360.0, delta=1.2)
         self.assertAlmostEqual(sites[0].area_ha, 60.0, delta=0.5)
+        self.assertEqual(sites[0].method_version, "adaptive-alpha-2026-08-12")
 
     def test_field_work_on_the_same_day_keeps_the_field_spacing(self):
         """The control: where passes dominate, the median is the field's.
@@ -414,13 +416,12 @@ class SlowRoadsTests(unittest.TestCase):
         self.assertEqual(sites[0].alpha_used_m, ALPHA_M)
         self.assertAlmostEqual(sites[0].area_ha, 9.0, delta=0.3)
 
-    @unittest.expectedFailure
     def test_slow_roads_alone_are_not_a_work_site(self):
-        """The target A7 is held to: no field, no hectares.
+        """The target A7 was held to: no field, no hectares.
 
-        Fails today (60 ha, see above). The fix must make it pass and drop
-        the decorator -- an unexpected success fails the run, so the change
-        cannot slip in unnoticed.
+        Set on 2026-10-02 as an expected failure (60 ha, see above); met by
+        the method itself since 2026-10-07, when the owner adopted the rule --
+        the default, with no switch passed.
         """
         sites, _quality = work_sites(slow_loop(TWO_ROADS))
         self.assertEqual([site.area_ha for site in sites], [])
@@ -434,13 +435,29 @@ def work_points(track):
 
 
 class OverflowCapTests(unittest.TestCase):
-    """A7 rule, pre-registered 2026-10-02 (roadmap 2.11), behind a switch.
+    """A7 rule, pre-registered 2026-10-02 (roadmap 2.11), the method since 07.10.
 
-    Off by default: the nightly computation stays today's until the owner
-    accepts the rule on his hand-measured sets. These tests hold what the rule
-    promises by construction -- untouched below the cap, never more hectares,
-    roads alone give nothing -- on the engine itself.
+    These tests hold what the rule promises by construction -- untouched below
+    the cap, never more hectares, roads alone give nothing -- on the engine
+    itself. «Today» in them is the PREVIOUS method, asked for explicitly with
+    `overflow_cap=False`: compared with the default, the rule would only be
+    compared with itself and every such test would pass on any code.
     """
+
+    def test_the_rule_is_the_method_and_the_switch_reproduces_the_previous(self):
+        """Default = the rule; False = the previous method, labelled as such."""
+        track = slow_loop(TWO_ROADS)
+        self.assertEqual(work_sites(track)[0], [])
+        self.assertEqual(work_sites(track, overflow_cap=True)[0], [])
+        previous, _ = work_sites(track, overflow_cap=False)
+        self.assertEqual(len(previous), 1)
+        contour = rectangle_contour(2000.0, 300.0, margin_m=50.0)
+        self.assertEqual(worked_area(track, contour).method_version,
+                         "overflow-cap-2026-10-07")
+        self.assertEqual(worked_area(track, contour, overflow_cap=False)
+                         .method_version, "adaptive-alpha-2026-08-12")
+        self.assertEqual(METHOD_VERSION, "overflow-cap-2026-10-07")
+        self.assertEqual(PREVIOUS_METHOD_VERSION, "adaptive-alpha-2026-08-12")
 
     def test_the_cap_is_the_widest_validated_spacing_with_the_margin(self):
         """Literals on purpose: an expectation spelled with the constant
@@ -466,13 +483,13 @@ class OverflowCapTests(unittest.TestCase):
         contour = rectangle_contour(300.0, 300.0)
         for spacing_m in (6.0, 14.0, 37.2):
             track = shuttle_track(300.0, 300.0, pass_spacing_m=spacing_m)
-            today, _ = work_sites(track)
+            today, _ = work_sites(track, overflow_cap=False)
             capped, _ = work_sites(track, overflow_cap=True)
-            self.assertEqual([(s.area_ha, s.alpha_used_m, s.pass_spacing_m)
-                              for s in today],
-                             [(s.area_ha, s.alpha_used_m, s.pass_spacing_m)
-                              for s in capped], spacing_m)
-            one = worked_area(track, contour)
+            self.assertEqual([(s.area_ha, s.alpha_used_m, s.pass_spacing_m,
+                               s.polygon.wkb) for s in today],
+                             [(s.area_ha, s.alpha_used_m, s.pass_spacing_m,
+                               s.polygon.wkb) for s in capped], spacing_m)
+            one = worked_area(track, contour, overflow_cap=False)
             two = worked_area(track, contour, overflow_cap=True)
             self.assertEqual((one.area_ha, one.alpha_used_m, one.pass_spacing_m),
                              (two.area_ha, two.alpha_used_m, two.pass_spacing_m))
@@ -497,7 +514,7 @@ class OverflowCapTests(unittest.TestCase):
         roads = slow_loop([(e + 1000.0, n + 1000.0) for e, n in TWO_ROADS],
                           loops=6, start_time=field[-1][0] + 600)
         alone, _ = work_sites(field)
-        today, _ = work_sites(field + roads)
+        today, _ = work_sites(field + roads, overflow_cap=False)
         capped, _ = work_sites(field + roads, overflow_cap=True)
         self.assertGreater(today[0].alpha_used_m, 44.64)
         self.assertGreater(sum(s.area_ha for s in today),
@@ -515,7 +532,7 @@ class OverflowCapTests(unittest.TestCase):
                                   point_step_m=100.0)
                     + slow_loop(TWO_ROADS, loops=3, start_time=10 ** 5))
         for index, track in enumerate(days):
-            today, _ = work_sites(track)
+            today, _ = work_sites(track, overflow_cap=False)
             capped, _ = work_sites(track, overflow_cap=True)
             self.assertLessEqual(sum(s.area_ha for s in capped),
                                  sum(s.area_ha for s in today) + 1e-9, index)
@@ -533,7 +550,7 @@ class OverflowCapTests(unittest.TestCase):
         """
         track = slow_loop(TWO_ROADS)
         contour = rectangle_contour(2000.0, 300.0, margin_m=50.0)
-        today = worked_area(track, contour)
+        today = worked_area(track, contour, overflow_cap=False)
         capped = worked_area(track, contour, overflow_cap=True)
         self.assertGreater(today.alpha_used_m, 300.0)
         self.assertAlmostEqual(today.area_ha, 60.0, delta=0.5)
@@ -603,19 +620,31 @@ class OverflowCapTests(unittest.TestCase):
                               point_step_m=100.0)
         roads = slow_loop([(e + 1000.0, n + 1000.0) for e, n in TWO_ROADS],
                           loops=6, start_time=field[-1][0] + 600)
-        today, _ = work_sites(field + roads)
+        today, _ = work_sites(field + roads, overflow_cap=False)
         capped, _ = work_sites(field + roads, overflow_cap=True)
         self.assertGreater(today[0].pass_spacing_m, SPACING_CAP_M)
         self.assertAlmostEqual(capped[0].pass_spacing_m, 20.0, delta=0.5)
         self.assertEqual(capped[0].alpha_used_m,
                          ALPHA_SPACING_FACTOR * capped[0].pass_spacing_m)
 
-    def test_the_daily_computation_passes_the_switch_through(self):
+    def test_the_daily_computation_uses_the_rule_and_names_its_method(self):
+        """The nightly computation is the rule; a row names the method made it.
+
+        A day recomputed with the previous method (`overflow_cap=False`) must
+        not be stored as the new one -- that is what makes a hectare in the
+        database reproducible after the method changed.
+        """
         from gps.daily import compute_day
         points = [(t, lon, lat, speed, 10)
                   for t, lon, lat, speed in slow_loop(TWO_ROADS)]
-        self.assertEqual(len(compute_day(points).sites), 1)
-        self.assertEqual(compute_day(points, overflow_cap=True).sites, [])
+        today = compute_day(points)
+        self.assertEqual(today.sites, [])
+        self.assertEqual(today.aggregate["method_version"],
+                         "overflow-cap-2026-10-07")
+        previous = compute_day(points, overflow_cap=False)
+        self.assertEqual(len(previous.sites), 1)
+        self.assertEqual(previous.aggregate["method_version"],
+                         "adaptive-alpha-2026-08-12")
 
 
 class DensifyTests(unittest.TestCase):

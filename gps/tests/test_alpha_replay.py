@@ -37,7 +37,8 @@ from datetime import datetime
 import migrate_gps_daily_001 as migration
 import tools.gps_alpha_replay as replay
 from gps.area import SPACING_CAP_M
-from gps.daily import METHOD_VERSION, compute_day, write_day
+from gps.area import METHOD_VERSION, PREVIOUS_METHOD_VERSION
+from gps.daily import compute_day, write_day
 from gps.tests.test_area import (TWO_ROADS, shuttle_track, slow_loop,
                                  xy_to_lonlat)
 from gps_collector import config as collector_config
@@ -122,16 +123,19 @@ class World(unittest.TestCase):
             con.execute("INSERT INTO gps_daily_aggregates (work_date, wialon_id, "
                         "method_version, computed_at) VALUES "
                         "('2026-09-30', ?, ?, '2026-10-01 01:00:00')",
-                        (NO_POINTS, METHOD_VERSION))
+                        (NO_POINTS, PREVIOUS_METHOD_VERSION))
             con.commit()
         finally:
             con.close()
 
-    def day(self, con, day, unit, track, track_only=False):
+    def day(self, con, day, unit, track, track_only=False, overflow_cap=False):
+        """One stored day -- by default as the database held it before 07.10:
+        computed by the previous method and labelled with its version."""
         points = shifted(track, day)
         storage.write_points(self.folder, [(unit, t, lon, lat, speed, None, sats)
                                            for t, lon, lat, speed, sats in points])
-        write_day(con, day, unit, compute_day(points, track_only=track_only),
+        write_day(con, day, unit, compute_day(points, track_only=track_only,
+                                              overflow_cap=overflow_cap),
                   '2026-10-02 01:00:00')
 
     def untamper(self):
@@ -155,8 +159,7 @@ class World(unittest.TestCase):
                 today, capped = replay.replay_day(points, None)
                 rows[unit] = replay.judge_day(
                     day, unit, version, replay.stored_sites(con, day, unit),
-                    today, capped, METHOD_VERSION,
-                    replay.measure([r[:4] for r in points]))
+                    today, capped, replay.measure([r[:4] for r in points]))
         finally:
             con.close()
         return rows
@@ -245,8 +248,43 @@ class Production(World):
         self.assertIn('CONDITION 2 (invariants on every machine-day): '
                       'RUN INVALID -- the control failed on 1 machine-day(s), '
                       'the measure on 0', out)
-        self.assertIn('1 not checked (older method version)', out)
+        self.assertIn('1 not checked (another method version)', out)
         self.assertIn('points gone from disk: 1', out)
+
+    def test_after_the_recompute_the_control_checks_the_rule(self):
+        """Rows written by the rule are checked against the rule.
+
+        07.10 the window is recomputed by the new method; the same replay then
+        proves that what lies in the database is exactly the rule -- and a
+        row of the new version that is not the rule is a mismatch.
+        """
+        self.untamper()
+        con = sqlite3.connect(self.db)
+        try:
+            for day, unit, track in (('2026-09-26', ROADS, slow_loop(TWO_ROADS)),
+                                     ('2026-09-28', MIXED, field_and_roads())):
+                con.execute('DELETE FROM gps_work_polygons WHERE wialon_id = ?',
+                            (unit,))
+                con.commit()
+                self.day(con, day, unit, track, overflow_cap=True)
+            versions = dict(con.execute(
+                'SELECT wialon_id, method_version FROM gps_daily_aggregates '
+                'WHERE wialon_id IN (?, ?)', (ROADS, MIXED)).fetchall())
+        finally:
+            con.close()
+        self.assertEqual(versions, {ROADS: METHOD_VERSION, MIXED: METHOD_VERSION})
+        rows = self.judged()
+        self.assertTrue(rows[ROADS]['control'])
+        self.assertTrue(rows[MIXED]['control'])
+        self.assertTrue(rows[FIELD]['control'])     # still the previous method
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute('UPDATE gps_work_polygons SET area_ha = area_ha + 1 '
+                        'WHERE wialon_id = ?', (MIXED,))
+            con.commit()
+        finally:
+            con.close()
+        self.assertFalse(self.judged()[MIXED]['control'])
 
     def test_a_replay_measuring_other_numbers_than_the_engine_is_invalid(self):
         """Negative control of `consistent`: a measure that lies is caught."""
@@ -394,14 +432,14 @@ class Production(World):
         control says about another day; a violation only on a day where the
         replay disagrees with the engine is not trusted.
         """
-        broken = replay.judge_day('2026-09-10', 1, METHOD_VERSION,
+        broken = replay.judge_day('2026-09-10', 1, PREVIOUS_METHOD_VERSION,
                                   [(2.0, 360.0, 300.0)],
                                   [row(2.0, 360.0, 300.0)],
-                                  [row(3.0, 10.0, 6.0)], METHOD_VERSION,
+                                  [row(3.0, 10.0, 6.0)],
                                   (300.0, 6.0, 360.0, 10.0))
-        stale = replay.judge_day('2026-09-11', 2, METHOD_VERSION,
+        stale = replay.judge_day('2026-09-11', 2, PREVIOUS_METHOD_VERSION,
                                  [(9.0, 10.0, 6.0)], [row(2.0, 10.0, 6.0)],
-                                 [row(2.0, 10.0, 6.0)], METHOD_VERSION,
+                                 [row(2.0, 10.0, 6.0)],
                                  (6.0, 6.0, 10.0, 10.0))
         self.assertTrue(broken['control'])
         self.assertFalse(stale['control'])
@@ -479,8 +517,8 @@ class Invariants(unittest.TestCase):
     """Each invariant of condition 2, broken on purpose, is caught."""
 
     def judge(self, measures, today, capped):
-        return replay.judge_day('2026-09-26', ROADS, METHOD_VERSION, [], today,
-                                capped, METHOD_VERSION, measures)['violations']
+        return replay.judge_day('2026-09-26', ROADS, PREVIOUS_METHOD_VERSION,
+                                [], today, capped, measures)['violations']
 
     def test_a_clean_triggered_day_has_no_violation(self):
         self.assertEqual(self.judge((300.0, 6.0, 360.0, 10.0),
@@ -513,10 +551,11 @@ class Invariants(unittest.TestCase):
                                      53.568), [], []), [])
 
     def test_a_violation_fails_condition_2(self):
-        result = replay.judge_day('2026-09-26', ROADS, METHOD_VERSION, [],
-                                  [row(2.0, 360.0, 300.0)],
-                                  [row(3.0, 10.0, 6.0)], 'older',
+        result = replay.judge_day('2026-09-26', ROADS, 'fixed-alpha-2026-07-29',
+                                  [], [row(2.0, 360.0, 300.0)],
+                                  [row(3.0, 10.0, 6.0)],
                                   (300.0, 6.0, 360.0, 10.0))
+        self.assertIsNone(result['control'])
         self.assertTrue(result['consistent'])
         self.assertEqual(replay.condition_2([result], [].append), replay.FAIL)
         self.assertEqual(replay.condition_2([], [].append), replay.NOT_CHECKED)

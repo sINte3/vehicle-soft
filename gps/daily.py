@@ -71,8 +71,8 @@ from shapely.ops import transform as shapely_transform
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from gps.area import (METHOD_VERSION, SPEED_MAX_KMH, SPEED_MIN_KMH,  # noqa: E402
-                      UTM_41N, repair_polygon, to_utm, track_quality,
-                      work_sites)
+                      UTM_41N, method_version, repair_polygon, to_utm,
+                      track_quality, work_sites)
 from gps.exclusion import (REASON_TRACK_ONLY, excluded_units,       # noqa: E402
                            track_only_units)
 # [REASON]: the reader takes the writer's definition of where the points are
@@ -226,19 +226,19 @@ class DayResult:
         return self.aggregate["reason"]
 
 
-def compute_day(points, contours=None, track_only=False, overflow_cap=False):
+def compute_day(points, contours=None, track_only=False, overflow_cap=True):
     """points: [(t, lon, lat, speed, sats)] of one object, one local day.
 
     `track_only` -- the machine's category takes no hectares (special
     machinery): every measurement of the track is made, no site is sought.
-    `overflow_cap` -- the pre-registered A7 spacing rule
-    (`gps.area.pass_spacing_on_overflow`); only the read-only replay
-    (`tools/gps_alpha_replay.py`) turns it on until the owner accepts it.
+    `overflow_cap` -- the A7 spacing rule (`gps.area.pass_spacing_on_overflow`),
+    the method since 2026-10-07. False reproduces the previous method, and
+    the row then says so: its `method_version` is PREVIOUS_METHOD_VERSION.
     """
     aggregate = {"points_total": len(points), "points_work": 0, "track_km": 0.0,
                  "interval_median_s": None, "sats_median": None,
                  "motion_gaps": 0, "lost_seconds": 0.0, "gps_jumps": 0,
-                 "reason": None, "method_version": METHOD_VERSION}
+                 "reason": None, "method_version": method_version(overflow_cap)}
     if not points:
         aggregate["reason"] = REASON_NO_POINTS
         return DayResult(aggregate, [])
