@@ -30,6 +30,7 @@ if REPO_ROOT not in sys.path:
 from openpyxl import load_workbook                            # noqa: E402
 
 from agro_work import reconcile as rc                         # noqa: E402
+from tests import agro_work_db as dbh                         # noqa: E402
 from tests.test_agro_work_reconcile import Fixture            # noqa: E402
 from tools import agro_work_reconcile as tool                 # noqa: E402
 
@@ -113,6 +114,7 @@ class ReportTool(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertIn('of them with a later backdated application: 1 '
                       '(days late: min 5, max 5)', out)
+        self.assertIn('  days late -> machine-days: 5 -> 1\n', out)
         days_open = (date.today() - date(2026, 9, 10)).days
         self.assertIn('open applications: 1 | oldest open %d days since entry'
                       % days_open, out)
@@ -126,6 +128,99 @@ class ReportTool(unittest.TestCase):
         totals = [row for row in book['Свод'].iter_rows(values_only=True)
                   if row and row[0] == 'Итого / Жами'][0]
         self.assertEqual(totals[-1], 1)
+
+    def test_days_late_are_listed_exactly_not_in_buckets(self):
+        # Машина 12: заявка от 18-го опоздала на 5, 4 и 3 суток для 13-го,
+        # 14-го и 15-го. Машина 11: заявка от 25-го -- на 9, 8, 7 и 5 суток
+        # для 16-го, 17-го, 18-го и 20-го. Значения больше шести нужны
+        # затем, что живые заявки опаздывают и на 7-14 суток, а корзина
+        # «поздно» -- порог, которого владелец не называл: значения целиком.
+        self.fx.con = sqlite3.connect(self.fx.path)
+        for day in (14, 15):
+            dbh.add_day(self.fx.con, 1002, '2026-09-%02d' % day,
+                        sites=[(1.0, None)])
+        for day in (16, 17, 18, 20):
+            dbh.add_day(self.fx.con, 1001, '2026-09-%02d' % day,
+                        sites=[(1.5, None)])
+        self.fx.con.commit()
+        self.fx.app(transport='T2', created=18, completed=18,
+                    initial='COMPLETED')
+        self.fx.app(transport='T1', created=25, completed=25,
+                    initial='COMPLETED')
+        self.fx.con.close()
+        code, out, err = self.main()
+        self.assertEqual(code, 0, err)
+        self.assertIn('of them with a later backdated application: 7 '
+                      '(days late: min 3, max 9)', out)
+        self.assertIn('  days late -> machine-days: 3 -> 1 | 4 -> 1 | 5 -> 2 | '
+                      '7 -> 1 | 8 -> 1 | 9 -> 1\n', out)
+
+    def test_without_late_applications_there_is_no_distribution_line(self):
+        # Строки нет вовсе, а не «0 -> 0»: нечего распределять.
+        code, out, err = self.main()
+        self.assertEqual(code, 0, err)
+        self.assertIn('of them with a later backdated application: 0\n', out)
+        self.assertNotIn('days late ->', out)
+
+    def test_the_reasons_in_the_console_are_the_reasons_of_the_book(self):
+        # Консоль повторяет лист «Причины» и складывается в итоги, которые
+        # напечатаны строкой выше: владелец присылает консоль, не книгу, и
+        # по ней я проверяю, что «без вердикта» названо по существу.
+        self.fx.con = sqlite3.connect(self.fx.path)
+        # Две открытые против одной неопознанной машины: счётчики разные,
+        # и порядок «самые частые первыми» отличим от алфавитного и обратного.
+        self.fx.app(transport='T1', status='IN_PROGRESS', created=10,
+                    completed=None)
+        self.fx.app(transport='T1', status='PENDING', created=11,
+                    completed=None)
+        self.fx.con.close()
+        code, out, err = self.main()
+        self.assertEqual(code, 0, err)
+        self.assertTrue(out.isascii())
+
+        shown = {}
+        for line in out.splitlines():
+            for side, title in (('forward', 'no verdict, applications: '),
+                                ('reverse', 'no verdict, machine-days: ')):
+                if line.startswith(title):
+                    shown[side] = {
+                        name: int(number) for name, number in (
+                            item.rsplit(' ', 1)
+                            for item in line[len(title):].split(' | '))}
+        sheet = {}
+        for row in list(book_of(self.out)['Причины'].iter_rows(
+                values_only=True))[1:]:
+            side = 'forward' if str(row[0]).startswith('Заявка') else 'reverse'
+            sheet.setdefault(side, {})[row[2]] = row[3]
+        self.assertEqual(shown, sheet)
+        # Самые частые причины первыми, при равенстве -- по коду.
+        for title in ('no verdict, applications: ',
+                      'no verdict, machine-days: '):
+            line = [l for l in out.splitlines() if l.startswith(title)][0]
+            order = [(item.rsplit(' ', 1)[0], int(item.rsplit(' ', 1)[1]))
+                     for item in line[len(title):].split(' | ')]
+            self.assertEqual(order, sorted(order,
+                                           key=lambda i: (-i[1], i[0])))
+
+        con = sqlite3.connect(self.fx.path)
+        try:
+            ctx = rc.Reconciliation(con, date(2026, 9, 10), date(2026, 9, 20))
+            forward, reverse = ctx.forward_rows(), ctx.reverse_rows()
+        finally:
+            con.close()
+        _, total = ctx.summary(forward, reverse)
+        self.assertEqual(sum(shown['forward'].values()),
+                         total['app_bez_verdikta'])
+        self.assertEqual(sum(shown['reverse'].values()),
+                         total['day_bez_verdikta'])
+        # Не пусто и не одно значение: иначе равенство ничего не различает.
+        self.assertEqual(shown['forward']['otkryta'], 2)
+        self.assertIn('mashina_ne_sopostavlena', shown['forward'])
+        self.assertGreaterEqual(len(shown['reverse']), 2)
+        # Те же сутки, что в первых строках: число открытых заявок списка
+        # равно числу заявок с причиной «открыта».
+        self.assertIn('open applications: %d' % shown['forward']['otkryta'],
+                      out)
 
     def test_preview_names_itself_and_the_approved_n(self):
         code, out, err = self.main('--lookback-preview', '3')

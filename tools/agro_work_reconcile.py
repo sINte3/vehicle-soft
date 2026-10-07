@@ -45,6 +45,7 @@ import argparse
 import os
 import sqlite3
 import sys
+from collections import Counter
 from datetime import date, datetime, timedelta
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -329,6 +330,14 @@ def rc_category(slug):
     return labels.CATEGORIES.get(slug, slug or '')
 
 
+def print_reasons(title, counts, log=print):
+    """Одна строка: код причины и сколько строк отчёта её несут."""
+    if counts:
+        log('%s: %s' % (title, ' | '.join(
+            '%s %d' % (code, number) for code, number in sorted(
+                counts.items(), key=lambda item: (-item[1], item[0])))))
+
+
 def print_lags(lags, excluded, log=print):
     log('')
     log('completion lag, days from the last GPS work day to "Vypolneno":')
@@ -406,10 +415,27 @@ def main(argv=None):
     print('  of them with a later backdated application: %d%s'
           % (len(late), ' (days late: min %d, max %d)' % (min(late), max(late))
              if late else ''))
+    if late:
+        # [REASON]: точные значения, а не корзины: корзина «поздно» -- это
+        # порог, которого владелец не называл (решение 4 раздела 8 трекового
+        # файла). Читать так: 3 -- явно поздний ввод той же работы, 29 --
+        # явно другая работа.
+        spread = Counter(late)
+        print('  days late -> machine-days: %s' % ' | '.join(
+            '%d -> %d' % (days, spread[days]) for days in sorted(spread)))
     opened = ctx.open_applications()
     print('open applications: %d%s' % (
         len(opened), ' | oldest open %d days since entry'
         % opened[0]['days_open'] if opened else ''))
+    # [REASON]: «без вердикта» -- самое большое число отчёта, и без причин
+    # оно ничего не говорит; те же числа лежат на листе «Причины» книги, но
+    # владелец присылает консоль, а не книгу.
+    print_reasons('no verdict, applications',
+                  Counter(row['reason'] or 'none' for row in forward
+                          if row['verdict'] == rc.V_NONE))
+    print_reasons('no verdict, machine-days',
+                  Counter(row['reason'] or 'none' for row in reverse
+                          if row['coverage'] == rc.C_NONE))
     print('object-days with work and no machine in our registry: %d'
           % ctx.orphan_work_days())
     print_lags(lags, excluded)
