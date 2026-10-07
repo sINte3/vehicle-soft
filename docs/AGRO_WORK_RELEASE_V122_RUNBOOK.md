@@ -85,7 +85,7 @@
 ## Шаг 1. Влить запрос выпуска на GitHub
 
 Блоки этого ранбука проверены вместе с кодом выпуска и лежат в запросе PR
-#000. «Влить» — сделать его основной версией, чтобы сервер мог её
+#171. «Влить» — сделать его основной версией, чтобы сервер мог её
 забрать. Сам сервер на этом шаге не меняется.
 
 **Важно: до конца шага 4 не вливайте другие PR с кодом.** Выпуск проверен
@@ -93,7 +93,7 @@
 можно. Если в `main` появится другой код, шаги 2 и 3 остановятся сами и
 ничего не тронут — тогда напишите мне.
 
-1. Откройте https://github.com/sINte3/vehicle-soft/pull/000
+1. Откройте https://github.com/sINte3/vehicle-soft/pull/171
 2. Внизу — зелёная кнопка. Если на ней не написано «Merge pull request»,
    нажмите стрелку рядом с ней и выберите **«Create a merge commit»** (не
    «Squash» и не «Rebase»).
@@ -133,7 +133,7 @@ $py        = 'C:\Program Files\Python314\python.exe'
 $backupBat = 'C:\transport-report\backup_production_db.bat'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $baseline  = '8df568394a840054ef6f842c6a8b272ca4c31aa8'
-$reviewed  = '907eeb9ee0b7cd0000000000000000000000dead'
+$reviewed  = '07c871f5428d6a250df9232867adf52a3b3fbf64'
 $work      = 'C:\VehicleSoft_Release'
 $log       = 'C:\VehicleSoft_Release\release_v122_step2.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -202,7 +202,7 @@ try { Stop-Transcript | Out-Null } catch { }
 **Что должно получиться:** последняя строка перед `LOG FILE` —
 `RESULT: CHECK PASSED - go on to step 3`. Выше — три строки
 `SERVICE ... : Running`, строка `RELEASE: 8df5683... -> ...` и список
-влитых изменений: `#000` (этот выпуск), `#170` (B4), `#168`
+влитых изменений: `#171` (этот выпуск), `#170` (B4), `#168`
 (занятие площадки Дронами), `#167` (инструмент GPS), `#166` (документы Дронов)
 и `#165` (записи выпуска v1.21). Если в списке есть ещё PR — значит, они только
 с документами: чужой код после проверенной версии блок не пропускает.
@@ -247,7 +247,7 @@ $errLog    = 'C:\transport-report\logs\error.log'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '8df568394a840054ef6f842c6a8b272ca4c31aa8'
-$reviewed  = '907eeb9ee0b7cd0000000000000000000000dead'
+$reviewed  = '07c871f5428d6a250df9232867adf52a3b3fbf64'
 $work      = 'C:\VehicleSoft_Release'
 $log       = 'C:\VehicleSoft_Release\release_v122_step3.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -548,7 +548,7 @@ $prod      = 'C:\transport-report'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '8df568394a840054ef6f842c6a8b272ca4c31aa8'
-$reviewed  = '907eeb9ee0b7cd0000000000000000000000dead'
+$reviewed  = '07c871f5428d6a250df9232867adf52a3b3fbf64'
 $work      = 'C:\VehicleSoft_Release'
 $log       = 'C:\VehicleSoft_Release\release_v122_rollback.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
