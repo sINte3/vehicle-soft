@@ -540,6 +540,17 @@ jobs:
           GPS_RELEASE_POWERSHELL: pwsh
         run: python -m unittest tests.test_gps_release_runbook
 
+      # Release v1.22 (docs/AGRO_WORK_RELEASE_V122_RUNBOOK.md, agro-work B4):
+      # the same blocks once more, with the smoke check of the agro-work
+      # section instead of the GPS and Drones screens, against the same
+      # stand-ins. Step 3 stops the three production services, so every stop
+      # path runs here on pwsh 7 and in the Windows job below on Windows
+      # PowerShell 5.1. Stdlib only.
+      - name: agro-work release v1.22 runbook and blocks (pwsh 7)
+        env:
+          AGRO_WORK_POWERSHELL: pwsh
+        run: python -m unittest tests.test_agro_work_release_v122
+
   # DRONE-USEFUL-AREA-PILOT-001. The operator console on the server is
   # WINDOWS POWERSHELL 5.1, not pwsh 7, and the two differ exactly where this
   # kit writes files: 5.1 has no `utf8NoBOM`, and its native `>` redirection
@@ -604,3 +615,11 @@ jobs:
         env:
           GPS_RELEASE_POWERSHELL: powershell
         run: python -m unittest tests.test_gps_release_runbook.GpsReleaseToolFormats tests.test_gps_release_runbook.GpsReleaseBlocksInPowerShell
+
+      # agro-work release v1.22 (docs/AGRO_WORK_RELEASE_V122_RUNBOOK.md): the
+      # same stop paths on the interpreter the server has.
+      - name: agro-work release v1.22 blocks on Windows PowerShell 5.1
+        shell: powershell
+        env:
+          AGRO_WORK_POWERSHELL: powershell
+        run: python -m unittest tests.test_agro_work_release_v122.ReleaseV122ToolFormats tests.test_agro_work_release_v122.ReleaseV122BlocksInPowerShell
