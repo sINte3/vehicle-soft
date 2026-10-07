@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Выпуск v1.21 на production: docs/GPS_RELEASE_RUNBOOK.md.
+"""Выпуск v1.22 на production: docs/GPS_RELEASE_RUNBOOK.md.
 
 Блоки этого ранбука владелец вставляет в Windows PowerShell 5.1 на боевом
 сервере, и шаг 3 останавливает три службы. Они -- блоки выпуска v1.20
 (docs/AGRO_WORK_RELEASE_RUNBOOK.md, прошли на этом сервере 01.10.2026) без
-миграции, с постоянными этого выпуска. Здесь держится:
+миграции, с постоянными этого выпуска; v1.21 прошёл с ними 02.10. Шаг 3 v1.22
+вдобавок сверяет метод GPS на диске после перемотки, а шаг 4 -- пересчёт
+прошедших суток `tools/gps_recompute_days.py`. Здесь держится:
 
   * текст: нет плейсхолдеров и `&&`, ASCII без табуляций, git -- только
     проверенные команды, службы останавливаются только в выпуске и откате,
@@ -12,8 +14,9 @@
     закрепление верно, в дельте нет миграций;
   * вспомогательные функции блоков ДОСЛОВНО те же, что в выпуске v1.20: они
     там прошли на сервере, и копия с опечаткой проверкой текста не ловится;
-  * строки, которые ранбук велит ждать от `tools/gps_link_mappings.py`, --
-    то, что инструмент действительно печатает;
+  * строки, которые ранбук велит ждать от `tools/gps_recompute_days.py`, --
+    то, что инструмент действительно печатает; метод, который шаг 3 ждёт на
+    диске, -- тот, что в `gps/area.py`;
   * сами блоки исполняются против подставных git, служб, питона и сайта
     (tests/agro_work_release_harness.ps1 -- тот же стенд, что у v1.20) во всех
     путях «стоп»: на PowerShell 7 и -- в CI -- на Windows PowerShell 5.1.
@@ -48,7 +51,18 @@ RELEASE = os.path.join(REPO_ROOT, 'docs', 'GPS_RELEASE_RUNBOOK.md')
 RELATIVE_SCRIPT = re.compile(r'(?<![\\A-Za-z:-])(tools\\|migrate_[A-Za-z0-9_]+\.py'
                              r'|run_server\.py|-m unittest)')
 # Production на момент подготовки: строка production в docs/DEPLOYED.md.
-BASELINE = '6ed931a5545cf4392b7a5672c0e0cea8a99b9bc3'
+BASELINE = '8df568394a840054ef6f842c6a8b272ca4c31aa8'
+# [REASON]: окружение расчёта GPS -- отдельный venv без пробела в пути; им
+# запускается всё, что тянет numpy/shapely, в том числе пересчёт шага 4.
+GEO_PYTHON = '& C:\\gps_venv\\Scripts\\python.exe'
+
+
+def method_in_code():
+    """METHOD_VERSION из gps/area.py -- текстом, без numpy в этом окружении."""
+    with open(os.path.join(REPO_ROOT, 'gps', 'area.py'), encoding='utf-8') as fh:
+        found = re.findall(r'^METHOD_VERSION = "([^"]+)"$', fh.read(), re.M)
+    assert len(found) == 1, found
+    return found[0]
 SERVICES = "@('TransportReport', 'TransportBot', 'TransportBot003')"
 
 
@@ -147,6 +161,7 @@ class GpsReleaseRunbook(unittest.TestCase):
             'Invoke-Tool $backupBat',
             "'merge', '--ff-only', $release",
             '$drift1 = Get-Drift',
+            "Join-Path $prod 'gps\\area.py'",
             '{ Restart-Service -Name $name }',
             "($site + '/login')",
             "($site + '/wialon/mapping')",
@@ -187,7 +202,7 @@ class GpsReleaseRunbook(unittest.TestCase):
                 self.assertEqual(found['baseline'], expected['baseline'])
                 self.assertRegex(found['reviewed'], r"^'[0-9a-f]{40}'$")
                 self.assertRegex(found['log'],
-                                 r"^'C:\\VehicleSoft_Release\\release_v121_[a-z0-9]+\.log'$")
+                                 r"^'C:\\VehicleSoft_Release\\release_v122_[a-z0-9]+\.log'$")
                 reviewed.add(found['reviewed'])
                 self.assertIn("Where-Object { $_ -notlike 'docs/*' }",
                               release_block(name))
@@ -198,6 +213,10 @@ class GpsReleaseRunbook(unittest.TestCase):
                     self.assertIn('if ($open -gt 0) { throw',
                                   release_block(name))
         self.assertEqual(len(reviewed), 1)
+        # Метод, который шаг 3 ждёт на диске после перемотки, -- действующий.
+        self.assertEqual(constants(release_block('Шаг 3'))['method'],
+                         "'%s'" % method_in_code())
+        self.assertEqual(method_in_code(), 'overflow-cap-2026-10-07')
         logs = [constants(release_block(name))['log']
                 for name in ('Шаг 2', 'Шаг 3', 'Откат')]
         self.assertEqual(len(set(logs)), 3)
@@ -250,7 +269,8 @@ class GpsReleaseRunbook(unittest.TestCase):
             self.skipTest('the release delta is outside this clone')
         names = git('diff', '--name-only', BASELINE, commit).split()
         self.assertEqual([n for n in names if n.startswith('migrate_')], [])
-        self.assertIn('wialon_import.py', names)
+        self.assertIn('gps/area.py', names)
+        self.assertIn('tools/gps_recompute_days.py', names)
 
     def test_every_step_that_runs_a_script_first_goes_to_production(self):
         found = steps(RELEASE)
@@ -281,10 +301,11 @@ class GpsReleaseRunbook(unittest.TestCase):
                 continue
             if re.match(r"^\$py\s+= '", line):
                 continue                   # постоянная блока, проверена выше
-            self.assertTrue(line.startswith(PYTHON), line)
+            self.assertTrue(line.startswith(PYTHON)
+                            or line.startswith(GEO_PYTHON), line)
         self.assertEqual(names, {'tools\\check_migration_drift.py',
                                  'tools\\check_db_lock.py',
-                                 'tools\\gps_link_mappings.py'})
+                                 'tools\\gps_recompute_days.py'})
         for name in names:
             path = os.path.join(REPO_ROOT, name.replace('\\', os.sep))
             self.assertTrue(os.path.isfile(path), name)
@@ -316,23 +337,48 @@ class GpsReleaseRunbook(unittest.TestCase):
         self.assertIn("($fieldsBody -notmatch 'vs-login-form')", block)
 
     def test_the_lines_the_owner_waits_for_are_what_the_tool_prints(self):
-        with open(os.path.join(REPO_ROOT, 'tools', 'gps_link_mappings.py'),
+        with open(os.path.join(REPO_ROOT, 'tools', 'gps_recompute_days.py'),
                   encoding='utf-8') as fh:
             tool = fh.read()
-        for printed in ("print('to link: %d'",
-                        "'marked \"not ours\", to link so the computation sees it: %d'",
-                        "'write %d links and %d unlinks.'",
-                        "'\\nwritten: %d links, %d unlinks'"):
+        for printed in ("'method of this code: %s (previous: %s)'",
+                        "'operator answers (work/passage) in the window: %d'",
+                        "'PLAN ONLY: nothing was written. Add --apply to recompute.'",
+                        "'  %s: %.2f ha -> %.2f ha (%+.2f); published machine-days %d -> %d'",
+                        "'machine-days with more hectares than before: %d (the rule never adds '",
+                        "'rows of counted objects still not on %s: %d'",
+                        "'RESULT: RECOMPUTED %d day(s) by %s; rows of counted objects left on '",
+                        "'another method: %d'",
+                        "'== %s (%d of %d)'"):
             with self.subTest(line=printed):
                 self.assertIn(printed, tool)
         step = next(body for title, body in steps(RELEASE).items()
                     if title.startswith('Шаг 4'))
-        for waited in ('`to link: 0`',
-                       'to link so the computation sees\nit: 13`',
-                       '`write 13 links and 0 unlinks`',
-                       '`written: 13 links, 0 unlinks`'):
+        for waited in ('`method of this code: overflow-cap-2026-10-07 (previous:\n'
+                       '  adaptive-alpha-2026-08-12)`',
+                       '`operator answers (work/passage) in the window: 0`',
+                       '`PLAN ONLY: nothing was written. Add --apply to recompute.`',
+                       '`2026-09: 7336.63 ha -> 6201.30 ha (-1135.33); published '
+                       'machine-days 3346\n  -> 3346`',
+                       '`machine-days with more hectares than before: 0`',
+                       '`rows of counted objects still not on overflow-cap-2026-10-07: 0`',
+                       '`RESULT: RECOMPUTED ... day(s) by overflow-cap-2026-10-07; rows\n'
+                       '  of counted objects left on another method: 0`',
+                       '`exit 0`'):
             with self.subTest(waited=waited):
                 self.assertIn(waited, step)
+        # Пишущая команда -- одна, с --apply, и только после плана и копии.
+        lines = commands(step)
+        writes = [i for i, line in enumerate(lines) if '--apply' in line]
+        self.assertEqual(len(writes), 1)
+        plan = [i for i, line in enumerate(lines)
+                if 'gps_recompute_days.py' in line and '--apply' not in line]
+        backup = [i for i, line in enumerate(lines)
+                  if line.strip() == '& C:\\transport-report\\backup_production_db.bat']
+        self.assertEqual(len(plan), 1)
+        self.assertEqual(len(backup), 1)
+        self.assertLess(plan[0], backup[0])
+        self.assertLess(backup[0], writes[0])
+        self.assertTrue(lines[writes[0]].startswith(GEO_PYTHON + ' -u '))
 
 
 class GpsReleaseToolFormats(unittest.TestCase):
@@ -413,7 +459,7 @@ class GpsReleaseBlocksInPowerShell(unittest.TestCase):
             'ChangedAfterReviewed': ['docs/RELEASE_GATE.md'],
             'GateLines': gate_lines(0),
             'FetchCode': 0, 'MergeCode': 0, 'ResetCode': 0,
-            'DiffNames': ['wialon_import.py', 'tools/gps_day_kml.py',
+            'DiffNames': ['gps/area.py', 'tools/gps_recompute_days.py',
                           'docs/GPS_RELEASE_RUNBOOK.md'],
             'Modified': [], 'Services': TEST_SERVICES, 'StopFails': [],
             'FreeBytes': 50 * 1024 ** 3, 'LockKind': 'clean',
@@ -424,6 +470,7 @@ class GpsReleaseBlocksInPowerShell(unittest.TestCase):
                     '/drones/fields': {'Status': 200, 'Body': LOGIN_BODY}},
             'ErrorLogAfterStart': None,
             'Outputs': self.outputs(),
+            'MethodLine': 'METHOD_VERSION = "overflow-cap-2026-10-07"',
         }
         value.update(changes)
         return value
@@ -439,6 +486,11 @@ class GpsReleaseBlocksInPowerShell(unittest.TestCase):
             fh.write('x' * 64)
         with open(errlog, 'w', encoding='ascii') as fh:
             fh.write('INFO:waitress:Serving on http://0.0.0.0:5050\n')
+        # файл метода GPS, каким его оставит перемотка: шаг 3 читает его с диска
+        os.makedirs(os.path.join(prod, 'gps'))
+        with open(os.path.join(prod, 'gps', 'area.py'), 'w', encoding='ascii') as fh:
+            fh.write('PREVIOUS_METHOD_VERSION = "adaptive-alpha-2026-08-12"\n%s\n'
+                     % scenario.pop('MethodLine'))
         scenario['ErrorLog'] = errlog
         log = os.path.join(work, 'release.log')
         body = prepare(release_block(name), {
@@ -516,7 +568,22 @@ class GpsReleaseBlocksInPowerShell(unittest.TestCase):
         self.assertIn('SMOKE /drones/fields: asks to log in', output)
         self.assertIn('NEW TRACEBACKS IN logs\\error.log: 0', output)
         self.assertIn('PROGRAM VERSION NOW: %s' % RELEASE_HASH[:7], output)
+        self.assertIn('GPS METHOD: overflow-cap-2026-10-07', output)
         self.assertIn('RESULT: RELEASE PASSED', transcript)
+
+    def test_the_previous_gps_method_on_disk_is_a_stop(self):
+        # Перемотка прошла, но на диске прежний метод: ночной расчёт пошёл бы
+        # прежним путём. Службы подняты, база не менялась, шаг 4 не делать.
+        for line in ('METHOD_VERSION = "adaptive-alpha-2026-08-12"', '# nothing'):
+            with self.subTest(line=line):
+                result, calls, output, _ = self.run_block(
+                    'Шаг 3', self.scenario(MethodLine=line))
+                self.assertIn('after the update gps\\area.py says', result)
+                self.assertIn('expected the method overflow-cap-2026-10-07',
+                              result)
+                self.assertBackUp(calls)
+                self.assertNotIn('GPS METHOD:', output)
+                self.assertNotIn('GET /login', calls)
 
     def test_a_stale_wal_is_the_known_noise_not_a_stop(self):
         result, _calls, output, _ = self.run_block(
