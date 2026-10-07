@@ -78,7 +78,7 @@
 ## Шаг 1. Влить запрос выпуска на GitHub
 
 Блоки этого ранбука проверены вместе с кодом выпуска и лежат в запросе PR
-#0. «Влить» — сделать его основной версией, чтобы сервер мог её забрать.
+#171. «Влить» — сделать его основной версией, чтобы сервер мог её забрать.
 Сам сервер на этом шаге не меняется.
 
 **Важно: до конца шага 4 не вливайте другие PR с кодом.** Выпуск проверен
@@ -86,7 +86,7 @@
 можно. Если в `main` появится другой код, шаги 2 и 3 остановятся сами и ничего
 не тронут — тогда напишите мне.
 
-1. Откройте https://github.com/sINte3/vehicle-soft/pull/0
+1. Откройте https://github.com/sINte3/vehicle-soft/pull/171
 2. Внизу — зелёная кнопка. Если на ней не написано «Merge pull request»,
    нажмите стрелку рядом с ней и выберите **«Create a merge commit»** (не
    «Squash» и не «Rebase»).
@@ -114,7 +114,7 @@ $py        = 'C:\Program Files\Python314\python.exe'
 $backupBat = 'C:\transport-report\backup_production_db.bat'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $baseline  = '8df568394a840054ef6f842c6a8b272ca4c31aa8'
-$reviewed  = 'f7e0fdc2a52fc22666a5a27ab2cf2b8522845954'
+$reviewed  = '8a052ab103bfafbde3c14748a3cfe94d8e3e1245'
 $work      = 'C:\VehicleSoft_Release'
 $log       = 'C:\VehicleSoft_Release\release_v122_step2.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -183,7 +183,7 @@ try { Stop-Transcript | Out-Null } catch { }
 **Что должно получиться:** последняя строка перед `LOG FILE` —
 `RESULT: CHECK PASSED - go on to step 3`. Выше — три строки
 `SERVICE ... : Running`, строка `RELEASE: 8df56839... -> ...` и список
-влитых изменений: `#0` (этот выпуск), `#168` (документ площадки Дронов),
+влитых изменений: `#171` (этот выпуск), `#168` (документ площадки Дронов),
 `#167` (отчёт о допуске GPS), `#166` (документы Дронов) и `#165` (записи
 выпуска v1.21). Если в списке есть ещё PR — значит, они только с
 документами: чужой код после проверенной версии блок не пропускает.
@@ -230,7 +230,7 @@ $errLog    = 'C:\transport-report\logs\error.log'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '8df568394a840054ef6f842c6a8b272ca4c31aa8'
-$reviewed  = 'f7e0fdc2a52fc22666a5a27ab2cf2b8522845954'
+$reviewed  = '8a052ab103bfafbde3c14748a3cfe94d8e3e1245'
 $method    = 'overflow-cap-2026-10-07'
 $work      = 'C:\VehicleSoft_Release'
 $log       = 'C:\VehicleSoft_Release\release_v122_step3.log'
@@ -496,6 +496,8 @@ Get-Content C:\VehicleSoft_Release\release_v122_step4_plan.log
   сентябрь сейчас, как в прогоне 03.10 (если с тех пор вы меняли
   сопоставление машин, числа чуть другие — это нормально);
 - `operator answers (work/passage) in the window: 0`;
+- `days with points in C:\transport-report\instance:` — все дни окна, например
+  `37 of 37`;
 - последняя: `PLAN ONLY: nothing was written. Add --apply to recompute.`
 
 Если ответов операторов не 0 — **не идти к 4.2**, пришлите журнал: пересчёт
@@ -512,13 +514,19 @@ Get-Content C:\VehicleSoft_Release\release_v122_step4_plan.log
 немного отличаться от базы — программа работает, это нормально. Если в конце
 `Backup FAILED` — не идти к 4.3, пришлите вывод.
 
-**4.3. Пересчёт — пишет в базу.** Окно не закрывать, идёт 1–2 часа:
+**4.3. Пересчёт — пишет в базу.** Окно не закрывать, идёт 1–2 часа. Пока он
+идёт, на экране «Факт по технике» **не отмечайте «работа/проезд»**: ответ,
+поставленный посреди пересчёта, инструмент заметит и остановится, но лучше,
+чтобы его не было вовсе.
 
 ```powershell
 cd C:\transport-report
-& C:\gps_venv\Scripts\python.exe -u tools\gps_recompute_days.py --since 2026-09-01 --apply *> C:\VehicleSoft_Release\release_v122_step4_recompute.log
+& C:\gps_venv\Scripts\python.exe -u tools\gps_recompute_days.py --since 2026-09-01 --apply *>> C:\VehicleSoft_Release\release_v122_step4_recompute.log
 "exit $LASTEXITCODE"
 ```
+
+`*>>` — журнал дописывается, а не перезаписывается: если блок придётся
+повторить, первая сводка останется в том же файле.
 
 Как идёт, можно посмотреть в другом окне PowerShell (не от администратора
 тоже можно): строки вида `== 2026-09-14 (14 of 38)` — какой день считается и
@@ -539,8 +547,10 @@ Get-Content C:\VehicleSoft_Release\release_v122_step4_recompute.log -Tail 3
   of counted objects left on another method: 0`.
 
 Если `exit 5` — часть суток не посчиталась из-за сбоя; выполните тот же блок
-4.3 ещё раз: он пересчитает всё окно заново, это безопасно. Если снова
-`exit 5` или любой другой код, кроме 0, — пришлите журнал.
+4.3 ещё раз: он пересчитает всё окно заново, это безопасно. Во второй сводке
+будет строка `rows of counted objects already on overflow-cap-2026-10-07 before
+this run: ...` — это нормально: «было» в ней — то, что осталось после первого
+раза. Если снова `exit 5` или любой другой код, кроме 0, — пришлите журнал.
 
 **4.4. Глазами.** Откройте
 `http://10.103.25.14:5050/gps/fact?date=2026-09-26&unit=393` — МТЗ-80.1 80 239
@@ -569,9 +579,11 @@ overflow-cap-2026-10-07». «Факт по технике» за вчера от
 | `RESULT: STOP - after the update the migrations are ...` | после обновления реестр миграций выглядит иначе, чем до | прислать журнал; программа запущена на новой версии, база не менялась |
 | `RESULT: STOP - after the update gps\area.py says ...` | на диске не тот метод GPS, который проверялся | прислать журнал; программа запущена, база не менялась; шаг 4 не делать |
 | в 4.1 `operator answers ... in the window:` не 0 | за эти дни операторы уже отвечали «работа/проезд» | не делать 4.2 и 4.3, прислать журнал плана |
-| в 4.3 `exit 3`, в журнале `REFUSED` | ответы операторов появились между 4.1 и 4.3 | ничего не записано; прислать журнал |
+| в 4.3 `exit 3`, в журнале `REFUSED: ... operator answer(s) in the window` | ответы операторов появились между 4.1 и 4.3 | ничего не записано; прислать журнал |
+| в 4.3 `exit 3`, в журнале `REFUSED: ... appeared on` или `... reports operator answers lost on` | ответ появился посреди пересчёта | сутки до названной даты пересчитаны, она и дальше — нет; ответ, если потерян, есть в копии 4.2; прислать журнал |
 | в 4.3 `exit 5` | часть суток не посчиталась из-за сбоя, остальные посчитаны | выполнить 4.3 ещё раз; если снова — прислать журнал |
-| в 4.3 `exit 2` | неверный ввод — не та папка, не тот день | ничего не записано; прислать журнал |
+| в 4.1 или 4.3 `exit 2`, `ERROR: no point file holds any day of the window` | в папке точек нет ни одного дня окна | ничего не записано; прислать журнал |
+| в 4.3 `exit 2` | неверный ввод — не тот день | ничего не записано; прислать журнал |
 
 ## Откат — только если после шага 3 программа не открывается
 
@@ -592,7 +604,7 @@ $prod      = 'C:\transport-report'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '8df568394a840054ef6f842c6a8b272ca4c31aa8'
-$reviewed  = 'f7e0fdc2a52fc22666a5a27ab2cf2b8522845954'
+$reviewed  = '8a052ab103bfafbde3c14748a3cfe94d8e3e1245'
 $work      = 'C:\VehicleSoft_Release'
 $log       = 'C:\VehicleSoft_Release\release_v122_rollback.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
