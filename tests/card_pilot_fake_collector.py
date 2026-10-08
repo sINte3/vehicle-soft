@@ -38,6 +38,7 @@ token was present -- goes to the scenario's `record` file; no token value.
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import time
 
@@ -74,7 +75,7 @@ def now_utc():
     return datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
 
-def receive(con, fid, n, run_id, key=None):
+def receive(con, fid, n, run_id, key=None, evidence=True):
     sha = ('%064x' % (0xC0FFEE00 + fid * 7 + n))[-64:]
     stamp = now_utc()
     cur = con.execute(
@@ -86,7 +87,11 @@ def receive(con, fid, n, run_id, key=None):
         "'{}',?,0,'INLINE','{}',NULL,?,?,1)",
         (PROVIDER, fid, str(fid), sha, stamp, run_id, stamp, stamp))
     rev = cur.lastrowid
-    key = key or '%032x' % (0xABC000 + n)
+    if evidence:
+        touch_evidence(con, fid, rev, key or '%032x' % (0xABC000 + n), stamp)
+
+
+def touch_evidence(con, fid, rev, key, stamp):
     if con.execute('SELECT 1 FROM dji_flight_evidence WHERE flight_id = ?',
                    (fid,)).fetchone():
         con.execute('UPDATE dji_flight_evidence SET card_revision_id = ?, '
@@ -135,6 +140,11 @@ def main(argv):
             'collected and nothing was sent. Exit 24.' % lock.path, 'ERROR')
         flush_file_log()
         return 24
+    if sc.get('grandchild'):
+        # Like the Playwright driver and Chromium: a child that inherits the output.
+        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)'])
+        record['grandchild'] = child.pid
+        save_record()
     run_id = 'sources:ids-file:' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
     code = int(sc.get('exit', 0))
     visited = cards = page_errors = new = 0
@@ -200,11 +210,30 @@ def main(argv):
         for fid in sc.get('foreign_revisions', []):
             receive(con, int(fid), 999, run_id)
             new += 1
+        # Writes the gate must refuse one at a time (counted as received):
+        for fid in sc.get('other_run_revisions', []):      # a canary flight, another run
+            receive(con, int(fid), 998, 'sources:ids-file:OTHER', evidence=False)
+            new += 1
+        for fid in sc.get('repeated_revisions', []):       # a second card in this run
+            receive(con, int(fid), 997, run_id, evidence=False)
+            new += 1
+        for fid in sc.get('outside_revisions', []):        # a flight outside the canary
+            receive(con, int(fid), 996, run_id, evidence=False)
+            new += 1
+        for fid in sc.get('outside_evidence', []):         # evidence of a flight outside
+            con.execute('UPDATE dji_flight_evidence SET updated_at = ? WHERE flight_id = ?',
+                        (now_utc(), int(fid)))
         con.commit()
         con.close()
-        if sc.get('production_db'):
-            prod = sqlite3.connect(sc['production_db'])
-            receive(prod, ids[0], 0, run_id)
+        prod_writes = sc.get('production_db')
+        if prod_writes:
+            prod = sqlite3.connect(prod_writes['db'])
+            if prod_writes.get('this_run'):
+                receive(prod, ids[0], 0, run_id)
+            if prod_writes.get('other_run'):
+                receive(prod, ids[1], 0, 'sources:daily:OTHER', evidence=False)
+            if prod_writes.get('evidence'):
+                touch_evidence(prod, ids[2], None, None, now_utc())
             prod.commit()
             prod.close()
     finally:

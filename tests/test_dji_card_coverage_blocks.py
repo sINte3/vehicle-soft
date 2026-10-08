@@ -53,6 +53,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 from datetime import datetime, timedelta
@@ -1936,6 +1937,21 @@ TOOL_SHIM = ("import os, runpy, sys\n"
              "runpy.run_path(os.path.join(here, 'tools', %r), run_name='__main__')\n")
 
 
+def pid_alive(pid):
+    if os.name == 'nt':
+        out = subprocess.run(['tasklist', '/FI', 'PID eq %d' % pid, '/NH'], capture_output=True, text=True).stdout
+        return str(pid) in out.split()
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    try:
+        with open('/proc/%d/stat' % pid) as fh:
+            return fh.read().split()[2] != 'Z'
+    except OSError:
+        return True
+
+
 class W1Server(object):
     """SRV-YOQSH as W1 meets it: B1 done, the pilot checkout, production at rest.
 
@@ -2034,7 +2050,11 @@ class W1Server(object):
                 'prod_head': sh('git', 'rev-parse', 'HEAD', cwd=self.prod)}
 
     def tasks(self, **changes):
-        now = datetime.now()
+        if os.name != 'nt':
+            from zoneinfo import ZoneInfo
+            now = datetime.now(ZoneInfo(W1_TZ)).replace(tzinfo=None)
+        else:
+            now = datetime.now()
 
         def at(hours):
             return (now + timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M:%S')
@@ -2136,6 +2156,12 @@ class W1Server(object):
             con.close()
 
 
+NEW_EVIDENCE = 'staging holds new evidence that is not this run of the 50 canary flights'
+PROD_EVIDENCE = 'the production database received canary evidence'
+# [REASON]: SRV-YOQSH runs at UTC+5 and the receiver stamps UTC; on a UTC
+# runner a missing ToUniversalTime() would pass unseen. Where the stand-in
+# can set it (pwsh on Linux honours TZ), the block runs at UTC+5.
+W1_TZ = 'Asia/Tashkent'
 # What the pinned collector writes when the page asked for no descriptor (sources.py).
 DESCRIPTOR_LINE = 'Flight %d: the page asked for no descriptor; the direct request answered HTTP %d (%d bytes)'
 W1_SECRETS = (W1_TOKEN, W1_SESSION_SECRET, 'do-not-print', 'CONSOLE-TOKEN-DECOY-3')
@@ -2190,6 +2216,8 @@ class W1InPowerShell(unittest.TestCase):
                     # Left in the child, these two would import production's drone_collector.
                     'PYTHONSAFEPATH': '1', 'PYTHONPATH': srv.prod,
                     'PLAYWRIGHT_BROWSERS_PATH': srv.browsers})
+        if os.name != 'nt':
+            env['TZ'] = W1_TZ
         p = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
                             '-File', W1_HARNESS, '-BlockFile', bf, '-ScenarioFile', sf, '-CallsFile', cf],
                            capture_output=True, text=True, timeout=900, env=env)
@@ -2372,6 +2400,8 @@ class W1InPowerShell(unittest.TestCase):
             ('collector process', dict(sc=srv.scenario(Processes=[{'ProcessId': 5150, 'Name': 'python.exe',
                                                                   'CommandLine': 'python.exe tools\\dji_area_daily.py --apply'}])),
              '1 collector or cycle process(es) are running (pid 5150)'),
+            ('staging bot running', dict(sc=srv.scenario(Services=dict(srv.scenario()['Services'], TransportBot003Staging={'Status': 'Running', 'StartType': 'Disabled'}))),
+             'TransportBot003Staging is Running Disabled'),
             ('staging bot', dict(sc=srv.scenario(Services=dict(srv.scenario()['Services'], TransportBotStaging={'Status': 'Stopped', 'StartType': 'Manual'}))),
              'TransportBotStaging is Stopped Manual'),
             ('staging site', dict(sc=srv.scenario(Services=dict(srv.scenario()['Services'], TransportReportStaging={'Status': 'Stopped', 'StartType': 'Automatic'}))),
@@ -2410,6 +2440,20 @@ class W1InPowerShell(unittest.TestCase):
             out = self.run_w1()
             write(srv.canary_file, canary_text)
             self.assertStopBeforeDji(out, 'canary_ids.txt has sha256 ', before)
+        with self.subTest('staging off the pin'):
+            sh('git', '-c', 'advice.detachedHead=false', 'checkout', '-q', '--detach', PIN, cwd=srv.staging)
+            out = self.run_w1()
+            sh('git', '-c', 'advice.detachedHead=false', 'checkout', '-q', '--detach', srv.pin, cwd=srv.staging)
+            self.assertStopBeforeDji(out, 'staging is not on the clean pilot revision (BEFORE)', before)
+            self.assertIn('STAGING_BEFORE HEAD=%s tracked_changes=0' % PIN, out)
+        with self.subTest('staging edited'):
+            path = os.path.join(srv.staging, 'dji_area', 'pipeline.py')
+            text = read(path)
+            write(path, text + '\n# local change\n')
+            out = self.run_w1()
+            sh('git', 'checkout', '-q', '--', 'dji_area/pipeline.py', cwd=srv.staging)
+            self.assertStopBeforeDji(out, 'staging is not on the clean pilot revision (BEFORE)', before)
+            self.assertIn('STAGING_BEFORE HEAD=%s tracked_changes=1' % srv.pin, out)
         with self.subTest('pilot checkout changed'):
             path = os.path.join(srv.src, 'drone_collector', 'config.py')
             text = read(path)
@@ -2528,21 +2572,37 @@ class W1InPowerShell(unittest.TestCase):
             ('stats disagree', srv.collector(status={str(ids[-1]): 'stop_here'}, report_visited=50),
              'collector-stats saw 49 of 50 flights visited'),
             ('new count', srv.collector(report_new=49), 'staging holds 50 new revisions, the collector reported 49'),
-            ('foreign revision', srv.collector(foreign_revisions=[810004]),
-             'staging holds new evidence that is not this run of the 50 canary flights'),
-            ('production write', srv.collector(production_db=srv.prod_db),
-             'the production database received canary evidence'),
+            ('foreign revision', srv.collector(foreign_revisions=[810004]), NEW_EVIDENCE),
+            # Each part of the staging evidence gate alone (the other counters stay 0).
+            ('other run', srv.collector(status={str(ids[0]): 'nothing'}, other_run_revisions=[ids[0]]), NEW_EVIDENCE,
+             'flights=50 outside_canary=0 other_run=1 repeated_type=0 evidence_outside_since=0'),
+            ('repeated type', srv.collector(repeated_revisions=[ids[0]]), NEW_EVIDENCE,
+             'flights=50 outside_canary=0 other_run=0 repeated_type=1 evidence_outside_since=0'),
+            ('outside revision', srv.collector(status={str(ids[0]): 'nothing'}, outside_revisions=[810004]), NEW_EVIDENCE,
+             'flights=50 outside_canary=1 other_run=0 repeated_type=0 evidence_outside_since=0'),
+            ('outside evidence', srv.collector(outside_evidence=[810001]), NEW_EVIDENCE,
+             'flights=50 outside_canary=0 other_run=0 repeated_type=0 evidence_outside_since=1'),
+            # Production: this run's id, or canary rows since the start without it.
+            ('production write', srv.collector(production_db={'db': srv.prod_db, 'this_run': True}), PROD_EVIDENCE,
+             'PROD_DB_AFTER run_rows=1 canary_sources_since=1 canary_evidence_since=1'),
+            ('production other run', srv.collector(production_db={'db': srv.prod_db, 'other_run': True}), PROD_EVIDENCE,
+             'PROD_DB_AFTER run_rows=0 canary_sources_since=1 canary_evidence_since=0'),
+            ('production evidence', srv.collector(production_db={'db': srv.prod_db, 'evidence': True}), PROD_EVIDENCE,
+             'PROD_DB_AFTER run_rows=0 canary_sources_since=0 canary_evidence_since=1'),
             ('session written', srv.collector(touch_session=True), 'the production DJI session file changed during the run'),
             ('logged in production', srv.collector(also_log=srv.prod_log),
              'the run was not logged by the pilot checkout only (pilot=True production=True)'),
         ]
         session = read(srv.session)
         prod_log = read(srv.prod_log)
-        for name, collector, message in cases:
+        for case in cases:
+            name, collector, message = case[:3]
             with self.subTest(name):
                 out = self.run_w1(collector=collector)
+                if len(case) > 3:
+                    self.assertIn(case[3], out)
                 expected = dict(before)
-                if name == 'production write':
+                if collector.get('production_db'):
                     expected['prod_db'] = sha(srv.prod_db)
                     self.assertNotEqual(expected['prod_db'], before['prod_db'])
                 if name == 'session written':
@@ -2558,7 +2618,7 @@ class W1InPowerShell(unittest.TestCase):
                 if collector.get('hang_after'):
                     # Stopped in the middle of the walk: killed, not finished.
                     self.assertFalse(self.record['finished'])
-                if name == 'production write':
+                if collector.get('production_db'):
                     os.remove(srv.prod_db)
                     srv.build(srv.prod_db)
                     before['prod_db'] = sha(srv.prod_db)
@@ -2568,6 +2628,24 @@ class W1InPowerShell(unittest.TestCase):
                 if name == 'logged in production':
                     write(srv.prod_log, prod_log)
                 self.reset()
+
+    def test_a_stop_kills_the_collector_tree_and_nothing_else(self):
+        srv = self.srv
+        bystander = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)'])
+        self.addCleanup(bystander.wait)
+        self.addCleanup(bystander.kill)
+        out = self.run_w1(collector=srv.collector(grandchild=True, hang_after=2,
+                                                  log_after={'2': [DESCRIPTOR_LINE % (srv.ids[1], 429, 135)]}))
+        self.assertIn('STEP=STOP - STEP FAILED: the canary was stopped: stop marker HTTP_429', out)
+        child = self.record['grandchild']
+        for _ in range(20):
+            if not pid_alive(child):
+                break
+            time.sleep(0.5)
+        self.assertFalse(pid_alive(child), 'a process of the collector tree survived the stop')
+        self.assertIsNone(bystander.poll(), 'a process outside the collector tree was killed')
+        self.assertTrue(self.lock_is_free())
+        self.assertNotIn('stderr still open', read(os.path.join(srv.runs()[0], 'collector_stderr.log')))
 
     def test_time_limit_stops_the_run(self):
         srv = self.srv

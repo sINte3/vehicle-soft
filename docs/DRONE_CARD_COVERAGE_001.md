@@ -2100,8 +2100,9 @@ if __name__ == '__main__':
   }
   function Stop-Child($p) {
     if ($p.HasExited) { return }
+    # Only this process and its children (browser, driver); no other process is touched.
     try { & taskkill.exe /PID $p.Id /T /F 2>&1 | Out-Null } catch { }
-    if (-not $p.HasExited) { try { $p.Kill() } catch { } }
+    if (-not $p.HasExited) { try { $p.Kill($true) } catch { try { $p.Kill() } catch { } } }
     [void]$p.WaitForExit(30000)
   }
   function Get-LockOwner {
@@ -2330,7 +2331,8 @@ if __name__ == '__main__':
       if ($stopWhy) { Stop-Child $proc }
       if (-not $proc.WaitForExit(120000)) { Stop-Child $proc; if (-not $stopWhy) { $stopWhy = 'the collector did not end after its output closed' } }
       $writer.Close()
-      Set-Content -LiteralPath (Join-Path $w1 'collector_stderr.log') -Value $errTask.Result -Encoding UTF8
+      $errText = if ($errTask.Wait(30000)) { $errTask.Result } else { 'stderr still open after 30 s: a process of the collector tree is alive' }
+      Set-Content -LiteralPath (Join-Path $w1 'collector_stderr.log') -Value $errText -Encoding UTF8
     }
     $clock.Stop()
     $code = $proc.ExitCode
