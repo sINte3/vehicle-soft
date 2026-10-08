@@ -3237,6 +3237,8 @@ class W2InPowerShell(unittest.TestCase):
             ('w1 run id', dict(w1RunId='sources:ids-file:20261008T000000Z'), 'the W1 RUN SUMMARY is not the verified one'),
             ('w1 sources', dict(w1New=49), 'the W1 RUN SUMMARY is not the verified one'),
             ('w1 numbers', dict(w1Exact=19, w1NotInCatalog=31), 'the W1 measurement is not the verified one'),
+            ('pilot checkout elsewhere', dict(pin=PIN), 'the pilot checkout %s is at %s' % (srv.src, srv.pin)),
+            ('production database unreadable', dict(prodDb=os.path.join(self.tmp, 'none.db')), 'the read-only check newrows exit 1'),
         ]
         for name, kw, message in cases:
             with self.subTest(name):
@@ -3293,6 +3295,51 @@ class W2InPowerShell(unittest.TestCase):
                 self.assertEqual(srv.collector_runs(), [])
                 self.assertEqual(read_bytes(srv.db), changed)
                 self.assertEqual(srv.state(), self.before)
+        # W1 itself, one piece of its evidence at a time.
+        w1_log_text = read(self.w1_log)
+        for name, edit, message in (
+                ('W1 decided SIMPLIFY', lambda t: t.replace('DECISION=GO_TO_500', 'DECISION=SIMPLIFY'),
+                 'does not end W1 with STEP=PASS and DECISION=GO_TO_500'),
+                ('W1 ended with STOP', lambda t: t.replace('\nSTEP=PASS', '\nSTEP=STOP - something'),
+                 'does not end W1 with STEP=PASS and DECISION=GO_TO_500')):
+            with self.subTest(name):
+                self.setUp()
+                other_log = os.path.join(self.tmp, 'w1_variant.log')
+                write(other_log, edit(w1_log_text))
+                self.assertNotEqual(read(other_log), w1_log_text)
+                out = self.run_w2(w1Log=other_log)
+                self.assertStopBeforeDji(out, 'the W1 log %s %s' % (other_log, message))
+        w1_files = {name: os.path.join(self.w1_run, name) for name in ('collector_stdout.log', 'fingerprint_pre.json', 'canary_ids.txt')}
+        for name, target, edit, message in (
+                ('W1 visited 49', 'collector_stdout.log', lambda t: t.replace('sources_visited=50', 'sources_visited=49'), 'the W1 RUN SUMMARY is not the verified one'),
+                ('W1 cards 49', 'collector_stdout.log', lambda t: t.replace('sources_card=50', 'sources_card=49'), 'the W1 RUN SUMMARY is not the verified one'),
+                ('W1 ingest error', 'collector_stdout.log', lambda t: t.replace('sources_ingest_errors=0', 'sources_ingest_errors=1'), 'the W1 RUN SUMMARY is not the verified one'),
+                ('W1 batch refused', 'collector_stdout.log', lambda t: t.replace('sources_batch_accepted=true', 'sources_batch_accepted=false'), 'the W1 RUN SUMMARY is not the verified one'),
+                ('W1 started elsewhere', 'fingerprint_pre.json', lambda t: t + ' ', 'W1 did not start from the B0 staging fingerprint'),
+                ('W1 canary list edited', 'canary_ids.txt', lambda t: t + '# edited\n', 'the W1 run folder does not hold the frozen canary list')):
+            with self.subTest(name):
+                self.setUp()
+                path = w1_files[target]
+                kept = read_bytes(path)
+                text = kept.decode('utf-8')
+                self.assertNotEqual(edit(text), text)
+                with open(path, 'wb') as fh:
+                    fh.write(edit(text).encode('utf-8'))
+                try:
+                    self.assertStopBeforeDji(self.run_w2(), message)
+                finally:
+                    with open(path, 'wb') as fh:
+                        fh.write(kept)
+        with self.subTest('pilot checkout edited'):
+            self.setUp()
+            config = os.path.join(srv.src, 'drone_collector', 'config.py')
+            kept = read_bytes(config)
+            write(config, '# edited\n', 'a')
+            try:
+                self.assertStopBeforeDji(self.run_w2(), 'the pilot checkout %s is at %s with 1 tracked change(s)' % (srv.src, srv.pin))
+            finally:
+                with open(config, 'wb') as fh:
+                    fh.write(kept)
         with self.subTest('W1 collector exit'):
             self.setUp()
             exit_file = os.path.join(self.w1_run, 'collector_exit.txt')
@@ -3375,6 +3422,8 @@ class W2InPowerShell(unittest.TestCase):
              'staging holds new evidence that is not this run of the 450 W2 flights'),
             ('fewer new than reported', dict(report_new=11), 'staging holds 10 new revisions, the collector reported 11'),
             ('visited fewer', dict(report_visited=9), 'the collector requested 10, skipped  and visited 9 of 10'),
+            ('three pages', dict(status={str(f): 'page_error' for f in sorted(self.remaining)[2:5]}),
+             'W2 was stopped: three record pages in a row did not open'),
             ('configuration elsewhere', dict(report_outbox=srv.prod_outbox, hang_after=1),
              "W2 was stopped: the collector configuration does not show 'outbox_dir': "),
             ('session written', dict(touch_session=True), 'the production DJI session file changed during the run'),
@@ -3608,6 +3657,44 @@ class W2InPowerShell(unittest.TestCase):
         self.assertIn('STEP=STOP - STEP FAILED: staging changed after the W2 collection gate beyond the recalculation of the 450', out)
         self.assertRegex(out, r'CHANGED_SINCE_GATE flights=\d+ outside_w2=0 w1_canary=0 raw=1 decisions=1 migrations=1 sources=0')
 
+    def test_a_child_left_by_the_collector_stops_the_gate(self):
+        """A driver-like child outlives the collector: the gate stops; once it is gone, the gate passes."""
+        srv = self.srv
+        out = self.run_w2(collector=self.collector(driver_like_child=40))
+        self.assertStopBeforeRecalc(out, 'a process the collector (pid ', 'GATE_PENDING')
+        self.assertIn('(when the collector ended, its output stayed open 30 s)', out)
+        child = json.loads(read(srv.record))['driver_like_child']
+        for _ in range(120):
+            if not pid_alive(child):
+                break
+            time.sleep(0.5)
+        self.assertFalse(pid_alive(child))
+        out = self.run_w2()
+        self.assertEqual(out.splitlines()[-1], 'STEP=PASS', out)
+        self.assertIn('COLLECTOR_CHILDREN_LEFT=0', out)
+        self.assertEqual(len(srv.collector_runs()), 1)
+
+    def test_a_second_window_does_not_run_a_second_s2(self):
+        """S2 pending and another window is working on it: nothing is done, the site is not touched."""
+        srv = self.srv
+        out = self.run_w2(sc=srv.scenario(StartFails=['TransportReportStaging']), services_back=False)
+        self.assertIn('W2_STATE=S2_PENDING', out)
+        run = self.runs()[0]
+        self.assertFalse(os.path.exists(os.path.join(run, 'supervisor.txt')))
+        sleeper = subprocess.Popen([POWERSHELL, '-NoProfile', '-NonInteractive', '-Command',
+                                    '"$PID " + (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks; Start-Sleep -Seconds 300'],
+                                   stdout=subprocess.PIPE, text=True)
+        self.addCleanup(sleeper.wait)
+        self.addCleanup(sleeper.kill)
+        write(os.path.join(run, 'supervisor.txt'), sleeper.stdout.readline().strip() + '\n')
+        stopped = srv.scenario()
+        stopped['Services']['TransportReportStaging']['Status'] = 'Stopped'
+        out = self.run_w2(sc=stopped)
+        self.assertIn('STEP=STOP - STEP FAILED: W2 is collecting now in another PowerShell window (%s)' % run, out)
+        self.assertIn('W2_STATE=RUNNING', out)
+        self.assertEqual([c for c in self.calls if re.match(r'(Stop|Start)-Service', c)], [])
+        self.assertTrue(os.path.exists(os.path.join(run, 'supervisor.txt')))
+
     def test_s2_postconditions_stop_s2(self):
         """Each S2 check on its own: the change slips past every check before it and S2 stops."""
         srv = self.srv
@@ -3625,6 +3712,10 @@ class W2InPowerShell(unittest.TestCase):
                     "AND superseded_at IS NULL', ('2026-10-08 12:00:00', int(sys.argv[2])))\n"
                     'c.commit()\nassert c.total_changes, sys.argv\n')
         during_s2 = srv.scenario(OnStopStaging=[sys.executable, hook, srv.db, str(outside)])
+        catalog_hook = os.path.join(self.tmp, 'catalog_on_stop.py')
+        write(catalog_hook, 'import sqlite3, sys\nc = sqlite3.connect(sys.argv[1])\n'
+                            "c.execute('UPDATE dji_land_geometries SET md5_verified = 1 - md5_verified')\n"
+                            'c.commit()\nassert c.total_changes, sys.argv\n')
         cases = [
             ('a flight outside changed during S2', dict(sc=during_s2),
              'the recalculation changed something other than the 450 W2 flights'),
@@ -3634,7 +3725,25 @@ class W2InPowerShell(unittest.TestCase):
              'measure exit 5 (5 = an immutability gate against B0 failed)'),
             ('a W1 revision rewritten during the collection', dict(collector=self.collector(tamper_revision_ids=[w1_revision])),
              'measure against the state after W1 exit 5'),
+            ('the field catalog changed during S2', dict(sc=srv.scenario(OnStopStaging=[sys.executable, catalog_hook, srv.db])),
+             'the staging field catalog changed during W2'),
         ]
+        # The W1 log lost a flight line (its RUN SUMMARY intact): the 500 are not all accounted for.
+        w1_out = os.path.join(self.w1_run, 'collector_stdout.log')
+        kept = read_bytes(w1_out)
+        lines = kept.decode('utf-8').split('\n')
+        first_v4 = next(i for i, l in enumerate(lines) if re.search(r': Flight \d+: V4 \(', l))
+        with self.subTest('a W1 flight missing from its log'):
+            self.setUp()
+            with open(w1_out, 'wb') as fh:
+                fh.write('\n'.join(lines[:first_v4] + lines[first_v4 + 1:]).encode('utf-8'))
+            try:
+                out = self.run_w2()
+            finally:
+                with open(w1_out, 'wb') as fh:
+                    fh.write(kept)
+            self.assertIn('STEP=STOP - STEP FAILED: the W1 and W2 logs together visited 59 of the 60 frozen flights', out)
+            self.assertIn('W2_STATE=S2_PENDING', out)
         for name, kw, message in cases:
             with self.subTest(name):
                 self.setUp()

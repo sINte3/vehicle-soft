@@ -64,7 +64,7 @@ foreach ($verb in @('Disable-ScheduledTask', 'Enable-ScheduledTask', 'Start-Sche
 }
 function Get-CimInstance {
   [CmdletBinding()] param([string]$ClassName)
-  foreach ($p in @($global:sc.Processes)) { if ($p) { [pscustomobject]@{ ProcessId = [int]$p.ProcessId; Name = [string]$p.Name; CommandLine = [string]$p.CommandLine } } }
+  foreach ($p in @($global:sc.Processes)) { if ($p) { [pscustomobject]@{ ProcessId = [int]$p.ProcessId; ParentProcessId = [int]$p.ParentProcessId; Name = [string]$p.Name; CommandLine = [string]$p.CommandLine } } }
 }
 function Get-ItemProperty {
   [CmdletBinding()] param([string]$LiteralPath)

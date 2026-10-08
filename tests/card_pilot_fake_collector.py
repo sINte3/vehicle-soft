@@ -150,6 +150,12 @@ def main(argv):
             'collected and nothing was sent. Exit 24.' % lock.path, 'ERROR')
         flush_file_log()
         return 24
+    if sc.get('driver_like_child'):
+        # Like a browser driver left behind: its own stdin and stdout, stderr inherited.
+        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(%d)' % int(sc['driver_like_child'])],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        record['driver_like_child'] = child.pid
+        save_record()
     if sc.get('grandchild'):
         # Like the Playwright driver and Chromium: a child that inherits the output.
         child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)'])

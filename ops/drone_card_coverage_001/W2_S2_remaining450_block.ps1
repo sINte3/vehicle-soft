@@ -276,18 +276,19 @@ if __name__ == '__main__':
   }
   function Get-RunState([string]$dir) {
     if (Test-Path -LiteralPath (Join-Path $dir 's2_done.txt')) { return 'COMPLETE' }
-    if (Test-Path -LiteralPath (Join-Path $dir 'collector_gate.json')) { return 'S2_PENDING' }
-    $logFile = Join-Path $dir 'collector_stdout.log'
-    if (-not (Test-Path -LiteralPath $logFile)) { return 'NOT_STARTED' }
-    $doneFile = Join-Path $dir 'collector_done.json'
     $supFile = Join-Path $dir 'supervisor.txt'
-    if ((-not (Test-Path -LiteralPath $doneFile)) -and (Test-Path -LiteralPath $supFile)) {
-      # [REASON]: another window may still be watching this collection; its PowerShell process (id
-      # and start time, so a reused id does not count) tells a supervised run from an orphaned one.
+    if (Test-Path -LiteralPath $supFile) {
+      # [REASON]: another window may still be working on this run (collection, gate or S2); its
+      # PowerShell process (id and start time, so a reused id does not count) tells a run in
+      # progress from one that was cut off. The file is removed when that window ends normally.
       $sv = ([string](Get-Content -LiteralPath $supFile -Raw)).Trim() -split ' '
       $sp = Get-Process -Id ([int]$sv[0]) -ErrorAction SilentlyContinue
       if ($sp -and ($sp.Id -ne $PID) -and ([math]::Abs($sp.StartTime.ToUniversalTime().Ticks - [int64]$sv[1]) -lt 20000000)) { return 'RUNNING' }
     }
+    if (Test-Path -LiteralPath (Join-Path $dir 'collector_gate.json')) { return 'S2_PENDING' }
+    $logFile = Join-Path $dir 'collector_stdout.log'
+    if (-not (Test-Path -LiteralPath $logFile)) { return 'NOT_STARTED' }
+    $doneFile = Join-Path $dir 'collector_done.json'
     if (Test-Path -LiteralPath $doneFile) {
       $d = Read-Json $doneFile
       # [REASON]: the collector ended by itself (0 or 18) and nothing stopped it: what the gate needs
@@ -300,6 +301,13 @@ if __name__ == '__main__':
       if (([int]$d.collector_exit -eq 24) -or (($flights -eq 0) -and ($queued -eq 0))) { return 'NOT_STARTED' }
     }
     'COLLECTION_STOPPED'
+  }
+  function Set-Supervisor([string]$dir) {
+    [System.IO.File]::WriteAllText((Join-Path $dir 'supervisor.txt'), ([string]$PID + ' ' + (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks + "`n"), [System.Text.Encoding]::ASCII)
+  }
+  function Clear-Supervisor([string]$dir) {
+    $f = Join-Path $dir 'supervisor.txt'
+    if ((Test-Path -LiteralPath $f) -and (([string](Get-Content -LiteralPath $f -Raw)).Trim() -like ([string]$PID + ' *'))) { [System.IO.File]::Delete($f) }
   }
   function Write-PartialState([string]$dir) {
     $plines = Read-Utf8 (Join-Path $dir 'collector_stdout.log')
@@ -486,6 +494,7 @@ if __name__ == '__main__':
         $mode = 'gate'
         Write-Output ("MODE=gate of " + $w2 + " (its collector ended by itself; the gate is checked again from its files; DJI is not visited again)")
       }
+      Set-Supervisor $w2
     } else {
       $w2 = Join-Path $w2Root $stamp
       Write-Output ("MODE=fresh W2 run " + $w2)
@@ -633,7 +642,7 @@ if __name__ == '__main__':
       $t0 = (Get-Date).ToUniversalTime().AddSeconds(-5).ToString('yyyy-MM-dd HH:mm:ss')
       Write-Output ("NOW=" + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') + " UTC=" + $t0 + " W1_ALREADY_DONE=" + $canaryIds.Count + " W2_REMAINING=" + $remaining.Count + " TOTAL_MANIFEST=" + $pilotIds.Count)
       $collected = $true
-      [System.IO.File]::WriteAllText((Join-Path $w2 'supervisor.txt'), ([string]$PID + ' ' + (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks + "`n"), [System.Text.Encoding]::ASCII)
+      Set-Supervisor $w2
       $clock = [System.Diagnostics.Stopwatch]::StartNew()
       $proc = Start-Child $cpy ('-m drone_collector.main --sources --ids-file "' + $idsFile + '" --send-sources') $src
       $errTask = $proc.StandardError.ReadToEndAsync()
@@ -701,7 +710,8 @@ if __name__ == '__main__':
           } catch { }
         }
         $writer.Close()
-        $errText = if ($errTask.Wait(30000)) { $errTask.Result } else { 'stderr still open after 30 s: a process of the collector tree is alive' }
+        $treeAlive = -not $errTask.Wait(30000)
+        $errText = if (-not $treeAlive) { $errTask.Result } else { 'stderr still open after 30 s: a process of the collector tree is alive' }
         Set-Content -LiteralPath (Join-Path $w2 'collector_stderr.log') -Value $errText -Encoding UTF8
       }
       $clock.Stop()
@@ -709,7 +719,7 @@ if __name__ == '__main__':
       Set-Content -LiteralPath (Join-Path $w2 'collector_exit.txt') -Value ([string]$code) -Encoding ASCII
       $wall = [math]::Round($clock.Elapsed.TotalSeconds)
       Write-Output ("COLLECTOR_EXIT=" + $code + " WALL_SECONDS=" + $wall + " CARD_REFUSED_FLIGHTS=" + $cardRefused + $(if ($stopWhy) { " STOPPED_BY_THIS_BLOCK=" + $stopWhy } else { '' }))
-      $done = [ordered]@{ collector_exit = $code; stop_why = [string]$stopWhy; wall_seconds = $wall; card_refused = $cardRefused; t0_utc = $t0; t1_utc = (Get-Date).ToUniversalTime().AddSeconds(60).ToString('yyyy-MM-dd HH:mm:ss'); session_before = $sessionBefore; session_after = (Get-FileState $session); sources_max_id_before = [int]$stNow['SOURCE_MAX_ID']; v4sum_max_id_before = [int]$stNow['V4SUM_MAX_ID']; remaining_ids_sha256 = $remainingSha }
+      $done = [ordered]@{ collector_exit = $code; collector_pid = $proc.Id; tree_alive = $treeAlive; stop_why = [string]$stopWhy; wall_seconds = $wall; card_refused = $cardRefused; t0_utc = $t0; t1_utc = (Get-Date).ToUniversalTime().AddSeconds(60).ToString('yyyy-MM-dd HH:mm:ss'); session_before = $sessionBefore; session_after = (Get-FileState $session); sources_max_id_before = [int]$stNow['SOURCE_MAX_ID']; v4sum_max_id_before = [int]$stNow['V4SUM_MAX_ID']; remaining_ids_sha256 = $remainingSha }
       # [REASON]: what the gate compares against goes to disk before the gate starts: a window closed
       # during the gate leaves a collection that a later paste checks again, without DJI.
       [System.IO.File]::WriteAllText((Join-Path $w2 'collector_done.json'), ($done | ConvertTo-Json), [System.Text.Encoding]::ASCII)
@@ -732,7 +742,10 @@ if __name__ == '__main__':
       $ownerAfter = Get-LockOwner
       Write-Output ("PROD_LOCK_OWNER_AFTER=" + $ownerAfter)
       $left = @(Get-CimInstance -ClassName Win32_Process | Where-Object { [string]$_.CommandLine -like ('*' + $idsFile + '*') })
-      Write-Output ("W2_PROCESSES_LEFT=" + $left.Count)
+      # [REASON]: the browser driver of the collector does not carry the ids file in its command
+      # line; a child left behind by the collector still holds the production DJI session.
+      $orphans = @(Get-CimInstance -ClassName Win32_Process | Where-Object { [int]$_.ParentProcessId -eq [int]$done.collector_pid })
+      Write-Output ("W2_PROCESSES_LEFT=" + $left.Count + " COLLECTOR_CHILDREN_LEFT=" + $orphans.Count + $(if ($done.tree_alive) { ' (when the collector ended, its output stayed open 30 s)' } else { '' }))
       $summary = Read-Summary @($lines)
       $runId = [string]$summary['snapshot_run_id']
       Write-Output ("RUN_SUMMARY run_id=" + $runId + " requested=" + $summary['sources_requested'] + " skipped_known=" + $summary['sources_skipped_known'] + " visited=" + $summary['sources_visited'] + " card=" + $summary['sources_card'] + " rejected=" + $summary['sources_rejected'] + " v4_failed=" + $summary['sources_v4_failed'] + " page_errors=" + $summary['sources_page_errors'] + " sent=" + $summary['sources_envelopes_sent'] + " accepted=" + $summary['sources_batch_accepted'] + " new=" + $summary['sources_new'] + " ingest_errors=" + $summary['sources_ingest_errors'])
@@ -756,6 +769,7 @@ if __name__ == '__main__':
       if (@(0, 18) -notcontains $code) { throw "STEP FAILED: the collector ended with exit $code (2 session, 19 not accepted, 1 error) -- nothing is recalculated and nothing is collected again; evidence kept in $w2" }
       if (($ownerAfter -ne 'none') -and ($ownerAfter -notlike 'stale*')) { throw "STEP FAILED: the production lock is $ownerAfter after the run" }
       if ($left.Count -ne 0) { throw "STEP FAILED: $($left.Count) process(es) of this W2 run are still running" }
+      if (($orphans.Count -ne 0) -or ($done.tree_alive -and ($mode -eq 'fresh'))) { throw "STEP FAILED: a process the collector (pid $($done.collector_pid)) started is still alive after it ended -- see: Get-CimInstance Win32_Process -Filter 'ParentProcessId=$($done.collector_pid)'; when none is left, paste this block again: the gate is checked again without DJI" }
       if (-not $runId) { throw 'STEP FAILED: the collector printed no RUN SUMMARY with a run id' }
       if (-not $inPilot -or $inProd) { throw "STEP FAILED: the run was not logged by the pilot checkout only (pilot=$inPilot production=$inProd)" }
       if (($summary['sources_requested'] -ne [string]$remainingCount) -or ($summary['sources_visited'] -ne [string]$remainingCount) -or (($null -ne $summary['sources_skipped_known']) -and ($summary['sources_skipped_known'] -ne '0'))) { throw "STEP FAILED: the collector requested $($summary['sources_requested']), skipped $($summary['sources_skipped_known']) and visited $($summary['sources_visited']) of $remainingCount" }
@@ -913,5 +927,6 @@ if __name__ == '__main__':
   }
   Write-Output ("LOG FILE: " + $log)
   if ($failure) { Write-Output ("STEP=STOP - " + $failure) } else { Write-Output 'STEP=PASS' }
+  if ($w2) { try { Clear-Supervisor $w2 } catch { } }
   try { Stop-Transcript | Out-Null } catch { }
 }
