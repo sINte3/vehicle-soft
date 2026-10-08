@@ -441,7 +441,89 @@ class Access(ScreenCase):
         side_hrefs = sorted(set(re.findall(
             r'<a [^>]*?href="([^"]+)"[^>]*class="vs-side-sublink', html)))
         self.assertEqual(strip_hrefs, side_hrefs)
-        self.assertEqual(len(strip_hrefs), 4)
+        self.assertEqual(strip_hrefs, GPS_MODULE_PAGES)
+
+
+# Раздел модуля «GPS план-факт» после сведения сверок (владелец, 08.10).
+GPS_MODULE_PAGES = sorted(['/gps/fact', '/agro-work/', '/agro-work/applications',
+                           '/agro-work/work-days', '/agro-work/import',
+                           '/gps/sync'])
+
+
+def _strip(html):
+    return re.search(r'<nav class="vs-pills vs-modulenav vs-mb".*?</nav>',
+                     html, re.S).group(0)
+
+
+def _hrefs(fragment):
+    return sorted(set(re.findall(r'href="([^"]+)"', fragment)))
+
+
+class OneReconciliationSection(ScreenCase):
+    """Решение владельца 08.10: «Сверку нарядов» и «Сверку agro-work» свести.
+
+    Наряды в программе не ведутся (за 01.07–30.09 их 0), поэтому сверка --
+    одна, по заявкам agro-work, и живёт внутри модуля «GPS план-факт».
+    Маршруты остались прежними; меняется только место в меню. «Сверка
+    нарядов» из меню уходит, её маршрут цел -- на будущее, если наряды
+    начнут вести в программе.
+    """
+
+    def test_the_reconciliation_is_a_section_of_the_gps_module(self):
+        html = self.get('/agro-work/').get_data(as_text=True)
+        # один пункт модуля в сайдбаре, он раскрыт и подсвечен
+        gps_link = re.search(r'<a href="/gps/fact" class="vs-side-link([^"]*)"',
+                             html)
+        self.assertIsNotNone(gps_link)
+        self.assertIn('is-active', gps_link.group(1))
+        self.assertNotIn('Сверка agro-work', html)
+        self.assertNotIn('href="/agro-work/" class="vs-side-link', html)
+        side = sorted(set(re.findall(
+            r'<a [^>]*?href="([^"]+)"[^>]*class="vs-side-sublink', html)))
+        self.assertEqual(side, GPS_MODULE_PAGES)
+        self.assertEqual(_hrefs(_strip(html)), GPS_MODULE_PAGES)
+
+    def test_the_gps_pages_show_the_same_set(self):
+        html = self.get('/gps/fact').get_data(as_text=True)
+        self.assertEqual(_hrefs(_strip(html)), GPS_MODULE_PAGES)
+        side = sorted(set(re.findall(
+            r'<a [^>]*?href="([^"]+)"[^>]*class="vs-side-sublink', html)))
+        self.assertEqual(side, GPS_MODULE_PAGES)
+
+    def test_the_orders_page_is_off_the_menu_but_still_answers(self):
+        for url in ('/agro-work/', '/gps/fact'):
+            html = self.get(url).get_data(as_text=True)
+            with self.subTest(url=url):
+                self.assertNotIn('/gps/orders', _strip(html))
+                self.assertNotIn('Сверка нарядов', html)
+        self.assertEqual(self.get('/gps/orders').status_code, 200)
+
+    def test_the_reconciliation_pill_stays_current_on_the_machine_page(self):
+        html = self.get('/agro-work/machine/%d' % self.eq1_id).get_data(
+            as_text=True)
+        current = re.findall(r'<a href="([^"]+)"\s+class="vs-pill is-active"',
+                             _strip(html))
+        self.assertEqual(current, ['/agro-work/'])
+
+    def test_both_languages(self):
+        for lang, labels, title in (
+                ('ru', ['Факт по технике', 'Сверка', 'Заявка → работа',
+                        'Работа → заявка', 'Импорт заявок', 'Приём данных'],
+                 'Сверка — GPS'),
+                ('uz', ['Техника бўйича факт', 'Солиштирув', 'Буюртма → иш',
+                        'Иш → буюртма', 'Буюртмалар импорти',
+                        'Маълумот қабули'],
+                 'Солиштирув — GPS')):
+            html = self.get('/agro-work/', lang=lang).get_data(as_text=True)
+            pills = [x.strip() for x in re.findall(r'>([^<>]+)</a>',
+                                                   _strip(html))]
+            with self.subTest(lang=lang):
+                self.assertEqual(pills, labels)
+                self.assertIn(title, html)
+                if lang == 'uz':
+                    # узбекский -- только кириллицей
+                    self.assertFalse(any(re.search('[A-Za-z]', x)
+                                         for x in labels))
 
 
 class Copies(unittest.TestCase):
