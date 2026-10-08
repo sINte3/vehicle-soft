@@ -212,6 +212,22 @@ class ReportTool(unittest.TestCase):
         # неизвестен 0, не заведена 1.
         self.assertEqual((totals[9], totals[11:15]), (3, (0, 2, 0, 1)))
 
+    def test_still_open_counts_only_the_open_ones(self):
+        # Машина 12: закрытая обычная заявка от 15-го -- для 13-го 2 суток;
+        # машина 11: открытая от 22-го -- для 20-го 2 суток. Из двух
+        # обычных открыта одна: «все» и «открытые» здесь различимы.
+        self.fx.con = sqlite3.connect(self.fx.path)
+        dbh.add_day(self.fx.con, 1001, '2026-09-20', sites=[(1.5, None)])
+        self.fx.con.commit()
+        self.fx.app(transport='T2', created=15, completed=15)
+        self.fx.app(transport='T1', status='PENDING', created=22,
+                    completed=None)
+        self.fx.con.close()
+        code, out, err = self.main()
+        self.assertEqual(code, 0, err)
+        self.assertIn('  of them with a later ordinary application: 2 '
+                      '(days after: min 2, max 2; still open 1)\n', out)
+
     def test_unknown_entry_order_gets_its_own_console_line(self):
         self.fx.con = sqlite3.connect(self.fx.path)
         self.fx.app(transport='T2', created=18, completed=18, history=False)
