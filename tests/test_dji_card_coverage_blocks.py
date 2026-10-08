@@ -1337,6 +1337,11 @@ def read(path):
         return fh.read()
 
 
+def read_bytes(path):
+    with open(path, 'rb') as fh:
+        return fh.read()
+
+
 def sparse_clone(path, commit):
     """The repository at `commit`, only the root files and drone_collector/."""
     sh('git', 'clone', '-q', '--shared', '--no-checkout', REPO_ROOT, path)
@@ -2376,8 +2381,10 @@ class W1InPowerShell(unittest.TestCase):
     def test_refusals_before_dji(self):
         srv = self.srv
         before = srv.state()
-        plan_json = read(os.path.join(srv.plan_dir, 'plan.json'))
-        canary_text = read(srv.canary_file)
+        # [REASON]: frozen files are saved and put back as bytes: a text-mode
+        # write on Windows turns LF into CRLF and changes their sha256.
+        plan_json = read_bytes(os.path.join(srv.plan_dir, 'plan.json'))
+        canary_text = read_bytes(srv.canary_file)
         other_sha = '0' * 64
         cases = [
             ('host', dict(sc=srv.scenario(Host='bak-tex11')), 'host is bak-tex11'),
@@ -2426,19 +2433,20 @@ class W1InPowerShell(unittest.TestCase):
             os.remove(srv.lock + '.owner')
             self.assertStopBeforeDji(out, 'the production collector lock is held by running pid %d purpose daily' % os.getpid(), before)
         with self.subTest('49 ids'):
-            ids = [l for l in canary_text.splitlines() if l.split('#')[0].strip()]
-            write(srv.canary_file, canary_text.replace(ids[-1] + '\n', ''))
+            ids = [l for l in canary_text.splitlines() if l.split(b'#')[0].strip()]
+            write(srv.canary_file, canary_text.replace(ids[-1] + b'\n', b''), 'wb')
             new = sha(srv.canary_file)
-            write(os.path.join(srv.plan_dir, 'plan.json'), plan_json.replace(srv.plan['sample']['canary_ids_sha256'], new))
+            write(os.path.join(srv.plan_dir, 'plan.json'),
+                  plan_json.replace(srv.plan['sample']['canary_ids_sha256'].encode('ascii'), new.encode('ascii')), 'wb')
             out = self.run_w1(canarySha=new)
-            write(srv.canary_file, canary_text)
-            write(os.path.join(srv.plan_dir, 'plan.json'), plan_json)
+            write(srv.canary_file, canary_text, 'wb')
+            write(os.path.join(srv.plan_dir, 'plan.json'), plan_json, 'wb')
             self.assertStopBeforeDji(out, 'canary_ids.txt holds 49 ids, the frozen canary is 50 unique ids', before)
         with self.subTest('canary file changed, plan.json not'):
-            ids = [l for l in canary_text.splitlines() if l.split('#')[0].strip()]
-            write(srv.canary_file, canary_text.replace(ids[-1] + '\n', '810004\n'))
+            ids = [l for l in canary_text.splitlines() if l.split(b'#')[0].strip()]
+            write(srv.canary_file, canary_text.replace(ids[-1] + b'\n', b'810004\n'), 'wb')
             out = self.run_w1()
-            write(srv.canary_file, canary_text)
+            write(srv.canary_file, canary_text, 'wb')
             self.assertStopBeforeDji(out, 'canary_ids.txt has sha256 ', before)
         with self.subTest('staging off the pin'):
             sh('git', '-c', 'advice.detachedHead=false', 'checkout', '-q', '--detach', PIN, cwd=srv.staging)
@@ -2593,8 +2601,8 @@ class W1InPowerShell(unittest.TestCase):
             ('logged in production', srv.collector(also_log=srv.prod_log),
              'the run was not logged by the pilot checkout only (pilot=True production=True)'),
         ]
-        session = read(srv.session)
-        prod_log = read(srv.prod_log)
+        session = read_bytes(srv.session)
+        prod_log = read_bytes(srv.prod_log)
         for case in cases:
             name, collector, message = case[:3]
             with self.subTest(name):
@@ -2623,10 +2631,10 @@ class W1InPowerShell(unittest.TestCase):
                     srv.build(srv.prod_db)
                     before['prod_db'] = sha(srv.prod_db)
                 if name == 'session written':
-                    write(srv.session, session)
+                    write(srv.session, session, 'wb')
                     os.utime(srv.session, ns=(before['session'][1], before['session'][1]))
                 if name == 'logged in production':
-                    write(srv.prod_log, prod_log)
+                    write(srv.prod_log, prod_log, 'wb')
                 self.reset()
 
     def test_a_stop_kills_the_collector_tree_and_nothing_else(self):
