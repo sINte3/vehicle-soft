@@ -64,7 +64,7 @@ import tempfile
 import time
 import unittest
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -3505,7 +3505,7 @@ class W2InPowerShell(unittest.TestCase):
         self.assertIn('W2_STATE=GATE_PENDING', out)
         os.remove(srv.lock + '.owner')
         prod_db = read_bytes(srv.prod_db)
-        later = (datetime.utcnow() + timedelta(hours=3)).strftime('%Y-%m-%d %H:%M:%S')
+        later = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime('%Y-%m-%d %H:%M:%S')
         con = sqlite3.connect(srv.prod_db)
         con.execute("INSERT INTO dji_source_revisions (provider_account_id, flight_id, scope_key, source_type, sha256, "
                     "size_bytes, captured_at_utc, capture_run_id, is_evidence_import, storage_kind, body_text, received_at, "
@@ -3617,10 +3617,14 @@ class W2InPowerShell(unittest.TestCase):
         b0_revision = con.execute('SELECT MIN(id) FROM dji_source_revisions').fetchone()[0]
         con.close()
         outside = self.outside_flight()
-        during_s2 = srv.scenario(OnStopStaging=[sys.executable, '-c',
-            'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); '
-            "c.execute(\"UPDATE dji_field_attributions SET superseded_at = '2026-10-08 12:00:00' "
-            "WHERE flight_id = ? AND superseded_at IS NULL\", (int(sys.argv[2]),)); c.commit()", srv.db, str(outside)])
+        # [REASON]: a script file, not python -c: Windows PowerShell 5.1 drops the inner double
+        # quotes of a native argument, and the hook would silently do nothing.
+        hook = os.path.join(self.tmp, 'supersede_on_stop.py')
+        write(hook, 'import sqlite3, sys\nc = sqlite3.connect(sys.argv[1])\n'
+                    "c.execute('UPDATE dji_field_attributions SET superseded_at = ? WHERE flight_id = ? "
+                    "AND superseded_at IS NULL', ('2026-10-08 12:00:00', int(sys.argv[2])))\n"
+                    'c.commit()\nassert c.total_changes, sys.argv\n')
+        during_s2 = srv.scenario(OnStopStaging=[sys.executable, hook, srv.db, str(outside)])
         cases = [
             ('a flight outside changed during S2', dict(sc=during_s2),
              'the recalculation changed something other than the 450 W2 flights'),
