@@ -98,11 +98,14 @@ online-копии production** (шаг B0 ниже): сентябрь и авг�
   API) и `git rev-parse`. Код пилота берётся в отдельную папку
   `C:\VehicleSoft_CardPilot\src`. HEAD и службы production сверяются до и
   после.
-* **Сбор — с рабочей машины, как блок W квалификации 21.09.2026.** Сессия
-  DJI и `.env` holdout-сборщика уже смотрят на площадку (порт 5051).
-  Production-сборщик, его очередь, сессия и расписание не трогаются. Блок
-  сбора отказывается, если адрес приёмника не `:5051` — в `.env` или в
-  окружении процесса. Очередь пилота — своя папка.
+* **Сбор — на SRV-YOQSH из чекаута пилота** (решение владельца по выводу
+  W0, 08.10.2026; прежний план — рабочая машина, как блок W квалификации
+  21.09.2026). Код — `C:\VehicleSoft_CardPilot\src` на пине, python — venv
+  сборщика production. Сессия DJI production только читается
+  (`--save-session` не передаётся). Очередь и журнал пилота — свои. Адрес
+  площадки `:5051` и остальные настройки получает только процесс сборщика.
+  Код, очередь, расписание и окружение production не меняются. Блок сбора
+  отказывается от `:5050` и от любого приёмника, кроме `:5051`.
 * **Пересчёт** — только `--db` базы площадки, при остановленной службе
   площадки.
 * **На всё время пилота на площадке выключено всё, что пишет в её базу
@@ -129,14 +132,17 @@ online-копии production** (шаг B0 ниже): сентябрь и авг�
   запускает сборщик из venv production и с общими
   `C:\transport-report\drone_collector\data\storage_state.json` и
   `collector.lock`. Сейчас это не меняется. Отключённая задача на время
-  пилота не берёт ни сессию, ни замок. Разведка рабочей машины (W0) и
-  план канарейки (W1) обязаны отдельно учесть общий замок и общую сессию: сбор
-  пилота не должен идти одновременно со сбором production
-  (`DroneCollectorDaily`). Расписание сборщика production B1 не трогает.
+  пилота не берёт ни сессию, ни замок. W1 берёт тот же замок с ожиданием 0:
+  занят — сборщик выходит с кодом 24, блок останавливается. До запуска W1
+  требует, чтобы задачи сбора production не шли, до их следующего запуска
+  было не меньше 130 минут, а подсказки владельца замка не было. Сбор
+  пилота обрывается на 100-й минуте. Расписание сборщика production ни B1,
+  ни W1 не трогают.
 * **Чего B1 не закрывает, и чем это ловится.** Приёмники `/drones/api/*`
   площадки принимают данные от любого владельца токена площадки. На время
-  пилота на площадку шлёт только сбор W1/W2; разведка рабочей машины перед
-  канарейкой проверяет, что там нет задач holdout-сборщика по расписанию.
+  пилота на площадку шлёт только сбор W1/W2. W1 перед сбором проверяет,
+  что нет включённых задач, которые собирают или пишут в площадку, и что
+  все новые ревизии площадки — его прогона и только канареечных вылетов.
   Каталог полей (`dji_land_*`) отпечаток пилота не покрывает — S1/S2
   сверяют его с копией B0 до пересчёта.
 * **Инструмент пилота** отказывается открывать базу в папке
@@ -150,7 +156,10 @@ online-копии production** (шаг B0 ниже): сентябрь и авг�
   * у вылетов вне этапа не изменились ни привязка, ни расчёт, ни карточка.
 * **Остановка, а не обход защиты.** Признаки 403/429, капча, истёкшая
   сессия или остановка браузера → `collector-stats` даёт код 6, пилот
-  останавливается.
+  останавливается. Сам сборщик эти признаки не распознаёт, поэтому W1
+  читает его журнал во время сбора. При признаке, трёх вылетах подряд без
+  карточки или превышении времени W1 обрывает свой прогон. Номера взамен
+  неудачных не подставляются.
 * **Миграций, таблиц, колонок нет.** Манифест и отчёты — файлы.
 
 ## 6. Замороженная выборка
@@ -179,7 +188,8 @@ online-копии production** (шаг B0 ниже): сентябрь и авг�
 
 Первые 50 вылетов манифеста, тем же сборщиком и темпом, без ускорения.
 После неё — сверка (`collector-stats` и `measure --stage canary`) и решение
-владельца, продолжать ли до 500. Повтор файла 500 идёт тем же журналом
+владельца, продолжать ли до 500. Блок W1 печатает предложение
+`DECISION=…` по правилу из §14 (W1); решает владелец. Повтор файла 500 идёт тем же журналом
 очереди и канарейку не посещает второй раз.
 
 ## 8. Результаты пилота
@@ -240,15 +250,14 @@ NO_KEY или NOT_IN_CATALOG, это отдельный следующий ан�
 | B0 | SRV-YOQSH | онлайн-копия production, перепись сентября и августа, замороженная выборка, отпечатки | только папка пилота на D: и C:\VehicleSoft_CardPilot |
 | B1 | SRV-YOQSH | после мержа PR занятия площадки: задача `DjiAreaRefreshStaging` сверяется с D1 и отключается первым изменением, всё для точного возврата и две онлайн-копии базы площадки, боты площадки — стоп и `Disabled`, кнопка DJI площадки выключена, закреплённая ревизия, база площадки = копия B0 (сверка sha256 и отпечатком до и после пуска), пуск только службы | площадка |
 | D1 | SRV-YOQSH | только чтение: задача планировщика `DjiAreaRefreshStaging`, на которой встал первый B1 — действие, триггеры, учётная запись, прогоны, что она пишет в базу площадки, связь с кнопкой | только журнал блока в C:\VehicleSoft_CardPilot |
-| W0 | рабочая машина | только чтение: клоны сборщика, python, сессия DJI, замок, очереди, задачи и процессы, окружение, связь с площадкой; общие ли сессия и замок с production-сборщиком SRV-YOQSH и когда production собирает (с сервера — только метаданные) | только журнал блока в C:\VehicleSoft_CardPilot |
-| W1 | рабочая машина | канарейка 50: `--sources --ids-file canary_ids.txt --send-sources` только на `:5051`, своя очередь, разбор журнала | площадка, DJI — 50 посещений |
-| S1 | SRV-YOQSH | служба площадки стоп → `dji_area_recalc.py --apply --flight-id` (50) → `measure --stage canary` → пуск | площадка |
-| W2 | рабочая машина | только по решению владельца: тот же сбор по `pilot_ids.txt` (канарейка пропускается) | площадка, DJI — до 450 посещений |
+| W0 | рабочая машина (выполнен на SRV-YOQSH, 08.10.2026) | только чтение: клоны сборщика, python, сессия DJI, замок, очереди, задачи и процессы, окружение, связь с площадкой; общие ли сессия и замок с production-сборщиком SRV-YOQSH и когда production собирает (с сервера — только метаданные) | только журнал блока в C:\VehicleSoft_CardPilot |
+| W1 + S1 | SRV-YOQSH, чекаут пилота | один блок. Канарейка 50: `--sources --ids-file canary_ids.txt --send-sources` только на `:5051`, сессия и замок production (только чтение и общий замок), своя очередь, надзор за журналом, ворота сборщика. Только если ворота прошли — S1: служба площадки стоп → `dji_area_recalc.py --apply --flight-id` (50) → `measure --stage canary` → перепись → пуск. Итог — `DECISION=GO_TO_500 / STOP / SIMPLIFY` | площадка, DJI — 50 посещений, C:\VehicleSoft_CardPilot\w1 |
+| W2 | SRV-YOQSH, чекаут пилота | только по решению владельца: тот же сбор по `pilot_ids.txt` (канарейка пропускается) | площадка, DJI — до 450 посещений |
 | S2 | SRV-YOQSH | пересчёт 500, `measure --stage pilot`, случаи для проверки глазами | площадка |
 | R | SRV-YOQSH | копия базы пилота сохраняется; база, HEAD, окружение, службы площадки и задача `DjiAreaRefreshStaging` — как до B1 (задача не запускается); production-сверка | площадка |
 
-Список вылетов на рабочую машину передаётся через блок. B0 печатает
-номера, блок W пишет файл и сверяет его sha256 с `plan.json`.
+Список вылетов W1 берёт из папки B0 на SRV-YOQSH и сверяет его sha256 с
+`plan.json` и с замороженным значением в блоке.
 
 ### B0 — SRV-YOQSH: базовая линия и замороженная выборка (только чтение production)
 
@@ -1749,11 +1758,698 @@ con.close()
 
 Прислать весь вывод. После него — разбор и план W1; сбора до этого нет.
 
+### W1 — SRV-YOQSH: канарейка 50 и S1 одним блоком
+
+**Решение владельца по выводу W0 (08.10.2026).** W0 выполнен на SRV-YOQSH:
+сборщик production работает здесь, отдельной рабочей машины нет. Поэтому
+W1 идёт на SRV-YOQSH, но не из production-чекаута:
+
+* код — отдельный чекаут пилота `C:\VehicleSoft_CardPilot\src` на пине
+  `39eab50`;
+* python — venv сборщика production
+  (`C:\transport-report\drone_collector\.venv\Scripts\python.exe`);
+* сессия DJI — файл production, только на чтение;
+* замок — общий с production;
+* очередь и журнал — свои.
+
+Это заменяет «рабочую машину» в §5 и в строках W1/W2 таблицы выше.
+Канарейка и проверка площадки (S1) идут одним блоком. После сбора без
+отдельного шага, но только если ворота сборщика прошли; любые ворота
+закрываются в сторону остановки.
+
+**Что блок проверяет до DJI** (ничего не меняя и ничего не посылая):
+
+* `canary_ids.txt` B0 — ровно 50 разных номеров, sha256 `5913a88d…`, равен
+  `plan.json`; манифест — замороженный;
+* чекаут пилота — на пине, без правок, знает `--sources`, `--ids-file`,
+  `--send-sources`, замок и `DRONE_OUTBOX_DIR`, своего `.env` нет;
+* python venv production в окружении запуска импортирует `drone_collector`
+  из `C:\VehicleSoft_CardPilot\src` (`PACKAGE_ROOT` и файлы модулей) и видит
+  Playwright;
+* приёмник — `http://10.103.25.14:5051`; порт 5050 отвергается явно;
+* `DRONE_API_TOKEN` машинного окружения принят площадкой: POST
+  `/drones/api/land_geometry_manifest` с пустым списком. Этот вызов только
+  читает и ничего не пишет; значение токена не печатается;
+* production: HEAD `8df5683`, три службы `Running`;
+* `DroneCollectorDaily`, `DroneAreaDaily`, `DjiAreaRefresh` не идут, до
+  следующего запуска по расписанию не меньше 130 минут;
+* процессов сборщика или цикла нет;
+* подсказки владельца замка production нет, или процесс из неё мёртв;
+* площадка как после B1:
+  * HEAD — пин, без правок;
+  * `TransportReportStaging` — `Running`, оба бота — `Stopped Disabled`;
+  * `DjiAreaRefreshStaging` — `Disabled`, `DJI_REFRESH_LAUNCHER` нет;
+  * `/login` — 200;
+  * открытый прогон B1 с `swapped.txt`;
+  * отпечаток базы равен `fingerprint_before.json` B0;
+  * миграций 60;
+  * каталог полей (`dji_land_*`) равен копии B0;
+* включённых задач, которые пишут в площадку или собирают, нет; известная
+  резервная копия площадки не в счёт.
+
+Непосредственно перед запуском production и окно проверяются ещё раз.
+
+**Сбор.** Только штатная команда:
+
+```
+python -m drone_collector.main --sources --ids-file <копия canary_ids.txt> --send-sources
+```
+
+Запуск — из `C:\VehicleSoft_CardPilot\src`, дочерним процессом. Окружение
+пилота получает только он; консоль, пользователь и машина не меняются:
+
+| переменная | значение |
+|---|---|
+| `VEHICLE_SOFT_BASE_URL` | `http://10.103.25.14:5051` |
+| `DJI_STORAGE_STATE` | файл сессии production |
+| `DJI_COLLECTOR_LOCK_PATH` | замок production |
+| `DJI_COLLECTOR_LOCK_WAIT_S` | `0` |
+| `DRONE_OUTBOX_DIR` | `C:\VehicleSoft_CardPilot\w1\<время>\outbox` |
+| `DJI_HEADLESS` | `true` |
+| `DRONE_API_TOKEN` | из машинного окружения |
+
+Из окружения убраны `PYTHONPATH`, `PYTHONHOME`, `PYTHONSAFEPATH` и
+`PYTHONSTARTUP`. `--save-session` не передаётся.
+
+Почему сессия production не под угрозой. Код пина записывает
+`storage_state.json` в одном месте: `save_state_atomically`, достижимая
+только из `--save-session`. В `--sources` файл только читается:
+`require_session` и `new_context(storage_state=…)`. Блок сверяет sha256 и
+время файла до и после.
+
+Замок с ожиданием 0. Если сбор production держит замок, сборщик сразу
+выходит с кодом 24, и блок останавливается: не ждёт и никого не убивает.
+
+**Надзор во время сбора.** Сам сборщик 403, 429 и капчу не распознаёт: под
+защитой DJI он продолжил бы обход по 70 с на вылет. Блок читает журнал
+сборщика построчно и останавливает свой прогон, если:
+
+* строка конфигурации сборщика показывает не приёмник `:5051`, не свою
+  очередь, не сессию production или не `headless`;
+* в журнале признак отказа: сессия, 403, 429, капча или проверка «не робот»,
+  неработающий браузер;
+* три вылета подряд пришли без карточки;
+* прогон длится больше 100 минут.
+
+Остановка — `taskkill /T` только дерева этого процесса. Замок отпускает ОС;
+подсказка владельца, если останется, мертва и безвредна.
+
+Окно PowerShell не закрывать до строки `STEP=`: надзор живёт в нём. Блок
+печатает `COLLECTOR_PID=…` и команду, которой остановить сбор, если окно
+всё-таки закрыли.
+
+**Повторной канарейки нет.** Сборщик шлёт данные только после всего
+обхода, и у каждого запуска W1 своя очередь. Поэтому прогон, остановленный
+DJI, оставляет площадку как была, и повторная вставка блока снова посетила
+бы все 50. Блок отказывается, если в `C:\VehicleSoft_CardPilot\w1` есть
+прогон, который запускал сборщик. Исключение — выход 24: замок был занят,
+ничего не собрано. Новый сбор — только по новому решению владельца.
+
+**Ворота сборщика** — без них пересчёта нет:
+
+* код выхода 0 или 18 (часть вылетов неполная — допустимо); 24 — замок
+  взял сбор production, ничего не собрано, блок можно вставить снова после
+  него;
+* `RUN SUMMARY`: запрошено и посещено 50, площадка приняла всё, ошибок
+  приёма 0;
+* `collector-stats` по журналу этого прогона: код 0, посещено 50. Строки
+  «captured … (N bytes)» из разбора исключены — их байты ложно срабатывали
+  на признак 429;
+* сессия production не изменилась;
+* прогон записан в журнал чекаута пилота и не записан в журнал production;
+* база production (`mode=ro`, только счётчики): ни одной ревизии с
+  `capture_run_id` этого прогона, ни одной ревизии или улики канареечных
+  вылетов с момента запуска;
+* площадка: все новые ревизии — этого прогона и только канареечных
+  вылетов, по одной на тип, их число равно `sources_new`; улики других
+  вылетов с момента запуска не менялись.
+
+**S1** — только при пройденных воротах:
+
+1. Служба площадки — стоп, `check_db_lock`, каталог полей ещё раз равен B0.
+2. `dji_area_recalc.py --dry-run`, затем `--apply`: `--from 2026-09-01
+   --to 2026-09-30` и ровно 50 `--flight-id`. Требуется: в периоде 50
+   вылетов, строк расчёта и привязки по 50.
+3. `fingerprint` после.
+4. `measure --stage canary --before <отпечаток до канарейки>` — все ворота
+   неизменности: RAW, решения, прежние ревизии, миграции, вылеты вне
+   канарейки.
+5. Перепись сентября.
+6. Пуск службы, миграций 60, площадка и production — как до блока.
+
+Пересчёт дописывает кэш расшифрованных V4 (`dji_v4_summaries`) и
+соседним загруженным вылетам. Это не улики и не привязки; число таких
+строк печатается.
+
+**Правило решения.** Владелец его не задавал; это моё предложение, по
+выводу владелец решает сам:
+
+* `DECISION=STOP` — любые ворота не прошли, или карточек меньше 40 из 50:
+  исторические карточки этим путём надёжно не получить;
+* `DECISION=SIMPLIFY` — всё прошло, но верхняя граница 95 % интервала доли
+  подтверждённых среди получивших карточку ниже 20 %. 20 % — нижний край
+  гипотезы §3. Дособор карточек покрытие почти не сдвинет; следующий шаг —
+  данные полей (§12);
+* `DECISION=GO_TO_500` — иначе. Это лишь значит, что владелец может
+  разрешить W2; блок не запускает ничего сам, `pilot_ids.txt` не трогает.
+
+**Что пишет.**
+
+* `C:\VehicleSoft_CardPilot\w1\<время>\` — копия номеров, своя очередь,
+  журнал сборщика, сводка `collector-stats`, отпечатки, `recalc_*.json`,
+  `measure\`, `census_after.json`, вспомогательный `w1_check.py`
+  (только чтение);
+* журнал блока в `C:\VehicleSoft_CardPilot`;
+* база площадки — через штатный приём и пересчёт. Её вернёт R вместе со
+  всей площадкой;
+* в папке данных production — только `collector.lock` и
+  `collector.lock.owner` по протоколу общего замка, как у любого сбора.
+
+Production в остальном только читается.
+
+**Вывод.** Последние строки — `DECISION=…`, `DECISION_REASON=…`, `RUN=…`,
+`STEP=PASS` или `STEP=STOP - …`. Выше:
+
+* до DJI — `CANARY_COUNT=50`, `CANARY_SHA256=…`, `COLLECTOR_CODE`,
+  `PYTHON`, `IMPORTS`, `RECEIVER`, `SESSION`, `LOCK`, `PILOT_OUTBOX`,
+  `PILOT_LOG`, `PROD_TASK_*` со временем следующих запусков;
+* сбор — журнал построчно (`  | …`), `COLLECTOR_EXIT`, `RUN_SUMMARY`,
+  `COLLECTOR_GATE=PASS`;
+* S1 — `RECALC_DRY-RUN`, `RECALC_APPLY`, строки `measure` и `GATE …`,
+  `CENSUS`;
+* итог — `ATTEMPTED`, `VISITED`, `CARDS_CAPTURED`, `FETCH_SUCCESS`,
+  `WALL_SECONDS`, `MEDIAN_SECONDS_PER_FLIGHT`, `OUTCOME EXACT/IDENTIFIED/
+  CONFIRMED/NO_KEY/NOT_IN_CATALOG/NO_CARD/OTHER_UNRESOLVED/NO_CALC`,
+  `CASES`, `CONFIRMED_RATE` с интервалом Уилсона, `PROJECTION (not a
+  fact)`, `BY_UNIT`, `BY_WEEK`.
+
+`STEP=PASS` значит: все ворота пройдены. Решение при этом может быть любым
+из трёх.
+
+```powershell
+& {
+  $ErrorActionPreference = 'Stop'
+  $ProgressPreference = 'SilentlyContinue'
+  $expectedHost = 'srv-yoqsh'
+  $src          = 'C:\VehicleSoft_CardPilot\src'
+  $cpy          = 'C:\transport-report\drone_collector\.venv\Scripts\python.exe'
+  $python       = 'C:\Program Files\Python314\python.exe'
+  $root         = 'C:\transport-report-staging'
+  $db           = 'C:\transport-report-staging\instance\transport.db'
+  $service      = 'TransportReportStaging'
+  $bots         = @('TransportBotStaging', 'TransportBot003Staging')
+  $site         = 'http://10.103.25.14:5051'
+  $prodRoot     = 'C:\transport-report'
+  $prodDb       = 'C:\transport-report\instance\transport.db'
+  $prodExpected = '8df568394a840054ef6f842c6a8b272ca4c31aa8'
+  $prodNames    = @('TransportBot', 'TransportBot003', 'TransportReport')
+  $prodTasks    = @('DroneCollectorDaily', 'DroneAreaDaily', 'DjiAreaRefresh')
+  $session      = 'C:\transport-report\drone_collector\data\storage_state.json'
+  $lock         = 'C:\transport-report\drone_collector\data\collector.lock'
+  $prodLog      = 'C:\transport-report\drone_collector\logs\collector.log'
+  $pin          = '39eab503069b7bb01a8342542edcbebbfc2210c2'
+  $runRoot      = 'D:\transport-report-backups\staging\card_pilot'
+  $baseline     = 'D:\transport-report-backups\staging\card_pilot\baseline_20261003_072956'
+  $snapshot     = 'D:\transport-report-backups\staging\card_pilot\baseline_20261003_072956\snapshot\transport_20261003_073000_card_pilot_baseline.db'
+  $canarySha    = '5913a88d1bfcecdfe0586fd0a81007ef7cc771d777a2754ebd8b5c1ec2e641da'
+  $isoTask      = 'DjiAreaRefreshStaging'
+  $work         = 'C:\VehicleSoft_CardPilot'
+  $w1Root       = 'C:\VehicleSoft_CardPilot\w1'
+  $svcKey       = 'HKLM:\SYSTEM\CurrentControlSet\Services'
+  $machineKey   = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment'
+  $maxCollectMin = 100
+  $minGapMin    = 130
+  $minFetched   = 40
+  $simplifyBelow = 0.20
+  $stamp        = Get-Date -Format 'yyyyMMdd_HHmmss'
+  $planDir      = Join-Path $baseline 'plan'
+  $w1           = Join-Path $w1Root $stamp
+  $outbox       = Join-Path $w1 'outbox'
+  $idsCopy      = Join-Path $w1 'canary_ids.txt'
+  $collectLog   = Join-Path $w1 'collector_stdout.log'
+  $siteParams   = $svcKey + '\' + $service + '\Parameters'
+  $prodWant     = 'TransportBot=Running TransportBot003=Running TransportReport=Running'
+  $collectorRx  = 'drone_collector|dji_area_daily|dji_area_recalc|dji_area_backfill'
+  $stopMarkers  = @(@('SESSION', '(?i)no longer signed in|SessionExpired|session (is )?(missing|expired)'), @('HTTP_429', '(?i)\b429\b|too many requests|rate.?limit'), @('HTTP_403', '(?i)\bHTTP 403\b|\b403 Forbidden\b|forbidden'), @('CAPTCHA', '(?i)captcha|verify you are human|challenge'), @('BROWSER_DEAD', '(?i)browser is not usable'))
+  $helperText = @'
+import hashlib, os, sqlite3, sys
+# W1 read-only checks (DRONE-CARD-COVERAGE-001). Opens the database mode=ro, prints KEY=VALUE.
+#   snapshot DB                                    counters and the field catalog digest
+#   canary DB IDS SRC_AFTER V4_AFTER SINCE RUNID   where the rows written after those ids / since SINCE belong
+def con_ro(path):
+    if not os.path.isfile(path):
+        raise SystemExit('NOT FOUND: ' + path)
+    uri = 'file:%s?mode=ro' % os.path.abspath(path).replace('\\', '/').replace('?', '%3f').replace('#', '%23')
+    return sqlite3.connect(uri, uri=True, timeout=30)
+def one(con, sql, args=()):
+    return con.execute(sql, args).fetchone()[0]
+def snapshot(con):
+    out = {'SOURCE_MAX_ID': one(con, 'SELECT COALESCE(MAX(id), 0) FROM dji_source_revisions'),
+           'SOURCE_ROWS': one(con, 'SELECT COUNT(*) FROM dji_source_revisions'),
+           'EVIDENCE_ROWS': one(con, 'SELECT COUNT(*) FROM dji_flight_evidence'),
+           'V4SUM_ROWS': one(con, 'SELECT COUNT(*) FROM dji_v4_summaries'),
+           'V4SUM_MAX_ID': one(con, 'SELECT COALESCE(MAX(id), 0) FROM dji_v4_summaries')}
+    h = hashlib.sha256()
+    for table, cols in (('dji_land_snapshots', 'id, captured_at_utc, received_count'),
+                        ('dji_land_revisions', 'id, land_uuid, geometry_md5'),
+                        ('dji_land_geometries', 'id, content_md5, sha256, md5_verified')):
+        for row in con.execute('SELECT %s FROM %s ORDER BY id' % (cols, table)):
+            h.update((table + '|' + '|'.join(repr(v) for v in row) + '\n').encode('utf-8'))
+    out['CATALOG_SHA256'] = h.hexdigest()
+    return out
+def canary(con, ids, after, v4_after, since, run_id):
+    marks = ','.join('?' * len(ids))
+    new = 'FROM dji_source_revisions WHERE id > ?'
+    return {
+        'V4SUM_NEW': one(con, 'SELECT COUNT(*) FROM dji_v4_summaries WHERE id > ?', (v4_after,)),
+        'V4SUM_NEW_OUTSIDE_CANARY': one(con, 'SELECT COUNT(*) FROM dji_v4_summaries WHERE id > ? AND flight_id NOT IN (%s)' % marks, [v4_after] + ids),
+        'NEW_REVISIONS': one(con, 'SELECT COUNT(*) ' + new, (after,)),
+        'NEW_FLIGHTS': one(con, 'SELECT COUNT(DISTINCT flight_id) ' + new, (after,)),
+        'NEW_OUTSIDE_CANARY': one(con, 'SELECT COUNT(*) %s AND (flight_id IS NULL OR flight_id NOT IN (%s))' % (new, marks), [after] + ids),
+        'NEW_OTHER_RUN': one(con, 'SELECT COUNT(*) %s AND (capture_run_id IS NULL OR capture_run_id <> ?)' % new, (after, run_id)),
+        'NEW_REPEATED_TYPE': one(con, 'SELECT COUNT(*) FROM (SELECT 1 %s GROUP BY flight_id, source_type HAVING COUNT(*) > 1)' % new, (after,)),
+        'RUN_ID_ROWS': one(con, 'SELECT COUNT(*) FROM dji_source_revisions WHERE capture_run_id = ?', (run_id,)),
+        'CANARY_SOURCES_SINCE': one(con, 'SELECT COUNT(*) FROM dji_source_revisions WHERE flight_id IN (%s) AND (received_at >= ? OR last_seen_at >= ?)' % marks, ids + [since, since]),
+        'CANARY_EVIDENCE_SINCE': one(con, 'SELECT COUNT(*) FROM dji_flight_evidence WHERE flight_id IN (%s) AND updated_at >= ?' % marks, ids + [since]),
+        'EVIDENCE_OUTSIDE_SINCE': one(con, 'SELECT COUNT(*) FROM dji_flight_evidence WHERE flight_id NOT IN (%s) AND updated_at >= ?' % marks, ids + [since]),
+    }
+def main(argv):
+    con = con_ro(argv[1])
+    try:
+        if argv[0] == 'snapshot':
+            res = snapshot(con)
+        elif argv[0] == 'canary':
+            with open(argv[2], encoding='utf-8-sig') as fh:
+                ids = [int(l.split('#')[0]) for l in fh if l.split('#')[0].strip()]
+            res = canary(con, ids, int(argv[3]), int(argv[4]), argv[5], argv[6])
+        else:
+            raise SystemExit('unknown mode')
+    finally:
+        con.close()
+    for k in sorted(res):
+        print('%s=%s' % (k, res[k]))
+    return 0
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))
+'@
+  function Get-ProdServices { (@($prodNames | ForEach-Object { $s = Get-Service -Name $_ -ErrorAction SilentlyContinue; if ($s) { $_ + '=' + $s.Status } else { $_ + '=missing' } }) -join ' ') }
+  function Get-Sha([string]$p) { (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLower() }
+  function Test-SameFile([string]$a, [string]$b) { (Get-Sha $a) -eq (Get-Sha $b) }
+  function Get-FileState([string]$p) { $i = Get-Item -LiteralPath $p -Force; (Get-Sha $p) + ' bytes=' + $i.Length + ' changed_utc=' + $i.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') }
+  function Read-Ids([string]$p) { @(Get-Content -LiteralPath $p | ForEach-Object { ($_ -split '#')[0].Trim() } | Where-Object { $_ } | ForEach-Object { [int64]$_ }) }
+  function Pct($x) { if ($null -eq $x) { return '-' } ([double]$x * 100).ToString('0.0', [System.Globalization.CultureInfo]::InvariantCulture) + '%' }
+  function Read-Pairs([string[]]$lines) { $h = @{}; foreach ($l in $lines) { if ($l -match '^([A-Z0-9_]+)=(.*)$') { $h[$Matches[1]] = $Matches[2] } }; $h }
+  function Invoke-Helper([string[]]$helperArgs) {
+    $o = @(& $python -I (Join-Path $w1 'w1_check.py') @helperArgs)
+    if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: the read-only check $($helperArgs[0]) on $($helperArgs[1]) exit $LASTEXITCODE -- $($o -join ' ')" }
+    Read-Pairs $o
+  }
+  function Start-Child([string]$exe, [string]$arguments, [string]$cwd) {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $exe
+    $psi.Arguments = $arguments
+    $psi.WorkingDirectory = $cwd
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.StandardOutputEncoding = New-Object System.Text.UTF8Encoding($false)
+    $psi.StandardErrorEncoding = New-Object System.Text.UTF8Encoding($false)
+    # The child alone gets the pilot environment; this console and the machine keep theirs.
+    foreach ($k in $childDrop) { if ($psi.EnvironmentVariables.ContainsKey($k)) { $psi.EnvironmentVariables.Remove($k) } }
+    foreach ($k in $childEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$childEnv[$k] }
+    [System.Diagnostics.Process]::Start($psi)
+  }
+  function Stop-Child($p) {
+    if ($p.HasExited) { return }
+    try { & taskkill.exe /PID $p.Id /T /F 2>&1 | Out-Null } catch { }
+    if (-not $p.HasExited) { try { $p.Kill() } catch { } }
+    [void]$p.WaitForExit(30000)
+  }
+  function Get-LockOwner {
+    $h = $lock + '.owner'
+    if (-not (Test-Path -LiteralPath $h)) { return 'none' }
+    try { $o = Get-Content -LiteralPath $h -Raw | ConvertFrom-Json } catch { return 'unreadable' }
+    if (Get-Process -Id ([int]$o.pid) -ErrorAction SilentlyContinue) { return ('held by running pid ' + $o.pid + ' purpose ' + $o.purpose) }
+    'stale (pid ' + $o.pid + ' is not running; the lock itself is released by the OS)'
+  }
+  function Test-Production([string]$label) {
+    $h = [string](git -C $prodRoot rev-parse HEAD)
+    $s = Get-ProdServices
+    Write-Output ("PROD_" + $label + " HEAD=" + $h + " " + $s)
+    if (($h -ne $prodExpected) -or ($s -ne $prodWant)) { throw "STEP FAILED: production is not as expected ($label) -- send this output" }
+  }
+  function Test-Collision([string]$label) {
+    foreach ($n in $prodTasks) {
+      $t = @(Get-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue)
+      if ($t.Count -ne 1) { throw "STEP FAILED: $($t.Count) scheduled tasks named $n, expected one -- send this output" }
+      $i = Get-ScheduledTaskInfo -TaskName $t[0].TaskName -TaskPath $t[0].TaskPath
+      $next = $null
+      if ($i.NextRunTime) { $next = [datetime]$i.NextRunTime; if ($next.Year -lt 2001) { $next = $null } }
+      $gap = if ($next) { [math]::Floor(($next - (Get-Date)).TotalMinutes) } else { $null }
+      Write-Output ("PROD_TASK_" + $label + " " + $n + " state=" + $t[0].State + " next=" + $(if ($next) { $next.ToString('yyyy-MM-dd HH:mm') + ' (in ' + $gap + ' min)' } else { 'none' }))
+      if ([string]$t[0].State -eq 'Running') { throw "STEP FAILED: production task $n is running now -- run this block again after it finishes" }
+      if (($null -ne $gap) -and ($gap -lt $minGapMin)) { throw "STEP FAILED: production task $n starts in $gap min; the canary needs a window of $minGapMin min -- run this block after that run" }
+    }
+    $procs = @(Get-CimInstance -ClassName Win32_Process | Where-Object { [string]$_.CommandLine -match $collectorRx })
+    Write-Output ("COLLECTOR_PROCESSES_" + $label + "=" + $procs.Count)
+    if ($procs.Count -gt 0) { throw "STEP FAILED: $($procs.Count) collector or cycle process(es) are running (pid $(($procs | ForEach-Object { $_.ProcessId }) -join ',')) -- run this block again after they finish" }
+    $owner = Get-LockOwner
+    Write-Output ("PROD_LOCK_OWNER_" + $label + "=" + $owner)
+    if (($owner -ne 'none') -and ($owner -notlike 'stale*')) { throw "STEP FAILED: the production collector lock is $owner -- run this block again after it finishes" }
+  }
+  function Test-Staging([string]$label) {
+    $h = [string](git -C $root rev-parse HEAD)
+    $dirty = @(git -C $root --no-optional-locks status --porcelain --untracked-files=no)
+    $svc = Get-Service -Name $service
+    Write-Output ("STAGING_" + $label + " HEAD=" + $h + " tracked_changes=" + $dirty.Count + " " + $service + "=" + $svc.Status)
+    if (($h -ne $pin) -or ($dirty.Count -ne 0)) { throw "STEP FAILED: staging is not on the clean pilot revision ($label) -- send this output" }
+    if ([string]$svc.Status -ne 'Running') { throw "STEP FAILED: $service is $($svc.Status) ($label)" }
+    foreach ($name in $bots) {
+      $b = Get-Service -Name $name
+      Write-Output ("STAGING_BOT_" + $label + " " + $name + " " + $b.Status + " " + $b.StartType)
+      if (([string]$b.Status -ne 'Stopped') -or ([string]$b.StartType -ne 'Disabled')) { throw "STEP FAILED: $name is $($b.Status) $($b.StartType), B1 left it Stopped Disabled ($label)" }
+    }
+    $t = @(Get-ScheduledTask -TaskName $isoTask -ErrorAction SilentlyContinue)
+    if (($t.Count -ne 1) -or ([string]$t[0].Settings.Enabled -ne 'False') -or ([string]$t[0].State -ne 'Disabled')) { throw "STEP FAILED: $isoTask is not Disabled as B1 left it ($label) -- send this output" }
+    $extra = @((Get-ItemProperty -LiteralPath $siteParams).AppEnvironmentExtra)
+    if (@($extra -match '^\s*DJI_REFRESH_LAUNCHER=').Count -ne 0) { throw "STEP FAILED: DJI_REFRESH_LAUNCHER is back in the staging site environment ($label)" }
+    Write-Output ("STAGING_BARRIERS_" + $label + "=" + $isoTask + " Disabled, DJI_REFRESH_LAUNCHER absent")
+    $login = Invoke-WebRequest -Uri ($site + '/login') -UseBasicParsing -TimeoutSec 30
+    if (([int]$login.StatusCode -ne 200) -or ([string]$login.Content -notmatch 'vs-login-form')) { throw "STEP FAILED: the staging login page did not answer 200 with the form ($label)" }
+    Write-Output ("STAGING_LOGIN_" + $label + "=200")
+  }
+  function Get-Registered([string]$out) {
+    $ErrorActionPreference = 'Continue'
+    & $python tools\check_migration_drift.py --db $db > $out 2>&1
+    @(Select-String -LiteralPath $out -Pattern '^registered migrations: (\d+);' | ForEach-Object { $_.Matches[0].Groups[1].Value })
+  }
+  New-Item -ItemType Directory -Force -Path $work | Out-Null
+  $log = Join-Path $work ('card_pilot_w1_' + $stamp + '.log')
+  try { Start-Transcript -Path $log -Append | Out-Null } catch { Write-Output 'NOTE: the log file could not be started' }
+  $failure = $null
+  $collected = $false
+  $stoppedSite = $false
+  $measure = $null
+  $stats = $null
+  $summary = @{}
+  try {
+    Write-Output '== 1. Checks before DJI -- nothing is changed and nothing is sent'
+    if ((hostname) -ne $expectedHost) { throw "STEP FAILED: host is $(hostname), expected $expectedHost" }
+    foreach ($p in @($src, $cpy, $python, $db, $snapshot, (Join-Path $planDir 'canary_ids.txt'), (Join-Path $planDir 'plan.json'), (Join-Path $planDir 'fingerprint_before.json'), $session)) {
+      if (-not (Test-Path -LiteralPath $p)) { throw "STEP FAILED: not found: $p" }
+    }
+    $plan = Get-Content -LiteralPath (Join-Path $planDir 'plan.json') -Raw | ConvertFrom-Json
+    $canaryFile = Join-Path $planDir 'canary_ids.txt'
+    $ids = Read-Ids $canaryFile
+    $idsSha = Get-Sha $canaryFile
+    if (($idsSha -ne $canarySha) -or ($plan.sample.canary_ids_sha256 -ne $canarySha)) { throw "STEP FAILED: canary_ids.txt has sha256 $idsSha, frozen $canarySha (plan.json $($plan.sample.canary_ids_sha256))" }
+    if (($ids.Count -ne 50) -or (@($ids | Select-Object -Unique).Count -ne 50)) { throw "STEP FAILED: canary_ids.txt holds $($ids.Count) ids, the frozen canary is 50 unique ids" }
+    if ((Get-Sha (Join-Path $planDir 'pilot_manifest.csv')) -ne $plan.sample.manifest_sha256) { throw 'STEP FAILED: pilot_manifest.csv is not the frozen one' }
+    Write-Output ("CANARY_COUNT=" + $ids.Count)
+    Write-Output ("CANARY_SHA256=" + $idsSha)
+    # [REASON]: the collector sends only after its whole walk and every W1 run has its own
+    # queue, so a run stopped by DJI leaves staging as it was. Pasting the block again would
+    # visit DJI for all 50 again; only a run that found the lock busy (exit 24) collected nothing.
+    $earlier = @(Get-ChildItem -LiteralPath $w1Root -Directory -ErrorAction SilentlyContinue | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'collector_stdout.log') } | Where-Object { $e = Join-Path $_.FullName 'collector_exit.txt'; -not ((Test-Path -LiteralPath $e) -and ([string](Get-Content -LiteralPath $e -Raw)).Trim() -eq '24') })
+    if ($earlier.Count -gt 0) { throw "STEP FAILED: an earlier W1 run already started the collector ($($earlier[-1].FullName)); the canary is collected once -- send that run's output, a new collection needs the owner's decision" }
+    Write-Output 'EARLIER_W1_COLLECTION=none'
+
+    $srcHead = [string](git -C $src rev-parse HEAD)
+    $srcDirty = @(git -C $src --no-optional-locks status --porcelain --untracked-files=no)
+    if (($srcHead -ne $pin) -or ($srcDirty.Count -ne 0)) { throw "STEP FAILED: the pilot checkout $src is at $srcHead with $($srcDirty.Count) tracked change(s); expected the clean pin $pin" }
+    $pkg = [System.IO.Path]::Combine($src, 'drone_collector')
+    $mainText = [System.IO.File]::ReadAllText([System.IO.Path]::Combine($pkg, 'main.py'))
+    foreach ($w in @("'--sources'", "'--ids-file'", "'--send-sources'", 'DJI_COLLECTOR_LOCK_PATH', 'DJI_COLLECTOR_LOCK_WAIT_S')) { if (-not $mainText.Contains($w)) { throw "STEP FAILED: the pilot collector does not know $w" } }
+    if (-not ([System.IO.File]::ReadAllText([System.IO.Path]::Combine($pkg, 'config.py'))).Contains('DRONE_OUTBOX_DIR')) { throw 'STEP FAILED: the pilot collector does not know DRONE_OUTBOX_DIR' }
+    if (Test-Path -LiteralPath ([System.IO.Path]::Combine($pkg, '.env'))) { throw 'STEP FAILED: the pilot checkout has a drone_collector\.env; the child environment must be the only source of settings' }
+    Write-Output ("COLLECTOR_CODE=" + $src + " HEAD=" + $srcHead + " clean")
+
+    if ($site -match ':5050') { throw "STEP FAILED: the receiver $site is the production port 5050 -- refused" }
+    if ($site -notmatch ':5051$') { throw "STEP FAILED: the receiver $site is not the staging port 5051" }
+    $token = [string](Get-ItemProperty -LiteralPath $machineKey -ErrorAction SilentlyContinue).DRONE_API_TOKEN
+    if (-not $token.Trim()) { throw 'STEP FAILED: DRONE_API_TOKEN is not set in the machine environment' }
+    $childEnv = [ordered]@{ VEHICLE_SOFT_BASE_URL = $site; DJI_STORAGE_STATE = $session; DJI_COLLECTOR_LOCK_PATH = $lock; DJI_COLLECTOR_LOCK_WAIT_S = '0'; DRONE_OUTBOX_DIR = $outbox; DJI_HEADLESS = 'true'; DRONE_API_TOKEN = $token; PYTHONIOENCODING = 'utf-8' }
+    $childDrop = @('PYTHONPATH', 'PYTHONHOME', 'PYTHONSAFEPATH', 'PYTHONSTARTUP')
+    $inherited = @(Get-ChildItem Env: | Where-Object { ($_.Name -match '^(DJI_|DRONE_|VEHICLE_SOFT_|PLAYWRIGHT_|HTTPS?_PROXY$|NO_PROXY$)') -and (-not $childEnv.Contains($_.Name)) } | ForEach-Object { $_.Name })
+    Write-Output ("CHILD_ENV_SET=" + (@($childEnv.Keys) -join ',') + " (DRONE_API_TOKEN from the machine environment, value not shown)")
+    Write-Output ("CHILD_ENV_DROPPED=" + ($childDrop -join ',') + " CHILD_ENV_INHERITED=" + $(if ($inherited.Count) { $inherited -join ',' } else { 'none' }) + " (names only)")
+
+    # [REASON]: python itself decides whether its import folders are the pilot folder
+    # (samefile): 8.3 short names and letter case make a text comparison unreliable.
+    $p = Start-Child $cpy ("-B -c `"import os, sys, importlib.util as u, drone_collector.config as c, drone_collector.main as m, drone_collector.sources as s; d = [str(c.PACKAGE_ROOT), os.path.dirname(os.path.abspath(m.__file__)), os.path.dirname(os.path.abspath(s.__file__))]; print(d[0]); print(os.path.abspath(m.__file__)); print(u.find_spec('playwright').origin); print(all(os.path.samefile(x, sys.argv[1]) for x in d))`" `"" + $pkg + "`"") $src
+    $probeErr = $p.StandardError.ReadToEndAsync()
+    $probe = @($p.StandardOutput.ReadToEnd() -split "`r?`n" | Where-Object { $_ })
+    $p.WaitForExit()
+    if (($p.ExitCode -ne 0) -or ($probe.Count -ne 4)) { throw "STEP FAILED: the collector python could not import the pilot collector and Playwright (exit $($p.ExitCode)) -- $($probeErr.Result)" }
+    if ($probe[3] -ne 'True') { throw "STEP FAILED: the collector python imports drone_collector from $($probe[0]), not from $pkg" }
+    Write-Output ("PYTHON=" + $cpy)
+    Write-Output ("IMPORTS drone_collector=" + $probe[0] + " main=" + $probe[1] + " playwright=" + $probe[2])
+    $browsers = @(@($env:PLAYWRIGHT_BROWSERS_PATH, $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'ms-playwright' })) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | ForEach-Object { Get-ChildItem -LiteralPath $_ -Directory -Filter 'chromium*' })
+    Write-Output ("BROWSER=" + $(if ($browsers.Count) { $browsers[0].FullName } else { 'not found for this Windows user; if it is missing the collector stops at launch, before any DJI page' }))
+    $sessionBefore = Get-FileState $session
+    Write-Output ("SESSION=" + $session + " sha256=" + $sessionBefore + " (read only; --save-session is never passed)")
+    Write-Output ("LOCK=" + $lock + " (shared with the production collector; wait 0 s)")
+    Write-Output ("RECEIVER=" + $site + "/drones/api/source_sync")
+    Write-Output ("PILOT_OUTBOX=" + $outbox)
+    Write-Output ("PILOT_LOG=" + $collectLog)
+
+    Test-Production 'BEFORE'
+    Test-Collision 'BEFORE'
+    Test-Staging 'BEFORE'
+    $open = @(Get-ChildItem -LiteralPath $runRoot -Directory -Filter 'staging_*' | Where-Object { -not (Test-Path -LiteralPath (Join-Path $_.FullName 'returned.txt')) })
+    if (($open.Count -ne 1) -or (-not (Test-Path -LiteralPath (Join-Path $open[0].FullName 'swapped.txt')))) { throw "STEP FAILED: expected exactly one open B1 run with swapped.txt under $runRoot, found $($open.Count) -- send this output" }
+    Write-Output ("B1_RUN=" + $open[0].FullName + " (open; block R returns staging after the pilot)")
+    $body = @{ token = $token; content_md5 = @() } | ConvertTo-Json -Compress
+    try { $pre = Invoke-WebRequest -Uri ($site + '/drones/api/land_geometry_manifest') -Method Post -Body $body -ContentType 'application/json' -UseBasicParsing -TimeoutSec 30 -MaximumRedirection 0 } catch { throw "STEP FAILED: staging refused the machine DRONE_API_TOKEN on a read-only call ($($_.Exception.Message)) -- nothing was collected" }
+    if (([int]$pre.StatusCode -ne 200) -or ([string]$pre.Content -notmatch '"asked"\s*:\s*0')) { throw "STEP FAILED: staging answered the read-only token check with $($pre.StatusCode)" }
+    Write-Output 'TOKEN_CHECK=staging accepts the machine DRONE_API_TOKEN (read-only land_geometry_manifest, nothing written)'
+
+    New-Item -ItemType Directory -Force -Path $w1 | Out-Null
+    if (Test-Path -LiteralPath $outbox) { throw "STEP FAILED: the pilot outbox $outbox already exists" }
+    Set-Content -LiteralPath (Join-Path $w1 'w1_check.py') -Value $helperText -Encoding ASCII
+    Copy-Item -LiteralPath $canaryFile -Destination $idsCopy
+    if ((Get-Sha $idsCopy) -ne $canarySha) { throw 'STEP FAILED: the copy of canary_ids.txt differs from the frozen file' }
+    Set-Location -LiteralPath $root
+    $fpPre = Join-Path $w1 'fingerprint_pre.json'
+    & $python tools\dji_card_coverage_pilot.py fingerprint --db $db --out $fpPre | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: fingerprint of the staging database (exit $LASTEXITCODE)" }
+    if (-not (Test-SameFile $fpPre (Join-Path $planDir 'fingerprint_before.json'))) { throw 'STEP FAILED: the staging database no longer equals the B0 fingerprint -- send this output' }
+    Write-Output 'FINGERPRINT_PRE=equals B0 fingerprint_before.json'
+    $reg = @(Get-Registered (Join-Path $w1 'drift_before.log'))
+    if (($reg.Count -ne 1) -or ($reg[0] -ne '60')) { throw "STEP FAILED: the staging database reports $($reg -join ',') registered migrations, expected 60" }
+    Write-Output 'REGISTERED=60'
+    $stBefore = Invoke-Helper @('snapshot', $db)
+    $b0 = Invoke-Helper @('snapshot', $snapshot)
+    if ($stBefore['CATALOG_SHA256'] -ne $b0['CATALOG_SHA256']) { throw 'STEP FAILED: the staging field catalog differs from the B0 copy' }
+    Write-Output ("STAGING_COUNTERS sources_max_id=" + $stBefore['SOURCE_MAX_ID'] + " v4_summaries=" + $stBefore['V4SUM_ROWS'] + " catalog=equals B0")
+    $probeProd = Invoke-Helper @('canary', $prodDb, $idsCopy, '0', '0', (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss'), ('w1-probe-' + $stamp))
+    if (($probeProd['RUN_ID_ROWS'] -ne '0') -or ($probeProd['CANARY_EVIDENCE_SINCE'] -ne '0')) { throw 'STEP FAILED: the read-only production check did not answer as expected' }
+    Write-Output 'PROD_DB_READ=ok (mode=ro, counters only)'
+    $sched = @(Get-ScheduledTask | Where-Object { ([string]$_.TaskPath -notlike '\Microsoft\*') -and ([string]$_.State -ne 'Disabled') -and ((@($_.Actions | ForEach-Object { [string]$_.Execute + ' ' + [string]$_.Arguments + ' ' + [string]$_.WorkingDirectory }) -join ' ') -match ('transport-report-staging|:5051|VehicleSoft_|' + $collectorRx)) -and ($prodTasks -notcontains $_.TaskName) -and ($_.TaskName -ne 'TransportDBBackupStaging') })
+    if ($sched.Count -gt 0) { throw "STEP FAILED: enabled scheduled task(s) that may collect or write staging: $(($sched | ForEach-Object { $_.TaskName }) -join ', ')" }
+
+    Write-Output '== 2. Live canary: 50 frozen flights, staging receiver only, shared production lock'
+    Test-Production 'LAUNCH'
+    Test-Collision 'LAUNCH'
+    $t0 = (Get-Date).ToUniversalTime().AddSeconds(-5).ToString('yyyy-MM-dd HH:mm:ss')
+    Write-Output ("NOW=" + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') + " UTC=" + $t0)
+    $collected = $true
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    $proc = Start-Child $cpy ('-m drone_collector.main --sources --ids-file "' + $idsCopy + '" --send-sources') $src
+    $errTask = $proc.StandardError.ReadToEndAsync()
+    Write-Output ("COLLECTOR_PID=" + $proc.Id + " -- keep this window open until STEP= is printed; if it was closed: taskkill /PID " + $proc.Id + " /T /F")
+    $writer = New-Object System.IO.StreamWriter($collectLog, $false, (New-Object System.Text.UTF8Encoding($false)))
+    $stopWhy = $null
+    $configSeen = $false
+    $noCard = 0
+    $lines = New-Object System.Collections.ArrayList
+    try {
+      $next = $proc.StandardOutput.ReadLineAsync()
+      while ($true) {
+        if (-not $next.Wait(5000)) {
+          if ($clock.Elapsed.TotalMinutes -gt $maxCollectMin) { $stopWhy = "the run passed the $maxCollectMin min limit"; break }
+          continue
+        }
+        $line = $next.Result
+        if ($null -eq $line) { break }
+        [void]$lines.Add($line)
+        $writer.WriteLine($line)
+        $writer.Flush()
+        if ($line -notmatch ': Flight \d+: captured ') { Write-Output ('  | ' + $line) }
+        if ($line -match 'Configuration: (\{.*\})\s*$') {
+          $configSeen = $true
+          $cfg = $Matches[1] -replace '\\\\', '\'
+          foreach ($want in @(("'source_sync_url': '" + $site + "/drones/api/source_sync'"), ("'outbox_dir': '" + $outbox + "'"), ("'storage_state': '" + $session + "'"), "'headless': True", "'api_token': 'set'")) {
+            if (-not $cfg.Contains($want)) { $stopWhy = 'the collector configuration does not show ' + $want }
+          }
+        }
+        if (($line -match ': Flight \d+: ') -and (-not $configSeen)) { $stopWhy = 'a flight was visited before the configuration line was seen' }
+        if ($line -notmatch ': Flight \d+: captured \w+ \(\d+ bytes\)') {
+          foreach ($m in $stopMarkers) { if ($line -match $m[1]) { $stopWhy = 'stop marker ' + $m[0] + ' in the collector log' } }
+        }
+        if ($line -match ': Flight \d+: (V4|NO_V4_URL|NO_V4|V4_FAILED) \((.*)\)\s*$') {
+          if (@($Matches[2] -split ',\s*') -contains 'card') { $noCard = 0 } else { $noCard++ }
+        } elseif ($line -match ': Flight \d+: the record page did not open') { $noCard++ }
+        if ($noCard -ge 3) { $stopWhy = 'three flights in a row came without a card' }
+        if ($stopWhy) { break }
+        $next = $proc.StandardOutput.ReadLineAsync()
+      }
+    } finally {
+      if ($stopWhy) { Stop-Child $proc }
+      if (-not $proc.WaitForExit(120000)) { Stop-Child $proc; if (-not $stopWhy) { $stopWhy = 'the collector did not end after its output closed' } }
+      $writer.Close()
+      Set-Content -LiteralPath (Join-Path $w1 'collector_stderr.log') -Value $errTask.Result -Encoding UTF8
+    }
+    $clock.Stop()
+    $code = $proc.ExitCode
+    Set-Content -LiteralPath (Join-Path $w1 'collector_exit.txt') -Value ([string]$code) -Encoding ASCII
+    $wall = [math]::Round($clock.Elapsed.TotalSeconds)
+    Write-Output ("COLLECTOR_EXIT=" + $code + " WALL_SECONDS=" + $wall + $(if ($stopWhy) { " STOPPED_BY_THIS_BLOCK=" + $stopWhy } else { '' }))
+
+    Write-Output '== 3. Collector gate'
+    $sessionAfter = Get-FileState $session
+    Write-Output ("SESSION_AFTER=" + $(if ($sessionAfter -eq $sessionBefore) { 'unchanged' } else { 'CHANGED ' + $sessionAfter }))
+    $ownerAfter = Get-LockOwner
+    Write-Output ("PROD_LOCK_OWNER_AFTER=" + $ownerAfter)
+    $sumLine = @($lines | Where-Object { $_ -match 'RUN SUMMARY ' } | Select-Object -Last 1)
+    if ($sumLine.Count -eq 1) { foreach ($m in [regex]::Matches(($sumLine[0] -replace '^.*RUN SUMMARY ', ''), '(\w+)=("[^"]*"|\S+)')) { $summary[$m.Groups[1].Value] = $m.Groups[2].Value.Trim('"') } }
+    $runId = [string]$summary['snapshot_run_id']
+    Write-Output ("RUN_SUMMARY run_id=" + $runId + " requested=" + $summary['sources_requested'] + " visited=" + $summary['sources_visited'] + " card=" + $summary['sources_card'] + " rejected=" + $summary['sources_rejected'] + " page_errors=" + $summary['sources_page_errors'] + " descriptor_refused=" + $summary['sources_descriptor_refused'] + " sent=" + $summary['sources_envelopes_sent'] + " accepted=" + $summary['sources_batch_accepted'] + " new=" + $summary['sources_new'] + " ingest_errors=" + $summary['sources_ingest_errors'])
+    if ($runId) {
+      $ourLog = [System.IO.Path]::Combine($pkg, 'logs', 'collector.log')
+      $inPilot = (Test-Path -LiteralPath $ourLog) -and [bool](Select-String -LiteralPath $ourLog -SimpleMatch -Pattern $runId -Quiet)
+      $inProd = (Test-Path -LiteralPath $prodLog) -and [bool](Select-String -LiteralPath $prodLog -SimpleMatch -Pattern $runId -Quiet)
+      Write-Output ("RUN_LOGGED_IN pilot_checkout=" + $inPilot + " production_checkout=" + $inProd)
+    }
+    $prodAfter = Invoke-Helper @('canary', $prodDb, $idsCopy, '0', '0', $t0, $(if ($runId) { $runId } else { 'w1-no-run-id' }))
+    Write-Output ("PROD_DB_AFTER run_rows=" + $prodAfter['RUN_ID_ROWS'] + " canary_sources_since=" + $prodAfter['CANARY_SOURCES_SINCE'] + " canary_evidence_since=" + $prodAfter['CANARY_EVIDENCE_SINCE'])
+    if ($sessionAfter -ne $sessionBefore) { throw 'STEP FAILED: the production DJI session file changed during the run -- send this output' }
+    if (($prodAfter['RUN_ID_ROWS'] -ne '0') -or ($prodAfter['CANARY_SOURCES_SINCE'] -ne '0') -or ($prodAfter['CANARY_EVIDENCE_SINCE'] -ne '0')) { throw 'STEP FAILED: the production database received canary evidence -- send this output' }
+    if ($stopWhy) { throw "STEP FAILED: the canary was stopped: $stopWhy -- nothing is recalculated; evidence kept in $w1" }
+    if ($code -eq 24) { throw "STEP FAILED: the production collector took the shared lock first (exit 24); nothing was collected -- run this block again after it finishes" }
+    if (@(0, 18) -notcontains $code) { throw "STEP FAILED: the collector ended with exit $code (2 session, 19 not accepted, 24 lock busy, 1 error) -- nothing is recalculated; evidence kept in $w1" }
+    if (($ownerAfter -ne 'none') -and ($ownerAfter -notlike 'stale*')) { throw "STEP FAILED: the production lock is $ownerAfter after the run" }
+    if (-not $runId) { throw 'STEP FAILED: the collector printed no RUN SUMMARY with a run id' }
+    if (-not $inPilot -or $inProd) { throw "STEP FAILED: the run was not logged by the pilot checkout only (pilot=$inPilot production=$inProd)" }
+    if (($summary['sources_requested'] -ne '50') -or ($summary['sources_visited'] -ne '50')) { throw "STEP FAILED: the collector requested $($summary['sources_requested']) and visited $($summary['sources_visited']) of 50" }
+    if (($summary['sources_batch_accepted'] -ne 'true') -or ($summary['sources_ingest_errors'] -ne '0')) { throw "STEP FAILED: staging did not accept every source (accepted=$($summary['sources_batch_accepted']) errors=$($summary['sources_ingest_errors']))" }
+    $statsLog = Join-Path $w1 'collector_for_stats.log'
+    # [REASON]: "Flight N: captured card (429 bytes)" carries no DJI answer, but the
+    # HTTP_429 marker of collector-stats matches its byte count; those lines are left out.
+    [System.IO.File]::WriteAllLines($statsLog, [string[]]@($lines | Where-Object { $_ -notmatch ': Flight \d+: captured \w+ \(\d+ bytes\)' }), (New-Object System.Text.UTF8Encoding($false)))
+    $statsJson = Join-Path $w1 'collector_stats.json'
+    $statsOut = @(& $python tools\dji_card_coverage_pilot.py collector-stats --log $statsLog --ids $idsCopy --out $statsJson)
+    $statsCode = $LASTEXITCODE
+    $statsOut | ForEach-Object { Write-Output ('  ' + $_) }
+    if ($statsCode -ne 0) { throw "STEP FAILED: collector-stats exit $statsCode (6 = DJI stop markers) -- nothing is recalculated; evidence kept in $w1" }
+    $stats = Get-Content -LiteralPath $statsJson -Raw | ConvertFrom-Json
+    if (([int]$stats.visited -ne 50) -or (@($stats.not_visited).Count -ne 0)) { throw "STEP FAILED: collector-stats saw $($stats.visited) of 50 flights visited" }
+    $stNew = Invoke-Helper @('canary', $db, $idsCopy, $stBefore['SOURCE_MAX_ID'], $stBefore['V4SUM_MAX_ID'], $t0, $runId)
+    Write-Output ("STAGING_NEW_EVIDENCE revisions=" + $stNew['NEW_REVISIONS'] + " flights=" + $stNew['NEW_FLIGHTS'] + " outside_canary=" + $stNew['NEW_OUTSIDE_CANARY'] + " other_run=" + $stNew['NEW_OTHER_RUN'] + " repeated_type=" + $stNew['NEW_REPEATED_TYPE'] + " evidence_outside_since=" + $stNew['EVIDENCE_OUTSIDE_SINCE'])
+    if (($stNew['NEW_OUTSIDE_CANARY'] -ne '0') -or ($stNew['NEW_OTHER_RUN'] -ne '0') -or ($stNew['NEW_REPEATED_TYPE'] -ne '0') -or ($stNew['EVIDENCE_OUTSIDE_SINCE'] -ne '0') -or ([int]$stNew['NEW_FLIGHTS'] -gt 50)) { throw 'STEP FAILED: staging holds new evidence that is not this run of the 50 canary flights -- nothing is recalculated' }
+    if ($stNew['NEW_REVISIONS'] -ne $summary['sources_new']) { throw "STEP FAILED: staging holds $($stNew['NEW_REVISIONS']) new revisions, the collector reported $($summary['sources_new'])" }
+    Write-Output 'COLLECTOR_GATE=PASS'
+
+    Write-Output '== 4. Staging S1: site stopped, recalc of exactly these 50 flights, measure, census'
+    Stop-Service -Name $service -Force
+    $stoppedSite = $true
+    (Get-Service -Name $service).WaitForStatus('Stopped', (New-TimeSpan -Seconds 90))
+    & $python tools\check_db_lock.py --db $db | Out-Null
+    if (@(0, 3) -notcontains $LASTEXITCODE) { throw "STEP FAILED: check_db_lock exit $LASTEXITCODE -- another process holds the staging database" }
+    if ((Invoke-Helper @('snapshot', $db))['CATALOG_SHA256'] -ne $b0['CATALOG_SHA256']) { throw 'STEP FAILED: the staging field catalog changed during the run' }
+    $flightArgs = @($ids | ForEach-Object { '--flight-id'; [string]$_ })
+    foreach ($mode in @('--dry-run', '--apply')) {
+      $name = $mode.TrimStart('-')
+      $out = @(& $python tools\dji_area_recalc.py --db $db --from 2026-09-01 --to 2026-09-30 $mode --quiet --json (Join-Path $w1 ('recalc_' + $name + '.json')) @flightArgs)
+      $rc = $LASTEXITCODE
+      Set-Content -LiteralPath (Join-Path $w1 ('recalc_' + $name + '.txt')) -Value $out -Encoding UTF8
+      if ($rc -ne 0) { throw "STEP FAILED: recalc $mode exit $rc -- $($out -join ' ')" }
+      $r = Get-Content -LiteralPath (Join-Path $w1 ('recalc_' + $name + '.json')) -Raw | ConvertFrom-Json
+      $calc = 0; foreach ($q in $r.calc_writes.PSObject.Properties) { $calc += [int]$q.Value }
+      $field = 0; foreach ($q in $r.field_writes.PSObject.Properties) { $field += [int]$q.Value }
+      Write-Output ("RECALC_" + $name.ToUpper() + " flights_in_period=" + $r.flights_in_period + " calc_writes=" + $calc + " field_writes=" + $field + " tiers=" + (@($r.tier_counts.PSObject.Properties | ForEach-Object { $_.Name + '=' + $_.Value }) -join ','))
+      if ([int]$r.flights_in_period -ne 50) { throw "STEP FAILED: recalc $mode took $($r.flights_in_period) flights, expected exactly the 50 canary flights" }
+      if (($mode -eq '--apply') -and (($calc -ne 50) -or ($field -ne 50))) { throw "STEP FAILED: recalc wrote $calc calculation and $field attribution rows, expected 50 and 50" }
+    }
+    $stAfter = Invoke-Helper @('canary', $db, $idsCopy, $stBefore['SOURCE_MAX_ID'], $stBefore['V4SUM_MAX_ID'], $t0, $runId)
+    Write-Output ("V4_SUMMARY_CACHE new=" + $stAfter['V4SUM_NEW'] + " outside_canary=" + $stAfter['V4SUM_NEW_OUTSIDE_CANARY'] + " (decoded-V4 cache recalc keeps for loaded neighbours; not evidence, not attribution)")
+    if ($stAfter['NEW_REVISIONS'] -ne $stNew['NEW_REVISIONS']) { throw 'STEP FAILED: source revisions changed during the recalc' }
+    $fpPost = Join-Path $w1 'fingerprint_post.json'
+    & $python tools\dji_card_coverage_pilot.py fingerprint --db $db --out $fpPost | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: fingerprint after the canary (exit $LASTEXITCODE)" }
+    $mOut = @(& $python tools\dji_card_coverage_pilot.py measure --db $db --plan-dir $planDir --stage canary --before $fpPre --collector-stats $statsJson --out-dir (Join-Path $w1 'measure'))
+    $mCode = $LASTEXITCODE
+    $mOut | ForEach-Object { Write-Output ('  ' + $_) }
+    if ($mCode -ne 0) { throw "STEP FAILED: measure exit $mCode (5 = an immutability gate failed) -- send this output" }
+    $measure = Get-Content -LiteralPath ([System.IO.Path]::Combine($w1, 'measure', 'measure_canary.json')) -Raw | ConvertFrom-Json
+    $cOut = @(& $python tools\dji_field_census.py --db $db --from 2026-09-01 --to 2026-09-30 --json (Join-Path $w1 'census_after.json'))
+    if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: census after the canary exit $LASTEXITCODE" }
+    $seen = @{}
+    foreach ($l in @($cOut | Where-Object { $_ -match 'flights total|CONFIRMED|EXACT|IDENTIFIED|NO_CARD|NO_KEY|NOT_IN_CATALOG|KEY_AFTER' })) { $x = $l.Trim(); if (-not $seen.ContainsKey($x)) { $seen[$x] = 1; Write-Output ('  CENSUS ' + $x) } }
+    Start-Service -Name $service
+    (Get-Service -Name $service).WaitForStatus('Running', (New-TimeSpan -Seconds 90))
+    $stoppedSite = $false
+    Start-Sleep -Seconds 8
+    $reg = @(Get-Registered (Join-Path $w1 'drift_after.log'))
+    if (($reg.Count -ne 1) -or ($reg[0] -ne '60')) { throw "STEP FAILED: after the canary the staging database reports $($reg -join ',') registered migrations" }
+    Test-Staging 'AFTER'
+    Test-Production 'AFTER'
+    if ((Get-FileState $session) -ne $sessionBefore) { throw 'STEP FAILED: the production DJI session file changed' }
+  } catch {
+    $failure = $_.Exception.Message + ' [block line ' + $_.InvocationInfo.ScriptLineNumber + ']'
+  }
+  if ($stoppedSite) {
+    try { Start-Service -Name $service; (Get-Service -Name $service).WaitForStatus('Running', (New-TimeSpan -Seconds 90)); Write-Output ("STAGING_SITE_RESTARTED=" + (Get-Service -Name $service).Status) } catch { Write-Output ("STAGING_SITE_RESTART_FAILED=" + $_.Exception.Message) }
+  }
+
+  Write-Output '== 5. Canary result'
+  if ($stats) {
+    $median = if ($null -ne $stats.seconds_per_visit_median) { [math]::Round([double]$stats.seconds_per_visit_median, 1) } else { '-' }
+    Write-Output ("ATTEMPTED=50 VISITED=" + $stats.visited + " CARDS_CAPTURED=" + $stats.card_captured + " FAILED=" + (50 - [int]$stats.card_captured) + " NOT_VISITED=" + @($stats.not_visited).Count + " FETCH_SUCCESS=" + (Pct ([int]$stats.card_captured / 50.0)) + " WALL_SECONDS=" + $wall + " MEDIAN_SECONDS_PER_FLIGHT=" + $median)
+    Write-Output ("STATUSES=" + ($stats.statuses | ConvertTo-Json -Compress) + " STOP_MARKERS=" + ($stats.stop_markers | ConvertTo-Json -Compress))
+  }
+  $decision = 'STOP'
+  $why = $failure
+  if ((-not $failure) -and $measure) {
+    $rows = @(Import-Csv -LiteralPath ([System.IO.Path]::Combine($w1, 'measure', 'results_canary.csv')))
+    $count = @{}
+    foreach ($r in $rows) { $count[$r.after] = 1 + [int]$count[$r.after] }
+    $exact = [int]$count['EXACT']
+    $ident = [int]$count['IDENTIFIED']
+    $other = @($rows | Where-Object { @('EXACT', 'IDENTIFIED', 'NO_KEY', 'NOT_IN_CATALOG', 'NO_CARD') -notcontains $_.after }).Count
+    Write-Output ("OUTCOME EXACT=" + $exact + " IDENTIFIED=" + $ident + " CONFIRMED=" + ($exact + $ident) + " NO_KEY=" + [int]$count['NO_KEY'] + " NOT_IN_CATALOG=" + [int]$count['NOT_IN_CATALOG'] + " NO_CARD=" + [int]$count['NO_CARD'] + " OTHER_UNRESOLVED=" + $other + " NO_CALC=" + @($rows | Where-Object { $_.has_calc_after -ne 'True' }).Count)
+    foreach ($g in @($rows | Group-Object after | Sort-Object Name)) { Write-Output ("CASES " + $g.Name + ": " + (@($g.Group | Select-Object -First 5 | ForEach-Object { $_.flight_id }) -join ', ')) }
+    $fetched = [int]$measure.fetched
+    $cf = $measure.conversion_among_fetched
+    $lo = $cf.wilson95[0]
+    $hi = $cf.wilson95[1]
+    Write-Output ("CONFIRMED_RATE among_fetched=" + (Pct $cf.rate) + " wilson95=" + (Pct $lo) + ".." + (Pct $hi) + " among_50=" + (Pct (($exact + $ident) / 50.0)) + " fetched=" + $fetched)
+    $ps = $measure.post_stratified_among_fetched
+    if ($ps) { Write-Output ("PROJECTION (not a fact; n=50) post-stratified " + (Pct $ps.estimate) + " (" + (Pct $ps.low) + ".." + (Pct $ps.high) + ")") }
+    foreach ($k in @('at_manifest_rate', 'at_manifest_wilson_low', 'at_manifest_wilson_high')) { $v = $measure.projection_on_no_card_cohort.$k; if ($v) { Write-Output ("PROJECTION (not a fact) " + $k + ": +" + $v.additional_confirmed + " confirmed of " + $measure.projection_on_no_card_cohort.no_card_flights + " NO_CARD -> " + $v.coverage_pct + "% of September") } }
+    foreach ($part in @('by_unit', 'by_week')) { foreach ($q in $measure.$part.PSObject.Properties) { Write-Output (($part.ToUpper()) + " " + $q.Name + " attempted=" + $q.Value.attempted + " fetched=" + $q.Value.fetched + " confirmed=" + $q.Value.confirmed + " no_key=" + $q.Value.no_key + " not_in_catalog=" + $q.Value.not_in_catalog) } }
+    if ($fetched -lt $minFetched) { $decision = 'STOP'; $why = "cards came for $fetched of 50 flights, fewer than $minFetched, so historical cards are not reliably obtainable this way" }
+    elseif (($null -ne $hi) -and ([double]$hi -lt $simplifyBelow)) { $decision = 'SIMPLIFY'; $why = 'even the upper 95% bound of the confirmed rate among fetched cards is below 20% (the low end of the hypothesis in section 3): more cards will not move coverage much; the next step is the field data gap (section 12)' }
+    else { $decision = 'GO_TO_500'; $why = 'collection was safe and complete, every gate passed, and the confirmed rate is not ruled below 20%; the owner may authorize W2 (the other 450 flights) -- nothing starts by itself' }
+  }
+  Write-Output ("DECISION=" + $decision)
+  Write-Output ("DECISION_REASON=" + $why)
+  if ($collected) { Write-Output ("RUN=" + $w1) }
+  Write-Output ("LOG FILE: " + $log)
+  if ($failure) { Write-Output ("STEP=STOP - " + $failure) } else { Write-Output 'STEP=PASS' }
+  try { Stop-Transcript | Out-Null } catch { }
+}
+```
+
+Прислать весь вывод. Остальные 450 вылетов блок не запускает: W2 — только по решению владельца.
+
 ### R — SRV-YOQSH: возврат площадки
 
 Выдаётся только после разбора: по окончании пилота или если B1 встал с
-`STAGING_CHANGED=yes`. Пока сборщик рабочей машины может слать данные на
-площадку, R не запускается.
+`STAGING_CHANGED=yes`. Пока сборщик пилота может слать данные на
+площадку, R не запускается. Очередь пилота (`C:\VehicleSoft_CardPilot\w1\…\outbox`)
+после R не досылается: площадка уже не та.
 
 * Работает с единственной открытой папкой `staging_*` (без
   `returned.txt`); две открытые или ни одной — отказ без изменений.
