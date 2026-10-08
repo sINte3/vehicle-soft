@@ -280,6 +280,14 @@ if __name__ == '__main__':
     $logFile = Join-Path $dir 'collector_stdout.log'
     if (-not (Test-Path -LiteralPath $logFile)) { return 'NOT_STARTED' }
     $doneFile = Join-Path $dir 'collector_done.json'
+    $supFile = Join-Path $dir 'supervisor.txt'
+    if ((-not (Test-Path -LiteralPath $doneFile)) -and (Test-Path -LiteralPath $supFile)) {
+      # [REASON]: another window may still be watching this collection; its PowerShell process (id
+      # and start time, so a reused id does not count) tells a supervised run from an orphaned one.
+      $sv = ([string](Get-Content -LiteralPath $supFile -Raw)).Trim() -split ' '
+      $sp = Get-Process -Id ([int]$sv[0]) -ErrorAction SilentlyContinue
+      if ($sp -and ($sp.Id -ne $PID) -and ([math]::Abs($sp.StartTime.ToUniversalTime().Ticks - [int64]$sv[1]) -lt 20000000)) { return 'RUNNING' }
+    }
     if (Test-Path -LiteralPath $doneFile) {
       $d = Read-Json $doneFile
       # [REASON]: the collector ended by itself (0 or 18) and nothing stopped it: what the gate needs
@@ -300,12 +308,12 @@ if __name__ == '__main__':
     $sent = @(Get-ChildItem -LiteralPath ([System.IO.Path]::Combine($dir, 'outbox', 'sent')) -File -ErrorAction SilentlyContinue).Count
     $e = Join-Path $dir 'collector_exit.txt'
     $pexit = if (Test-Path -LiteralPath $e) { ([string](Get-Content -LiteralPath $e -Raw)).Trim() } else { 'none (the window was closed or the block was stopped)' }
-    $visited = Get-VisitedIds $plines
+    $visited = @(Get-VisitedIds $plines | Where-Object { -not $canarySet.Contains($_) })
     # [REASON]: a continuation skips a flight only when its card, route and descriptor and its V4
     # (or a confirmed absence of V4) are queued (sources.flight_already_captured); the rest are
     # visited at DJI again, among them the flights that made this run stop.
     $complete = @($plines | ForEach-Object { if ($_ -match ': Flight (\d+): (V4|NO_V4_URL) \((.*)\)\s*$') { $it = @($Matches[3] -split ',\s*'); if (@(@('card', 'route', 'airlines') | Where-Object { $it -notcontains $_ }).Count -eq 0) { [int64]$Matches[1] } } } | Select-Object -Unique | Where-Object { -not $canarySet.Contains($_) })
-    Write-Output ("PARTIAL_W2_STATE visited=" + $visited.Count + " of " + $remainingCount + " complete=" + $complete.Count + " visited_again_by_a_continuation=" + ($remainingCount - $complete.Count) + " collector_exit=" + $pexit + " run_id=" + $(if ($psum['snapshot_run_id']) { $psum['snapshot_run_id'] } else { 'none (no RUN SUMMARY)' }) + " outbox_pending=" + $pending + " outbox_sent=" + $sent)
+    Write-Output ("PARTIAL_W2_STATE visited=" + $visited.Count + " of " + $remainingCount + " complete=" + $complete.Count + " visited_again_by_a_continuation=" + ($visited.Count - $complete.Count) + " not_visited_yet=" + ($remainingCount - $visited.Count) + " collector_exit=" + $pexit + " run_id=" + $(if ($psum['snapshot_run_id']) { $psum['snapshot_run_id'] } else { 'none (no RUN SUMMARY)' }) + " outbox_pending=" + $pending + " outbox_sent=" + $sent)
     $live = @(Get-CimInstance -ClassName Win32_Process | Where-Object { [string]$_.CommandLine -like ('*' + (Join-Path $dir 'remaining_450_ids.txt') + '*') })
     foreach ($q in $live) { Write-Output ("COLLECTOR_STILL_RUNNING pid=" + $q.ProcessId + " -- the collector of this run is working without supervision; stop it now: taskkill /PID " + $q.ProcessId + " /T /F") }
     Write-Output 'PARTIAL_W2_NEXT=nothing is collected again by this block. A continuation is a separate step after the owner decides: it reuses this run folder and outbox, skips the complete flights, visits the others again and then sends what is pending; send this output.'
@@ -463,7 +471,9 @@ if __name__ == '__main__':
     $runs = @(Get-ChildItem -LiteralPath $w2Root -Directory -ErrorAction SilentlyContinue | Sort-Object Name | ForEach-Object { [pscustomobject]@{ Dir = $_.FullName; State = (Get-RunState $_.FullName) } })
     $done = @($runs | Where-Object { $_.State -eq 'COMPLETE' })
     $partial = @($runs | Where-Object { $_.State -eq 'COLLECTION_STOPPED' })
+    $running = @($runs | Where-Object { $_.State -eq 'RUNNING' })
     $pendingRuns = @($runs | Where-Object { @('GATE_PENDING', 'S2_PENDING') -contains $_.State })
+    if ($running.Count -gt 0) { $w2 = $running[-1].Dir; throw "STEP FAILED: W2 is collecting now in another PowerShell window ($w2) -- nothing is done here; wait for that window's STEP= line" }
     if ($done.Count -gt 0) { $w2 = $done[-1].Dir; throw "STEP FAILED: W2+S2 was already completed in $w2 -- nothing is done again; send that run's output" }
     if ($partial.Count -gt 0) { $w2 = $partial[-1].Dir; throw "STEP FAILED: an earlier W2 run started the collector and its collection did not end by itself ($w2) -- no new collection without the owner's decision" }
     if ($pendingRuns.Count -gt 1) { throw "STEP FAILED: $($pendingRuns.Count) W2 runs collected without S2 -- send this output" }
@@ -623,6 +633,7 @@ if __name__ == '__main__':
       $t0 = (Get-Date).ToUniversalTime().AddSeconds(-5).ToString('yyyy-MM-dd HH:mm:ss')
       Write-Output ("NOW=" + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') + " UTC=" + $t0 + " W1_ALREADY_DONE=" + $canaryIds.Count + " W2_REMAINING=" + $remaining.Count + " TOTAL_MANIFEST=" + $pilotIds.Count)
       $collected = $true
+      [System.IO.File]::WriteAllText((Join-Path $w2 'supervisor.txt'), ([string]$PID + ' ' + (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks + "`n"), [System.Text.Encoding]::ASCII)
       $clock = [System.Diagnostics.Stopwatch]::StartNew()
       $proc = Start-Child $cpy ('-m drone_collector.main --sources --ids-file "' + $idsFile + '" --send-sources') $src
       $errTask = $proc.StandardError.ReadToEndAsync()
@@ -892,7 +903,7 @@ if __name__ == '__main__':
     $state = Get-RunState $w2
     Write-Output ("RUN=" + $w2)
     if ($state -eq 'COLLECTION_STOPPED') { Write-PartialState $w2 }
-    $stateText = @{ NOT_STARTED = 'W2 did not visit DJI; this block may be pasted again'; COLLECTION_STOPPED = 'DJI was visited and the collection did not end by itself; pasting this block again collects nothing'; GATE_PENDING = 'the collector ended by itself and its gate did not pass or was cut off; pasting this block again checks the gate again, without DJI'; S2_PENDING = 'the 450 are collected and verified; pasting this block again runs only S2, without DJI'; COMPLETE = 'W2+S2 done; R is a separate step' }
+    $stateText = @{ NOT_STARTED = 'W2 did not visit DJI; this block may be pasted again'; COLLECTION_STOPPED = 'DJI was visited and the collection did not end by itself; pasting this block again collects nothing'; GATE_PENDING = 'the collector ended by itself and its gate did not pass or was cut off; pasting this block again checks the gate again, without DJI'; RUNNING = 'another PowerShell window is collecting now; wait for its STEP= line'; S2_PENDING = 'the 450 are collected and verified; pasting this block again runs only S2, without DJI'; COMPLETE = 'W2+S2 done; R is a separate step' }
     Write-Output ("W2_STATE=" + $state + " -- " + $stateText[$state])
   }
   } catch {

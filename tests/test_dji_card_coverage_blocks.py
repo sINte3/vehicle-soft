@@ -2948,7 +2948,7 @@ class W2Text(unittest.TestCase):
             self.assertLess(w2.index(gate), done, gate)
         self.assertLess(done, w2.index('  } catch {\n    $failure = '))
         self.assertEqual(sorted(set(re.findall(r"return '([A-Z0-9_]+)'", function_text(w2, 'Get-RunState'))) | {'COLLECTION_STOPPED'}),
-                         ['COLLECTION_STOPPED', 'COMPLETE', 'GATE_PENDING', 'NOT_STARTED', 'S2_PENDING'])
+                         ['COLLECTION_STOPPED', 'COMPLETE', 'GATE_PENDING', 'NOT_STARTED', 'RUNNING', 'S2_PENDING'])
         # The staging site is started again in finally, so that Ctrl+C during S2 does not leave it stopped.
         self.assertLess(w2.index('  } finally {\n    # [REASON]: in finally'), w2.index("Write-Output '== 5. Pilot result"))
 
@@ -3409,7 +3409,7 @@ class W2InPowerShell(unittest.TestCase):
         srv = self.srv
         out = self.run_w2(collector=self.collector(hang_after=3, log_after={'3': [DESCRIPTOR_LINE % (self.remaining[2], 403, 135)]}))
         self.assertStopBeforeRecalc(out, 'W2 was stopped: stop marker HTTP_403')
-        self.assertIn('PARTIAL_W2_STATE visited=3 of 10 complete=3 visited_again_by_a_continuation=7 collector_exit=', out)
+        self.assertIn('PARTIAL_W2_STATE visited=3 of 10 complete=3 visited_again_by_a_continuation=0 not_visited_yet=7 collector_exit=', out)
         self.assertIn('outbox_pending=3 outbox_sent=0', out)
         run = self.runs()[0]
         # 18. Pasting again (twice): no collection, the state of the stopped run and what to do;
@@ -3428,6 +3428,44 @@ class W2InPowerShell(unittest.TestCase):
         self.assertNotIn('COLLECTOR_STILL_RUNNING', self.run_w2().split('W2_STATE=')[0])
         self.assertIn('COLLECTOR_STILL_RUNNING pid=4321 -- the collector of this run is working without supervision; '
                       'stop it now: taskkill /PID 4321 /T /F', out)
+
+    def test_a_second_window_does_not_touch_a_supervised_collection(self):
+        """Pasted again while the first window still watches its collector: no taskkill advice, nothing done."""
+        srv = self.srv
+        first_stem = os.path.join(self.tmp, 'w2_first_window')
+        write(first_stem + '.ps1', self.text())
+        write(first_stem + '.scenario.json', json.dumps(srv.scenario()))
+        write(srv.fake, json.dumps(self.collector(hang_after=2, hang_s=25)))
+        env = {k: v for k, v in os.environ.items()
+               if not re.match(r'(?i)(DJI_|DRONE_|VEHICLE_SOFT_|PLAYWRIGHT_|PYTHON|HTTPS?_PROXY$|NO_PROXY$)', k)}
+        env.update({'CARD_PILOT_FAKE_COLLECTOR': srv.fake, 'PLAYWRIGHT_BROWSERS_PATH': srv.browsers})
+        if os.name != 'nt':
+            env['TZ'] = W1_TZ
+        first = subprocess.Popen([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', W1_HARNESS,
+                                  '-BlockFile', first_stem + '.ps1', '-ScenarioFile', first_stem + '.scenario.json',
+                                  '-CallsFile', first_stem + '.calls.txt'],
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+        # [REASON]: killing the first window would leave its collector holding the shared lock;
+        # it is let finish (a 25 s pause, then S2) whatever this test finds.
+        self.addCleanup(lambda: first.poll() is not None or first.communicate(timeout=600))
+        for _ in range(240):
+            runs = self.runs()
+            if runs and os.path.exists(os.path.join(runs[0], 'supervisor.txt')) and \
+                    len(re.findall(r': Flight \d+: V4', read(os.path.join(runs[0], 'collector_stdout.log')))) >= 2:
+                break
+            time.sleep(0.5)
+        else:
+            self.fail('the first window did not reach its second flight')
+        live = [{'ProcessId': 4321, 'Name': 'python.exe', 'CommandLine': 'python.exe -m drone_collector.main --sources '
+                 '--ids-file "%s" --send-sources' % os.path.join(runs[0], 'remaining_450_ids.txt')}]
+        out = self.run_w2(sc=srv.scenario(Processes=live))
+        self.assertIn('STEP=STOP - STEP FAILED: W2 is collecting now in another PowerShell window (%s)' % runs[0], out)
+        self.assertIn('W2_STATE=RUNNING', out)
+        self.assertNotIn('taskkill', out.split('LOG FILE:')[0].split('== 1.')[1])
+        self.assertNotIn('PARTIAL_W2_STATE', out)
+        first_out = first.communicate(timeout=600)[0]
+        self.assertEqual(first_out.splitlines()[-1], 'STEP=PASS', first_out)
+        self.assertEqual(len(srv.collector_runs()), 1)
 
     def test_time_limit_holds_while_the_collector_keeps_talking(self):
         """A slow DJI that answers every second never leaves 5 s of silence; the limit still holds."""
