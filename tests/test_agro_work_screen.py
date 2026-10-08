@@ -349,6 +349,67 @@ class LateAndOpen(ScreenCase):
         self.assertNotIn('APP-TEST-001', html)
 
 
+class WhatCameAfterOnScreen(ScreenCase):
+    """B5: у суток «без заявки» -- что было потом, на трёх экранах."""
+
+    def add_ordinary(self):
+        # A8: T2 открыта 16-го -- для работы 13-го это обычная заявка через
+        # 3 суток; сутки до её создания она не покрывает.
+        _sql(["INSERT INTO agro_work_applications (id, application_number, "
+              "transport_id, work_type_id, work_type_name, unit, status, "
+              "created_at, updated_at, created_day, first_seen_run_id, "
+              "last_seen_run_id, history_updated_at, initial_status, "
+              "plate_number) VALUES ('A8', 'APP-TEST-008', 'T2', 'W1', "
+              "'Култивация', 'HECTARE', 'IN_PROGRESS', "
+              "'2026-09-16T08:00:00+05:00', 'u', '2026-09-16', 1, 1, 'u', "
+              "'PENDING', 'PT2')"])
+
+    def test_without_a_later_application_the_day_says_not_entered(self):
+        html = self.get('/agro-work/work-days', lang='ru',
+                        coverage='bez_zayavki').get_data(as_text=True)
+        self.assertIn('заявка не заведена совсем: позже у машины новых заявок '
+                      'нет', html)
+        html = self.get('/agro-work/', lang='ru').get_data(as_text=True)
+        self.assertIn('заявка не заведена совсем: 1', html)
+        self.assertIn('с обычной заявкой, заведённой позже: 0', html)
+        self.assertIn('из них с заявкой, заведённой задним числом позже: 0', html)
+        # Части без заявок с неизвестным порядком на экране нет, пока она пуста.
+        self.assertNotIn('порядок ввода неизвестен:', html)
+
+    def test_a_later_ordinary_application_is_named_on_every_screen(self):
+        self.add_ordinary()
+        expected = ('заявка APP-TEST-008 заведена обычным порядком через 3 сут., '
+                    'ещё открыта')
+        html = self.get('/agro-work/work-days', lang='ru',
+                        coverage='bez_zayavki').get_data(as_text=True)
+        self.assertIn(expected, html)
+        self.assertIn('Работа без заявки', html)
+        html = self.get('/agro-work/machine/%d' % self.eq2_id,
+                        lang='ru').get_data(as_text=True)
+        self.assertIn(expected, html)
+        html = self.get('/agro-work/work-days', lang='uz',
+                        coverage='bez_zayavki').get_data(as_text=True)
+        self.assertIn('APP-TEST-008 буюртма 3 кундан кейин оддий тартибда '
+                      'киритилган, ҳали очиқ', html)
+        html = self.get('/agro-work/', lang='ru').get_data(as_text=True)
+        self.assertIn('с обычной заявкой, заведённой позже: 1', html)
+        self.assertIn('заявка не заведена совсем: 0', html)
+        self.assertIn('after=obychnaya_pozzhe', html)
+        html = self.get('/agro-work/', lang='uz').get_data(as_text=True)
+        self.assertIn('кейин оддий тартибда киритилган буюртмаси борлари: 1', html)
+
+    def test_the_list_filters_by_what_came_after(self):
+        self.add_ordinary()
+        html = self.get('/agro-work/work-days', lang='ru',
+                        after='obychnaya_pozzhe').get_data(as_text=True)
+        self.assertIn('APP-TEST-008', html)
+        self.assertIn('Без заявки: что было потом', html)
+        html = self.get('/agro-work/work-days', lang='ru',
+                        after='ne_zavedena').get_data(as_text=True)
+        self.assertNotIn('APP-TEST-008', html)
+        self.assertIn('Суток с работой по GPS с такими условиями нет', html)
+
+
 class Access(ScreenCase):
     def test_without_the_wialon_permission_every_page_is_403(self):
         user_id = self.operator([self.org1_id], wialon=False)

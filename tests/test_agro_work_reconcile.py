@@ -480,6 +480,162 @@ class LateBackdated(unittest.TestCase):
         self.assertEqual((day['late'][0].number, day['late'][1]), ('N-001', 5))
 
 
+class WhatCameAfter(unittest.TestCase):
+    """B5, решение владельца 07.10: «не заведена совсем» отдельно от
+    «заведена обычным порядком уже после работы»."""
+
+    def setUp(self):
+        self.fx = Fixture()
+
+    def tearDown(self):
+        self.fx.close()
+
+    def rows(self, **kwargs):
+        return {(r['equipment_id'], r['day']): r
+                for r in self.fx.run(**kwargs).reverse_rows()}
+
+    def day13(self, **kwargs):
+        # Машина 12 (T2) работала 13-го: объект 1002, участок 3,5 га.
+        return self.rows(**kwargs)[(12, D(13))]
+
+    def after(self, row):
+        return (row['coverage'], row['after'],
+                row['later_app'].number if row['later_app'] else None,
+                row['later_days'])
+
+    def test_without_any_later_application_it_was_not_entered_at_all(self):
+        self.assertEqual(self.after(self.day13()),
+                         (rc.C_UNCOVERED, rc.A_NOT_ENTERED, None, None))
+
+    def test_a_later_ordinary_application_is_named_and_the_day_stays_uncovered(self):
+        # Окно обычной заявки -- с дня создания (правило 4): 16..17 сутки
+        # 13-го не покрывает, вердикт тот же.
+        self.fx.app(transport='T2', created=16, completed=17)
+        row = self.day13()
+        self.assertEqual(self.after(row),
+                         (rc.C_UNCOVERED, rc.A_ORDINARY, 'N-001', 3))
+        self.assertIsNone(row['late_app'])
+        self.assertFalse(row['later_app'].is_open)
+
+    def test_an_open_one_is_ordinary_and_says_it_is_open(self):
+        self.fx.app(transport='T2', status='IN_PROGRESS', created=15,
+                    completed=None)
+        row = self.day13()
+        self.assertEqual(self.after(row),
+                         (rc.C_UNCOVERED, rc.A_ORDINARY, 'N-001', 2))
+        self.assertTrue(row['later_app'].is_open)
+
+    def test_the_nearest_one_is_named(self):
+        self.fx.app(transport='T2', created=19, completed=19)
+        self.fx.app(transport='T2', status='PENDING', created=16, completed=None)
+        self.fx.app(transport='T2', created=17, completed=18)
+        self.assertEqual(self.after(self.day13()),
+                         (rc.C_UNCOVERED, rc.A_ORDINARY, 'N-002', 3))
+
+    def test_cancelled_and_deleted_ones_are_not_an_entry(self):
+        # Ответы 4 и 11: отменённая и удалённая работу не покрывают -- и
+        # заведённой работой не считаются.
+        self.fx.app(transport='T2', status='CANCELLED', created=15,
+                    completed=None, cancelled='2026-09-16T08:00:00+05:00')
+        self.fx.app(transport='T2', created=16, completed=17,
+                    gone_at='2026-09-20 03:00:00')
+        self.assertEqual(self.after(self.day13()),
+                         (rc.C_UNCOVERED, rc.A_NOT_ENTERED, None, None))
+
+    def test_an_application_of_another_machine_does_not_count(self):
+        self.fx.app(transport='T1', created=16, completed=17)
+        self.assertEqual(self.day13()['after'], rc.A_NOT_ENTERED)
+
+    def test_an_earlier_application_is_not_a_later_one(self):
+        self.fx.app(transport='T2', created=10, completed=12)    # окно 10..12
+        self.assertEqual(self.after(self.day13()),
+                         (rc.C_UNCOVERED, rc.A_NOT_ENTERED, None, None))
+
+    def test_one_entered_on_the_day_covers_it_and_nothing_is_said_after(self):
+        self.fx.app(transport='T2', created=13, completed=14)
+        row = self.day13()
+        self.assertEqual((row['coverage'], row['after'], row['later_app']),
+                         (rc.C_COVERED, None, None))
+
+    def test_a_late_backdated_one_comes_first(self):
+        # B4 называет её; обычная, заведённая раньше неё, уже не нужна.
+        self.fx.app(transport='T2', created=15, completed=16)
+        self.fx.app(transport='T2', created=18, completed=18, initial='COMPLETED')
+        row = self.day13()
+        self.assertEqual(self.after(row),
+                         (rc.C_UNCOVERED, rc.A_BACKDATED, None, None))
+        self.assertEqual((row['late_app'].number, row['late_days']), ('N-002', 5))
+
+    def test_unknown_entry_order_is_named_apart(self):
+        # Без истории статусов задним ли числом заведена заявка, неизвестно;
+        # так же -- незнакомый статус. Это не «обычная позже» и не «не
+        # заведена совсем».
+        self.fx.app(transport='T2', created=18, completed=18, history=False)
+        self.assertEqual(self.after(self.day13()),
+                         (rc.C_UNCOVERED, rc.A_UNCLEAR, 'N-001', 5))
+        fx = Fixture()
+        try:
+            fx.app(transport='T2', status='ARCHIVED', created=17, completed=None)
+            row = {(r['equipment_id'], r['day']): r
+                   for r in fx.run().reverse_rows()}[(12, D(13))]
+            self.assertEqual((row['after'], row['later_app'].number,
+                              row['later_days']), (rc.A_UNCLEAR, 'N-001', 4))
+        finally:
+            fx.close()
+
+    def test_a_known_ordinary_one_wins_over_a_nearer_unknown_one(self):
+        self.fx.app(transport='T2', created=16, completed=16, history=False)
+        self.fx.app(transport='T2', created=19, completed=19)
+        self.assertEqual(self.after(self.day13()),
+                         (rc.C_UNCOVERED, rc.A_ORDINARY, 'N-002', 6))
+
+    def test_covered_and_suspended_days_say_nothing_after(self):
+        self.fx.app(transport='T1', created=10, completed=10)  # 11-й, 10-е
+        self.fx.app(transport='T2', status='IN_PROGRESS', created=12,
+                    completed=None)                             # 12-я, 13-е
+        rows = self.rows()
+        self.assertEqual((rows[(11, D(10))]['coverage'], rows[(11, D(10))]['after']),
+                         (rc.C_COVERED, None))
+        self.assertEqual((rows[(12, D(13))]['coverage'], rows[(12, D(13))]['after']),
+                         (rc.C_NONE, None))
+
+    def test_the_four_parts_add_up_to_the_uncovered_days(self):
+        con = self.fx.con
+        for day in (16, 18):
+            dbh.add_day(con, 1002, '2026-09-%02d' % day, sites=[(2.0, None)])
+        dbh.add_day(con, 1001, '2026-09-20', sites=[(1.5, None)])
+        con.commit()
+        self.fx.app(transport='T1', created=15, completed=15,
+                    initial='COMPLETED')      # 11-я, 10-е: задним числом, 5
+        self.fx.app(transport='T1', created=25, completed=25,
+                    history=False)            # 11-я, 20-е: порядок неизвестен
+        self.fx.app(transport='T2', created=17, completed=17)
+        # 12-я: 13-е и 16-е -- обычная от 17-го (4 и 1 сутки), 18-е -- после
+        # него заявок нет.
+        ctx = self.fx.run()
+        rows = {(r['equipment_id'], r['day']): r for r in ctx.reverse_rows()}
+        self.assertEqual(
+            {key: (row['after'], row['late_days'] or row['later_days'])
+             for key, row in rows.items() if row['coverage'] == rc.C_UNCOVERED},
+            {(11, D(10)): (rc.A_BACKDATED, 5), (11, D(20)): (rc.A_UNCLEAR, 5),
+             (12, D(13)): (rc.A_ORDINARY, 4), (12, D(16)): (rc.A_ORDINARY, 1),
+             (12, D(18)): (rc.A_NOT_ENTERED, None)})
+        groups, total = ctx.summary()
+        self.assertEqual(
+            [total[rc.DAY_AFTER + kind] for kind in rc.AFTER_KINDS], [1, 2, 1, 1])
+        for counter in list(groups.values()) + [total]:
+            self.assertEqual(counter['day_' + rc.C_UNCOVERED],
+                             sum(counter[rc.DAY_AFTER + kind]
+                                 for kind in rc.AFTER_KINDS))
+            self.assertEqual(counter[rc.DAY_LATE],
+                             counter[rc.DAY_AFTER + rc.A_BACKDATED])
+        days = {d['day']: d for d in ctx.machine_days(12)}
+        self.assertEqual((days[D(13)]['after'][0], days[D(13)]['after'][1].number,
+                          days[D(13)]['after'][2]), (rc.A_ORDINARY, 'N-003', 4))
+        self.assertEqual(days[D(18)]['after'], (rc.A_NOT_ENTERED, None, None))
+        self.assertIsNone(days[D(10)]['after'])         # у 12-й 10-го не работа
+
+
 class OpenApplications(unittest.TestCase):
     """B4, пункт 5: открытые заявки от самой старой, суток с ввода."""
 
