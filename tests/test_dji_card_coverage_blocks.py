@@ -2136,6 +2136,8 @@ class W1Server(object):
             con.close()
 
 
+# What the pinned collector writes when the page asked for no descriptor (sources.py).
+DESCRIPTOR_LINE = 'Flight %d: the page asked for no descriptor; the direct request answered HTTP %d (%d bytes)'
 W1_SECRETS = (W1_TOKEN, W1_SESSION_SECRET, 'do-not-print', 'CONSOLE-TOKEN-DECOY-3')
 W1_TABLES = ('drone_flights', 'dji_field_attributions', 'dji_area_calculations', 'dji_flight_evidence',
              'dji_source_revisions')
@@ -2266,8 +2268,10 @@ class W1InPowerShell(unittest.TestCase):
         self.pristine_rows()
         before = srv.state()
         keys = {str(fid): CATALOG_KEY for fid in srv.ids[:20]}
-        out = self.run_w1(collector=srv.collector(card_keys=keys))
+        # A body of 429 bytes is not HTTP 429 (the descriptor line and every "captured" line).
+        out = self.run_w1(collector=srv.collector(card_keys=keys, log_after={'2': [DESCRIPTOR_LINE % (srv.ids[1], 200, 429)]}))
         self.assertEqual(out.splitlines()[-1], 'STEP=PASS', out)
+        self.assertIn(DESCRIPTOR_LINE % (srv.ids[1], 200, 429), out)
         for line in ('CANARY_COUNT=50', 'CANARY_SHA256=' + srv.plan['sample']['canary_ids_sha256'],
                      'COLLECTOR_GATE=PASS', 'DECISION=GO_TO_500', 'REGISTERED=60', 'FINGERPRINT_PRE=equals B0',
                      'RECEIVER=' + W1_SITE + '/drones/api/source_sync', 'LOCK=' + srv.lock,
@@ -2325,15 +2329,16 @@ class W1InPowerShell(unittest.TestCase):
         self.assertIn('BROWSER=' + os.path.join(srv.browsers, 'chromium-1181'), out)
 
     def test_simplify_when_cards_do_not_confirm(self):
-        out = self.run_w1()
+        # Two refused V4 downloads (V4_FAILED) are a result, not a refusal of the canary.
+        out = self.run_w1(collector=self.srv.collector(rejected=2, v4_failed=2))
         self.assertEqual(out.splitlines()[-1], 'STEP=PASS', out)
         self.assertIn('OUTCOME EXACT=0 IDENTIFIED=0 CONFIRMED=0 NO_KEY=0 NOT_IN_CATALOG=50', out)
         self.assertIn('DECISION=SIMPLIFY', out)
 
     def test_low_fetch_is_a_stop_decision_after_passed_gates(self):
         srv = self.srv
-        # Every other flight without a card: never three in a row, 25 of 50 fetched.
-        status = {str(fid): 'no_v4' for fid in srv.ids[1::2]}
+        # Every other record page gives nothing: never five in a row, no refused card, 25 of 50 fetched.
+        status = {str(fid): 'nothing' for fid in srv.ids[1::2]}
         out = self.run_w1(collector=srv.collector(status=status, exit=18))
         self.assertEqual(out.splitlines()[-1], 'STEP=PASS', out)
         self.assertIn('CARDS_CAPTURED=25 FAILED=25', out)
@@ -2476,7 +2481,7 @@ class W1InPowerShell(unittest.TestCase):
     def test_a_stopped_canary_is_not_collected_again(self):
         """Stopped by DJI, the run sent nothing: staging equals B0, yet a second paste must not visit DJI."""
         srv = self.srv
-        out = self.run_w1(collector=srv.collector(log_after={'3': ['Flight %d: HTTP 429 Too Many Requests' % srv.ids[2]]},
+        out = self.run_w1(collector=srv.collector(log_after={'3': [DESCRIPTOR_LINE % (srv.ids[2], 429, 135)]},
                                                   hang_after=3))
         self.assertIn('the canary was stopped: stop marker HTTP_429', out)
         self.assertEqual(sha(srv.db), sha(srv.snapshot))
@@ -2495,16 +2500,24 @@ class W1InPowerShell(unittest.TestCase):
         ids = srv.ids
         cases = [
             ('exit 2', srv.collector(exit=2), 'the collector ended with exit 2'),
-            ('429 marker', srv.collector(log_after={'3': ['Flight %d: HTTP 429 Too Many Requests' % ids[2]]}, hang_after=3),
+            ('429 marker', srv.collector(log_after={'3': [DESCRIPTOR_LINE % (ids[2], 429, 135)]}, hang_after=3),
              'the canary was stopped: stop marker HTTP_429'),
+            ('403 marker', srv.collector(log_after={'2': [DESCRIPTOR_LINE % (ids[1], 403, 0)]}, hang_after=2),
+             'the canary was stopped: stop marker HTTP_403'),
             ('captcha', srv.collector(log_after={'2': ['Please verify you are human']}, hang_after=2),
              'the canary was stopped: stop marker CAPTCHA'),
-            ('session', srv.collector(log_after={'1': ['You are no longer signed in to DJI']}, hang_after=1),
+            ('session', srv.collector(log_after={'1': ['the saved session at %s is no longer signed in (landed on '
+                                                       'https://www.djiag.com/login) -- run `python -m drone_collector.main '
+                                                       '--save-session` again' % srv.session]}, hang_after=1),
              'the canary was stopped: stop marker SESSION'),
-            ('three without card', srv.collector(status={str(f): 'no_v4' for f in ids[4:7]}, hang_after=7),
-             'the canary was stopped: three flights in a row came without a card'),
-            ('page errors', srv.collector(status={str(f): 'page_error' for f in ids[:3]}, hang_after=3),
-             'the canary was stopped: three flights in a row came without a card'),
+            ('five without card', srv.collector(status={str(f): 'nothing' for f in ids[4:9]}, hang_after=9),
+             'the canary was stopped: 5 flights in a row came without a card'),
+            ('refused cards', srv.collector(status={str(ids[3]): 'no_v4', str(ids[20]): 'no_v4'}, hang_after=21),
+             'the canary was stopped: 2 flights came without a card while their other parts came (refused card requests)'),
+            ('page errors', srv.collector(status={str(f): 'page_error' for f in ids[:3]}),
+             'the canary was stopped: three record pages in a row did not open'),
+            ('refused requests', srv.collector(rejected=3, v4_failed=1, exit=18),
+             'DJI refused 2 request(s) that were not V4 downloads (sources_rejected=3, sources_v4_failed=1)'),
             ('foreign outbox', srv.collector(report_outbox=srv.prod_outbox, hang_after=1),
              "the canary was stopped: the collector configuration does not show 'outbox_dir'"),
             ('not accepted', srv.collector(accepted='false', exit=19), 'the collector ended with exit 19'),
@@ -2540,9 +2553,11 @@ class W1InPowerShell(unittest.TestCase):
                     self.assertNotEqual(expected['prod_log'], before['prod_log'])
                 self.assertStopBeforeRecalc(out, message, expected)
                 if 'stopped' in message:
-                    self.assertFalse(self.record['finished'])
                     self.assertIn('STOPPED_BY_THIS_BLOCK=', out)
                     self.assertTrue(self.lock_is_free())
+                if collector.get('hang_after'):
+                    # Stopped in the middle of the walk: killed, not finished.
+                    self.assertFalse(self.record['finished'])
                 if name == 'production write':
                     os.remove(srv.prod_db)
                     srv.build(srv.prod_db)
@@ -2589,7 +2604,7 @@ class W1InPowerShell(unittest.TestCase):
         self.pristine_rows()
         before = srv.state()
         self.mutant(re.search(r"(?m)^  \$stopMarkers  = @\(.*\)$", srv.block()).group(0), '  $stopMarkers  = @()')
-        out = self.run_w1(collector=srv.collector(log_after={'5': ['Flight %d: HTTP 429 Too Many Requests' % srv.ids[4]]}))
+        out = self.run_w1(collector=srv.collector(log_after={'5': [DESCRIPTOR_LINE % (srv.ids[4], 429, 135)]}))
         self.assertIn('COLLECTOR VERDICT    STOP (HTTP_429)', out)
         self.assertStopBeforeRecalc(out, 'collector-stats exit 6 (6 = DJI stop markers) -- nothing is recalculated', before)
 

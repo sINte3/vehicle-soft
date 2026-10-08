@@ -150,6 +150,7 @@ def main(argv):
         for name in ('pending', 'sent'):
             os.makedirs(os.path.join(outbox, name), exist_ok=True)
         queued = []
+        page_errors_in_row = 0
         for n, fid in enumerate(ids):
             status = sc.get('status', {}).get(str(fid), 'card')
             if status == 'stop_here':
@@ -157,8 +158,21 @@ def main(argv):
             visited += 1
             if status == 'page_error':
                 page_errors += 1
+                page_errors_in_row += 1
                 log('Flight %d: the record page did not open (TimeoutError)' % fid, 'ERROR')
+                if page_errors_in_row == 3:
+                    # The pinned collector stops itself here (sources.py, browser_looks_dead).
+                    log('Three record pages in a row did not open; the browser is not usable. '
+                        'Stopping after %d of %d flight(s).' % (n + 1, len(ids)), 'ERROR')
+                    break
+            elif status == 'nothing':
+                # The page opened and nothing came (sources.py: 'nothing captured').
+                page_errors_in_row = 0
+                log('Flight %d: NO_V4 (nothing captured)' % fid)
             else:
+                # 'card', or 'no_v4': route and descriptor came, the card did not
+                # (what a refused card request leaves).
+                page_errors_in_row = 0
                 items = 'airlines, card, route, v4' if status == 'card' else 'airlines, route'
                 log('Flight %d: captured route (%d bytes)' % (fid, 429))
                 log('Flight %d: V4 (%s)' % (fid, items) if status == 'card'
@@ -198,11 +212,13 @@ def main(argv):
     if not sc.get('no_summary'):
         log('RUN SUMMARY mode=sources dry_run=false snapshot_run_id=%s period_from=- '
             'sources_requested=%d sources_visited=%d sources_card=%d '
-            'sources_page_errors=%d sources_rejected=0 sources_descriptor_refused=0 '
+            'sources_v4_failed=%d sources_page_errors=%d sources_rejected=%d '
+            'sources_descriptor_refused=0 '
             'sources_envelopes_sent=%d sources_batch_accepted=%s sources_new=%d '
             'sources_ingest_errors=%d exit=%d'
             % (run_id, len(ids), sc.get('report_visited', visited), cards,
-               page_errors, cards, sc.get('accepted', 'true'), sc.get('report_new', new),
+               int(sc.get('v4_failed', 0)), page_errors, int(sc.get('rejected', 0)),
+               cards, sc.get('accepted', 'true'), sc.get('report_new', new),
                int(sc.get('ingest_errors', 0)), code))
     flush_file_log(sc.get('also_log'))
     record['finished'] = True

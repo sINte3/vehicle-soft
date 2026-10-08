@@ -157,9 +157,10 @@ online-копии production** (шаг B0 ниже): сентябрь и авг�
 * **Остановка, а не обход защиты.** Признаки 403/429, капча, истёкшая
   сессия или остановка браузера → `collector-stats` даёт код 6, пилот
   останавливается. Сам сборщик эти признаки не распознаёт, поэтому W1
-  читает его журнал во время сбора. При признаке, трёх вылетах подряд без
-  карточки или превышении времени W1 обрывает свой прогон. Номера взамен
-  неудачных не подставляются.
+  читает его журнал во время сбора. При признаке, пяти вылетах подряд без
+  карточки или превышении времени W1 обрывает свой прогон. Отказы на
+  карточку пин пишет только в счётчик `sources_rejected`; по нему W1
+  останавливается до пересчёта. Номера взамен неудачных не подставляются.
 * **Миграций, таблиц, колонок нет.** Манифест и отчёты — файлы.
 
 ## 6. Замороженная выборка
@@ -1841,14 +1842,26 @@ python -m drone_collector.main --sources --ids-file <копия canary_ids.txt> 
 выходит с кодом 24, и блок останавливается: не ждёт и никого не убивает.
 
 **Надзор во время сбора.** Сам сборщик 403, 429 и капчу не распознаёт: под
-защитой DJI он продолжил бы обход по 70 с на вылет. Блок читает журнал
-сборщика построчно и останавливает свой прогон, если:
+защитой DJI он продолжил бы обход по 70 с на вылет. Более того, отказ на
+запрос карточки, дескриптора или V4 (не-2xx или код ошибки в теле) код пина
+не пишет в журнал строкой. Он только прибавляет счётчик `sources_rejected`
+в итоговой строке. Поэтому блок читает журнал сборщика построчно и
+останавливает свой прогон, если:
 
 * строка конфигурации сборщика показывает не приёмник `:5051`, не свою
   очередь, не сессию production или не `headless`;
-* в журнале признак отказа: сессия, 403, 429, капча или проверка «не робот»,
-  неработающий браузер;
-* три вылета подряд пришли без карточки;
+* в журнале признак отказа. Пин пишет такие строки при истёкшей сессии, при
+  прямом запросе дескриптора (`answered HTTP 403/429`) и при неработающем
+  браузере (три страницы подряд не открылись). Капча и «не робот» — на
+  случай, если такая строка появится. Число байт вида `(429 bytes)` —
+  не ответ DJI и маскируется;
+* второй вылет, у которого маршрут, дескриптор или V4 пришли, а карточка
+  нет. Это единственный след отказа на запрос карточки во время обхода;
+* три страницы записи подряд не открылись;
+* пять вылетов подряд пришли без карточки (по любой причине). Пять, а не
+  три: до 10 из 50 без карточки — ещё результат (правило решения), а вылеты
+  идут по порядку номеров, соседние похожи. При 20 % случайных пропусков
+  ложная остановка случится в 1,2 % прогонов (при трёх подряд — в 27 %);
 * прогон длится больше 100 минут.
 
 Остановка — `taskkill /T` только дерева этого процесса. Замок отпускает ОС;
@@ -1872,9 +1885,12 @@ DJI, оставляет площадку как была, и повторная 
   него;
 * `RUN SUMMARY`: запрошено и посещено 50, площадка приняла всё, ошибок
   приёма 0;
-* `collector-stats` по журналу этого прогона: код 0, посещено 50. Строки
-  «captured … (N bytes)» из разбора исключены — их байты ложно срабатывали
-  на признак 429;
+* `sources_rejected` не больше `sources_v4_failed`. Отказанная загрузка V4
+  оставляет свой статус V4_FAILED и измеряется. Любой другой отказ —
+  карточка, дескриптор, маршрут — признак защиты, пересчёта нет. В живых
+  прогонах площадки 20 и 24.09.2026 было `sources_rejected=0`;
+* `collector-stats` по журналу этого прогона: код 0, посещено 50. Число
+  байт в строках замаскировано так же, как при надзоре;
 * сессия production не изменилась;
 * прогон записан в журнал чекаута пилота и не записан в журнал production;
 * база production (`mode=ro`, только счётчики): ни одной ревизии с
@@ -1980,6 +1996,8 @@ Production в остальном только читается.
   $maxCollectMin = 100
   $minGapMin    = 130
   $minFetched   = 40
+  $maxNoCardRun = 5
+  $maxCardRefused = 2
   $simplifyBelow = 0.20
   $stamp        = Get-Date -Format 'yyyyMMdd_HHmmss'
   $planDir      = Join-Path $baseline 'plan'
@@ -2263,6 +2281,8 @@ if __name__ == '__main__':
     $stopWhy = $null
     $configSeen = $false
     $noCard = 0
+    $pageErr = 0
+    $cardRefused = 0
     $lines = New-Object System.Collections.ArrayList
     try {
       $next = $proc.StandardOutput.ReadLineAsync()
@@ -2285,13 +2305,24 @@ if __name__ == '__main__':
           }
         }
         if (($line -match ': Flight \d+: ') -and (-not $configSeen)) { $stopWhy = 'a flight was visited before the configuration line was seen' }
-        if ($line -notmatch ': Flight \d+: captured \w+ \(\d+ bytes\)') {
-          foreach ($m in $stopMarkers) { if ($line -match $m[1]) { $stopWhy = 'stop marker ' + $m[0] + ' in the collector log' } }
-        }
+        # [REASON]: a byte count such as "(429 bytes)" is not a DJI answer; "HTTP 429" still is.
+        $scan = $line -replace '\(\d+ bytes\)', '(N bytes)'
+        foreach ($m in $stopMarkers) { if ($scan -match $m[1]) { $stopWhy = 'stop marker ' + $m[0] + ' in the collector log' } }
         if ($line -match ': Flight \d+: (V4|NO_V4_URL|NO_V4|V4_FAILED) \((.*)\)\s*$') {
-          if (@($Matches[2] -split ',\s*') -contains 'card') { $noCard = 0 } else { $noCard++ }
-        } elseif ($line -match ': Flight \d+: the record page did not open') { $noCard++ }
-        if ($noCard -ge 3) { $stopWhy = 'three flights in a row came without a card' }
+          $parts = @($Matches[2] -split ',\s*')
+          $pageErr = 0
+          if ($parts -contains 'card') { $noCard = 0 } else {
+            $noCard++
+            # [REASON]: the collector logs no line for a refused card request. A flight whose
+            # route, descriptor or V4 came but whose card did not is the only sign of it.
+            if (@($parts | Where-Object { @('route', 'airlines', 'v4') -contains $_ }).Count -gt 0) { $cardRefused++ }
+          }
+        } elseif ($line -match ': Flight \d+: the record page did not open') { $noCard++; $pageErr++ }
+        if ($pageErr -ge 3) { $stopWhy = 'three record pages in a row did not open' }
+        if ($cardRefused -ge $maxCardRefused) { $stopWhy = "$maxCardRefused flights came without a card while their other parts came (refused card requests)" }
+        # [REASON]: five, not three: up to 10 of 50 missing cards is still a result (minFetched),
+        # and the ids are visited in order, so neighbours are alike.
+        if ($noCard -ge $maxNoCardRun) { $stopWhy = "$maxNoCardRun flights in a row came without a card" }
         if ($stopWhy) { break }
         $next = $proc.StandardOutput.ReadLineAsync()
       }
@@ -2305,7 +2336,7 @@ if __name__ == '__main__':
     $code = $proc.ExitCode
     Set-Content -LiteralPath (Join-Path $w1 'collector_exit.txt') -Value ([string]$code) -Encoding ASCII
     $wall = [math]::Round($clock.Elapsed.TotalSeconds)
-    Write-Output ("COLLECTOR_EXIT=" + $code + " WALL_SECONDS=" + $wall + $(if ($stopWhy) { " STOPPED_BY_THIS_BLOCK=" + $stopWhy } else { '' }))
+    Write-Output ("COLLECTOR_EXIT=" + $code + " WALL_SECONDS=" + $wall + " CARD_REFUSED_FLIGHTS=" + $cardRefused + $(if ($stopWhy) { " STOPPED_BY_THIS_BLOCK=" + $stopWhy } else { '' }))
 
     Write-Output '== 3. Collector gate'
     $sessionAfter = Get-FileState $session
@@ -2315,7 +2346,7 @@ if __name__ == '__main__':
     $sumLine = @($lines | Where-Object { $_ -match 'RUN SUMMARY ' } | Select-Object -Last 1)
     if ($sumLine.Count -eq 1) { foreach ($m in [regex]::Matches(($sumLine[0] -replace '^.*RUN SUMMARY ', ''), '(\w+)=("[^"]*"|\S+)')) { $summary[$m.Groups[1].Value] = $m.Groups[2].Value.Trim('"') } }
     $runId = [string]$summary['snapshot_run_id']
-    Write-Output ("RUN_SUMMARY run_id=" + $runId + " requested=" + $summary['sources_requested'] + " visited=" + $summary['sources_visited'] + " card=" + $summary['sources_card'] + " rejected=" + $summary['sources_rejected'] + " page_errors=" + $summary['sources_page_errors'] + " descriptor_refused=" + $summary['sources_descriptor_refused'] + " sent=" + $summary['sources_envelopes_sent'] + " accepted=" + $summary['sources_batch_accepted'] + " new=" + $summary['sources_new'] + " ingest_errors=" + $summary['sources_ingest_errors'])
+    Write-Output ("RUN_SUMMARY run_id=" + $runId + " requested=" + $summary['sources_requested'] + " visited=" + $summary['sources_visited'] + " card=" + $summary['sources_card'] + " rejected=" + $summary['sources_rejected'] + " v4_failed=" + $summary['sources_v4_failed'] + " page_errors=" + $summary['sources_page_errors'] + " descriptor_refused=" + $summary['sources_descriptor_refused'] + " sent=" + $summary['sources_envelopes_sent'] + " accepted=" + $summary['sources_batch_accepted'] + " new=" + $summary['sources_new'] + " ingest_errors=" + $summary['sources_ingest_errors'])
     if ($runId) {
       $ourLog = [System.IO.Path]::Combine($pkg, 'logs', 'collector.log')
       $inPilot = (Test-Path -LiteralPath $ourLog) -and [bool](Select-String -LiteralPath $ourLog -SimpleMatch -Pattern $runId -Quiet)
@@ -2333,11 +2364,14 @@ if __name__ == '__main__':
     if (-not $runId) { throw 'STEP FAILED: the collector printed no RUN SUMMARY with a run id' }
     if (-not $inPilot -or $inProd) { throw "STEP FAILED: the run was not logged by the pilot checkout only (pilot=$inPilot production=$inProd)" }
     if (($summary['sources_requested'] -ne '50') -or ($summary['sources_visited'] -ne '50')) { throw "STEP FAILED: the collector requested $($summary['sources_requested']) and visited $($summary['sources_visited']) of 50" }
+    # [REASON]: card, airlines and route refusals (403, 429, an error code in the body) reach the
+    # log only as this sum. A refused V4 download leaves its own V4_FAILED status and is measured.
+    if ([int]$summary['sources_rejected'] -gt [int]$summary['sources_v4_failed']) { throw "STEP FAILED: DJI refused $([int]$summary['sources_rejected'] - [int]$summary['sources_v4_failed']) request(s) that were not V4 downloads (sources_rejected=$($summary['sources_rejected']), sources_v4_failed=$($summary['sources_v4_failed'])) -- nothing is recalculated; evidence kept in $w1" }
     if (($summary['sources_batch_accepted'] -ne 'true') -or ($summary['sources_ingest_errors'] -ne '0')) { throw "STEP FAILED: staging did not accept every source (accepted=$($summary['sources_batch_accepted']) errors=$($summary['sources_ingest_errors']))" }
     $statsLog = Join-Path $w1 'collector_for_stats.log'
-    # [REASON]: "Flight N: captured card (429 bytes)" carries no DJI answer, but the
-    # HTTP_429 marker of collector-stats matches its byte count; those lines are left out.
-    [System.IO.File]::WriteAllLines($statsLog, [string[]]@($lines | Where-Object { $_ -notmatch ': Flight \d+: captured \w+ \(\d+ bytes\)' }), (New-Object System.Text.UTF8Encoding($false)))
+    # [REASON]: "Flight N: captured card (429 bytes)" carries no DJI answer, but the HTTP_429
+    # marker of collector-stats matches its byte count; byte counts are masked as in the live watch.
+    [System.IO.File]::WriteAllLines($statsLog, [string[]]@($lines | ForEach-Object { $_ -replace '\(\d+ bytes\)', '(N bytes)' }), (New-Object System.Text.UTF8Encoding($false)))
     $statsJson = Join-Path $w1 'collector_stats.json'
     $statsOut = @(& $python tools\dji_card_coverage_pilot.py collector-stats --log $statsLog --ids $idsCopy --out $statsJson)
     $statsCode = $LASTEXITCODE
