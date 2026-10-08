@@ -211,6 +211,15 @@ def main(argv):
                         fh.write('{}')
             for line in sc.get('log_after', {}).get(str(n + 1), []):
                 log(line, 'WARNING')
+            burst = sc.get('burst_after', {}).get(str(n + 1), [])
+            if burst:
+                # Several lines in one write: the later ones are surely in the pipe when the block
+                # reads the first (what a stopped run printed after the stop sign).
+                stamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                text = ''.join('%s INFO collector: %s\n' % (stamp, l) for l in burst)
+                sys.stdout.write(text)
+                sys.stdout.flush()
+                LOG.extend(text.splitlines())
             if str(n + 1) == str(sc.get('hang_after')):
                 time.sleep(float(sc.get('hang_s', 120)))
             if sc.get('pace_s'):

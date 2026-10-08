@@ -3484,20 +3484,27 @@ class W2InPowerShell(unittest.TestCase):
         first_stem = os.path.join(self.tmp, 'w2_first_window')
         write(first_stem + '.ps1', self.text())
         write(first_stem + '.scenario.json', json.dumps(srv.scenario()))
-        write(srv.fake, json.dumps(self.collector(hang_after=2, hang_s=25)))
+        write(srv.fake, json.dumps(self.collector(hang_after=2, hang_s=60)))
         env = {k: v for k, v in os.environ.items()
                if not re.match(r'(?i)(DJI_|DRONE_|VEHICLE_SOFT_|PLAYWRIGHT_|PYTHON|HTTPS?_PROXY$|NO_PROXY$)', k)}
         env.update({'CARD_PILOT_FAKE_COLLECTOR': srv.fake, 'PLAYWRIGHT_BROWSERS_PATH': srv.browsers})
         if os.name != 'nt':
             env['TZ'] = W1_TZ
+        # [REASON]: the first window's output goes to a file, not a pipe: nobody reads it while it
+        # runs, and a Windows pipe buffer fills long before the first flight, blocking the window.
+        first_log = open(first_stem + '.out.txt', 'w', encoding='utf-8')
+        self.addCleanup(first_log.close)
         first = subprocess.Popen([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', W1_HARNESS,
                                   '-BlockFile', first_stem + '.ps1', '-ScenarioFile', first_stem + '.scenario.json',
                                   '-CallsFile', first_stem + '.calls.txt'],
-                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+                                 stdout=first_log, stderr=subprocess.STDOUT, env=env)
         # [REASON]: killing the first window would leave its collector holding the shared lock;
-        # it is let finish (a 25 s pause, then S2) whatever this test finds.
-        self.addCleanup(lambda: first.poll() is not None or first.communicate(timeout=600))
-        for _ in range(240):
+        # it is let finish (a 60 s pause, then S2) whatever this test finds. The Windows runner
+        # needs minutes for the checks before the first flight.
+        self.addCleanup(lambda: first.poll() is not None or first.wait(timeout=900))
+        for _ in range(1200):
+            if first.poll() is not None:
+                self.fail('the first window ended early: ' + read(first_stem + '.out.txt'))
             runs = self.runs()
             if runs and os.path.exists(os.path.join(runs[0], 'supervisor.txt')) and \
                     len(re.findall(r': Flight \d+: V4', read(os.path.join(runs[0], 'collector_stdout.log')))) >= 2:
@@ -3512,9 +3519,20 @@ class W2InPowerShell(unittest.TestCase):
         self.assertIn('W2_STATE=RUNNING', out)
         self.assertNotIn('taskkill', out.split('LOG FILE:')[0].split('== 1.')[1])
         self.assertNotIn('PARTIAL_W2_STATE', out)
-        first_out = first.communicate(timeout=600)[0]
+        first.wait(timeout=900)
+        first_log.close()
+        first_out = read(first_stem + '.out.txt')
         self.assertEqual(first_out.splitlines()[-1], 'STEP=PASS', first_out)
         self.assertEqual(len(srv.collector_runs()), 1)
+
+    def test_what_a_stopped_collector_printed_is_kept(self):
+        """The stop sign and one more flight arrive together: that flight counts as visited."""
+        ids = sorted(self.remaining)
+        burst = [DESCRIPTOR_LINE % (ids[1], 429, 135), 'Flight %d: V4 (airlines, card, route, v4)' % ids[2]]
+        out = self.run_w2(collector=self.collector(hang_after=2, burst_after={'2': burst}))
+        self.assertStopBeforeRecalc(out, 'W2 was stopped: stop marker HTTP_429')
+        self.assertIn('PARTIAL_W2_STATE visited=3 of 10 complete=3 ', out)
+        self.assertIn('Flight %d: V4 (airlines, card, route, v4)' % ids[2], read(os.path.join(self.runs()[0], 'collector_stdout.log')))
 
     def test_time_limit_holds_while_the_collector_keeps_talking(self):
         """A slow DJI that answers every second never leaves 5 s of silence; the limit still holds."""
