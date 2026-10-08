@@ -3615,9 +3615,16 @@ class W2InPowerShell(unittest.TestCase):
         # the site started again first, the recalculation repeats as unchanged.
         stopped = srv.scenario()
         stopped['Services']['TransportReportStaging']['Status'] = 'Stopped'
+        # While S2 runs, the run carries this window's supervisor marker (a second window waits).
+        seen = os.path.join(self.tmp, 'supervisor_seen.txt')
+        hook = os.path.join(self.tmp, 'copy_supervisor.py')
+        write(hook, 'import shutil, sys\nshutil.copyfile(sys.argv[1], sys.argv[2])\n')
+        stopped['OnStopStaging'] = [sys.executable, hook, os.path.join(run, 'supervisor.txt'), seen]
         out = self.run_w2(sc=stopped, services_back=False)
         self.assertEqual(out.splitlines()[-1], 'STEP=PASS', out)
         self.assertIn('MODE=resume S2 of ' + run, out)
+        self.assertRegex(read(seen), r'^\d+ \d+\n$')
+        self.assertFalse(os.path.exists(os.path.join(run, 'supervisor.txt')))
         self.assertIn('STAGING_SITE_STARTED_AGAIN=the interrupted S2 of this run had left it stopped', out)
         self.assertRegex(out, r'CHANGED_SINCE_GATE flights=\d+ outside_w2=0 w1_canary=0 raw=1 decisions=1 migrations=1 sources=1')
         self.assertIn('RECALC_APPLY flights_in_period=10 calc_writes=10 (unchanged=10)', out)
