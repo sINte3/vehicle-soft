@@ -70,7 +70,32 @@ alpha cannot touch -- up to 8.8 ha worked on ground that has no geozone at
 all, and tracks losing up to 708 minutes of motion in a day. Those are
 input defects, both measured and reported by this module, not method error.
 
-To reproduce the old behaviour exactly, pass alpha_m=ALPHA_M explicitly.
+To reproduce the old behaviour exactly, pass alpha_m=ALPHA_M explicitly; such
+a result is labelled `fixed-alpha-10m`, never as one of the adaptive methods.
+
+THE OVERFLOW CAP -- the method since 2026-10-07 (A7), and its warrant.
+On a day of slow road driving the "pass alongside" the spacing estimator finds
+is the next road, hundreds of metres away, and alpha = 1.2 x that spacing
+stitched everything between the roads into one site: 805 ha on six September
+days, 285 ha for a tractor that never entered a field. The rule: when the
+day's median spacing is above SPACING_CAP_M, take the median again over the
+same votes that are not farther than the cap; none -- no spacing, the fixed
+10 m. It was written down on 2026-10-02 BEFORE any run on data, with its
+acceptance conditions (docs/GPS_PLAN_FAKT_VISION_ROADMAP.md section 2.11),
+and judged on 02-07.10 by `tools/gps_alpha_replay.py`:
+
+  32 hand-measured works (27.07 and 12.08)   none changed, bit for bit
+  5 198 machine-days of September            no invariant broken; the
+                                             replay reproduced the database
+                                             on all 5 198
+  the six days of alpha 300-981 m            804.76 ha -> 1.58 ha
+  16 days the owner looked at in the KML     974.30 ha -> 2.37 ha; the
+                                             owner: none of it was field work
+
+The owner adopted it on 2026-10-07. Below the cap a day is bit-identical to
+the previous method; above it nothing is ever added. `overflow_cap=False`
+reproduces the previous method exactly, and its results carry
+PREVIOUS_METHOD_VERSION, so a row always names the method that made it.
 
 WHAT THIS MODULE DOES NOT DO
 It contains no business rules. It does not decide what counts as work rather
@@ -123,6 +148,19 @@ PASS_SPACING_MIN_POINTS = 20
 PASS_SPACING_SAMPLES = 400
 PASS_SPACING_NEIGHBOURS = 80
 
+# [REASON]: A7, pre-registered 2026-10-02 (docs/GPS_PLAN_FAKT_VISION_ROADMAP.md
+# section 2.11), the method since the owner adopted it on 2026-10-07 (see the
+# module docstring). On a day of slow road driving
+# the "pass alongside" is the next road: a median spacing of 252-818 m, alpha
+# 302-981 m, billed everything between the roads (805 ha on six September
+# days, `tools/gps_alpha_report.py` on production 02.10). 37.2 m
+# is the widest pass spacing the method ever measured on a work with a hand
+# measurement (27.07 set, spraying); the cap is that times the engine's own
+# margin, 1.2 -- the widest alpha ever checked against a hand measurement. No
+# implement width is involved: the owner rejected it as a notion.
+WIDEST_VALIDATED_SPACING_M = 37.2
+SPACING_CAP_M = ALPHA_SPACING_FACTOR * WIDEST_VALIDATED_SPACING_M
+
 # [REASON]: work covers ground REPEATEDLY -- the machine comes back alongside
 # where it has already been, pass after pass. Transit crosses ground once. So
 # for every point ask: is there another point of the same site within an
@@ -148,7 +186,23 @@ RETURN_SAMPLES = 400
 # anything; the engine only needs some floor to keep road slivers out.
 MIN_WORK_AREA_HA = 0.3
 
-METHOD_VERSION = "adaptive-alpha-2026-08-12"
+# [REASON]: a row names the method that made it, so a hectare stays
+# reproducible after the method changes. The previous version is kept because
+# `overflow_cap=False` still computes it -- recomputing a day that way must
+# not label the result as the new method.
+METHOD_VERSION = "overflow-cap-2026-10-07"
+PREVIOUS_METHOD_VERSION = "adaptive-alpha-2026-08-12"
+
+
+def method_version(overflow_cap, alpha_m=None):
+    """The version string of the method a computation with these switches ran.
+
+    A pinned alpha is neither adaptive method -- no spacing is measured and the
+    cap never runs -- so its result is named by the alpha itself.
+    """
+    if alpha_m is not None:
+        return "fixed-alpha-%gm" % alpha_m
+    return METHOD_VERSION if overflow_cap else PREVIOUS_METHOD_VERSION
 
 # [REASON]: the tracker writes at most every 30 s while moving (parameter
 # 10050) and transmits every 60 s (10055), so 5 minutes between two CONSECUTIVE
@@ -401,24 +455,15 @@ def track_quality(timestamps, speeds, points_used=0, points_xy=None):
                         span_seconds=span, gps_jumps=jumps)
 
 
-def pass_spacing(points_xy, detour_ratio=PASS_SPACING_DETOUR_RATIO):
-    """Distance between neighbouring passes, measured from the track itself.
+def pass_votes(points_xy, detour_ratio=PASS_SPACING_DETOUR_RATIO):
+    """The votes `pass_spacing` takes the median of, one per sampled point.
 
-    For a sample of points, find the nearest point that lies on a DIFFERENT
-    pass, and take the median of those distances. A different pass is
-    recognised by the detour: driving there along the track is at least
-    `detour_ratio` times further than the straight line to it.
-
-    Returns None when the cloud is too small, or when no neighbour looks like
-    another pass at all -- a single straight run has no spacing to measure.
-    The caller then falls back to the fixed alpha rather than guess.
-
-    [REASON]: the implement width is NEVER used, here or anywhere else. It is
-    unknown, the machine changes implements, and every method built on it
-    failed in this project. The spacing is a property of the track.
+    A vote is the distance from a sampled point to its nearest point on a
+    DIFFERENT pass; a sampled point that finds none among its neighbours casts
+    no vote. Empty when the cloud is too small to measure anything.
     """
     if len(points_xy) < PASS_SPACING_MIN_POINTS:
-        return None
+        return []
     pts = np.asarray(points_xy, dtype=float)
     # Distance travelled along the track up to each point.
     steps = np.linalg.norm(np.diff(pts, axis=0), axis=1)
@@ -435,7 +480,63 @@ def pass_spacing(points_xy, detour_ratio=PASS_SPACING_DETOUR_RATIO):
             if abs(along[j] - along[i]) >= detour_ratio * distance:
                 found.append(float(distance))
                 break
+    return found
+
+
+def pass_spacing(points_xy, detour_ratio=PASS_SPACING_DETOUR_RATIO):
+    """Distance between neighbouring passes, measured from the track itself.
+
+    For a sample of points, find the nearest point that lies on a DIFFERENT
+    pass, and take the median of those distances. A different pass is
+    recognised by the detour: driving there along the track is at least
+    `detour_ratio` times further than the straight line to it.
+
+    Returns None when the cloud is too small, or when no neighbour looks like
+    another pass at all -- a single straight run has no spacing to measure.
+    The caller then falls back to the fixed alpha rather than guess.
+
+    [REASON]: the implement width is NEVER used, here or anywhere else. It is
+    unknown, the machine changes implements, and every method built on it
+    failed in this project. The spacing is a property of the track.
+    """
+    found = pass_votes(points_xy, detour_ratio)
     return float(np.median(found)) if found else None
+
+
+def pass_spacing_on_overflow(points_xy, cap_m=SPACING_CAP_M):
+    """`pass_spacing`, unless it says the pass alongside is beyond belief.
+
+    The A7 rule (roadmap 2.11), the method since 2026-10-07. The plain
+    median is kept as it is whenever it is at most `cap_m` -- such a day is
+    bit-identical to the previous method.
+    Above it, the median is taken again over the same votes that are at most
+    `cap_m`; no such vote means no pass alongside was found, and None sends the
+    caller to the fixed alpha, exactly as for a cloud too small to measure.
+
+    [REASON]: the cap applies only on overflow, not to every day. On a sprayer
+    day with refill trips the votes form three groups -- retraces of one road
+    (a few metres), the field (the spacing), roads far apart (hundreds of
+    metres) -- and today's median sits in the field BECAUSE the far group
+    balances the retraces. Cutting the far group on such a day handed the
+    median to the retraces and lost the field (34 of 360 synthetic days);
+    cutting it only where today's answer is already out of range cannot touch
+    a day whose answer was believable.
+    """
+    found = pass_votes(points_xy)
+    today = float(np.median(found)) if found else None
+    if today is None or today <= cap_m:
+        return today
+    kept = [vote for vote in found if vote <= cap_m]
+    return float(np.median(kept)) if kept else None
+
+
+def _adaptive_alpha(points_xy, overflow_cap):
+    """(spacing, alpha) by the adaptive rule; the A7 cap when asked for."""
+    spacing = (pass_spacing_on_overflow(points_xy) if overflow_cap
+               else pass_spacing(points_xy))
+    alpha = (max(ALPHA_M, ALPHA_SPACING_FACTOR * spacing)
+             if spacing is not None else ALPHA_M)
+    return spacing, alpha
 
 
 def return_share(points_xy, radius_m=RETURN_RADIUS_M, along_track_m=RETURN_ALONG_M):
@@ -467,19 +568,25 @@ def return_share(points_xy, radius_m=RETURN_RADIUS_M, along_track_m=RETURN_ALONG
     return returned / looked if looked else None
 
 
-def worked_area(track, contour, contour_id=None, alpha_m=None):
+def worked_area(track, contour, contour_id=None, alpha_m=None,
+                overflow_cap=True):
     """The method for one machine, one interval, one contour.
 
     `track` is a sequence of (timestamp_seconds, lon, lat, speed_kmh).
     `contour` is a shapely Polygon already in UTM 41N.
     `alpha_m` pins alpha to a fixed value; the default None selects the
     adaptive rule max(ALPHA_M, ALPHA_SPACING_FACTOR x measured spacing).
+    `overflow_cap` -- the A7 rule (`pass_spacing_on_overflow`), the method
+    since 2026-10-07; False reproduces the previous method exactly, and the
+    result then carries PREVIOUS_METHOD_VERSION.
     """
+    version = method_version(overflow_cap, alpha_m)
     if contour is None or not track:
         return WorkArea(contour_id, 0.0, None,
                         track_quality([0.0], [0.0]) if not track
                         else track_quality([r[0] for r in track],
-                                           [r[3] for r in track]))
+                                           [r[3] for r in track]),
+                        method_version=version)
 
     timestamps = [r[0] for r in track]
     speeds = [r[3] for r in track]
@@ -491,21 +598,19 @@ def worked_area(track, contour, contour_id=None, alpha_m=None):
     quality = track_quality(timestamps, speeds, points_used=len(used),
                             points_xy=list(zip(xs, ys)))
     if not used:
-        return WorkArea(contour_id, 0.0, None, quality)
+        return WorkArea(contour_id, 0.0, None, quality, method_version=version)
 
     if alpha_m is None:
-        spacing = pass_spacing(used)
-        alpha = (max(ALPHA_M, ALPHA_SPACING_FACTOR * spacing)
-                 if spacing is not None else ALPHA_M)
+        spacing, alpha = _adaptive_alpha(used, overflow_cap)
     else:
         spacing, alpha = None, alpha_m
 
     shape = alpha_shape(densify(used), alpha)
     if shape is None:
-        return WorkArea(contour_id, 0.0, None, quality, alpha, spacing)
+        return WorkArea(contour_id, 0.0, None, quality, alpha, spacing, version)
     clipped = shape.intersection(contour)
     return WorkArea(contour_id, clipped.area / 10000.0, clipped, quality,
-                    alpha, spacing)
+                    alpha, spacing, version)
 
 
 def repair_polygon(polygon):
@@ -538,7 +643,8 @@ def repair_polygon(polygon):
     return shapely.union_all(parts)
 
 
-def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None):
+def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None,
+               overflow_cap=True):
     """Every patch of ground worked in this interval -- geozone or not.
 
     This is the primary entry point, and it deliberately does NOT need a
@@ -556,6 +662,10 @@ def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None)
     most of it, if any. It never filters and never clips. A site with
     contour_id None is real work on unregistered ground, and the caller must
     show it as such -- never as zero.
+
+    `overflow_cap` -- the A7 rule (`pass_spacing_on_overflow`), the method
+    since 2026-10-07; False reproduces the previous method exactly, and the
+    sites then carry PREVIOUS_METHOD_VERSION.
 
     Returns (sites, quality), sites ordered by area, largest first.
     """
@@ -576,9 +686,7 @@ def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None)
         return [], quality
 
     if alpha_m is None:
-        spacing = pass_spacing(points)
-        alpha = (max(ALPHA_M, ALPHA_SPACING_FACTOR * spacing)
-                 if spacing is not None else ALPHA_M)
+        spacing, alpha = _adaptive_alpha(points, overflow_cap)
     else:
         spacing, alpha = None, alpha_m
 
@@ -610,7 +718,8 @@ def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None)
                 overlap = probe.intersection(geom).area
                 if overlap > best:
                     best, contour_id = overlap, named[int(position)]
-        sites.append(WorkArea(contour_id, area_ha, piece, quality, alpha, spacing))
+        sites.append(WorkArea(contour_id, area_ha, piece, quality, alpha, spacing,
+                              method_version(overflow_cap, alpha_m)))
     sites.sort(key=lambda s: -s.area_ha)
     return sites, quality
 

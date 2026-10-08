@@ -1,4 +1,4 @@
-"""GPS-2 frozen area method: independent reproduction and self-check.
+r"""GPS-2 frozen area method: independent reproduction and self-check.
 
 Reimplements, from its written specification alone, the frozen area pipeline
 of the GPS plan-fact track (docs/PLAN.md phase 2, GPS-2; docs/tracks/
@@ -50,7 +50,7 @@ Two modes:
     C2 4.56 ha vs 8.51 (FAIL) and C4 0.256 (FAIL); alpha 60 m -> C3 1.222
     (FAIL). A check that cannot fail proves nothing.
 
-Inputs (NOT in the repository; the owner keeps them in C:\\diag\\wialon):
+Inputs (NOT in the repository; the owner keeps them in C:\diag\wialon):
     verify_tracks.csv   tracks of the verification day (wialon_probe4.py)
     wialon_zones.json   17 812 zones with geometry (wialon_probe2.py)
     --tracks NAME       use another tracks csv (same columns) for new sets

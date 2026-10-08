@@ -28,11 +28,16 @@ import json
 import math
 import os
 import unittest
+import unittest.mock
 
+import gps.area as area
 from gps.area import (ALPHA_M, ALPHA_SPACING_FACTOR, DENSIFY_MAX_SEG_M,
-                      MOTION_GAP_SECONDS, SPEED_MAX_KMH, alpha_shape,
+                      METHOD_VERSION, MOTION_GAP_SECONDS,
+                      PREVIOUS_METHOD_VERSION, SPACING_CAP_M, SPEED_MAX_KMH,
+                      WIDEST_VALIDATED_SPACING_M, alpha_shape,
                       candidate_contours, densify, joint_work_check,
-                      pass_spacing, polygon_from_wialon, return_share, to_utm,
+                      pass_spacing, pass_spacing_on_overflow, pass_votes,
+                      polygon_from_wialon, return_share, to_utm,
                       track_quality, work_sites, worked_area)
 
 FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
@@ -319,7 +324,7 @@ class AdaptiveAlphaTests(unittest.TestCase):
                              contour)
         self.assertGreater(result.alpha_used_m, ALPHA_M)
         self.assertIsNotNone(result.pass_spacing_m)
-        self.assertEqual(result.method_version, "adaptive-alpha-2026-08-12")
+        self.assertEqual(result.method_version, "overflow-cap-2026-10-07")
 
     def test_hole_survives_the_adaptive_rule(self):
         """The danger of the rule, guarded explicitly.
@@ -379,20 +384,21 @@ class SlowRoadsTests(unittest.TestCase):
     the roads. These two tests pin the mechanism on the engine itself.
     """
 
-    def test_today_two_roads_measure_their_distance_as_the_spacing(self):
-        """What the engine does today: 300 m apart -> alpha 360 m -> 60 ha.
+    def test_the_previous_method_measured_the_roads_distance_as_the_spacing(self):
+        """What the method did until 2026-10-07: 300 m -> alpha 360 m -> 60 ha.
 
-        Not a wish but a characterisation of the defect A7 removes: a
-        machine that never left the roads gets the whole 2 km x 300 m
-        between them as one work site. When the fix lands this test changes
-        on purpose, together with the one below.
+        The characterisation of the defect A7 removed, kept on the previous
+        method (`overflow_cap=False`, which still reproduces it): a machine
+        that never left the roads got the whole 2 km x 300 m between them as
+        one work site.
         """
         track = slow_loop(TWO_ROADS)
-        sites, _quality = work_sites(track)
+        sites, _quality = work_sites(track, overflow_cap=False)
         self.assertEqual(len(sites), 1)
         self.assertAlmostEqual(sites[0].pass_spacing_m, 300.0, delta=1.0)
         self.assertAlmostEqual(sites[0].alpha_used_m, 360.0, delta=1.2)
         self.assertAlmostEqual(sites[0].area_ha, 60.0, delta=0.5)
+        self.assertEqual(sites[0].method_version, "adaptive-alpha-2026-08-12")
 
     def test_field_work_on_the_same_day_keeps_the_field_spacing(self):
         """The control: where passes dominate, the median is the field's.
@@ -410,16 +416,247 @@ class SlowRoadsTests(unittest.TestCase):
         self.assertEqual(sites[0].alpha_used_m, ALPHA_M)
         self.assertAlmostEqual(sites[0].area_ha, 9.0, delta=0.3)
 
-    @unittest.expectedFailure
     def test_slow_roads_alone_are_not_a_work_site(self):
-        """The target A7 is held to: no field, no hectares.
+        """The target A7 was held to: no field, no hectares.
 
-        Fails today (60 ha, see above). The fix must make it pass and drop
-        the decorator -- an unexpected success fails the run, so the change
-        cannot slip in unnoticed.
+        Set on 2026-10-02 as an expected failure (60 ha, see above); met by
+        the method itself since 2026-10-07, when the owner adopted the rule --
+        the default, with no switch passed.
         """
         sites, _quality = work_sites(slow_loop(TWO_ROADS))
         self.assertEqual([site.area_ha for site in sites], [])
+
+
+def work_points(track):
+    """The work-window points work_sites hands to the spacing estimator."""
+    xs, ys = to_utm([r[1] for r in track], [r[2] for r in track])
+    return [(float(x), float(y)) for x, y, r in zip(xs, ys, track)
+            if 1.0 <= r[3] <= SPEED_MAX_KMH]
+
+
+class OverflowCapTests(unittest.TestCase):
+    """A7 rule, pre-registered 2026-10-02 (roadmap 2.11), the method since 07.10.
+
+    These tests hold what the rule promises by construction -- untouched below
+    the cap, never more hectares, roads alone give nothing -- on the engine
+    itself. «Today» in them is the PREVIOUS method, asked for explicitly with
+    `overflow_cap=False`: compared with the default, the rule would only be
+    compared with itself and every such test would pass on any code.
+    """
+
+    def test_the_rule_is_the_method_and_the_switch_reproduces_the_previous(self):
+        """Default = the rule; False = the previous method, labelled as such."""
+        track = slow_loop(TWO_ROADS)
+        self.assertEqual(work_sites(track)[0], [])
+        self.assertEqual(work_sites(track, overflow_cap=True)[0], [])
+        previous, _ = work_sites(track, overflow_cap=False)
+        self.assertEqual(len(previous), 1)
+        contour = rectangle_contour(2000.0, 300.0, margin_m=50.0)
+        self.assertEqual(worked_area(track, contour).method_version,
+                         "overflow-cap-2026-10-07")
+        self.assertEqual(worked_area(track, contour, overflow_cap=False)
+                         .method_version, "adaptive-alpha-2026-08-12")
+        self.assertEqual(METHOD_VERSION, "overflow-cap-2026-10-07")
+        self.assertEqual(PREVIOUS_METHOD_VERSION, "adaptive-alpha-2026-08-12")
+
+    def test_a_pinned_alpha_is_labelled_by_the_alpha_not_by_a_rule(self):
+        """alpha_m runs neither adaptive method; its result must not pass for one."""
+        track = shuttle_track(300.0, 300.0, pass_spacing_m=14.0)
+        contour = rectangle_contour(300.0, 300.0)
+        for cap in (True, False):
+            fixed = worked_area(track, contour, alpha_m=ALPHA_M, overflow_cap=cap)
+            self.assertEqual(fixed.method_version, "fixed-alpha-10m")
+            self.assertIsNone(fixed.pass_spacing_m)
+            sites, _ = work_sites(track, alpha_m=12.5, overflow_cap=cap)
+            self.assertEqual({site.method_version for site in sites},
+                             {"fixed-alpha-12.5m"})
+
+    def test_the_cap_is_the_widest_validated_spacing_with_the_margin(self):
+        """Literals on purpose: an expectation spelled with the constant
+        moves when the constant moves."""
+        self.assertEqual(WIDEST_VALIDATED_SPACING_M, 37.2)
+        self.assertAlmostEqual(SPACING_CAP_M, 44.64, places=9)
+
+    def test_the_votes_are_what_todays_spacing_takes_the_median_of(self):
+        for spacing_m in (6.0, 14.0, 37.2):
+            points = work_points(shuttle_track(300.0, 300.0,
+                                               pass_spacing_m=spacing_m))
+            votes = pass_votes(points)
+            self.assertTrue(votes)
+            ordered = sorted(votes)
+            middle = len(ordered) // 2
+            median = (ordered[middle] if len(ordered) % 2
+                      else (ordered[middle - 1] + ordered[middle]) / 2.0)
+            self.assertAlmostEqual(pass_spacing(points), median, places=9)
+        self.assertEqual(pass_votes([(0.0, 0.0)] * 5), [])
+
+    def test_below_the_cap_a_day_is_bit_identical_to_today(self):
+        """Every hand-validated work has spacing <= 37.2 m: nothing moves."""
+        contour = rectangle_contour(300.0, 300.0)
+        for spacing_m in (6.0, 14.0, 37.2):
+            track = shuttle_track(300.0, 300.0, pass_spacing_m=spacing_m)
+            today, _ = work_sites(track, overflow_cap=False)
+            capped, _ = work_sites(track, overflow_cap=True)
+            self.assertEqual([(s.area_ha, s.alpha_used_m, s.pass_spacing_m,
+                               s.polygon.wkb) for s in today],
+                             [(s.area_ha, s.alpha_used_m, s.pass_spacing_m,
+                               s.polygon.wkb) for s in capped], spacing_m)
+            one = worked_area(track, contour, overflow_cap=False)
+            two = worked_area(track, contour, overflow_cap=True)
+            self.assertEqual((one.area_ha, one.alpha_used_m, one.pass_spacing_m),
+                             (two.area_ha, two.alpha_used_m, two.pass_spacing_m))
+
+    def test_slow_roads_alone_give_nothing_under_the_cap(self):
+        """The A7 target, met by the rule: 60 ha today, none with the cap."""
+        points = work_points(slow_loop(TWO_ROADS))
+        self.assertAlmostEqual(pass_spacing(points), 300.0, delta=1.0)
+        self.assertIsNone(pass_spacing_on_overflow(points))
+        sites, _quality = work_sites(slow_loop(TWO_ROADS), overflow_cap=True)
+        self.assertEqual([site.area_ha for site in sites], [])
+
+    def test_on_a_road_dominated_day_the_field_keeps_its_own_spacing(self):
+        """A 100 x 300 m field and six slow laps of the roads 1 km away.
+
+        Today the road points outvote the passes, alpha balloons and the
+        roads become a site of their own; under the cap the field is measured
+        as if the roads were not there.
+        """
+        field = shuttle_track(100.0, 300.0, pass_spacing_m=6.0,
+                              point_step_m=100.0)
+        roads = slow_loop([(e + 1000.0, n + 1000.0) for e, n in TWO_ROADS],
+                          loops=6, start_time=field[-1][0] + 600)
+        alone, _ = work_sites(field)
+        today, _ = work_sites(field + roads, overflow_cap=False)
+        capped, _ = work_sites(field + roads, overflow_cap=True)
+        self.assertGreater(today[0].alpha_used_m, 44.64)
+        self.assertGreater(sum(s.area_ha for s in today),
+                           sum(s.area_ha for s in alone) + 1.0)
+        self.assertEqual(len(capped), 1)
+        self.assertEqual(capped[0].alpha_used_m, ALPHA_M)
+        self.assertAlmostEqual(capped[0].pass_spacing_m, 6.0, delta=0.6)
+        self.assertAlmostEqual(capped[0].area_ha, alone[0].area_ha, delta=0.01)
+
+    def test_the_cap_never_adds_alpha_or_hectares(self):
+        days = [shuttle_track(300.0, 300.0, pass_spacing_m=s)
+                for s in (6.0, 14.0, 37.2)]
+        days.append(slow_loop(TWO_ROADS))
+        days.append(shuttle_track(100.0, 300.0, pass_spacing_m=6.0,
+                                  point_step_m=100.0)
+                    + slow_loop(TWO_ROADS, loops=3, start_time=10 ** 5))
+        for index, track in enumerate(days):
+            today, _ = work_sites(track, overflow_cap=False)
+            capped, _ = work_sites(track, overflow_cap=True)
+            self.assertLessEqual(sum(s.area_ha for s in capped),
+                                 sum(s.area_ha for s in today) + 1e-9, index)
+            if capped and today:
+                self.assertLessEqual(capped[0].alpha_used_m,
+                                     today[0].alpha_used_m, index)
+                self.assertLessEqual(capped[0].alpha_used_m, 53.568 + 1e-9)
+
+    def test_the_contour_path_takes_the_switch_too(self):
+        """worked_area -- the per-contour half of condition 1 -- obeys the cap.
+
+        A contour drawn around the two roads: today the roads 300 m apart are
+        the "passes" and the contour fills; with the cap no pass alongside is
+        left, the spacing is gone and alpha falls back to the fixed 10 m.
+        """
+        track = slow_loop(TWO_ROADS)
+        contour = rectangle_contour(2000.0, 300.0, margin_m=50.0)
+        today = worked_area(track, contour, overflow_cap=False)
+        capped = worked_area(track, contour, overflow_cap=True)
+        self.assertGreater(today.alpha_used_m, 300.0)
+        self.assertAlmostEqual(today.area_ha, 60.0, delta=0.5)
+        self.assertIsNone(capped.pass_spacing_m)
+        self.assertEqual(capped.alpha_used_m, ALPHA_M)
+        self.assertLess(capped.area_ha, 0.3)
+
+    def votes_give(self, votes):
+        with unittest.mock.patch.object(area, 'pass_votes', return_value=votes):
+            return pass_spacing_on_overflow([(0.0, 0.0)] * 30)
+
+    def test_a_median_exactly_at_the_cap_is_not_an_overflow(self):
+        """`today <= cap`, not `<`: the boundary belongs to today's answer.
+
+        Votes 20 m (40), exactly the cap (40) and 300 m (30): the median is
+        the cap itself. Treated as overflow, the median of the votes up to
+        the cap would be (20 + cap) / 2 -- the boundary would move the day.
+        """
+        votes = [20.0] * 40 + [SPACING_CAP_M] * 40 + [300.0] * 30
+        self.assertEqual(self.votes_give(votes), SPACING_CAP_M)
+
+    def test_on_overflow_a_vote_exactly_at_the_cap_is_kept(self):
+        """`vote <= cap`, not `<`: a pass exactly 44.64 m away still counts.
+
+        Ten votes at the cap, thirty roads at 300 m: the day overflows and the
+        ten survive. With a strict filter nothing would, and alpha would drop
+        to the fixed 10 m.
+        """
+        self.assertEqual(self.votes_give([SPACING_CAP_M] * 10 + [300.0] * 30),
+                         SPACING_CAP_M)
+        just_above = math.nextafter(SPACING_CAP_M, math.inf)
+        self.assertIsNone(self.votes_give([just_above] * 10 + [300.0] * 30))
+
+    def test_on_overflow_the_kept_votes_give_their_median(self):
+        """Step 3 says median: not the least, not the mean, not a quartile.
+
+        A sprayer day with refill trips: retraces of one road (3 m), the
+        field (14 m) and roads far apart (300 m). The median of the kept
+        votes is the field's 14 m; the least would be 3, the mean 9.29, the
+        lower quartile 3 -- each a different alpha and a different area.
+        """
+        votes = [3.0] * 30 + [14.0] * 40 + [300.0] * 100
+        self.assertEqual(self.votes_give(votes), 14.0)
+        self.assertEqual(self.votes_give([5.0, 7.0, 9.0, 40.0] + [300.0] * 10),
+                         8.0)
+
+    def test_on_overflow_there_is_no_other_threshold(self):
+        """2.11, step 3: «других порогов нет» -- no floor, no minimum share.
+
+        Retraces outnumber the field among the kept votes: the median is
+        then the retraces' 3 m, as the rule is written. A floor that drops
+        short votes would answer 14 m; a minimum count of kept votes would
+        answer None for the two votes below.
+        """
+        self.assertEqual(self.votes_give([3.0] * 30 + [14.0] * 20
+                                         + [300.0] * 100), 3.0)
+        self.assertEqual(self.votes_give([20.0, 30.0] + [300.0] * 100), 25.0)
+
+    def test_on_overflow_alpha_keeps_the_margin(self):
+        """Alpha = 1.2 x the kept spacing, whenever that beats the 10 m floor.
+
+        A field in 20 m passes and six laps of the roads 1 km away: today the
+        roads give 100 m and alpha 120 m; with the cap the field keeps its own
+        20 m, and alpha is 24 m -- not 20, not the 10 m floor.
+        """
+        field = shuttle_track(300.0, 300.0, pass_spacing_m=20.0,
+                              point_step_m=100.0)
+        roads = slow_loop([(e + 1000.0, n + 1000.0) for e, n in TWO_ROADS],
+                          loops=6, start_time=field[-1][0] + 600)
+        today, _ = work_sites(field + roads, overflow_cap=False)
+        capped, _ = work_sites(field + roads, overflow_cap=True)
+        self.assertGreater(today[0].pass_spacing_m, SPACING_CAP_M)
+        self.assertAlmostEqual(capped[0].pass_spacing_m, 20.0, delta=0.5)
+        self.assertEqual(capped[0].alpha_used_m,
+                         ALPHA_SPACING_FACTOR * capped[0].pass_spacing_m)
+
+    def test_the_daily_computation_uses_the_rule_and_names_its_method(self):
+        """The nightly computation is the rule; a row names the method made it.
+
+        A day recomputed with the previous method (`overflow_cap=False`) must
+        not be stored as the new one -- that is what makes a hectare in the
+        database reproducible after the method changed.
+        """
+        from gps.daily import compute_day
+        points = [(t, lon, lat, speed, 10)
+                  for t, lon, lat, speed in slow_loop(TWO_ROADS)]
+        today = compute_day(points)
+        self.assertEqual(today.sites, [])
+        self.assertEqual(today.aggregate["method_version"],
+                         "overflow-cap-2026-10-07")
+        previous = compute_day(points, overflow_cap=False)
+        self.assertEqual(len(previous.sites), 1)
+        self.assertEqual(previous.aggregate["method_version"],
+                         "adaptive-alpha-2026-08-12")
 
 
 class DensifyTests(unittest.TestCase):

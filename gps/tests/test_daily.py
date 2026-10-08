@@ -168,7 +168,7 @@ class FixtureDay(unittest.TestCase):
         self.assertEqual(aggregate["sats_median"], 14.0)
         self.assertEqual(aggregate["motion_gaps"], 0)
         self.assertEqual(aggregate["gps_jumps"], 0)
-        self.assertEqual(aggregate["method_version"], "adaptive-alpha-2026-08-12")
+        self.assertEqual(aggregate["method_version"], "overflow-cap-2026-10-07")
 
     def test_the_polygon_is_stored_in_degrees_and_survives_the_round_trip(self):
         site = self.result.sites[0]
@@ -644,6 +644,91 @@ class CollectionCompleteness(unittest.TestCase):
         self.assertIn("waiting for the collector: 1", log)
         self.assertIn("--catch-up", log)
         self.assertTrue(log.isascii(), log)
+
+
+class KeepAnswers(CollectionCompleteness):
+    """--keep-answers: a recompute of past days never deletes an answer.
+
+    [REASON]: tools/gps_recompute_days.py recomputes a window of past days
+    while the program works. An answer given meanwhile on a site the new
+    method no longer draws would be deleted by write_day itself. With the
+    flag such an object-day is not written at all; without it (the nightly
+    run) the old behaviour stays -- the answer is dropped and said.
+    """
+
+    def displaced_answer(self, label="работа"):
+        """The stored site moved 100 km away, with an answer on it: a site the
+        recomputation will not draw again, so its answer has nowhere to go."""
+        far = json.dumps({"type": "Polygon", "coordinates": [[
+            [65.50, 40.50], [65.51, 40.50], [65.51, 40.51], [65.50, 40.51],
+            [65.50, 40.50]]]})
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute("UPDATE gps_work_polygons SET polygon_geojson = ?, "
+                        "operator_label = ?, decided_at = '2026-10-07 10:00'",
+                        (far, label))
+            con.commit()
+        finally:
+            con.close()
+
+    def stored(self):
+        return self.rows("gps_work_polygons"), self.rows("gps_daily_aggregates")
+
+    def test_write_day_keeping_answers_writes_nothing_and_says_why(self):
+        daily.run_day(self.DAY, self.UNIT, folder=self.folder, db_path=self.db,
+                      log=lambda *a: None)
+        self.answer("работа")
+        before = self.stored()
+        elsewhere = daily.compute_day(synthetic_day(day=self.DAY))
+        con = sqlite3.connect(self.db)
+        try:
+            with self.assertRaises(daily.AnswersWouldBeLost) as raised:
+                daily.write_day(con, self.DAY, self.UNIT, elsewhere,
+                                keep_answers=True)
+        finally:
+            con.close()
+        self.assertEqual(self.stored(), before)
+        self.assertIn("1 of 1 operator answer(s) of %s unit %d"
+                      % (self.DAY, self.UNIT), str(raised.exception))
+
+    def test_keeping_answers_still_carries_an_answer_that_finds_its_site(self):
+        daily.run_day(self.DAY, self.UNIT, folder=self.folder, db_path=self.db,
+                      log=lambda *a: None)
+        self.answer("проезд")
+        daily.run_day(self.DAY, self.UNIT, folder=self.folder, db_path=self.db,
+                      log=lambda *a: None, keep_answers=True)
+        self.assertEqual([p["operator_label"]
+                          for p in self.rows("gps_work_polygons")], ["проезд"])
+
+    def test_a_keep_answers_run_leaves_the_object_day_and_fails_it(self):
+        daily.run_day(self.DAY, self.UNIT, folder=self.folder, db_path=self.db,
+                      log=lambda *a: None)
+        self.displaced_answer("работа")
+        before = self.stored()
+        code, log = self.run_main("--date", self.DAY, "--keep-answers")
+        self.assertEqual(code, daily.EXIT_SOME_DAYS_FAILED, log)
+        self.assertIn("SBOY: AnswersWouldBeLost", log)
+        self.assertNotIn(daily.DROPPED_MARK, log)
+        self.assertEqual(self.stored(), before)
+        self.assertTrue(log.isascii(), log)
+        # negative control: the same run without the flag is the nightly one --
+        # the answer is dropped, and the line the recompute tool watches for
+        # is printed with the words it imports
+        code, log = self.run_main("--date", self.DAY)
+        self.assertEqual(code, 0, log)
+        self.assertIn("    VNIMANIE: %s: 1" % daily.DROPPED_MARK, log)
+        self.assertEqual([p["operator_label"]
+                          for p in self.rows("gps_work_polygons")], [None])
+
+    def test_catch_up_refuses_keep_answers(self):
+        err, saved = io.StringIO(), sys.stderr
+        sys.stderr = err
+        try:
+            code, _ = self.run_main("--catch-up", "--keep-answers")
+        finally:
+            sys.stderr = saved
+        self.assertEqual(code, 2)
+        self.assertIn("--keep-answers is for a --date run", err.getvalue())
 
 
 class CatchUpGaps(CollectionCompleteness):
