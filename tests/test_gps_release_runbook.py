@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Выпуск v1.22 на production: docs/GPS_RELEASE_RUNBOOK.md.
+"""Выпуск v1.23 на production: docs/GPS_RELEASE_RUNBOOK.md.
 
 Блоки этого ранбука владелец вставляет в Windows PowerShell 5.1 на боевом
 сервере, и шаг 3 останавливает три службы. Они -- блоки выпуска v1.20
 (docs/AGRO_WORK_RELEASE_RUNBOOK.md, прошли на этом сервере 01.10.2026) без
-миграции, с постоянными этого выпуска; v1.21 прошёл с ними 02.10. Шаг 3 v1.22
+миграции, с постоянными этого выпуска; v1.21 прошёл с ними 02.10, v1.22 (B4)
+-- тоже. Шаг 3 v1.23
 вдобавок сверяет метод GPS на диске после перемотки, а шаг 4 -- пересчёт
 прошедших суток `tools/gps_recompute_days.py`. Здесь держится:
 
@@ -51,7 +52,7 @@ RELEASE = os.path.join(REPO_ROOT, 'docs', 'GPS_RELEASE_RUNBOOK.md')
 RELATIVE_SCRIPT = re.compile(r'(?<![\\A-Za-z:-])(tools\\|migrate_[A-Za-z0-9_]+\.py'
                              r'|run_server\.py|-m unittest)')
 # Production на момент подготовки: строка production в docs/DEPLOYED.md.
-BASELINE = '8df568394a840054ef6f842c6a8b272ca4c31aa8'
+BASELINE = '3434996a434652b0b590be2cfe08c4dc54cf1fab'
 # [REASON]: окружение расчёта GPS -- отдельный venv без пробела в пути; им
 # запускается всё, что тянет numpy/shapely, в том числе пересчёт шага 4.
 GEO_PYTHON = '& C:\\gps_venv\\Scripts\\python.exe'
@@ -202,7 +203,7 @@ class GpsReleaseRunbook(unittest.TestCase):
                 self.assertEqual(found['baseline'], expected['baseline'])
                 self.assertRegex(found['reviewed'], r"^'[0-9a-f]{40}'$")
                 self.assertRegex(found['log'],
-                                 r"^'C:\\VehicleSoft_Release\\release_v122_[a-z0-9]+\.log'$")
+                                 r"^'C:\\VehicleSoft_Release\\release_v123_[a-z0-9]+\.log'$")
                 reviewed.add(found['reviewed'])
                 self.assertIn("Where-Object { $_ -notlike 'docs/*' }",
                               release_block(name))
@@ -389,7 +390,7 @@ class GpsReleaseRunbook(unittest.TestCase):
         self.assertTrue(lines[writes[0]].startswith(GEO_PYTHON + ' -u '))
         # Повтор 4.3 дописывает журнал: сводка первого прогона не затирается.
         self.assertIn(' --apply *>> C:\\VehicleSoft_Release\\'
-                      'release_v122_step4_recompute.log', lines[writes[0]])
+                      'release_v123_step4_recompute.log', lines[writes[0]])
 
 
 class GpsReleaseToolFormats(unittest.TestCase):
