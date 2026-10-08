@@ -2822,13 +2822,19 @@ class W2Text(unittest.TestCase):
         self.assertEqual(const(w2, 'w2Root'), const(w1, 'work') + '\\w2')
         self.assertEqual(const(w2, 'prodExpected'), PROD_V123)
         self.assertEqual(const(w2, 'prodBase'), PROD)
-        # The DJI code of the production W2 expects is that of the commit W1 was checked against.
-        self.assertEqual(subprocess.run(['git', '-C', REPO_ROOT, 'diff', '--quiet', PROD, PROD_V123, '--',
-                                         'drone_collector', 'dji_area', 'drones.py']).returncode, 0)
         # The stop signs of W1, and the session expiring in the middle of a longer run.
         m1 = re.search(r"(?m)^  \$stopMarkers  = (.*)$", w1).group(1)
         m2 = re.search(r"(?m)^  \$stopMarkers  = (.*)$", w2).group(1)
         self.assertEqual(m2, m1.replace("session (is )?(missing|expired)'", "session (is )?(missing|expired)|expired during the run'"))
+
+    def test_w2_production_dji_code_is_that_of_w1(self):
+        """The DJI code of the production W2 expects is that of the commit W1 was checked against."""
+        have = [subprocess.run(['git', '-C', REPO_ROOT, 'cat-file', '-e', c + '^{commit}'],
+                               capture_output=True).returncode == 0 for c in (PROD, PROD_V123)]
+        if not all(have):
+            self.skipTest('needs the full git history (the windows-powershell-51 job has it)')
+        self.assertEqual(subprocess.run(['git', '-C', REPO_ROOT, 'diff', '--quiet', PROD, PROD_V123, '--',
+                                         'drone_collector', 'dji_area', 'drones.py']).returncode, 0)
 
     def test_w2_shares_the_checked_functions_of_w1(self):
         """The checks that ran live in W1 are the same lines here, not a re-typed copy."""
