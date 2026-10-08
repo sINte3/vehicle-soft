@@ -190,12 +190,35 @@ online-копии production** (шаг B0 ниже): сентябрь и авг�
 Первые 50 вылетов манифеста, тем же сборщиком и темпом, без ускорения.
 После неё — сверка (`collector-stats` и `measure --stage canary`) и решение
 владельца, продолжать ли до 500. Блок W1 печатает предложение
-`DECISION=…` по правилу из §14 (W1); решает владелец. Повтор файла 500 идёт тем же журналом
-очереди и канарейку не посещает второй раз.
+`DECISION=…` по правилу из §14 (W1); решает владелец.
+
+Канарейка выполнена 08.10.2026 (§8); владелец решил GO_TO_500. Остальные
+450 собирает W2 (§14) по отдельному списку: замороженный `pilot_ids.txt`
+минус `canary_ids.txt`. Второй раз канарейка не посещается.
 
 ## 8. Результаты пилота
 
-Ожидают сбора.
+**W1, канарейка 50 — факт** (SRV-YOQSH, 08.10.2026, `STEP=PASS`, прогон
+`20261008_151912`, run id `sources:ids-file:20261008T101922Z`):
+
+| | |
+|---|---|
+| запрошено / посещено / карточек | 50 / 50 / 50 |
+| ошибок | 0 |
+| новых ревизий источников | 200 |
+| время сбора | 430 с (8,6 с на вылет) |
+| EXACT / IDENTIFIED | 14 / 3 |
+| подтверждено | 17 из 50 = 34,0 % (95 % Уилсон: 22,4–47,8 %) |
+| NO_KEY / NOT_IN_CATALOG | 6 / 27 |
+
+Сентябрь после S1: 7 240 вылетов. Подтверждено 279 (EXACT 129,
+IDENTIFIED 150), NO_CARD 6 017, NO_KEY 439, NOT_IN_CATALOG 497.
+
+34 % — доля на 50 вылетах канарейки, и интервал у неё широкий. На когорту
+NO_CARD она не переносится и проекцией не объявляется. Оценка на всю
+когорту будет после W2+S2 на 500.
+
+**W2+S2, остальные 450** — подготовлен (§14), ждёт запуска владельцем.
 
 ## 9. Перепись до и после
 
@@ -215,7 +238,8 @@ online-копии production** (шаг B0 ниже): сентябрь и авг�
 | для сравнения: суточный адресный сбор | 6–42 | 24–170 | — |
 | для сравнения: весь парк за сутки | ~270 | ~1 100 | — |
 
-Время на посещение до пилота не измерено, канарейка его меряет. Опора
+Время на посещение до пилота не измерено, канарейка его меряет. Замер
+W1: 430 с на 50 вылетов, 8,6 с на вылет, все V4 пришли. Опора
 оценки — пауза 1,5 с, загрузка страницы и ожидание V4. Потолок — 70 с на
 вылет, если V4 не приходит: тогда 500 вылетов заняли бы до 10 ч, и это
 признак остановиться.
@@ -237,6 +261,24 @@ online-копии production** (шаг B0 ниже): сентябрь и авг�
 NO_KEY или NOT_IN_CATALOG, это отдельный следующий анализ (данные полей),
 а не повод расширять сбор карточек.
 
+S2 печатает строки `DIAG` — только счётчики, номера вылетов и ИМЕНА полей
+карточки; ключи, тела и координаты не печатаются:
+
+* NOT_IN_CATALOG:
+  * формат ключа — составной `uuid__md5` или только md5;
+  * сколько разных контуров и сколько из них стоят на нескольких вылетах;
+  * сколько вылетов периода стоят на этих контурах;
+  * когда снят каталог полей (первый и последний снимок);
+* NO_KEY:
+  * поле `geometry_md5` в карточке отсутствует, пусто или есть, но не
+    прочитано (последнее — ошибка разбора);
+  * `manual_mode` и `mode_name` рядом с теми же полями подтверждённых
+    вылетов;
+  * имена других полей карточки, значение которых похоже на ключ.
+
+Это воспроизводимые примеры и гипотезы для следующего анализа, а не
+разработка каталога.
+
 ## 13. Рекомендация
 
 После пилота.
@@ -252,13 +294,13 @@ NO_KEY или NOT_IN_CATALOG, это отдельный следующий ан�
 | B1 | SRV-YOQSH | после мержа PR занятия площадки: задача `DjiAreaRefreshStaging` сверяется с D1 и отключается первым изменением, всё для точного возврата и две онлайн-копии базы площадки, боты площадки — стоп и `Disabled`, кнопка DJI площадки выключена, закреплённая ревизия, база площадки = копия B0 (сверка sha256 и отпечатком до и после пуска), пуск только службы | площадка |
 | D1 | SRV-YOQSH | только чтение: задача планировщика `DjiAreaRefreshStaging`, на которой встал первый B1 — действие, триггеры, учётная запись, прогоны, что она пишет в базу площадки, связь с кнопкой | только журнал блока в C:\VehicleSoft_CardPilot |
 | W0 | рабочая машина (выполнен на SRV-YOQSH, 08.10.2026) | только чтение: клоны сборщика, python, сессия DJI, замок, очереди, задачи и процессы, окружение, связь с площадкой; общие ли сессия и замок с production-сборщиком SRV-YOQSH и когда production собирает (с сервера — только метаданные) | только журнал блока в C:\VehicleSoft_CardPilot |
-| W1 + S1 | SRV-YOQSH, чекаут пилота | один блок. Канарейка 50: `--sources --ids-file canary_ids.txt --send-sources` только на `:5051`, сессия и замок production (только чтение и общий замок), своя очередь, надзор за журналом, ворота сборщика. Только если ворота прошли — S1: служба площадки стоп → `dji_area_recalc.py --apply --flight-id` (50) → `measure --stage canary` → перепись → пуск. Итог — `DECISION=GO_TO_500 / STOP / SIMPLIFY` | площадка, DJI — 50 посещений, C:\VehicleSoft_CardPilot\w1 |
-| W2 | SRV-YOQSH, чекаут пилота | только по решению владельца: тот же сбор по `pilot_ids.txt` (канарейка пропускается) | площадка, DJI — до 450 посещений |
-| S2 | SRV-YOQSH | пересчёт 500, `measure --stage pilot`, случаи для проверки глазами | площадка |
+| W1 + S1 | SRV-YOQSH, чекаут пилота (выполнен 08.10.2026: `STEP=PASS`, `GO_TO_500`) | один блок. Канарейка 50: `--sources --ids-file canary_ids.txt --send-sources` только на `:5051`, сессия и замок production (только чтение и общий замок), своя очередь, надзор за журналом, ворота сборщика. Только если ворота прошли — S1: служба площадки стоп → `dji_area_recalc.py --apply --flight-id` (50) → `measure --stage canary` → перепись → пуск. Итог — `DECISION=GO_TO_500 / STOP / SIMPLIFY` | площадка, DJI — 50 посещений, C:\VehicleSoft_CardPilot\w1 |
+| W2 + S2 | SRV-YOQSH, чекаут пилота | файл `ops/drone_card_coverage_001/W2_S2_remaining450_block.ps1`, по решению владельца GO_TO_500 (08.10.2026). Сбор 450 = `pilot_ids.txt` минус `canary_ids.txt`, так же, как W1. Только после ворот: пересчёт ровно 450, `measure --stage pilot` на всех 500 с журналами W1 и W2, перепись, диагностика NO_KEY и NOT_IN_CATALOG | площадка, DJI — 450 посещений, C:\VehicleSoft_CardPilot\w2 |
 | R | SRV-YOQSH | копия базы пилота сохраняется; база, HEAD, окружение, службы площадки и задача `DjiAreaRefreshStaging` — как до B1 (задача не запускается); production-сверка | площадка |
 
 Список вылетов W1 берёт из папки B0 на SRV-YOQSH и сверяет его sha256 с
-`plan.json` и с замороженным значением в блоке.
+`plan.json` и с замороженным значением в блоке. W2 строит свой список из
+тех же двух файлов B0 после такой же сверки.
 
 ### B0 — SRV-YOQSH: базовая линия и замороженная выборка (только чтение production)
 
@@ -1761,6 +1803,28 @@ con.close()
 
 ### W1 — SRV-YOQSH: канарейка 50 и S1 одним блоком
 
+**Выполнен на SRV-YOQSH 08.10.2026: `STEP=PASS`, `DECISION=GO_TO_500`.**
+Прогон `C:\VehicleSoft_CardPilot\w1\20261008_151912`, журнал блока
+`C:\VehicleSoft_CardPilot\card_pilot_w1_20261008_151912.log`, run id
+`sources:ids-file:20261008T101922Z`. Цифры — в §8.
+
+Владелец выполнил не блок коммита `3cfc451`, а свою исправленную копию
+`C:\VehicleSoft_CardPilot\W1_S1_canary50_staging_token.ps1` (sha256
+`05dceafa078b29e988687021ff953949c2cd15a022f693f58545b6fc7a596f5c`).
+Исправлений два:
+
+1. HEAD production на 08.10.2026 — `3434996`, а не `8df5683`. Между ними
+   24 коммита, и ни один не меняет `drone_collector`, `dji_area` и
+   `drones.py`.
+2. Токен. Машинный `DRONE_API_TOKEN` принадлежит production, и площадка
+   ответила на него 401. Площадка приняла токен из окружения своей службы
+   `TransportReportStaging`.
+
+Блок ниже содержит оба исправления как проверки, и тесты их покрывают
+(`W1InPowerShell`, `Text.test_w1_*`). Но выполнялся не он, а файл
+владельца, исправленный вручную; CI этот файл не проходил. Повторно W1 не
+запускается: блок откажет, увидев прогон в `w1`.
+
 **Решение владельца по выводу W0 (08.10.2026).** W0 выполнен на SRV-YOQSH:
 сборщик production работает здесь, отдельной рабочей машины нет. Поэтому
 W1 идёт на SRV-YOQSH, но не из production-чекаута:
@@ -1788,10 +1852,15 @@ W1 идёт на SRV-YOQSH, но не из production-чекаута:
   из `C:\VehicleSoft_CardPilot\src` (`PACKAGE_ROOT` и файлы модулей) и видит
   Playwright;
 * приёмник — `http://10.103.25.14:5051`; порт 5050 отвергается явно;
-* `DRONE_API_TOKEN` машинного окружения принят площадкой: POST
-  `/drones/api/land_geometry_manifest` с пустым списком. Этот вызов только
-  читает и ничего не пишет; значение токена не печатается;
-* production: HEAD `8df5683`, три службы `Running`;
+* `DRONE_API_TOKEN` берётся из окружения службы площадки
+  (`AppEnvironmentExtra` в параметрах `TransportReportStaging`). Строка
+  должна быть ровно одна. Площадка должна его принять: POST
+  `/drones/api/land_geometry_manifest` с пустым списком. Этот вызов
+  только читает и ничего не пишет; значение токена не печатается;
+* production: HEAD `3434996`, три службы `Running`. Код DJI production
+  (`drone_collector`, `dji_area`, `drones.py`) совпадает с `8df5683`: нет
+  ни коммита, ни правки в рабочей копии. Другой HEAD — остановка до DJI:
+  нужна новая проверка совместимости;
 * `DroneCollectorDaily`, `DroneAreaDaily`, `DjiAreaRefresh` не идут, до
   следующего запуска по расписанию не меньше 130 минут;
 * процессов сборщика или цикла нет;
@@ -1827,7 +1896,7 @@ python -m drone_collector.main --sources --ids-file <копия canary_ids.txt> 
 | `DJI_COLLECTOR_LOCK_WAIT_S` | `0` |
 | `DRONE_OUTBOX_DIR` | `C:\VehicleSoft_CardPilot\w1\<время>\outbox` |
 | `DJI_HEADLESS` | `true` |
-| `DRONE_API_TOKEN` | из машинного окружения |
+| `DRONE_API_TOKEN` | из окружения службы площадки (значение не печатается) |
 
 Из окружения убраны `PYTHONPATH`, `PYTHONHOME`, `PYTHONSAFEPATH` и
 `PYTHONSTARTUP`. `--save-session` не передаётся.
@@ -1977,7 +2046,9 @@ Production в остальном только читается.
   $site         = 'http://10.103.25.14:5051'
   $prodRoot     = 'C:\transport-report'
   $prodDb       = 'C:\transport-report\instance\transport.db'
-  $prodExpected = '8df568394a840054ef6f842c6a8b272ca4c31aa8'
+  $prodExpected = '3434996a434652b0b590be2cfe08c4dc54cf1fab'
+  $prodBase     = '8df568394a840054ef6f842c6a8b272ca4c31aa8'
+  $prodDji      = @('drone_collector', 'dji_area', 'drones.py')
   $prodNames    = @('TransportBot', 'TransportBot003', 'TransportReport')
   $prodTasks    = @('DroneCollectorDaily', 'DroneAreaDaily', 'DjiAreaRefresh')
   $session      = 'C:\transport-report\drone_collector\data\storage_state.json'
@@ -1992,7 +2063,6 @@ Production в остальном только читается.
   $work         = 'C:\VehicleSoft_CardPilot'
   $w1Root       = 'C:\VehicleSoft_CardPilot\w1'
   $svcKey       = 'HKLM:\SYSTEM\CurrentControlSet\Services'
-  $machineKey   = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment'
   $maxCollectMin = 100
   $minGapMin    = 130
   $minFetched   = 40
@@ -2117,6 +2187,13 @@ if __name__ == '__main__':
     $s = Get-ProdServices
     Write-Output ("PROD_" + $label + " HEAD=" + $h + " " + $s)
     if (($h -ne $prodExpected) -or ($s -ne $prodWant)) { throw "STEP FAILED: production is not as expected ($label) -- send this output" }
+    # [REASON]: the production collector shares the session and the lock with the pilot; its DJI
+    # code must be the one the pilot was checked against (8df5683 = the pin for these paths).
+    & git -C $prodRoot diff --quiet $prodBase HEAD -- @prodDji
+    $committed = $LASTEXITCODE
+    $edited = @(git -C $prodRoot --no-optional-locks status --porcelain --untracked-files=no -- @prodDji)
+    if (($committed -ne 0) -or ($edited.Count -ne 0)) { throw "STEP FAILED: the production DJI code (drone_collector, dji_area, drones.py) differs from $prodBase (diff exit $committed, $($edited.Count) local change(s)) -- a new compatibility check is needed" }
+    Write-Output ("PROD_DJI_CODE_" + $label + "=unchanged since " + $prodBase)
   }
   function Test-Collision([string]$label) {
     foreach ($n in $prodTasks) {
@@ -2206,12 +2283,17 @@ if __name__ == '__main__':
 
     if ($site -match ':5050') { throw "STEP FAILED: the receiver $site is the production port 5050 -- refused" }
     if ($site -notmatch ':5051$') { throw "STEP FAILED: the receiver $site is not the staging port 5051" }
-    $token = [string](Get-ItemProperty -LiteralPath $machineKey -ErrorAction SilentlyContinue).DRONE_API_TOKEN
-    if (-not $token.Trim()) { throw 'STEP FAILED: DRONE_API_TOKEN is not set in the machine environment' }
+    # [REASON]: staging accepts only its own token (W1, 08.10.2026: the machine token got 401).
+    # It is read from the staging service environment, used once in the child, never shown.
+    $tokenLines = @(@((Get-ItemProperty -LiteralPath $siteParams).AppEnvironmentExtra) | Where-Object { [string]$_ -match '^\s*DRONE_API_TOKEN=' })
+    if ($tokenLines.Count -ne 1) { throw "STEP FAILED: the staging service environment holds $($tokenLines.Count) DRONE_API_TOKEN entries, expected exactly one" }
+    $token = ([string]$tokenLines[0] -replace '^\s*DRONE_API_TOKEN=', '').Trim()
+    $tokenLines = $null
+    if (-not $token) { throw 'STEP FAILED: the DRONE_API_TOKEN of the staging service is empty' }
     $childEnv = [ordered]@{ VEHICLE_SOFT_BASE_URL = $site; DJI_STORAGE_STATE = $session; DJI_COLLECTOR_LOCK_PATH = $lock; DJI_COLLECTOR_LOCK_WAIT_S = '0'; DRONE_OUTBOX_DIR = $outbox; DJI_HEADLESS = 'true'; DRONE_API_TOKEN = $token; PYTHONIOENCODING = 'utf-8' }
     $childDrop = @('PYTHONPATH', 'PYTHONHOME', 'PYTHONSAFEPATH', 'PYTHONSTARTUP')
     $inherited = @(Get-ChildItem Env: | Where-Object { ($_.Name -match '^(DJI_|DRONE_|VEHICLE_SOFT_|PLAYWRIGHT_|HTTPS?_PROXY$|NO_PROXY$)') -and (-not $childEnv.Contains($_.Name)) } | ForEach-Object { $_.Name })
-    Write-Output ("CHILD_ENV_SET=" + (@($childEnv.Keys) -join ',') + " (DRONE_API_TOKEN from the machine environment, value not shown)")
+    Write-Output ("CHILD_ENV_SET=" + (@($childEnv.Keys) -join ',') + " (DRONE_API_TOKEN of the staging service, value not shown)")
     Write-Output ("CHILD_ENV_DROPPED=" + ($childDrop -join ',') + " CHILD_ENV_INHERITED=" + $(if ($inherited.Count) { $inherited -join ',' } else { 'none' }) + " (names only)")
 
     # [REASON]: python itself decides whether its import folders are the pilot folder
@@ -2240,9 +2322,9 @@ if __name__ == '__main__':
     if (($open.Count -ne 1) -or (-not (Test-Path -LiteralPath (Join-Path $open[0].FullName 'swapped.txt')))) { throw "STEP FAILED: expected exactly one open B1 run with swapped.txt under $runRoot, found $($open.Count) -- send this output" }
     Write-Output ("B1_RUN=" + $open[0].FullName + " (open; block R returns staging after the pilot)")
     $body = @{ token = $token; content_md5 = @() } | ConvertTo-Json -Compress
-    try { $pre = Invoke-WebRequest -Uri ($site + '/drones/api/land_geometry_manifest') -Method Post -Body $body -ContentType 'application/json' -UseBasicParsing -TimeoutSec 30 -MaximumRedirection 0 } catch { throw "STEP FAILED: staging refused the machine DRONE_API_TOKEN on a read-only call ($($_.Exception.Message)) -- nothing was collected" }
+    try { $pre = Invoke-WebRequest -Uri ($site + '/drones/api/land_geometry_manifest') -Method Post -Body $body -ContentType 'application/json' -UseBasicParsing -TimeoutSec 30 -MaximumRedirection 0 } catch { throw "STEP FAILED: staging refused the DRONE_API_TOKEN of its own service on a read-only call ($($_.Exception.Message)) -- nothing was collected" }
     if (([int]$pre.StatusCode -ne 200) -or ([string]$pre.Content -notmatch '"asked"\s*:\s*0')) { throw "STEP FAILED: staging answered the read-only token check with $($pre.StatusCode)" }
-    Write-Output 'TOKEN_CHECK=staging accepts the machine DRONE_API_TOKEN (read-only land_geometry_manifest, nothing written)'
+    Write-Output 'TOKEN_CHECK=staging accepts the DRONE_API_TOKEN of its own service (read-only land_geometry_manifest, nothing written)'
 
     New-Item -ItemType Directory -Force -Path $w1 | Out-Null
     if (Test-Path -LiteralPath $outbox) { throw "STEP FAILED: the pilot outbox $outbox already exists" }
@@ -2480,12 +2562,238 @@ if __name__ == '__main__':
 
 Прислать весь вывод. Остальные 450 вылетов блок не запускает: W2 — только по решению владельца.
 
+### W2+S2 — SRV-YOQSH: остальные 450 и итог пилота на 500
+
+**Решение владельца 08.10.2026: GO_TO_500.** W2+S2 — не текст для
+вставки, а файл репозитория
+`ops/drone_card_coverage_001/W2_S2_remaining450_block.ps1`. В нём около
+830 строк, поэтому вставка по памяти исключена: владелец получает сам файл
+и сверяет sha256. Запуск на SRV-YOQSH, после того как файл положен в
+`C:\VehicleSoft_CardPilot`:
+
+```powershell
+Get-FileHash -Algorithm SHA256 C:\VehicleSoft_CardPilot\W2_S2_remaining450_block.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\VehicleSoft_CardPilot\W2_S2_remaining450_block.ps1
+```
+
+Хеш сверяется со значением из описания PR и сообщения о передаче. Окно не
+закрывать до строки `STEP=`.
+
+**Что собирается.** 450 — это замороженный `pilot_ids.txt` минус
+`canary_ids.txt`, в порядке манифеста. Блок сверяет:
+
+* sha256 `pilot_manifest.csv`, `pilot_ids.txt` и `canary_ids.txt` равны
+  замороженным в нём и записанным в `plan.json`; в `plan.json` 500 и 50;
+* `pilot_ids.txt` — 500 разных номеров в порядке манифеста;
+  `canary_ids.txt` — первые 50 из них, флаги `canary` манифеста — те же;
+* остаток — 450 номеров, с канарейкой не пересекается, вместе с ней даёт
+  ровно 500.
+
+Остаток пишется в папку прогона как `remaining_450_ids.txt`: две строки
+`#`, затем номера. Блок печатает его sha256 и сверяет файл с ним. Номера
+не заменяются, выборка заново не строится, сверх 500 ничего не берётся.
+
+**До DJI** — ничего не меняя. Всё, что проверял W1, проверяется теми же
+функциями, байт в байт (тест `test_w2_shares_the_checked_functions_of_w1`):
+
+* чекаут пилота на пине, сборщик импортируется из него;
+* приёмник `:5051`, порт 5050 отвергается;
+* токен — из окружения службы площадки, ровно одна строка, проверен
+  вызовом только на чтение;
+* production: HEAD `3c5c8c5` — выпуск v1.23 от 08.10.2026
+  (`docs/DEPLOYED.md`), уже после W1. Код DJI не изменился с `8df5683`,
+  три службы работают. Другой HEAD — остановка до DJI;
+* задачи production не идут, до ближайшей не меньше 130 минут;
+  процессов сборщика нет, замок свободен;
+* площадка такая, какой её оставил B1, прогон B1 открыт;
+* миграций 60, каталог полей равен B0, включённых задач, пишущих в
+  площадку, нет.
+
+Плюс улики W1:
+
+* журнал W1 кончается строками `STEP=PASS` и `DECISION=GO_TO_500`;
+* `RUN SUMMARY` W1:
+  * run id `sources:ids-file:20261008T101922Z`;
+  * запрошено, посещено и карточек — по 50;
+  * новых источников 200, ошибок приёма 0, всё принято;
+  * код выхода 0 или 18;
+* W1 начинал с отпечатка B0. В его `measure_canary.json`: карточек 50,
+  подтверждено 17 (EXACT 14, IDENTIFIED 3), NO_KEY 6, NOT_IN_CATALOG 27;
+* на площадке 200 ревизий прогона W1, все по вылетам канарейки. У всех 50
+  карточка есть, и она из прогона W1;
+* отпечаток площадки сейчас побайтно равен `fingerprint_post.json` W1,
+  то есть после W1 на площадке ничего не менялось. Он сохраняется как
+  `fingerprint_pre.json` W2;
+* `measure --stage canary --before <отпечаток B0>` сейчас: все ворота
+  проходят, цифры те же — 50/17/14/3/6/27.
+
+Любое расхождение — остановка до DJI. Ничего не восстанавливается и не
+исправляется.
+
+**Сбор.** Тот же, что в W1, по `remaining_450_ids.txt`, в своей папке
+`C:\VehicleSoft_CardPilot\w2\<время>` со своей очередью. Перед запуском
+блок печатает:
+
+* `W1_ALREADY_DONE=50 W2_REMAINING=450 TOTAL_MANIFEST=500`;
+* sha256 обоих списков;
+* пути сборщика, сессии, замка и очереди, приёмник площадки;
+* время запуска и ближайшие запуски production.
+
+Надзор тот же, что в W1:
+
+* маркеры 403, 429, капчи, сессии и браузера;
+* две отказанные карточки;
+* три страницы подряд не открылись;
+* пять вылетов подряд без карточки;
+* 100 минут.
+
+Отличия от W1:
+
+* посещение любого вылета канарейки останавливает сбор;
+* маркер сессии ловит и «expired during the run»;
+* предел времени проверяется на каждой строке журнала, а не только в
+  паузе от 5 с. Медленный DJI, который отвечает каждые несколько секунд,
+  иначе прошёл бы мимо предела в окно production;
+* строка `RUN SUMMARY` маркерами не проверяется. Счётчик
+  `sources_v4=429` — не ответ DJI; `collector-stats` эту строку тоже
+  пропускает. На 50 вылетах W1 счётчики до 429 не доходили, на 450 —
+  доходят;
+* сборщик останавливается при любом выходе из надзора: по правилу, по
+  Ctrl+C, по ошибке. Если он кончил сам — нет. Строки, напечатанные им
+  до остановки, дописываются в журнал прогона.
+
+По W1 на вылет уходит 8,6 с, на 450 — около 65 минут. Предел — 100 минут,
+окно до production — не меньше 130.
+
+**Ворота сборщика** — те же, что в W1, на 450 вылетов, и ещё два условия:
+в журнале нет ни одного вылета канарейки, `sources_skipped_known` равен 0.
+Всё, с чем ворота сравнивают, записано до них в `collector_done.json`:
+
+* код выхода, причина остановки, время;
+* время запуска и конца сбора (UTC, конец с запасом 60 с). Записи
+  production по 450 вылетам считаются только в этом окне: ночной сбор
+  production после W2 законно пишет строки сентябрьских вылетов, и
+  повторная проверка ворот не должна на нём вставать;
+* sha256 сессии до и сразу после сбора;
+* `max(id)` источников и кэша V4 до сбора;
+* sha256 списка.
+
+Ворота читают журнал сборщика с диска. Пройдя их, блок пишет
+`fingerprint_after_collection.json`, а последним — `collector_gate.json`.
+
+**S2** — только после ворот:
+
+1. Пишется `s2_started.txt`, служба площадки останавливается. Затем
+   `check_db_lock`; каталог полей по-прежнему равен B0. Пуск службы при
+   отказе — в `finally`: Ctrl+C посреди S2 площадку остановленной не
+   оставляет.
+2. `dji_area_recalc.py --dry-run`, затем `--apply`, с `--from 2026-09-01
+   --to 2026-09-30` и ровно 450 `--flight-id`. Требуется: в периоде 450
+   вылетов, и строк расчёта и привязки учтено по 450 (`new + unchanged +
+   reactivated`).
+   Расчёты и привязки 50 вылетов W1 не трогаются: S1 их уже пересчитал, и
+   повторный пересчёт изменил бы результат W1. У вылета W1 входы могут
+   устареть из-за данных W2 (соседи в цепочке, канал, оборудование), и
+   dry-run по нему покажет `would_write`. S2 такие вылеты сознательно не
+   пересчитывает.
+3. `fingerprint_after_recalc.json` сравнивается с двумя отпечатками.
+   С отпечатком после сбора: RAW, решения, миграции и источники те же,
+   изменились только вылеты из 450 и ни одного из 50. С отпечатком после
+   W1: то же, кроме источников.
+4. `collector-stats` по журналам W1 и W2 вместе, с `--ids pilot_ids.txt`:
+   посещено 500. Затем `measure --stage pilot --before <отпечаток B0>
+   --collector-stats <W1+W2>`: все ворота проверяются против B0, а
+   `attempted` равен 500, а не 450. Второй `measure --stage pilot
+   --before <отпечаток после W1>` проверяет, что ревизии W1 побайтно на
+   месте. Это нужно отдельно: ворота `measure` не видят изменения 50
+   вылетов W1 внутри стадии `pilot`.
+5. Перепись сентября и диагностика (§12). Пуск службы, миграций 60,
+   площадка и production — как до блока, сессия не менялась. Последним
+   пишется `s2_done.txt`.
+
+**Повторная вставка.** Что делать, блок решает по файлам в папках `w2`:
+
+| в папке прогона | состояние | при повторной вставке |
+|---|---|---|
+| `s2_done.txt` | `COMPLETE` | отказ: W2+S2 уже выполнен |
+| `collector_gate.json` без `s2_done.txt` | `S2_PENDING` | только S2 этого прогона, без DJI и без токена. Условие: после ворот на площадке изменились только 450 (их пересчёт), а RAW, решения, миграции и источники те же. Если прерванный S2 этого прогона оставил службу площадки остановленной (есть `s2_started.txt`), она сначала запускается. Пересчёт повторяется: он идемпотентен, строки приходят как `unchanged` |
+| `collector_done.json`: сборщик кончил сам (код 0 или 18), блок его не останавливал, ворот нет | `GATE_PENDING` | ворота проверяются заново по файлам прогона, без DJI; затем S2. Так кончается и закрытое во время ворот окно, и ворота, вставшие на условии, которое потом прошло (например, замок взял production) |
+| `collector_done.json`: код 24, или сборщик кончил до первого вылета и в очереди пусто | `NOT_STARTED` | DJI не посещался — новый прогон |
+| журнала сборщика нет | `NOT_STARTED` | то же |
+| иначе: блок остановил сбор, окно закрыто посреди обхода, иной код выхода | `COLLECTION_STOPPED` | отказ без сбора. Печатается, сколько посещено и сколько вылетов полные; полные продолжение пропустит, остальные посетит заново (без карточки, с несостоявшимся V4 или неоткрывшейся страницей тоже). Ещё печатаются код выхода, run id и сколько файлов в `pending` и `sent` очереди. Если сборщик этого прогона ещё работает (окно закрыли), печатается `COLLECTOR_STILL_RUNNING pid=…` с командой `taskkill`. Продолжение — отдельный шаг по решению владельца: та же папка и очередь |
+
+Последняя строка состояния — `W2_STATE=` и одно из этих пяти значений.
+После начала обхода повторного сбора блок сам не запускает никогда.
+
+**Что меняется на площадке.**
+
+* В базе площадки:
+  * источники 450 вылетов — через штатный приём;
+  * их улики, расчёты и привязки;
+  * кэш расшифрованных V4 (`dji_v4_summaries`), в том числе соседей. Это
+    не улики и не привязки; новых строк печатается столько, сколько
+    добавлено.
+* Служба площадки останавливается на время S2 и снова запускается.
+* Боты, задача `DjiAreaRefreshStaging` и окружение площадки не
+  трогаются.
+
+Production только читается. Исключение — `collector.lock` и
+`collector.lock.owner`: их пишет протокол общего замка, как при любом
+сборе. R этот блок не запускает.
+
+**Что остаётся.**
+
+* Журнал блока: `C:\VehicleSoft_CardPilot\card_pilot_w2_<время>.log`.
+* Папка прогона `C:\VehicleSoft_CardPilot\w2\<время>`:
+  * списки: `remaining_450_ids.txt`, копии `pilot_ids.txt` и
+    `canary_ids.txt`;
+  * состояние: `collector_done.json`, `s2_started.txt`;
+  * сбор: `outbox\`, `collector_stdout.log`, `collector_stderr.log`,
+    `collector_exit.txt`, `collector_for_stats*.log`,
+    `collector_stats_w2.json`, `collector_stats_pilot.json`;
+  * отпечатки: `fingerprint_pre.json`,
+    `fingerprint_after_collection.json`, `fingerprint_after_recalc.json`;
+  * пересчёт: `recalc_dry-run.*`, `recalc_apply.*`;
+  * измерения: `w1_recheck\`, `measure\` (`measure_pilot.json`,
+    `results_pilot.csv`), `measure_since_w1\`, `census_after.json`,
+    `diagnostics.txt`;
+  * прочее: `drift_*.log`, `w2_check.py` (только чтение);
+  * отметки `collector_gate.json` и `s2_done.txt`.
+
+**Итог** — раздел 5 вывода:
+
+* `COLLECTION` — посещено из 500, карточек, без карточки, ошибки страниц,
+  время W2, среднее и медиана секунд на вылет;
+* `STATUSES`, `STOP_MARKERS`;
+* `SOURCES_SAVED` — W1 200 + W2;
+* `OUTCOME` — EXACT, IDENTIFIED, CONFIRMED, NO_KEY, NOT_IN_CATALOG,
+  NO_CARD, OTHER_UNRESOLVED, NO_CALC;
+* `CASES`;
+* `CONFIRMED_RATE` — на 500 и среди получивших карточку, с 95 %
+  интервалом Уилсона;
+* `COMPARE` — W1 17/50, W2 x/450 и все вместе;
+* `PROJECTION (not a fact)` — постстратифицированная оценка на когорту
+  NO_CARD и проекция на сентябрь;
+* `BY_UNIT`, `BY_WEEK`, строки `DIAG`;
+* `PILOT_STATUS=COMPLETE`, `W2_STATE`, `STEP`.
+
+Решения дальше блок не предлагает. Следующие шаги — отчёт и R, отдельно.
+
+**Проверки** — в `tests/test_dji_card_coverage_blocks.py`:
+
+* `W2Text` — текст файла;
+* `W2InPowerShell` — на подставном SRV-YOQSH, после настоящего прогона
+  блока W1 в нём же. Замороженных вылетов в стенде 60 = 50 + 10, поэтому
+  там `W2_REMAINING=10`.
+
+В CI они идут и под Windows PowerShell 5.1.
+
 ### R — SRV-YOQSH: возврат площадки
 
 Выдаётся только после разбора: по окончании пилота или если B1 встал с
 `STAGING_CHANGED=yes`. Пока сборщик пилота может слать данные на
-площадку, R не запускается. Очередь пилота (`C:\VehicleSoft_CardPilot\w1\…\outbox`)
-после R не досылается: площадка уже не та.
+площадку, R не запускается. Очереди пилота (`C:\VehicleSoft_CardPilot\w1\…\outbox`,
+`C:\VehicleSoft_CardPilot\w2\…\outbox`) после R не досылаются: площадка уже не та.
 
 * Работает с единственной открытой папкой `staging_*` (без
   `returned.txt`); две открытые или ни одной — отказ без изменений.

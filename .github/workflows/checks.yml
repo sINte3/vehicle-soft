@@ -224,10 +224,11 @@ jobs:
         run: python -m unittest tests.test_dji_card_coverage_pilot
 
       # The owner blocks B0, B1, D1, R, W0 and W1 are pasted verbatim into
-      # Windows PowerShell 5.1; their text invariants (ASCII, one staging,
-      # production only read, markers before changes, W0 read only, W1 one
-      # collector run of the frozen 50) break silently.
-      - name: DJI card coverage pilot -- owner blocks B0, B1, D1, R, W0, W1 (text)
+      # Windows PowerShell 5.1, W2+S2 is run as a file; their text invariants
+      # (ASCII, one staging, production only read, markers before changes, W0
+      # read only, W1 one collector run of the frozen 50, W2 one run of the
+      # other 450) break silently.
+      - name: DJI card coverage pilot -- owner blocks B0, B1, D1, R, W0, W1, W2+S2 (text)
         run: python -m unittest tests.test_dji_card_coverage_blocks
 
       - name: DJI area evidence migration (four paths, DDL columns)
@@ -636,13 +637,16 @@ jobs:
 
       # DRONE-CARD-COVERAGE-001 (docs/DRONE_CARD_COVERAGE_001.md, section 14):
       # B1 prepares staging for the pilot, R returns it, W1 collects the
-      # canary into staging and recalculates it. All are pasted into Windows
-      # PowerShell 5.1 on the server; every stop path runs here against
-      # stand-ins with real git, python, SQLite and child processes.
-      - name: DJI card coverage pilot blocks B1, R, D1, W0 and W1 on Windows PowerShell 5.1
+      # canary into staging and recalculates it, W2+S2 the other 450 after a
+      # real W1 run. All run in Windows PowerShell 5.1 on the server; every
+      # stop path runs here against stand-ins with real git, python, SQLite
+      # and child processes. CARD_PILOT_POWERSHELL_MAJOR makes the W2 suite
+      # assert that 5.1 actually ran.
+      - name: DJI card coverage pilot blocks B1, R, D1, W0, W1 and W2+S2 on Windows PowerShell 5.1
         shell: powershell
         env:
           CARD_PILOT_POWERSHELL: powershell
+          CARD_PILOT_POWERSHELL_MAJOR: '5'
         run: python -m unittest -v tests.test_dji_card_coverage_blocks
 
       # agro-work release v1.22 (docs/AGRO_WORK_RELEASE_V122_RUNBOOK.md): the

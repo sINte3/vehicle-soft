@@ -29,7 +29,7 @@ The scenario (JSON at CARD_PILOT_FAKE_COLLECTOR) decides the status and the
 card key per flight, extra log lines after a given flight (stop markers), a
 hang after them (so the block has to stop the run), the exit code, writes it
 must not do (a foreign revision, the session file, the production database
-or log).
+or log), and flights visited beyond the ids file (`visit_also`).
 What it
 saw -- argv, cwd, the environment names the block must set, whether the
 token was present -- goes to the scenario's `record` file; no token value.
@@ -75,20 +75,30 @@ def now_utc():
     return datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
 
-def receive(con, fid, n, run_id, key=None, evidence=True):
+def receive(con, fid, n, run_id, key=None, evidence=True, manual=False):
+    """A card as the receiver stores it; key None = a contour unknown to the
+    catalog, '' = a card with an empty contour key, '-' = a card without the
+    field at all (both NO_KEY)."""
     sha = ('%064x' % (0xC0FFEE00 + fid * 7 + n))[-64:]
     stamp = now_utc()
+    if key is None:
+        key = '%032x' % (0xABC000 + n)
+    data = {'id': fid, 'geometry_md5': key, 'manual_mode': manual, 'mode_name': 2}
+    if key == '-':
+        key = ''
+        del data['geometry_md5']
+    body = json.dumps({'code': 0, 'data': data})
     cur = con.execute(
         'INSERT INTO dji_source_revisions (provider_account_id, flight_id, '
         'scope_key, source_type, sha256, size_bytes, captured_at_utc, '
         'parser_version, request_context_json, capture_run_id, '
         'is_evidence_import, storage_kind, body_text, body_path, received_at, '
         "last_seen_at, ingest_count) VALUES (?,?,?,'CARD',?,100,?,'FAKE-COLLECTOR',"
-        "'{}',?,0,'INLINE','{}',NULL,?,?,1)",
-        (PROVIDER, fid, str(fid), sha, stamp, run_id, stamp, stamp))
+        "'{}',?,0,'inline',?,NULL,?,?,1)",
+        (PROVIDER, fid, str(fid), sha, stamp, run_id, body, stamp, stamp))
     rev = cur.lastrowid
     if evidence:
-        touch_evidence(con, fid, rev, key or '%032x' % (0xABC000 + n), stamp)
+        touch_evidence(con, fid, rev, key or None, stamp)
 
 
 def touch_evidence(con, fid, rev, key, stamp):
@@ -155,7 +165,8 @@ def main(argv):
             with open(os.environ['DJI_STORAGE_STATE'], 'ab') as fh:
                 fh.write(b' ')
         with open(argv[argv.index('--ids-file') + 1], encoding='utf-8-sig') as fh:
-            ids = sorted({int(l.split('#')[0]) for l in fh if l.split('#')[0].strip()})
+            ids = sorted({int(l.split('#')[0]) for l in fh if l.split('#')[0].strip()}
+                         | {int(i) for i in sc.get('visit_also', [])})
         outbox = os.environ['DRONE_OUTBOX_DIR']
         for name in ('pending', 'sent'):
             os.makedirs(os.path.join(outbox, name), exist_ok=True)
@@ -196,11 +207,15 @@ def main(argv):
                 log(line, 'WARNING')
             if str(n + 1) == str(sc.get('hang_after')):
                 time.sleep(float(sc.get('hang_s', 120)))
+            if sc.get('pace_s'):
+                # A slow DJI that still answers: a line every few seconds, never a long silence.
+                time.sleep(float(sc['pace_s']))
         # As the real collector: the queue is sent after the whole walk, so a
         # run stopped during it has sent nothing.
         con = sqlite3.connect(sc['staging_db'])
         for fid, n in queued:
-            receive(con, fid, n, run_id, sc.get('card_keys', {}).get(str(fid)))
+            receive(con, fid, n, run_id, sc.get('card_keys', {}).get(str(fid)),
+                    manual=str(fid) in sc.get('manual', []))
             new += 1
             name = 'source_%d_card.json' % fid
             os.replace(os.path.join(outbox, 'pending', name), os.path.join(outbox, 'sent', name))
@@ -220,6 +235,11 @@ def main(argv):
         for fid in sc.get('outside_revisions', []):        # a flight outside the canary
             receive(con, int(fid), 996, run_id, evidence=False)
             new += 1
+        for rid in sc.get('tamper_revision_ids', []):      # an earlier revision rewritten
+            con.execute("UPDATE dji_source_revisions SET capture_run_id = 'tampered' WHERE id = ?", (int(rid),))
+        for fid in sc.get('supersede_attr_flights', []):   # an attribution changed meanwhile
+            con.execute('UPDATE dji_field_attributions SET superseded_at = ? WHERE flight_id = ? '
+                        'AND superseded_at IS NULL', (now_utc(), int(fid)))
         for fid in sc.get('outside_evidence', []):         # evidence of a flight outside
             con.execute('UPDATE dji_flight_evidence SET updated_at = ? WHERE flight_id = ?',
                         (now_utc(), int(fid)))
@@ -238,6 +258,10 @@ def main(argv):
             prod.close()
     finally:
         lock.release()
+    if sc.get('leave_owner_pid'):
+        # An owner hint of a live process (as when the production collector takes the lock next).
+        with open(os.environ['DJI_COLLECTOR_LOCK_PATH'] + '.owner', 'w', encoding='utf-8') as fh:
+            json.dump({'pid': int(sc['leave_owner_pid']), 'purpose': 'daily'}, fh)
     if not sc.get('no_summary'):
         log('RUN SUMMARY mode=sources dry_run=false snapshot_run_id=%s period_from=- '
             'sources_requested=%d sources_visited=%d sources_card=%d '

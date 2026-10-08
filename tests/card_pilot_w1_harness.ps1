@@ -29,7 +29,13 @@ function Get-Service {
     elseif ($PSBoundParameters['ErrorAction'] -ne 'SilentlyContinue') { throw "Cannot find any service with service name '$n'." }
   }
 }
-function Stop-Service { [CmdletBinding()] param([string]$Name, [switch]$Force) Add-Call "Stop-Service $Name"; $global:svc[$Name].Status = 'Stopped' }
+function Stop-Service {
+  [CmdletBinding()] param([string]$Name, [switch]$Force)
+  Add-Call "Stop-Service $Name"
+  $global:svc[$Name].Status = 'Stopped'
+  # A write that lands while the site is down (the W2 tests of the S2 postconditions).
+  if (($Name -eq 'TransportReportStaging') -and $global:sc.OnStopStaging) { $c = @($global:sc.OnStopStaging); & ([string]$c[0]) @($c | Select-Object -Skip 1) | Out-Null }
+}
 function Start-Service {
   [CmdletBinding()] param([string]$Name)
   Add-Call "Start-Service $Name"

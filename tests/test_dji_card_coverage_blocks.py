@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Блоки владельца B0, B1, D1, R, W0 и W1 из docs/DRONE_CARD_COVERAGE_001.md.
+"""Блоки владельца B0, B1, D1, R, W0 и W1 из docs/DRONE_CARD_COVERAGE_001.md и файл W2+S2.
 
 [REASON]: блоки вставляются в консоль Windows PowerShell 5.1 ВЕРБАТИМ.
 Свойства ниже ломаются молча -- ни глаз при чтении диффа, ни py_compile их не
@@ -39,6 +39,14 @@ SIMPLIFY, STOP по малой доле карточек; каждый отка�
 остановка после сбора и до пересчёта (код выхода, признаки DJI, три вылета
 без карточки, время, чужие записи, запись в production, сессия, журнал
 production); отказ на шаге S1 с перезапуском площадки.
+W2Text и W2InPowerShell -- W2+S2, файл
+ops/drone_card_coverage_001/W2_S2_remaining450_block.ps1, на том же
+подставном SRV-YOQSH после настоящего прогона W1 (в стенде 60 = 50 + 10).
+Пути: PASS; каждый отказ до DJI, в том числе по уликам W1 и по площадке,
+изменённой после W1; остановки во время и после сбора; повторная вставка
+(остановленный сбор не повторяется, после ворот -- только S2 без DJI,
+выполненный -- отказ); занятый замок; прерванный S2; пересчёт сверх 450
+отвергается. Функции проверок W2 -- те же строки, что в W1.
 Нужен PowerShell и полная история git: CARD_PILOT_POWERSHELL=powershell (на
 сервере -- Windows PowerShell 5.1, в CI -- задача windows-powershell-51) или
 pwsh. Без переменной класс пропускается.
@@ -337,7 +345,10 @@ class Text(unittest.TestCase):
                 self.assertEqual(const(w1, name), const(b1, name))
         # The frozen canary of B0 (03.10.2026), the production commit and data folder W0 read.
         self.assertEqual(const(w1, 'canarySha'), '5913a88d1bfcecdfe0586fd0a81007ef7cc771d777a2754ebd8b5c1ec2e641da')
-        self.assertEqual(const(w1, 'prodExpected'), PROD)
+        # Production as W1 found it live (08.10.2026); its DJI code is that of the B0 commit.
+        self.assertEqual(const(w1, 'prodExpected'), PROD_NOW)
+        self.assertEqual(const(w1, 'prodBase'), PROD)
+        self.assertIn("$prodDji      = @('drone_collector', 'dji_area', 'drones.py')", w1)
         self.assertEqual(const(w1, 'site'), 'http://10.103.25.14:5051')
         self.assertEqual(const(w1, 'session'), const(w0, 'serverData') + '\\storage_state.json')
         self.assertEqual(const(w1, 'lock'), const(w0, 'serverData') + '\\collector.lock')
@@ -390,8 +401,10 @@ class Text(unittest.TestCase):
         self.assertIn("$outbox       = Join-Path $w1 'outbox'", w1)
         self.assertIn("$w1           = Join-Path $w1Root $stamp", w1)
         self.assertIn("if (Test-Path -LiteralPath $outbox) { throw", w1)
-        # The token: from the machine environment, never printed, only its name.
-        self.assertIn('$token = [string](Get-ItemProperty -LiteralPath $machineKey -ErrorAction SilentlyContinue).DRONE_API_TOKEN', w1)
+        # The token: the staging service's own, exactly one entry, never printed, only its name.
+        self.assertIn("$tokenLines = @(@((Get-ItemProperty -LiteralPath $siteParams).AppEnvironmentExtra) | Where-Object { [string]$_ -match '^\\s*DRONE_API_TOKEN=' })", w1)
+        self.assertIn('if ($tokenLines.Count -ne 1) { throw', w1)
+        self.assertNotIn('machineKey', w1)
         for line in w1.splitlines():
             if 'Write-Output' in line:
                 self.assertNotRegex(line, r'\$token\b|\$childEnv\[|\$childEnv\.Values|\$body\b')
@@ -409,7 +422,10 @@ class Text(unittest.TestCase):
             self.assertNotIn(word, helper, word)
         self.assertEqual(w1.count("Invoke-Helper @('canary', $prodDb"), 2)
         self.assertEqual(len(re.findall(r'\$prodDb\b', w1)), 3)  # the constant and the two read-only checks
-        self.assertEqual(re.findall(r'git -C \$prodRoot [^)]*', w1), ['git -C $prodRoot rev-parse HEAD'])
+        # git on production: read only.
+        self.assertEqual(sorted(re.findall(r'git -C \$prodRoot ((?:--no-optional-locks )?\S+)', w1)),
+                         ['--no-optional-locks status', 'diff', 'rev-parse'])
+        self.assertIn('& git -C $prodRoot diff --quiet $prodBase HEAD -- @prodDji', w1)
         self.assertEqual(w1.count("& $python -I (Join-Path $w1 'w1_check.py')"), 1)
         # The production session: hashed and named, never opened as text.
         for m in re.finditer(r'[^\n]*\$session\b[^\n]*', w1):
@@ -1929,6 +1945,11 @@ class W0OnWindows(unittest.TestCase):
 W1_HARNESS = os.path.join(HERE, 'card_pilot_w1_harness.ps1')
 FAKE_COLLECTOR = os.path.join(HERE, 'card_pilot_fake_collector.py')
 W1_TOKEN = 'W1-TOKEN-SECRET-9c41'
+MACHINE_TOKEN = 'MACHINE-TOKEN-SECRET-4b7e'
+SITE_ENV = ['FLASK_ENV=sqlite_prod', 'PORT=5051', 'SECRET_KEY=do-not-print-0f9e', 'DRONE_API_TOKEN=' + W1_TOKEN]
+PROD_NOW = '3434996a434652b0b590be2cfe08c4dc54cf1fab'
+# Production after W1: v1.23 (docs/DEPLOYED.md, 08.10.2026); its DJI code is that of PROD.
+PROD_V123 = '3c5c8c5688b6a1586ef868c0cb62d750e366f34b'
 W1_SESSION_SECRET = 'W1-SESSION-COOKIE-SECRET-5d2e'
 W1_SITE = 'http://10.103.25.14:5051'
 # Present in the stand-in field catalog: a card with this key resolves EXACT.
@@ -2015,7 +2036,7 @@ class W1Server(object):
         # Production: its checkout, database, DJI session, shared lock, log, outbox.
         self.prod = os.path.join(root, 'transport-report')
         sh('git', 'clone', '-q', '--shared', REPO_ROOT, self.prod)
-        sh('git', '-c', 'advice.detachedHead=false', 'checkout', '-q', PROD, cwd=self.prod)
+        sh('git', '-c', 'advice.detachedHead=false', 'checkout', '-q', PROD_NOW, cwd=self.prod)
         self.prod_db = os.path.join(self.prod, 'instance', 'transport.db')
         os.makedirs(os.path.dirname(self.prod_db))
         self.build(self.prod_db)
@@ -2107,8 +2128,9 @@ class W1Server(object):
             'Tasks': self.tasks(**(tasks or {})),
             'Processes': [{'ProcessId': 4245, 'Name': 'explorer.exe', 'CommandLine': 'C:\\Windows\\explorer.exe'}],
             'Registry': {
-                MACHINE_KEY: {'Path': 'C:\\Windows', 'DRONE_API_TOKEN': W1_TOKEN},
-                SITE_KEY: {'AppEnvironmentExtra': ['FLASK_ENV=sqlite_prod', 'PORT=5051', SECRET]},
+                # The machine token is production's: staging refuses it (W1, 08.10.2026).
+                MACHINE_KEY: {'Path': 'C:\\Windows', 'DRONE_API_TOKEN': MACHINE_TOKEN},
+                SITE_KEY: {'AppEnvironmentExtra': SITE_ENV},
             },
             'Web': {W1_SITE + '/login': {'Status': 200, 'Body': LOGIN}},
         }
@@ -2161,6 +2183,57 @@ class W1Server(object):
             con.close()
 
 
+def run_server_block(srv, stem, text, sc, collector):
+    """Run one block against the stand-in SRV-YOQSH; (output, calls, final services)."""
+    bf, sf, cf = stem + '.ps1', stem + '.scenario.json', stem + '.calls.txt'
+    write(bf, text)
+    write(sf, json.dumps(sc))
+    write(srv.fake, json.dumps(collector))
+    if os.path.exists(srv.record):
+        os.remove(srv.record)
+    env = {k: v for k, v in os.environ.items()
+           if not re.match(r'(?i)(DJI_|DRONE_|VEHICLE_SOFT_|PLAYWRIGHT_|PYTHON|HTTPS?_PROXY$|NO_PROXY$)', k)}
+    # The owner's console holds other values; only the collector gets the pilot ones.
+    env.update({'CARD_PILOT_FAKE_COLLECTOR': srv.fake,
+                'VEHICLE_SOFT_BASE_URL': 'http://10.103.25.14:5050',
+                'DRONE_OUTBOX_DIR': srv.prod_outbox,
+                'DJI_COLLECTOR_LOCK_WAIT_S': '1800',
+                'DJI_STORAGE_STATE': os.path.join(os.path.dirname(stem), 'other_session.json'),
+                'DJI_HEADLESS': 'false',
+                'DRONE_API_TOKEN': 'CONSOLE-TOKEN-DECOY-3',
+                # Left in the child, these two would import production's drone_collector.
+                'PYTHONSAFEPATH': '1', 'PYTHONPATH': srv.prod,
+                'PLAYWRIGHT_BROWSERS_PATH': srv.browsers})
+    if os.name != 'nt':
+        env['TZ'] = W1_TZ
+    p = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                        '-File', W1_HARNESS, '-BlockFile', bf, '-ScenarioFile', sf, '-CallsFile', cf],
+                       capture_output=True, text=True, timeout=900, env=env)
+    out = p.stdout + p.stderr
+    return out, [l for l in read(cf).splitlines() if l], json.loads(read(cf + '.services.json'))
+
+
+def check_server_calls(test, calls, out):
+    """What a W1 or W2 block may do to the server: stop and start staging, read the rest."""
+    test.assertEqual([c for c in calls if c.startswith('CONSOLE_ENV_CHANGED')], [], out)
+    test.assertEqual([c for c in calls if 'ScheduledTask' in c or 'ItemProperty' in c
+                      or c.startswith(('Set-Service', 'Restart-Service'))], [])
+    test.assertEqual([c for c in calls if re.match(r'(Stop|Start)-Service ', c)
+                      and c.split()[1] != 'TransportReportStaging'], [])
+    test.assertEqual([c for c in calls if c.startswith('WEB ') and ':5050' in c], [])
+
+
+def check_no_secret(test, out, work, runs):
+    """No token, cookie or secret in the output, the block logs or any file of the runs."""
+    texts = [out] + [read(os.path.join(work, f)) for f in os.listdir(work) if f.endswith('.log')]
+    for run in runs:
+        for base, _, files in os.walk(run):
+            texts += [read(os.path.join(base, f)) for f in files]
+    for secret in W1_SECRETS:
+        for text in texts:
+            test.assertNotIn(secret, text)
+
+
 NEW_EVIDENCE = 'staging holds new evidence that is not this run of the 50 canary flights'
 PROD_EVIDENCE = 'the production database received canary evidence'
 # [REASON]: SRV-YOQSH runs at UTC+5 and the receiver stamps UTC; on a UTC
@@ -2169,7 +2242,7 @@ PROD_EVIDENCE = 'the production database received canary evidence'
 W1_TZ = 'Asia/Tashkent'
 # What the pinned collector writes when the page asked for no descriptor (sources.py).
 DESCRIPTOR_LINE = 'Flight %d: the page asked for no descriptor; the direct request answered HTTP %d (%d bytes)'
-W1_SECRETS = (W1_TOKEN, W1_SESSION_SECRET, 'do-not-print', 'CONSOLE-TOKEN-DECOY-3')
+W1_SECRETS = (W1_TOKEN, W1_SESSION_SECRET, 'do-not-print', 'CONSOLE-TOKEN-DECOY-3', MACHINE_TOKEN)
 W1_TABLES = ('drone_flights', 'dji_field_attributions', 'dji_area_calculations', 'dji_flight_evidence',
              'dji_source_revisions')
 
@@ -2200,56 +2273,19 @@ class W1InPowerShell(unittest.TestCase):
     def run_w1(self, sc=None, collector=None, **override):
         srv = self.srv
         self.n += 1
-        bf = os.path.join(self.tmp, 'w1_%d.ps1' % self.n)
-        sf = os.path.join(self.tmp, 'scenario_%d.json' % self.n)
-        cf = os.path.join(self.tmp, 'calls_%d.txt' % self.n)
-        write(bf, srv.block(**override))
-        write(sf, json.dumps(sc or srv.scenario()))
-        write(srv.fake, json.dumps(collector or srv.collector()))
-        if os.path.exists(srv.record):
-            os.remove(srv.record)
-        env = {k: v for k, v in os.environ.items()
-               if not re.match(r'(?i)(DJI_|DRONE_|VEHICLE_SOFT_|PLAYWRIGHT_|PYTHON|HTTPS?_PROXY$|NO_PROXY$)', k)}
-        # The owner's console holds other values; only the collector gets the pilot ones.
-        env.update({'CARD_PILOT_FAKE_COLLECTOR': srv.fake,
-                    'VEHICLE_SOFT_BASE_URL': 'http://10.103.25.14:5050',
-                    'DRONE_OUTBOX_DIR': srv.prod_outbox,
-                    'DJI_COLLECTOR_LOCK_WAIT_S': '1800',
-                    'DJI_STORAGE_STATE': os.path.join(self.tmp, 'other_session.json'),
-                    'DJI_HEADLESS': 'false',
-                    'DRONE_API_TOKEN': 'CONSOLE-TOKEN-DECOY-3',
-                    # Left in the child, these two would import production's drone_collector.
-                    'PYTHONSAFEPATH': '1', 'PYTHONPATH': srv.prod,
-                    'PLAYWRIGHT_BROWSERS_PATH': srv.browsers})
-        if os.name != 'nt':
-            env['TZ'] = W1_TZ
-        p = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-                            '-File', W1_HARNESS, '-BlockFile', bf, '-ScenarioFile', sf, '-CallsFile', cf],
-                           capture_output=True, text=True, timeout=900, env=env)
-        out = p.stdout + p.stderr
+        sc = sc or srv.scenario()
+        out, self.calls, self.services = run_server_block(
+            srv, os.path.join(self.tmp, 'w1_%d' % self.n), srv.block(**override), sc, collector or srv.collector())
         self.assertNotIn('BLOCK THREW', out, out)
-        self.calls = [l for l in read(cf).splitlines() if l]
-        self.services = json.loads(read(cf + '.services.json'))
         self.record = json.loads(read(srv.record)) if os.path.exists(srv.record) else None
-        self.assertEqual([c for c in self.calls if c.startswith('CONSOLE_ENV_CHANGED')], [], out)
-        self.assertEqual([c for c in self.calls if 'ScheduledTask' in c or 'ItemProperty' in c
-                          or c.startswith(('Set-Service', 'Restart-Service'))], [])
-        self.assertEqual([c for c in self.calls if re.match(r'(Stop|Start)-Service ', c)
-                          and c.split()[1] != 'TransportReportStaging'], [])
-        self.assertEqual([c for c in self.calls if c.startswith('WEB ') and ':5050' in c], [])
+        check_server_calls(self, self.calls, out)
         # Every service ends as it began (S1 stops and starts staging only).
-        self.assertEqual(self.services, json.loads(read(sf))['Services'], out)
+        self.assertEqual(self.services, json.loads(json.dumps(sc['Services'])), out)
         log = line_with(out, 'LOG FILE: ')[len('LOG FILE: '):]
         self.assertEqual(os.path.dirname(log), srv.work)
         self.assertRegex(os.path.basename(log), r'^card_pilot_w1_\d{8}_\d{6}\.log$')
         self.assertIn('== 1. Checks before DJI', read(log))
-        texts = [out] + [read(os.path.join(srv.work, f)) for f in os.listdir(srv.work) if f.endswith('.log')]
-        for run in srv.runs():
-            for base, _, files in os.walk(run):
-                texts += [read(os.path.join(base, f)) for f in files]
-        for secret in W1_SECRETS:
-            for text in texts:
-                self.assertNotIn(secret, text)
+        check_no_secret(self, out, srv.work, srv.runs())
         self.assertEqual(len([l for l in out.splitlines() if l.startswith('DECISION=')]), 1, out)
         return out
 
@@ -2316,7 +2352,7 @@ class W1InPowerShell(unittest.TestCase):
                      'ATTEMPTED=50 VISITED=50 CARDS_CAPTURED=50 FAILED=0 NOT_VISITED=0 FETCH_SUCCESS=100.0%',
                      'OUTCOME EXACT=20 IDENTIFIED=0 CONFIRMED=20 NO_KEY=0 NOT_IN_CATALOG=30 NO_CARD=0',
                      'CONFIRMED_RATE among_fetched=40.0% wilson95=', 'PROJECTION (not a fact', 'BY_UNIT ', 'BY_WEEK ',
-                     'CASES EXACT: ', 'STAGING_AFTER HEAD=' + srv.pin, 'PROD_AFTER HEAD=' + PROD):
+                     'CASES EXACT: ', 'STAGING_AFTER HEAD=' + srv.pin, 'PROD_AFTER HEAD=' + PROD_NOW, 'PROD_DJI_CODE_AFTER=unchanged since ' + PROD):
             self.assertIn(line, out)
         for name in ('PROD_TASK_BEFORE', 'PROD_TASK_LAUNCH'):
             for task in ('DroneCollectorDaily', 'DroneAreaDaily', 'DjiAreaRefresh'):
@@ -2392,10 +2428,13 @@ class W1InPowerShell(unittest.TestCase):
             ('site 5050', dict(site='http://10.103.25.14:5050'), 'the receiver http://10.103.25.14:5050 is the production port 5050 -- refused'),
             ('site other', dict(site='http://10.103.25.14:8080'), 'the receiver http://10.103.25.14:8080 is not the staging port 5051'),
             ('pilot pin', dict(pin=PIN), 'the pilot checkout '),
-            ('no token', dict(sc=srv.scenario(Registry={MACHINE_KEY: {'Path': 'C:\\Windows'},
-                                                       SITE_KEY: {'AppEnvironmentExtra': ['PORT=5051']}})),
-             'DRONE_API_TOKEN is not set in the machine environment'),
-            ('token refused', dict(sc=srv.scenario(Token='another')), 'staging refused the machine DRONE_API_TOKEN'),
+            ('no staging token', dict(sc=srv.scenario(Registry={MACHINE_KEY: {'DRONE_API_TOKEN': W1_TOKEN},
+                                                               SITE_KEY: {'AppEnvironmentExtra': ['PORT=5051']}})),
+             'the staging service environment holds 0 DRONE_API_TOKEN entries, expected exactly one'),
+            ('two staging tokens', dict(sc=srv.scenario(Registry={MACHINE_KEY: {'DRONE_API_TOKEN': MACHINE_TOKEN},
+                                                                 SITE_KEY: {'AppEnvironmentExtra': SITE_ENV + ['DRONE_API_TOKEN=x']}})),
+             'the staging service environment holds 2 DRONE_API_TOKEN entries, expected exactly one'),
+            ('token refused', dict(sc=srv.scenario(Token='another')), 'staging refused the DRONE_API_TOKEN of its own service'),
             ('production head', dict(prodExpected=STAGING_HEAD), 'production is not as expected (BEFORE)'),
             ('production service', dict(sc=srv.scenario(Services=dict(srv.scenario()['Services'], TransportBot={'Status': 'Stopped', 'StartType': 'Automatic'}))),
              'production is not as expected (BEFORE)'),
@@ -2414,8 +2453,8 @@ class W1InPowerShell(unittest.TestCase):
             ('staging site', dict(sc=srv.scenario(Services=dict(srv.scenario()['Services'], TransportReportStaging={'Status': 'Stopped', 'StartType': 'Automatic'}))),
              'TransportReportStaging is Stopped (BEFORE)'),
             ('iso task', dict(sc=srv.scenario(tasks={ISO: {'State': 'Ready'}})), 'DjiAreaRefreshStaging is not Disabled'),
-            ('launcher', dict(sc=srv.scenario(Registry={MACHINE_KEY: {'DRONE_API_TOKEN': W1_TOKEN},
-                                                       SITE_KEY: {'AppEnvironmentExtra': ['PORT=5051', 'DJI_REFRESH_LAUNCHER=subprocess']}})),
+            ('launcher', dict(sc=srv.scenario(Registry={MACHINE_KEY: {'DRONE_API_TOKEN': MACHINE_TOKEN},
+                                                       SITE_KEY: {'AppEnvironmentExtra': SITE_ENV + ['DJI_REFRESH_LAUNCHER=subprocess']}})),
              'DJI_REFRESH_LAUNCHER is back'),
             ('login', dict(sc=srv.scenario(Web={W1_SITE + '/login': {'Status': 500, 'Body': 'error'}})),
              'the staging login page did not answer 200'),
@@ -2462,6 +2501,24 @@ class W1InPowerShell(unittest.TestCase):
             sh('git', 'checkout', '-q', '--', 'dji_area/pipeline.py', cwd=srv.staging)
             self.assertStopBeforeDji(out, 'staging is not on the clean pilot revision (BEFORE)', before)
             self.assertIn('STAGING_BEFORE HEAD=%s tracked_changes=1' % srv.pin, out)
+        with self.subTest('production DJI code edited'):
+            path = os.path.join(srv.prod, 'drones.py')
+            text = read_bytes(path)
+            write(path, text + b'\n# local change\n', 'wb')
+            out = self.run_w1()
+            write(path, text, 'wb')
+            self.assertStopBeforeDji(out, 'the production DJI code (drone_collector, dji_area, drones.py) differs from %s '
+                                     '(diff exit 0, 1 local change(s))' % PROD, before)
+        with self.subTest('production DJI code committed'):
+            path = os.path.join(srv.prod, 'dji_area', 'pipeline.py')
+            text = read_bytes(path)
+            write(path, text + b'\n# new release\n', 'wb')
+            sh('git', '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-am', 'release', cwd=srv.prod)
+            head = sh('git', 'rev-parse', 'HEAD', cwd=srv.prod)
+            out = self.run_w1(prodExpected=head)
+            sh('git', '-c', 'advice.detachedHead=false', 'checkout', '-q', '--detach', PROD_NOW, cwd=srv.prod)
+            self.assertStopBeforeDji(out, 'the production DJI code (drone_collector, dji_area, drones.py) differs from %s '
+                                     '(diff exit 1, 0 local change(s))' % PROD, before)
         with self.subTest('pilot checkout changed'):
             path = os.path.join(srv.src, 'drone_collector', 'config.py')
             text = read(path)
@@ -2707,6 +2764,852 @@ class W1InPowerShell(unittest.TestCase):
                       % (os.path.join(srv.prod, 'drone_collector'), os.path.join(srv.src, 'drone_collector')), out)
         self.assertEqual(srv.collector_runs(), [])
         self.assertEqual(srv.state(), before)
+
+
+W2_FILE = os.path.join(REPO_ROOT, 'ops', 'drone_card_coverage_001', 'W2_S2_remaining450_block.ps1')
+W2_SHARED = ('Get-ProdServices', 'Get-Sha', 'Test-SameFile', 'Get-FileState', 'Read-Ids', 'Pct', 'Read-Pairs',
+             'Start-Child', 'Stop-Child', 'Get-LockOwner', 'Test-Production', 'Test-Collision', 'Test-Staging',
+             'Get-Registered')
+
+
+def w2_text():
+    with open(W2_FILE, encoding='ascii') as fh:
+        return fh.read()
+
+
+class W2Text(unittest.TestCase):
+    """W2+S2 is a file the owner runs as it is (ops/drone_card_coverage_001)."""
+
+    def setUp(self):
+        self.w2 = w2_text()
+        self.w1 = blocks()['W1']
+
+    def test_w2_is_one_ascii_block(self):
+        w2 = self.w2
+        self.assertTrue(w2.startswith('& {\n'))
+        self.assertTrue(w2.endswith('\n}\n'))
+        self.assertNotIn('\t', w2)
+        self.assertNotIn('\r', w2)
+        self.assertNotIn('&&', w2)
+        # "$name:" inside double quotes is a scope-qualified variable in PowerShell.
+        self.assertIsNone(re.search(r'\$(?!env:|global:|script:)\w+:(?!:)', w2))
+        self.assertIsNone(re.search(r'<[a-z_ ]+>|\bTODO\b|XXX', w2.replace('<this file>', '')))
+
+    def test_w2_names_the_frozen_sample_w1_and_the_server(self):
+        w2, w1 = self.w2, self.w1
+        for name in ('expectedHost', 'src', 'cpy', 'python', 'root', 'db', 'service', 'site', 'prodRoot', 'prodDb',
+                     'prodBase', 'session', 'lock', 'prodLog', 'pin', 'runRoot', 'baseline',
+                     'snapshot', 'canarySha', 'isoTask', 'work', 'svcKey'):
+            with self.subTest(name):
+                self.assertIsNotNone(const(w2, name))
+                self.assertEqual(const(w2, name), const(w1, name))
+        for line in ("  $prodDji      = @('drone_collector', 'dji_area', 'drones.py')",
+                     "  $prodTasks    = @('DroneCollectorDaily', 'DroneAreaDaily', 'DjiAreaRefresh')",
+                     "  $bots         = @('TransportBotStaging', 'TransportBot003Staging')",
+                     '  $maxCollectMin = 100', '  $minGapMin    = 130', '  $maxNoCardRun = 5', '  $maxCardRefused = 2',
+                     '  $pilotCount   = 500', '  $canaryCount  = 50'):
+            self.assertIn(line + '\n', w2)
+        # B0 as frozen on 03.10.2026; W1 as the owner ran it on 08.10.2026.
+        self.assertEqual(const(w2, 'manifestSha'), '1782d19899ed1e06345e859542d4705d6ac750d6ac57078577f5c03ad6dc66f8')
+        self.assertEqual(const(w2, 'pilotSha'), '456b6486f41c8cc66bb8e745196346ea0817e5f6c159c990d8070dcc08e21e8e')
+        self.assertEqual(const(w2, 'canarySha'), '5913a88d1bfcecdfe0586fd0a81007ef7cc771d777a2754ebd8b5c1ec2e641da')
+        self.assertEqual(const(w2, 'w1Run'), const(w1, 'w1Root') + '\\20261008_151912')
+        self.assertEqual(const(w2, 'w1Log'), const(w1, 'work') + '\\card_pilot_w1_20261008_151912.log')
+        self.assertEqual(const(w2, 'w1RunId'), 'sources:ids-file:20261008T101922Z')
+        for name, value in (('w1New', 200), ('w1Exact', 14), ('w1Identified', 3), ('w1NoKey', 6),
+                            ('w1NotInCatalog', 27)):
+            self.assertRegex(w2, r'(?m)^  \$%s\s*= %d$' % (name, value))
+        self.assertEqual(const(w2, 'w2Root'), const(w1, 'work') + '\\w2')
+        self.assertEqual(const(w2, 'prodExpected'), PROD_V123)
+        self.assertEqual(const(w2, 'prodBase'), PROD)
+        # The DJI code of the production W2 expects is that of the commit W1 was checked against.
+        self.assertEqual(subprocess.run(['git', '-C', REPO_ROOT, 'diff', '--quiet', PROD, PROD_V123, '--',
+                                         'drone_collector', 'dji_area', 'drones.py']).returncode, 0)
+        # The stop signs of W1, and the session expiring in the middle of a longer run.
+        m1 = re.search(r"(?m)^  \$stopMarkers  = (.*)$", w1).group(1)
+        m2 = re.search(r"(?m)^  \$stopMarkers  = (.*)$", w2).group(1)
+        self.assertEqual(m2, m1.replace("session (is )?(missing|expired)'", "session (is )?(missing|expired)|expired during the run'"))
+
+    def test_w2_shares_the_checked_functions_of_w1(self):
+        """The checks that ran live in W1 are the same lines here, not a re-typed copy."""
+        for name in W2_SHARED:
+            with self.subTest(name):
+                one = function_text(self.w1, name).replace('the canary needs a window', 'the collection needs a window')
+                self.assertEqual(function_text(self.w2, name), one)
+
+    def test_w2_collects_the_450_once_and_recalculates_them_only(self):
+        w2 = self.w2
+        code = '\n'.join(l for l in w2.splitlines() if not l.lstrip().startswith(('Write-Output', '#')))
+        self.assertEqual(re.findall(r"Start-Child \$cpy \('-m [^)]*\)", w2),
+                         ["Start-Child $cpy ('-m drone_collector.main --sources --ids-file \"' + $idsFile + '\" --send-sources')"])
+        self.assertEqual(w2.count('Start-Child $cpy'), 2)  # the import probe and the run
+        self.assertEqual(w2.count('[System.Diagnostics.Process]::Start('), 1)
+        self.assertIn("$idsFile = Join-Path $w2 'remaining_450_ids.txt'", w2)
+        self.assertIn("$outbox = Join-Path $w2 'outbox'", w2)
+        # 450 = the frozen pilot minus the W1 canary, in manifest order; the file is checked by hash.
+        self.assertIn('$remaining = @($pilotIds | Where-Object { -not $canarySet.Contains($_) })', w2)
+        self.assertIn('$remainingCount = $pilotCount - $canaryCount', w2)
+        self.assertIn('if ((Get-Sha $idsFile) -ne $remainingSha)', w2)
+        self.assertIn("$flightArgs = @($remaining | ForEach-Object { '--flight-id'; [string]$_ })", w2)
+        self.assertEqual(w2.count('dji_area_recalc.py'), 1)
+        self.assertIn('tools\\dji_area_recalc.py --db $db --from 2026-09-01 --to 2026-09-30 $mode2 --quiet', w2)
+        for word in ('--save-session', 'Start-Process', 'Invoke-Expression', 'Remove-Item', 'Move-Item',
+                     'SetEnvironmentVariable', 'drain', '--routes', '--lands', '--from-date', '--days',
+                     'Register-ScheduledTask', 'Set-ScheduledTask', 'Disable-ScheduledTask', 'Enable-ScheduledTask',
+                     'Start-ScheduledTask', 'Stop-ScheduledTask', 'Set-Service', 'Restart-Service', 'Set-ItemProperty',
+                     'New-ItemProperty', 'Remove-ItemProperty', 'Stop-Process', 'Wait-Process', 'Invoke-RestMethod',
+                     'source_sync -Method', 'git pull', 'migrate_', 'backup_transport_db',
+                     'Copy-Item -LiteralPath $snapshot', '--with-geometric'):
+            self.assertNotIn(word, code, word)
+        # The tools it runs: the checks, the pilot tool, one recalculation, the census; no cycle, no backfill.
+        self.assertEqual(sorted(set(re.findall(r'tools\\(\w+)\.py', w2))),
+                         ['check_db_lock', 'check_migration_drift', 'dji_area_recalc', 'dji_card_coverage_pilot',
+                          'dji_field_census'])
+        self.assertIsNone(re.search(r'\$env:\w+\s*=', w2))
+        # Staging only: start after an interrupted S2 of the same run, stop and start in S2, restart in finally.
+        self.assertEqual(re.findall(r'(?:Stop|Start)-Service -Name (\$\w+)', w2), ['$service'] * 4)
+        # B1's returned.txt is looked at, never written: returning staging is R's.
+        self.assertEqual(re.findall(r'[^\n]*returned\.txt[^\n]*', w2),
+                         ["    $open = @(Get-ChildItem -LiteralPath $runRoot -Directory -Filter 'staging_*' | Where-Object { -not (Test-Path -LiteralPath (Join-Path $_.FullName 'returned.txt')) })"])
+        # The measure covers the 500 with both collection logs; attempted must be the 500.
+        self.assertIn("collector-stats --log $w1ForStats --log (Join-Path $w2 'collector_for_stats.log') --ids $pilotCopy", w2)
+        self.assertIn('measure --db $db --plan-dir $planDir --stage pilot --before $fpB0 --collector-stats $statsAllJson', w2)
+        self.assertIn('if ([int]$measure.attempted -ne $pilotCount)', w2)
+        # No decision to go further and no R: the pilot ends here.
+        self.assertNotRegex(w2, r'Write-Output \(?["\']DECISION=')
+        self.assertIn("PILOT_STATUS=COMPLETE (W2 and R are not started by this block; R is a separate step)", w2)
+
+    def test_w2_child_environment_and_token(self):
+        w2 = self.w2
+        m = re.search(r'\$childEnv = \[ordered\]@\{ (.*?) \}\n', w2)
+        pairs = dict(p.split(' = ', 1) for p in m.group(1).split('; '))
+        self.assertEqual(pairs, {'VEHICLE_SOFT_BASE_URL': '$site', 'DJI_STORAGE_STATE': '$session',
+                                 'DJI_COLLECTOR_LOCK_PATH': '$lock', 'DJI_COLLECTOR_LOCK_WAIT_S': "'0'",
+                                 'DRONE_OUTBOX_DIR': '$outbox', 'DJI_HEADLESS': "'true'",
+                                 'DRONE_API_TOKEN': '$token', 'PYTHONIOENCODING': "'utf-8'"})
+        self.assertIn("$childDrop = @('PYTHONPATH', 'PYTHONHOME', 'PYTHONSAFEPATH', 'PYTHONSTARTUP')", w2)
+        self.assertIn("$tokenLines = @(@((Get-ItemProperty -LiteralPath $siteParams).AppEnvironmentExtra) | Where-Object { [string]$_ -match '^\\s*DRONE_API_TOKEN=' })", w2)
+        self.assertIn('if ($tokenLines.Count -ne 1) { throw', w2)
+        self.assertEqual(len(re.findall(r'\$token\b', w2)), 4)  # read, emptiness check, the child, the read-only check
+        for line in w2.splitlines():
+            if 'Write-Output' in line:
+                self.assertNotRegex(line, r'\$token\b|\$childEnv\[|\$childEnv\.Values|\$body\b')
+        refuse = w2.index("if ($site -match ':5050')")
+        self.assertLess(refuse, w2.index('Start-Child $cpy'))
+
+    def test_w2_reads_production_only(self):
+        w2 = self.w2
+        helper = re.search(r"\$helperText = @'\n(.*?)\n'@", w2, re.S).group(1)
+        self.assertIn("uri = 'file:%s?mode=ro'", helper)
+        self.assertEqual(helper.count('sqlite3.connect('), 1)
+        for word in ('INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'CREATE', 'commit', 'REPLACE', 'PRAGMA'):
+            self.assertNotIn(word, helper, word)
+        self.assertEqual(len(re.findall(r'\$prodDb\b', w2)), 3)  # the constant, the probe, the gate
+        self.assertEqual(sorted(re.findall(r'git -C \$prodRoot ((?:--no-optional-locks )?\S+)', w2)),
+                         ['--no-optional-locks status', 'diff', 'rev-parse'])
+        for m in re.finditer(r'[^\n]*\$session\b[^\n]*', w2):
+            self.assertNotRegex(m.group(0), r'Get-Content|ReadAll|Select-String|Set-Content|Copy-Item|Read-Utf8')
+        for m in re.finditer(r'[^\n]*(\$lock\b|\$prodLog\b)[^\n]*', w2):
+            self.assertNotRegex(m.group(0), r'Set-Content|Remove|Out-File|WriteAll|Copy-Item|New-Item')
+        # The diagnostics print counts, flight ids and field NAMES; never a key, a body or a value.
+        diag = helper[helper.index('def diag('):helper.index('def main(')]
+        self.assertNotRegex(diag, r"lines\.append\([^\n]*(raw|data\[|body|geometry_key_raw)")
+
+    def test_w2_order_of_gates_and_state(self):
+        w2 = self.w2
+        launch = w2.index('$proc = Start-Child $cpy')
+        for gate in ("Test-Production 'BEFORE'", "Test-Collision 'BEFORE'", "Test-Staging 'BEFORE'",
+                     "Test-Production 'LAUNCH'", "Test-Collision 'LAUNCH'", 'FINGERPRINT_PRE=equals W1 fingerprint_post.json',
+                     'REGISTERED=60', 'TOKEN_CHECK=', 'W1_RECHECK_NOW', "STEP FAILED: the W1 log $w1Log",
+                     'W1_ON_STAGING', '$done = @($runs', '$partial = @($runs', 'W2_REMAINING='):
+            self.assertLess(w2.index(gate), launch, gate)
+        stop = w2.index('Stop-Service -Name $service -Force')
+        for gate in ('if ($stopWhy) { throw', 'if (@(0, 18) -notcontains $code)', 'if ($statsCode -ne 0)',
+                     'if ($sessionAfter -ne [string]$done.session_before)', 'if (-not $inPilot -or $inProd)',
+                     'if ($revisited.Count -ne 0)', "COLLECTOR_GATE=PASS"):
+            self.assertLess(w2.index(gate), stop, gate)
+        # What the gate needs is on disk before the gate; the collector is stopped unless it ended by itself.
+        self.assertLess(w2.index("WriteAllText((Join-Path $w2 'collector_done.json')"), w2.index("Write-Output '== 3. Collector gate'"))
+        self.assertIn('if (-not $ended) { Stop-Child $proc }', w2)
+        self.assertLess(w2.index('if ($clock.Elapsed.TotalMinutes -gt $maxCollectMin)'), w2.index('if (-not $next.Wait(5000)) { continue }'))
+        # The gate marker is written after every collector check, the S2 marker after every S2 check.
+        marker = w2.index("WriteAllText((Join-Path $w2 'collector_gate.json')")
+        self.assertLess(w2.index("Write-Fingerprint (Join-Path $w2 'fingerprint_after_collection.json')"), marker)
+        for gate in ('if ($stNew[', 'if (([int]$stats.visited -ne $remainingCount)'):
+            self.assertLess(w2.index(gate), marker, gate)
+        done = w2.index("WriteAllText((Join-Path $w2 's2_done.txt')")
+        for gate in ("Test-Staging 'AFTER'", "Test-Production 'AFTER'", 'if ($m2Code -ne 0)', 'if ($mCode -ne 0)'):
+            self.assertLess(w2.index(gate), done, gate)
+        self.assertLess(done, w2.index('  } catch {\n    $failure = '))
+        self.assertEqual(sorted(set(re.findall(r"return '([A-Z0-9_]+)'", function_text(w2, 'Get-RunState'))) | {'COLLECTION_STOPPED'}),
+                         ['COLLECTION_STOPPED', 'COMPLETE', 'GATE_PENDING', 'NOT_STARTED', 'S2_PENDING'])
+        # The staging site is started again in finally, so that Ctrl+C during S2 does not leave it stopped.
+        self.assertLess(w2.index('  } finally {\n    # [REASON]: in finally'), w2.index("Write-Output '== 5. Pilot result"))
+
+
+W2_RESULT_TABLES = ('dji_field_attributions', 'dji_area_calculations', 'dji_flight_evidence', 'dji_source_revisions',
+                    'drone_flights', 'drone_area_decisions')
+
+
+@unittest.skipUnless(POWERSHELL, 'CARD_PILOT_POWERSHELL is not set')
+class W2InPowerShell(unittest.TestCase):
+    """W2+S2 as the file in ops/, against the stand-in SRV-YOQSH after a real W1.
+
+    [REASON]: W2 continues a live pilot. It must collect exactly the frozen
+    pilot minus the 50 W1 already visited, only after W1's evidence and the
+    staging state W1 left are proven; never visit DJI twice for the same
+    run; recalculate the 450 alone; measure all 500 with both collection
+    logs; and leave production, the 50 W1 results and every flight outside
+    the pilot as they were. setUpClass runs the real W1 block once (its
+    collection by the stand-in collector); the bed has 60 frozen flights
+    (50 + 10), so W2_REMAINING is 10 here and 450 on the server.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        srv = cls.srv = W1Server(os.path.join(cls.tmp, 'srv'))
+        cls.w2_root = os.path.join(srv.work, 'w2')
+        keys = {str(fid): CATALOG_KEY for fid in srv.ids[:20]}
+        out, _, _ = run_server_block(srv, os.path.join(cls.tmp, 'w1'), srv.block(), srv.scenario(),
+                                     srv.collector(card_keys=keys))
+        assert out.splitlines()[-1] == 'STEP=PASS' and 'DECISION=GO_TO_500' in out, out
+        cls.w1_run = srv.runs()[0]
+        cls.w1_log = line_with(out, 'LOG FILE: ')[len('LOG FILE: '):]
+        cls.w1_run_id = re.search(r'RUN_SUMMARY run_id=(\S+) ', out).group(1)
+        # [REASON]: on the server W1 ran hours before W2; here seconds. The receiver's stamps are
+        # moved back to that morning (not hashed by the fingerprint), or the "evidence of other
+        # flights since the launch" gate would see W1's own.
+        con = sqlite3.connect(srv.db)
+        con.execute("UPDATE dji_flight_evidence SET updated_at = '2026-10-08 10:19:22' WHERE updated_at > '2026-10-08 10:19:22'")
+        con.execute("UPDATE dji_source_revisions SET received_at = '2026-10-08 10:19:22', last_seen_at = '2026-10-08 10:19:22' "
+                    "WHERE received_at > '2026-10-08 10:19:22'")
+        con.commit()
+        con.close()
+        cls.post_w1 = read_bytes(srv.db)
+        # Production was released again after W1 (v1.23), its DJI code unchanged.
+        sh('git', '-c', 'advice.detachedHead=false', 'checkout', '-q', PROD_V123, cwd=srv.prod)
+        cls.pilot_log = os.path.join(srv.src, 'drone_collector', 'logs', 'collector.log')
+        cls.pilot_log_bytes = read_bytes(cls.pilot_log)
+        cls.pilot = [int(l) for l in read(os.path.join(srv.plan_dir, 'pilot_ids.txt')).splitlines()
+                     if l.strip() and not l.startswith('#')]
+        cls.canary = [int(l) for l in read(srv.canary_file).splitlines() if l.strip() and not l.startswith('#')]
+        cls.remaining = [i for i in cls.pilot if i not in set(cls.canary)]
+        assert (len(cls.pilot), len(cls.canary), len(cls.remaining)) == (60, 50, 10), (len(cls.pilot), len(cls.remaining))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, True)
+
+    def setUp(self):
+        srv = self.srv
+        with open(srv.db, 'wb') as fh:
+            fh.write(self.post_w1)
+        for p in (srv.db + '-wal', srv.db + '-shm', srv.lock + '.owner', srv.record + '.runs', srv.record):
+            if os.path.exists(p):
+                os.remove(p)
+        shutil.rmtree(self.w2_root, True)
+        with open(self.pilot_log, 'wb') as fh:
+            fh.write(self.pilot_log_bytes)
+        for f in os.listdir(srv.work):
+            if f.startswith('card_pilot_w2_'):
+                os.remove(os.path.join(srv.work, f))
+        self.n = 0
+        self.before = srv.state()
+
+    def text(self, **override):
+        srv, plan = self.srv, self.srv.plan['sample']
+        values = {'src': srv.src, 'cpy': sys.executable, 'python': sys.executable, 'root': srv.staging,
+                  'db': srv.db, 'prodRoot': srv.prod, 'prodDb': srv.prod_db, 'session': srv.session,
+                  'lock': srv.lock, 'prodLog': srv.prod_log, 'pin': srv.pin, 'runRoot': srv.run_root,
+                  'baseline': srv.baseline, 'snapshot': srv.snapshot, 'manifestSha': plan['manifest_sha256'],
+                  'pilotSha': plan['pilot_ids_sha256'], 'canarySha': plan['canary_ids_sha256'],
+                  'pilotCount': 60, 'work': srv.work, 'w1Run': self.w1_run, 'w1Log': self.w1_log,
+                  'w1RunId': self.w1_run_id, 'w1New': 50, 'w1Exact': 20, 'w1Identified': 0, 'w1NoKey': 0,
+                  'w1NotInCatalog': 30, 'w2Root': self.w2_root}
+        values.update(override)
+        text = w2_text()
+        for name, value in values.items():
+            if isinstance(value, int):
+                text, n = re.subn(r'^(  \$%s\s*= )\d+$' % name, r'\g<1>%d' % value, text, flags=re.M)
+            else:
+                text, n = re.subn(r"^(  \$%s\s*= )'[^']*'$" % name, lambda m: m.group(1) + "'" + value + "'",
+                                  text, flags=re.M)
+            assert n == 1, name
+        return text
+
+    def collector(self, **changes):
+        # W2's cards: 4 on a catalogued contour, 3 without a contour key (2 with the field
+        # empty, 1 without the field), 3 on an unknown contour.
+        keys = {str(f): CATALOG_KEY for f in self.remaining[:4]}
+        keys.update({str(f): '' for f in self.remaining[4:6]})
+        keys[str(self.remaining[6])] = '-'
+        return self.srv.collector(card_keys=keys, **changes)
+
+    def run_w2(self, sc=None, collector=None, services_back=True, **override):
+        srv = self.srv
+        self.n += 1
+        sc = sc or srv.scenario()
+        out, self.calls, services = run_server_block(srv, os.path.join(self.tmp, 'w2_%s_%d' % (self._testMethodName, self.n)),
+                                                     self.text(**override), sc, collector or self.collector())
+        self.assertNotIn('BLOCK THREW', out, out)
+        check_server_calls(self, self.calls, out)
+        if services_back:
+            self.assertEqual(services, json.loads(json.dumps(sc['Services'])), out)
+        log = line_with(out, 'LOG FILE: ')[len('LOG FILE: '):]
+        self.assertRegex(os.path.basename(log), r'^card_pilot_w2_\d{8}_\d{6}\.log$')
+        check_no_secret(self, out, srv.work, self.runs())
+        self.assertEqual([l for l in out.splitlines() if l.startswith('DECISION=')], [])
+        return out
+
+    def runs(self):
+        if not os.path.isdir(self.w2_root):
+            return []
+        return sorted(os.path.join(self.w2_root, d) for d in os.listdir(self.w2_root))
+
+    def table(self, name, ids=None, outside=False, db=None):
+        con = sqlite3.connect(db or self.srv.db)
+        try:
+            cols = [r[1] for r in con.execute('PRAGMA table_info(%s)' % name)]
+            key = 'dji_flight_id' if 'dji_flight_id' in cols else 'flight_id'
+            if ids is None:
+                rows = con.execute('SELECT * FROM %s' % name).fetchall()
+            else:
+                marks = ','.join('?' * len(ids))
+                rows = con.execute('SELECT * FROM %s WHERE %s %s IN (%s)' % (name, key, 'NOT' if outside else '', marks),
+                                   list(ids)).fetchall()
+            return sorted(rows, key=repr)
+        finally:
+            con.close()
+
+    def post_w1_table(self, name, ids=None, outside=False):
+        path = os.path.join(self.tmp, 'post_w1.db')
+        if not os.path.exists(path):
+            with open(path, 'wb') as fh:
+                fh.write(self.post_w1)
+        return self.table(name, ids, outside, db=path)
+
+    def assertStopBeforeDji(self, out, message):
+        self.assertIn('STEP=STOP - STEP FAILED: ' + message, out)
+        self.assertNotIn('== 2.', out)
+        self.assertEqual(self.srv.collector_runs(), [])
+        self.assertEqual(read_bytes(self.srv.db), self.post_w1)
+        self.assertEqual(self.srv.state(), self.before)
+        self.assertEqual([c for c in self.calls if c.startswith(('Stop-Service', 'Start-Service'))], [])
+        self.assertNotIn('W2_STATE=COLLECTION_STOPPED', out)
+
+    def assertStopBeforeRecalc(self, out, message, state='COLLECTION_STOPPED'):
+        self.assertIn('STEP=STOP - STEP FAILED: ' + message, out)
+        self.assertNotIn('COLLECTOR_GATE=PASS', out)
+        self.assertNotIn('RECALC_', out)
+        self.assertEqual([c for c in self.calls if c.startswith(('Stop-Service', 'Start-Service'))], [])
+        self.assertEqual(len(self.srv.collector_runs()), 1)
+        for name in ('dji_field_attributions', 'dji_area_calculations'):
+            self.assertEqual(self.table(name), self.post_w1_table(name), name)
+        # A run this block stopped is never collected again; a collector that ended by itself is
+        # only checked again (its gate), never collected again either.
+        self.assertIn('W2_STATE=' + state + ' -- ', out)
+        if state == 'COLLECTION_STOPPED':
+            self.assertIn('PARTIAL_W2_STATE visited=', out)
+        else:
+            self.assertNotIn('PARTIAL_W2_STATE', out)
+
+    def test_the_interpreter_is_the_one_ci_asked_for(self):
+        """In CI CARD_PILOT_POWERSHELL_MAJOR=5: these runs prove Windows PowerShell 5.1, not pwsh 7."""
+        got = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.Major'],
+                             capture_output=True, text=True, timeout=120).stdout.strip()
+        self.assertRegex(got, r'^\d+$')
+        want = os.environ.get('CARD_PILOT_POWERSHELL_MAJOR')
+        if want:
+            self.assertEqual(got, want)
+
+    def test_pass_collects_the_450_recalculates_them_and_measures_the_500(self):
+        srv = self.srv
+        out = self.run_w2()
+        self.assertEqual(out.splitlines()[-1], 'STEP=PASS', out)
+        run = self.runs()
+        self.assertEqual(len(run), 1)
+        run = run[0]
+        ids_file = os.path.join(run, 'remaining_450_ids.txt')
+        # 1. Exactly the frozen pilot minus the canary, in manifest order, and its hash printed.
+        self.assertEqual([int(l) for l in read(ids_file).splitlines() if not l.startswith('#')], self.remaining)
+        self.assertEqual(read(ids_file).count('\n'), 12)
+        for line in ('W1_ALREADY_DONE=50 W2_REMAINING=10 TOTAL_MANIFEST=60',
+                     'PILOT_IDS_SHA256=' + srv.plan['sample']['pilot_ids_sha256'],
+                     'REMAINING_IDS_SHA256=' + sha(ids_file), 'MODE=fresh W2 run ' + run,
+                     # 7. W1 as verified, and staging exactly as W1 left it.
+                     'W1_RUN_SUMMARY exit=0 run_id=' + self.w1_run_id + ' requested=50 visited=50 card=50 new=50',
+                     'W1_MEASURE fetched=50 confirmed=20 EXACT=20 IDENTIFIED=0 NO_KEY=0 NOT_IN_CATALOG=30',
+                     'W1_ON_STAGING revisions=50 flights=50 outside_canary=0 canary_with_card=50 canary_card_from_w1=50',
+                     'FINGERPRINT_PRE=equals W1 fingerprint_post.json',
+                     'W1_RECHECK_NOW fetched=50 confirmed=20 EXACT=20 IDENTIFIED=0 NO_KEY=0 NOT_IN_CATALOG=30 gates_exit=0',
+                     'TOKEN_CHECK=staging accepts the DRONE_API_TOKEN of its own service', 'REGISTERED=60',
+                     'RECEIVER=' + W1_SITE + '/drones/api/source_sync', 'PILOT_OUTBOX=' + os.path.join(run, 'outbox'),
+                     'COLLECTOR_GATE=PASS', 'CANARY_REVISITED=0', 'SESSION_AFTER=unchanged',
+                     'RUN_LOGGED_IN pilot_checkout=True production_checkout=False',
+                     'PROD_DB_AFTER run_rows=0 w2_sources_since=0 w2_evidence_since=0',
+                     'STAGING_NEW_EVIDENCE revisions=10 flights=10 outside_w2=0 other_run=0 repeated_type=0 evidence_outside_since=0',
+                     'RECALC_DRY-RUN flights_in_period=10', 'RECALC_APPLY flights_in_period=10 calc_writes=10',
+                     'outside_w2=0 w1_canary=0 raw=1 decisions=1 migrations=1 sources=1',
+                     # 14. All 60 (500 on the server) attempted, from both collection logs.
+                     'COLLECTION visited=60 of 60 cards=60 without_card=0', 'SOURCES_SAVED W1=50 W2=10 total=60',
+                     'OUTCOME EXACT=24 IDENTIFIED=0 CONFIRMED=24 NO_KEY=3 NOT_IN_CATALOG=33 NO_CARD=0 OTHER_UNRESOLVED=0 NO_CALC=0',
+                     'COMPARE W1=20/50 40.0% W2=4/10 40.0% ALL=24/60 40.0%', 'CONFIRMED_RATE all_500=40.0% wilson95=',
+                     'PROJECTION (not a fact', 'BY_UNIT ', 'BY_WEEK ', 'CASES NO_KEY: ',
+                     'DIAG NO_KEY flights=3 key_field_absent=1 key_field_empty=2 key_in_card_but_not_read=0',
+                     'DIAG NOT_IN_CATALOG flights=33 key_format=[PLAIN_MD5:33]', 'DIAG CATALOG snapshots=1 ',
+                     'PILOT_STATUS=COMPLETE', 'W2_STATE=COMPLETE', 'STAGING_AFTER HEAD=' + srv.pin,
+                     'PROD_AFTER HEAD=' + PROD_V123, 'PROD_DJI_CODE_AFTER=unchanged since ' + PROD):
+            self.assertIn(line, out)
+        self.assertRegex(out, r'CHANGED_SINCE_W1 flights=\d+ outside_w2=0 w1_canary=0 raw=1 decisions=1 migrations=1')
+        for task in ('DroneCollectorDaily', 'DroneAreaDaily', 'DjiAreaRefresh'):
+            self.assertRegex(out, r'PROD_TASK_LAUNCH %s state=Ready next=' % task)
+        measure = json.loads(read(os.path.join(run, 'measure', 'measure_pilot.json')))
+        self.assertEqual((measure['attempted'], measure['fetched'], measure['confirmed']), (60, 60, 24))
+        self.assertEqual(json.loads(read(os.path.join(run, 'collector_stats_pilot.json')))['visited'], 60)
+        # 2. One collector run: the remaining ids, never a canary flight; the staging token; own outbox.
+        self.assertEqual(srv.collector_runs(), [['--sources', '--ids-file', ids_file, '--send-sources']])
+        rec = json.loads(read(srv.record))
+        self.assertTrue(rec['token_matches'])
+        self.assertEqual(rec['env']['DRONE_OUTBOX_DIR'], os.path.join(run, 'outbox'))
+        self.assertEqual(rec['env']['VEHICLE_SOFT_BASE_URL'], W1_SITE)
+        self.assertEqual(len(os.listdir(os.path.join(run, 'outbox', 'sent'))), 10)
+        stats = json.loads(read(os.path.join(run, 'collector_stats_w2.json')))
+        self.assertEqual(sorted(int(k) for k in stats['per_flight']), sorted(self.remaining))
+        # 13, 15. Staging: the 50 W1 results and every flight outside the pilot as W1 left them.
+        for name in W2_RESULT_TABLES:
+            self.assertEqual(self.table(name, self.canary), self.post_w1_table(name, self.canary), name)
+            self.assertEqual(self.table(name, self.pilot, outside=True), self.post_w1_table(name, self.pilot, outside=True), name)
+        self.assertNotEqual(self.table('dji_area_calculations', self.remaining),
+                            self.post_w1_table('dji_area_calculations', self.remaining))
+        # 16. Production only read; the lock free; the site stopped for S2 and started again.
+        self.assertEqual(srv.state(), self.before)
+        self.assertFalse(os.path.exists(srv.lock + '.owner'))
+        self.assertEqual([c for c in self.calls if re.match(r'(Stop|Start)-Service', c)],
+                         ['Stop-Service TransportReportStaging', 'Start-Service TransportReportStaging'])
+        # 17. Nothing more: pasting again does nothing at all.
+        out = self.run_w2()
+        self.assertIn('STEP=STOP - STEP FAILED: W2+S2 was already completed in ' + run, out)
+        self.assertIn('W2_STATE=COMPLETE', out)
+        self.assertEqual(len(srv.collector_runs()), 1)
+        self.assertEqual([c for c in self.calls if c.startswith(('Stop-Service', 'Start-Service'))], [])
+
+    def test_refusals_before_dji(self):
+        srv = self.srv
+        plan = srv.plan['sample']
+        other = '0' * 64
+        cases = [
+            ('host', dict(sc=srv.scenario(Host='bak-tex11')), 'host is bak-tex11'),
+            ('pilot sha', dict(pilotSha=other), os.path.join(srv.plan_dir, 'pilot_ids.txt') + ' has sha256 '),
+            ('canary sha', dict(canarySha=other), os.path.join(srv.plan_dir, 'canary_ids.txt') + ' has sha256 '),
+            ('manifest sha', dict(manifestSha=other), os.path.join(srv.plan_dir, 'pilot_manifest.csv') + ' has sha256 '),
+            ('pilot size', dict(pilotCount=61), 'plan.json says 60 / 50, expected 61 / 50'),
+            ('site 5050', dict(site='http://10.103.25.14:5050'), 'the receiver http://10.103.25.14:5050 is the production port 5050 -- refused'),
+            ('no staging token', dict(sc=srv.scenario(Registry={MACHINE_KEY: {'DRONE_API_TOKEN': W1_TOKEN},
+                                                               SITE_KEY: {'AppEnvironmentExtra': ['PORT=5051']}})),
+             'the staging service environment holds 0 DRONE_API_TOKEN entries, expected exactly one'),
+            ('two staging tokens', dict(sc=srv.scenario(Registry={MACHINE_KEY: {}, SITE_KEY: {
+                'AppEnvironmentExtra': SITE_ENV + ['DRONE_API_TOKEN=' + MACHINE_TOKEN]}})),
+             'the staging service environment holds 2 DRONE_API_TOKEN entries, expected exactly one'),
+            ('token refused', dict(sc=srv.scenario(Token='another')), 'staging refused the DRONE_API_TOKEN of its own service on a read-only call'),
+            ('production head', dict(prodExpected=PROD_NOW), 'production is not as expected (BEFORE)'),
+            ('collector due', dict(sc=srv.scenario(tasks={'DroneCollectorDaily': {'NextRunTime': 1.5}})),
+             'production task DroneCollectorDaily starts in '),
+            ('collector running', dict(sc=srv.scenario(Processes=[{'ProcessId': 777, 'Name': 'python.exe',
+                                                                   'CommandLine': 'python -m drone_collector.main'}])),
+             '1 collector or cycle process(es) are running (pid 777)'),
+            ('bot running', dict(sc=srv.scenario(Services=dict(srv.scenario()['Services'], TransportBotStaging={'Status': 'Running', 'StartType': 'Automatic'}))),
+             'TransportBotStaging is Running Automatic'),
+            ('iso enabled', dict(sc=srv.scenario(tasks={ISO: {'State': 'Ready'}})), 'DjiAreaRefreshStaging is not Disabled'),
+            ('launcher', dict(sc=srv.scenario(Registry={MACHINE_KEY: {}, SITE_KEY: {'AppEnvironmentExtra': SITE_ENV + ['DJI_REFRESH_LAUNCHER=subprocess']}})),
+             'DJI_REFRESH_LAUNCHER is back in the staging site environment (BEFORE)'),
+            ('writer task', dict(sc=srv.scenario(tasks={'StagingImport': {'State': 'Ready', 'Execute': 'python.exe',
+                                                                         'Arguments': 'C:\\transport-report-staging\\tools\\import.py'}})),
+             'enabled scheduled task(s) that may collect or write staging: StagingImport'),
+            ('w1 log', dict(w1Log=os.path.join(self.w1_run, 'collector_stdout.log')),
+             'the W1 log %s does not end W1 with STEP=PASS and DECISION=GO_TO_500' % os.path.join(self.w1_run, 'collector_stdout.log')),
+            ('w1 run id', dict(w1RunId='sources:ids-file:20261008T000000Z'), 'the W1 RUN SUMMARY is not the verified one'),
+            ('w1 sources', dict(w1New=49), 'the W1 RUN SUMMARY is not the verified one'),
+            ('w1 numbers', dict(w1Exact=19, w1NotInCatalog=31), 'the W1 measurement is not the verified one'),
+        ]
+        for name, kw, message in cases:
+            with self.subTest(name):
+                self.setUp()
+                out = self.run_w2(**kw)
+                self.assertStopBeforeDji(out, message)
+        # Files and databases on the server, one at a time.
+        b1_closed = os.path.join(srv.b1_run, 'returned.txt')
+        drones = os.path.join(srv.prod, 'drones.py')
+        drones_text = read_bytes(drones)
+
+        def outside_attribution(con):
+            con.execute('UPDATE dji_field_attributions SET superseded_at = ? WHERE flight_id = ? AND superseded_at IS NULL',
+                        ('2026-10-08 12:00:00', self.outside_flight()))
+
+        def canary_attribution(con):
+            con.execute('UPDATE dji_field_attributions SET superseded_at = ? WHERE flight_id = ? AND superseded_at IS NULL',
+                        ('2026-10-08 12:00:00', self.canary[0]))
+
+        def catalog(con):
+            Seed(con).geometry('d' * 32)
+
+        def migration(con):
+            con.execute("INSERT INTO schema_migrations (name, applied_at) VALUES ('SYNTH_99', '2026-10-08')")
+
+        def w1_revision_elsewhere(con):
+            con.execute("UPDATE dji_source_revisions SET capture_run_id = 'sources:ids-file:OTHER' WHERE id = "
+                        "(SELECT MIN(id) FROM dji_source_revisions WHERE capture_run_id = ?)", (self.w1_run_id,))
+
+        def receiver(con):
+            con.execute("INSERT INTO dji_source_revisions (provider_account_id, flight_id, scope_key, source_type, sha256, "
+                        "size_bytes, captured_at_utc, capture_run_id, is_evidence_import, storage_kind, body_text, received_at) "
+                        "VALUES ('X', ?, 'x', 'CARD', ?, 1, '2026-10-08', 'other', 0, 'inline', '{}', '2026-10-08')",
+                        (self.outside_flight(), 'e' * 64))
+
+        for name, change, message in (
+                ('outside flight changed after W1', outside_attribution, 'staging changed after W1'),
+                ('a W1 result changed after W1', canary_attribution, 'staging changed after W1'),
+                ('evidence received after W1', receiver, 'staging changed after W1'),
+                ('field catalog', catalog, 'the staging field catalog differs from the B0 copy'),
+                ('migration', migration, 'the staging database reports 61 registered migrations, expected 60'),
+                ('a W1 revision not of the W1 run', w1_revision_elsewhere,
+                 'staging does not hold the W1 evidence as verified (its sources, the 50 cards)')):
+            with self.subTest(name):
+                self.setUp()
+                con = sqlite3.connect(srv.db)
+                change(con)
+                con.commit()
+                con.close()
+                changed = read_bytes(srv.db)
+                out = self.run_w2()
+                self.assertIn('STEP=STOP - STEP FAILED: ' + message, out)
+                self.assertNotIn('== 2.', out)
+                self.assertEqual(srv.collector_runs(), [])
+                self.assertEqual(read_bytes(srv.db), changed)
+                self.assertEqual(srv.state(), self.before)
+        with self.subTest('W1 collector exit'):
+            self.setUp()
+            exit_file = os.path.join(self.w1_run, 'collector_exit.txt')
+            kept = read_bytes(exit_file)
+            write(exit_file, '1\n')
+            try:
+                self.assertStopBeforeDji(self.run_w2(), 'the W1 RUN SUMMARY is not the verified one')
+            finally:
+                with open(exit_file, 'wb') as fh:
+                    fh.write(kept)
+        with self.subTest('B1 run closed'):
+            self.setUp()
+            write(b1_closed, 'returned\n')
+            try:
+                self.assertStopBeforeDji(self.run_w2(), 'expected exactly one open B1 run with swapped.txt')
+            finally:
+                os.remove(b1_closed)
+        with self.subTest('production DJI code edited'):
+            self.setUp()
+            write(drones, '# edited\n', 'a')
+            try:
+                out = self.run_w2()
+                self.assertIn('STEP=STOP - STEP FAILED: the production DJI code (drone_collector, dji_area, drones.py) '
+                              'differs from %s (diff exit 0, 1 local change(s))' % PROD, out)
+                self.assertEqual(srv.collector_runs(), [])
+            finally:
+                with open(drones, 'wb') as fh:
+                    fh.write(drones_text)
+        with self.subTest('production lock owner alive'):
+            self.setUp()
+            write(srv.lock + '.owner', json.dumps({'pid': os.getpid(), 'purpose': 'daily'}))
+            out = self.run_w2()
+            self.assertIn('STEP=STOP - STEP FAILED: the production collector lock is held by running pid %d' % os.getpid(), out)
+            self.assertEqual(srv.collector_runs(), [])
+            os.remove(srv.lock + '.owner')
+
+    def outside_flight(self):
+        con = sqlite3.connect(self.srv.db)
+        try:
+            marks = ','.join('?' * len(self.pilot))
+            return con.execute('SELECT flight_id FROM dji_field_attributions WHERE superseded_at IS NULL AND flight_id NOT IN (%s) '
+                               'ORDER BY flight_id LIMIT 1' % marks, self.pilot).fetchone()[0]
+        finally:
+            con.close()
+
+    def test_stops_during_and_after_the_collection(self):
+        srv = self.srv
+        first, canary = self.remaining[0], self.canary[0]
+        cases = [
+            ('HTTP 429', dict(hang_after=2, log_after={'2': [DESCRIPTOR_LINE % (self.remaining[1], 429, 135)]}),
+             'W2 was stopped: stop marker HTTP_429'),
+            ('challenge', dict(hang_after=1, log_after={'1': ['the page shows a captcha challenge']}), 'W2 was stopped: stop marker CAPTCHA'),
+            ('session expired', dict(hang_after=1, log_after={'1': ['DJI session expired during the run']}), 'W2 was stopped: stop marker SESSION'),
+            ('canary visited', dict(visit_also=[canary]), 'W2 was stopped: the collector visited a W1 canary flight'),
+            ('two refused cards', dict(status={str(f): 'no_v4' for f in self.remaining[2:4]}, exit=18),
+             'W2 was stopped: 2 flights came without a card while their other parts came'),
+            # The collector walks the ids ascending; five neighbours in that order.
+            ('five without card', dict(status={str(f): 'nothing' for f in sorted(self.remaining)[1:6]}, exit=18),
+             'W2 was stopped: 5 flights in a row came without a card'),
+            ('exit 1', dict(exit=1), 'the collector ended with exit 1'),
+            ('ingest errors', dict(ingest_errors=2), 'staging did not accept every source (accepted=true errors=2)'),
+            ('refused requests', dict(rejected=1), 'DJI refused 1 request(s) that were not V4 downloads'),
+            ('production database', dict(production_db={'db': srv.prod_db, 'this_run': True}), None),
+            # Since the launch in UTC: the receiver stamps UTC, the server runs at UTC+5.
+            ('production evidence since the launch', dict(production_db={'db': srv.prod_db, 'evidence': True}), None),
+            ('evidence of a flight outside since the launch', dict(outside_evidence=[self.outside_flight()]),
+             'staging holds new evidence that is not this run of the 450 W2 flights'),
+            # One part of the gate at a time: no other part sees these.
+            ('a revision of a flight outside', dict(outside_revisions=[self.outside_flight()],
+                                                     status={str(sorted(self.remaining)[0]): 'nothing'}, exit=18),
+             'staging holds new evidence that is not this run of the 450 W2 flights'),
+            ('a revision of another run', dict(other_run_revisions=[sorted(self.remaining)[0]],
+                                               status={str(sorted(self.remaining)[0]): 'nothing'}, exit=18),
+             'staging holds new evidence that is not this run of the 450 W2 flights'),
+            ('foreign revision', dict(foreign_revisions=[self.outside_flight()]),
+             'staging holds new evidence that is not this run of the 450 W2 flights'),
+            ('canary revision of another run', dict(other_run_revisions=[canary]),
+             'staging holds new evidence that is not this run of the 450 W2 flights'),
+            ('a second card in the run', dict(repeated_revisions=[first]),
+             'staging holds new evidence that is not this run of the 450 W2 flights'),
+            ('fewer new than reported', dict(report_new=11), 'staging holds 10 new revisions, the collector reported 11'),
+            ('visited fewer', dict(report_visited=9), 'the collector requested 10, skipped  and visited 9 of 10'),
+            ('configuration elsewhere', dict(report_outbox=srv.prod_outbox, hang_after=1),
+             "W2 was stopped: the collector configuration does not show 'outbox_dir': "),
+            ('session written', dict(touch_session=True), 'the production DJI session file changed during the run'),
+            ('production log', dict(also_log=srv.prod_log),
+             'the run was not logged by the pilot checkout only (pilot=True production=True)'),
+        ]
+        prod_db = read_bytes(srv.prod_db)
+        session, session_times = read_bytes(srv.session), os.stat(srv.session)
+        prod_log = read_bytes(srv.prod_log)
+        for name, changes, message in cases:
+            with self.subTest(name):
+                self.setUp()
+                out = self.run_w2(collector=self.collector(**changes))
+                if message is None:
+                    self.assertIn('STEP=STOP - STEP FAILED: the production database received W2 evidence', out)
+                    self.assertNotIn('RECALC_', out)
+                    self.assertIn('W2_STATE=GATE_PENDING', out)
+                    with open(srv.prod_db, 'wb') as fh:
+                        fh.write(prod_db)
+                    continue
+                stopped = message.startswith(('W2 was stopped', 'the collector ended with exit'))
+                self.assertStopBeforeRecalc(out, message, 'COLLECTION_STOPPED' if stopped else 'GATE_PENDING')
+                if name in ('session written', 'production log'):
+                    with open(srv.session, 'wb') as fh:
+                        fh.write(session)
+                    os.utime(srv.session, ns=(session_times.st_atime_ns, session_times.st_mtime_ns))
+                    with open(srv.prod_log, 'wb') as fh:
+                        fh.write(prod_log)
+                self.assertEqual(srv.state(), self.before)
+
+    def test_a_stopped_collection_is_never_collected_again(self):
+        srv = self.srv
+        out = self.run_w2(collector=self.collector(hang_after=3, log_after={'3': [DESCRIPTOR_LINE % (self.remaining[2], 403, 135)]}))
+        self.assertStopBeforeRecalc(out, 'W2 was stopped: stop marker HTTP_403')
+        self.assertIn('PARTIAL_W2_STATE visited=3 of 10 complete=3 visited_again_by_a_continuation=7 collector_exit=', out)
+        self.assertIn('outbox_pending=3 outbox_sent=0', out)
+        run = self.runs()[0]
+        # 18. Pasting again (twice): no collection, the state of the stopped run and what to do;
+        # the second time its collector is (said to be) still alive and is named with its kill command.
+        live = [{'ProcessId': 4321, 'Name': 'python.exe', 'CommandLine': 'python.exe -m drone_collector.main --sources '
+                 '--ids-file "%s" --send-sources' % os.path.join(run, 'remaining_450_ids.txt')}]
+        for sc in (srv.scenario(), srv.scenario(Processes=live)):
+            out = self.run_w2(sc=sc)
+            self.assertIn('STEP=STOP - STEP FAILED: an earlier W2 run started the collector and its collection did not end by itself (%s)' % run, out)
+            self.assertIn('PARTIAL_W2_STATE visited=3 of 10 ', out)
+            self.assertIn('PARTIAL_W2_NEXT=nothing is collected again by this block.', out)
+            self.assertIn('W2_STATE=COLLECTION_STOPPED', out)
+            self.assertEqual(len(srv.collector_runs()), 1)
+            self.assertEqual(len(self.runs()), 1)
+            self.assertEqual([c for c in self.calls if c.startswith(('Stop-Service', 'Start-Service', 'WEB Post'))], [])
+        self.assertNotIn('COLLECTOR_STILL_RUNNING', self.run_w2().split('W2_STATE=')[0])
+        self.assertIn('COLLECTOR_STILL_RUNNING pid=4321 -- the collector of this run is working without supervision; '
+                      'stop it now: taskkill /PID 4321 /T /F', out)
+
+    def test_time_limit_holds_while_the_collector_keeps_talking(self):
+        """A slow DJI that answers every second never leaves 5 s of silence; the limit still holds."""
+        original = self.text
+        self.text = lambda **kw: original(**kw).replace('  $maxCollectMin = 100\n', '  $maxCollectMin = 0.05\n')
+        out = self.run_w2(collector=self.collector(pace_s=1))
+        self.assertStopBeforeRecalc(out, 'W2 was stopped: the run passed the 0.05 min limit')
+        self.assertFalse(json.loads(read(self.srv.record))['finished'])
+        self.assertRegex(out, r'PARTIAL_W2_STATE visited=[1-9] of 10 ')
+
+    def test_a_summary_counter_of_429_is_not_a_dji_answer(self):
+        """sources_v4_failed=429 in RUN SUMMARY: the run is complete, not refused."""
+        out = self.run_w2(collector=self.collector(v4_failed=429))
+        self.assertIn('sources_v4_failed=429', out)
+        self.assertIn('COLLECTOR_GATE=PASS', out)
+        self.assertEqual(out.splitlines()[-1], 'STEP=PASS', out)
+
+    def test_a_gate_cut_off_is_checked_again_without_dji(self):
+        """The collector ended by itself; the gate stopped on a passing condition; the next paste re-checks it."""
+        srv = self.srv
+        out = self.run_w2(collector=self.collector(leave_owner_pid=os.getpid()))
+        self.assertStopBeforeRecalc(out, 'the production lock is held by running pid %d' % os.getpid(), 'GATE_PENDING')
+        os.remove(srv.lock + '.owner')
+        run = self.runs()[0]
+        out = self.run_w2()
+        self.assertEqual(out.splitlines()[-1], 'STEP=PASS', out)
+        self.assertIn('MODE=gate of ' + run, out)
+        self.assertIn('COLLECTOR_GATE=PASS', out)
+        self.assertEqual(len(srv.collector_runs()), 1)
+        self.assertEqual([c for c in self.calls if c.startswith('WEB Post')], [])
+        self.assertEqual(self.runs(), [run])
+
+    def test_a_gate_checked_later_ignores_what_production_stored_after_w2(self):
+        """The nightly production run may store a list row of a September flight after W2 ended."""
+        srv = self.srv
+        out = self.run_w2(collector=self.collector(leave_owner_pid=os.getpid()))
+        self.assertIn('W2_STATE=GATE_PENDING', out)
+        os.remove(srv.lock + '.owner')
+        prod_db = read_bytes(srv.prod_db)
+        later = (datetime.utcnow() + timedelta(hours=3)).strftime('%Y-%m-%d %H:%M:%S')
+        con = sqlite3.connect(srv.prod_db)
+        con.execute("INSERT INTO dji_source_revisions (provider_account_id, flight_id, scope_key, source_type, sha256, "
+                    "size_bytes, captured_at_utc, capture_run_id, is_evidence_import, storage_kind, body_text, received_at, "
+                    "last_seen_at) VALUES ('P', ?, 'list', 'LIST', ?, 1, ?, 'flights-nightly', 0, 'inline', '{}', ?, ?)",
+                    (self.remaining[0], 'a' * 64, later, later, later))
+        con.commit()
+        con.close()
+        try:
+            out = self.run_w2()
+            self.assertEqual(out.splitlines()[-1], 'STEP=PASS', out)
+            self.assertIn('PROD_DB_AFTER run_rows=0 w2_sources_since=0 w2_evidence_since=0 (UTC ', out)
+        finally:
+            with open(srv.prod_db, 'wb') as fh:
+                fh.write(prod_db)
+
+    def test_a_collector_that_ended_before_its_first_flight_did_not_start_w2(self):
+        srv = self.srv
+        out = self.run_w2(collector=self.collector(status={str(min(self.remaining)): 'stop_here'}, exit=1))
+        self.assertIn('STEP=STOP - STEP FAILED: the collector ended with exit 1', out)
+        self.assertIn('W2_STATE=NOT_STARTED -- W2 did not visit DJI', out)
+        out = self.run_w2()
+        self.assertEqual(out.splitlines()[-1], 'STEP=PASS', out)
+        self.assertEqual(len(srv.collector_runs()), 2)
+
+    def test_busy_lock_collects_nothing_and_may_run_again(self):
+        srv = self.srv
+        holder = subprocess.Popen(
+            [sys.executable, '-c', 'import os, sys, time; sys.path.insert(0, sys.argv[1]); '
+             'from drone_collector import runlock; l = runlock.RunLock(sys.argv[2], purpose="daily"); '
+             'assert l.acquire(wait_s=0); os.remove(sys.argv[2] + ".owner"); print("held", flush=True); time.sleep(600)',
+             srv.src, srv.lock], stdout=subprocess.PIPE, text=True)
+        self.addCleanup(holder.stdout.close)
+        self.addCleanup(holder.wait)
+        self.addCleanup(holder.kill)
+        self.assertEqual(holder.stdout.readline().strip(), 'held')
+        out = self.run_w2()
+        self.assertIn('STEP=STOP - STEP FAILED: the production collector took the shared lock first (exit 24)', out)
+        self.assertIn('W2_STATE=NOT_STARTED -- W2 did not visit DJI', out)
+        self.assertEqual(read_bytes(srv.db), self.post_w1)
+        holder.kill()
+        holder.wait()
+        out = self.run_w2()
+        self.assertEqual(out.splitlines()[-1], 'STEP=PASS', out)
+        self.assertEqual(len(self.runs()), 2)
+
+    def test_an_interrupted_s2_continues_without_dji(self):
+        srv = self.srv
+        sc = srv.scenario(StartFails=['TransportReportStaging'])
+        out = self.run_w2(sc=sc, services_back=False)
+        self.assertIn('COLLECTOR_GATE=PASS', out)
+        self.assertIn('RECALC_APPLY flights_in_period=10', out)
+        self.assertIn("STEP=STOP - Service 'TransportReportStaging' cannot be started.", out)
+        self.assertIn('STAGING_SITE_RESTART_FAILED=', out)
+        self.assertIn('W2_STATE=S2_PENDING -- the 450 are collected and verified; pasting this block again runs only S2', out)
+        self.assertEqual(len(srv.collector_runs()), 1)
+        run = self.runs()[0]
+        # 12. Pasted again with the site still stopped: S2 only, the same run, no DJI, no token check,
+        # the site started again first, the recalculation repeats as unchanged.
+        stopped = srv.scenario()
+        stopped['Services']['TransportReportStaging']['Status'] = 'Stopped'
+        out = self.run_w2(sc=stopped, services_back=False)
+        self.assertEqual(out.splitlines()[-1], 'STEP=PASS', out)
+        self.assertIn('MODE=resume S2 of ' + run, out)
+        self.assertIn('STAGING_SITE_STARTED_AGAIN=the interrupted S2 of this run had left it stopped', out)
+        self.assertRegex(out, r'CHANGED_SINCE_GATE flights=\d+ outside_w2=0 w1_canary=0 raw=1 decisions=1 migrations=1 sources=1')
+        self.assertIn('RECALC_APPLY flights_in_period=10 calc_writes=10 (unchanged=10)', out)
+        self.assertIn('COLLECTION visited=60 of 60', out)
+        self.assertIn('W2_STATE=COMPLETE', out)
+        self.assertEqual(len(srv.collector_runs()), 1)
+        self.assertEqual([c for c in self.calls if c.startswith('WEB Post')], [])
+        self.assertEqual(self.runs(), [run])
+        self.assertEqual(srv.state(), self.before)
+
+    def test_s2_does_not_continue_on_a_staging_changed_after_the_gate(self):
+        srv = self.srv
+        out = self.run_w2(sc=srv.scenario(StartFails=['TransportReportStaging']), services_back=False)
+        self.assertIn('W2_STATE=S2_PENDING', out)
+        con = sqlite3.connect(srv.db)
+        con.execute('UPDATE dji_field_attributions SET superseded_at = ? WHERE flight_id = ? AND superseded_at IS NULL',
+                    ('2026-10-08 12:00:00', self.canary[1]))
+        con.commit()
+        con.close()
+        out = self.run_w2()
+        self.assertIn('STEP=STOP - STEP FAILED: staging changed after the W2 collection gate beyond the recalculation of the 450', out)
+        self.assertIn('w1_canary=1', out)
+        self.assertNotIn('RECALC_', out)
+        self.assertEqual(len(srv.collector_runs()), 1)
+        # A source revision received after the gate is a change too, even with every flight as it was.
+        self.setUp()
+        out = self.run_w2(sc=srv.scenario(StartFails=['TransportReportStaging']), services_back=False)
+        self.assertIn('W2_STATE=S2_PENDING', out)
+        con = sqlite3.connect(srv.db)
+        con.execute("INSERT INTO dji_source_revisions (provider_account_id, flight_id, scope_key, source_type, sha256, "
+                    "size_bytes, captured_at_utc, capture_run_id, is_evidence_import, storage_kind, body_text, received_at) "
+                    "VALUES ('X', ?, 'x', 'ROUTE', ?, 1, '2026-10-08', 'other', 0, 'inline', '{}', '2026-10-08')",
+                    (self.outside_flight(), 'f' * 64))
+        con.commit()
+        con.close()
+        out = self.run_w2()
+        self.assertIn('STEP=STOP - STEP FAILED: staging changed after the W2 collection gate beyond the recalculation of the 450', out)
+        self.assertRegex(out, r'CHANGED_SINCE_GATE flights=\d+ outside_w2=0 w1_canary=0 raw=1 decisions=1 migrations=1 sources=0')
+
+    def test_s2_postconditions_stop_s2(self):
+        """Each S2 check on its own: the change slips past every check before it and S2 stops."""
+        srv = self.srv
+        con = sqlite3.connect(self.srv.db)
+        w1_revision = con.execute('SELECT MIN(id) FROM dji_source_revisions WHERE capture_run_id = ?',
+                                  (self.w1_run_id,)).fetchone()[0]
+        b0_revision = con.execute('SELECT MIN(id) FROM dji_source_revisions').fetchone()[0]
+        con.close()
+        outside = self.outside_flight()
+        during_s2 = srv.scenario(OnStopStaging=[sys.executable, '-c',
+            'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); '
+            "c.execute(\"UPDATE dji_field_attributions SET superseded_at = '2026-10-08 12:00:00' "
+            "WHERE flight_id = ? AND superseded_at IS NULL\", (int(sys.argv[2]),)); c.commit()", srv.db, str(outside)])
+        cases = [
+            ('a flight outside changed during S2', dict(sc=during_s2),
+             'the recalculation changed something other than the 450 W2 flights'),
+            ('a W1 result changed during the collection', dict(collector=self.collector(supersede_attr_flights=[self.canary[0]])),
+             'since W1 something other than the 450 W2 flights changed (the 50 W1 results must stay as they are)'),
+            ('a B0 revision rewritten during the collection', dict(collector=self.collector(tamper_revision_ids=[b0_revision])),
+             'measure exit 5 (5 = an immutability gate against B0 failed)'),
+            ('a W1 revision rewritten during the collection', dict(collector=self.collector(tamper_revision_ids=[w1_revision])),
+             'measure against the state after W1 exit 5'),
+        ]
+        for name, kw, message in cases:
+            with self.subTest(name):
+                self.setUp()
+                out = self.run_w2(**kw)
+                self.assertIn('COLLECTOR_GATE=PASS', out)
+                self.assertIn('STEP=STOP - STEP FAILED: ' + message, out)
+                self.assertIn('STAGING_SITE_RESTARTED=Running', out)
+                self.assertIn('W2_STATE=S2_PENDING', out)
+                self.assertNotIn('PILOT_STATUS=COMPLETE', out)
+                self.assertFalse(os.path.exists(os.path.join(self.runs()[0], 's2_done.txt')))
+
+    def test_a_recalculation_beyond_the_450_is_refused(self):
+        """Negative control: the same S2 over the whole pilot stops at flights_in_period."""
+        text = self.text()
+        old = "$flightArgs = @($remaining | ForEach-Object { '--flight-id'; [string]$_ })"
+        self.assertEqual(text.count(old), 1)
+        original = self.text
+        self.text = lambda **kw: original(**kw).replace(old, old.replace('$remaining', '$pilotIds'))
+        out = self.run_w2()
+        self.assertIn('STEP=STOP - STEP FAILED: recalc --dry-run took 60 flights, expected exactly the 10 W2 flights', out)
+        self.assertIn('STAGING_SITE_RESTARTED=Running', out)
+        for name in ('dji_field_attributions', 'dji_area_calculations'):
+            self.assertEqual(self.table(name, self.canary), self.post_w1_table(name, self.canary), name)
 
 
 if __name__ == '__main__':
