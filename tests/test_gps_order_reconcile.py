@@ -79,6 +79,17 @@ class Tolerances(unittest.TestCase):
         self.assertAlmostEqual(deviation, -3.0)
         self.assertAlmostEqual(share, -0.3)
 
+    def test_one_rule_for_orders_and_agro_work_applications(self):
+        # U2: объём заявок agro-work судится тем же допуском В-2. Одна
+        # функция, а не две копии: копии расходятся молча.
+        from agro_work import reconcile as agro
+        from gps import tolerance
+        self.assertIs(gps_routes.verdict_for_ga, tolerance.verdict_for_ga)
+        self.assertIs(agro.tolerance, tolerance)
+        self.assertEqual((agro.VOL_OK, agro.VOL_WARN, agro.VOL_FAIL),
+                         (gps_routes.VERDICT_OK, gps_routes.VERDICT_WARN,
+                          gps_routes.VERDICT_FAIL))
+
 
 class WhatCountsAsFact(unittest.TestCase):
     """Пункт 2."""

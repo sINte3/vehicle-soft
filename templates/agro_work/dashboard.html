@@ -25,6 +25,15 @@
     <div class="vs-stat-value"><a href="{{ url_for('agro_work.applications', **{'from': date_from.isoformat(), 'to': date_to.isoformat(), 'verdict': 'rabota_net'}) }}">{{ total.get('app_rabota_net', 0) }}</a></div>
   </div>
   <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Работа была: объём против GPS' if is_ru else 'Иш бўлган: ҳажм GPS га қарши' }}</div>
+    <div class="vs-stat-value"><a href="{{ url_for('agro_work.applications', **{'from': date_from.isoformat(), 'to': date_to.isoformat(), 'verdict': 'rabota_est'}) }}">{{ total.get('app_rabota_est', 0) }}</a></div>
+    {% if total.get('app_rabota_est', 0) %}
+    {% for key, counter in volume_keys %}
+    <div class="vs-soft"><a href="{{ url_for('agro_work.applications', **{'from': date_from.isoformat(), 'to': date_to.isoformat(), 'verdict': 'rabota_est', 'volume': key}) }}">{{ volume_label(key) }}: {{ total.get(counter, 0) }}</a></div>
+    {% endfor %}
+    {% endif %}
+  </div>
+  <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Машино-суток с работой по GPS' if is_ru else 'GPS бўйича иш бўлган машина-кунлар' }}</div>
     <div class="vs-stat-value">{{ total.get('work_days', 0) }}</div>
   </div>

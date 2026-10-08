@@ -8,6 +8,7 @@
   <div>
     <div class="vs-hero-title">{{ 'Заявка → была ли работа' if is_ru else 'Буюртма → иш бўлганми' }}</div>
     <div class="vs-hero-sub">{{ 'Каждая заявка, чьё окно задевает период. Работа была — хотя бы в одних сутках окна по GPS есть участок работы. Работы не было — все сутки окна известны, и работы нет ни в одних. Нарушения — первыми.' if is_ru else 'Ойнаси даврга тегадиган ҳар бир буюртма. Иш бўлган — ойнанинг камида бир кунида GPS бўйича иш участкаси бор. Иш бўлмаган — ойнанинг барча кунлари маълум ва уларнинг ҳеч бирида иш йўқ. Қоидабузарликлар — биринчи.' }}</div>
+    <div class="vs-hero-sub">{{ 'Объём против GPS — только у заявок, где работа была: объём в заявке против гектаров по GPS за сутки её окна. Светофор — допуски владельца, те же, что у нарядов: в допуске при расхождении не больше 10% или 0,3 га, на грани до 20% или 0,5 га, дальше — вне допуска. Если в окне есть неизвестные сутки или эти гектары могла покрыть другая заявка той же машины, сверить нельзя: названы причина и номера, а при пересечении закрытых окон — общие числа без цвета.' if is_ru else 'GPS га қарши ҳажм — фақат иш бўлган буюртмаларда: буюртмадаги ҳажм унинг ойнаси кунларидаги GPS бўйича гектарларга қарши. Светофор — эгасининг нарядлардаги йўл қўйилишлари: фарқ 10% ёки 0,3 га дан ошмаса йўл қўйилишда, 20% ёки 0,5 га гача чегарада, ундан кейин йўл қўйилишдан ташқари. Ойнада номаълум кунлар бўлса ёки бу гектарларни шу машинанинг бошқа буюртмаси ҳам қоплаши мумкин бўлса, солиштириб бўлмайди: сабаб ва рақамлар кўрсатилади, ёпилган ойналар кесишганда эса — умумий рақамлар рангсиз.' }}</div>
   </div>
 </div>
 
@@ -45,6 +46,7 @@
           <th>{{ 'Окно' if is_ru else 'Ойна' }}</th>
           <th>{{ 'Вердикт' if is_ru else 'Ҳукм' }}</th>
           <th class="right">{{ 'Га по GPS в окне' if is_ru else 'Ойнада GPS бўйича га' }}</th>
+          <th>{{ 'Объём против GPS' if is_ru else 'Ҳажм GPS га қарши' }}</th>
         </tr>
       </thead>
       <tbody>
@@ -76,6 +78,18 @@
             {% endif %}
           </td>
           <td class="right">{% if row.work_days %}{{ row.gps_ha }}{% else %}—{% endif %}</td>
+          <td>
+            {% if row.volume_verdict %}
+              {% if row.volume_verdict == 'ok' %}<span class="vs-badge vs-badge-success">{% elif row.volume_verdict == 'warn' %}<span class="vs-badge vs-badge-warning">{% else %}<span class="vs-badge vs-badge-danger">{% endif %}{{ volume_label(row.volume_verdict) }}</span>
+              <div class="vs-soft">{{ ('в заявке %.2f га · по GPS %.2f га' if is_ru else 'буюртмада %.2f га · GPS бўйича %.2f га')|format(row.volume, row.gps_ha) }}</div>
+              <div class="vs-soft">{{ '%+.2f га'|format(row.volume_deviation) }}{% if row.volume_share is not none %} ({{ (row.volume_share * 100)|round(1) }}%){% endif %}</div>
+            {% elif row.volume_reason %}
+              <span class="vs-badge">{{ volume_label('sverit_nelzya') }}</span>
+              <div class="vs-soft">{{ volume_reason_label(row.volume_reason) }}</div>
+              {% if row.volume_neighbours %}<div class="vs-soft">{{ 'заявки: ' if is_ru else 'буюртмалар: ' }}{% for other in row.volume_neighbours %}{{ other.number }}{% if not loop.last %}, {% endif %}{% endfor %}</div>{% endif %}
+              {% if row.volume_group %}<div class="vs-soft">{{ ('вместе за %s — %s: в заявках %.2f га · по GPS %.2f га' if is_ru else 'биргаликда %s — %s: буюртмаларда %.2f га · GPS бўйича %.2f га')|format(row.volume_group.first.strftime('%d.%m'), row.volume_group.last.strftime('%d.%m'), row.volume_group.volume, row.volume_group.gps_ha) }}</div>{% endif %}
+            {% else %}—{% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>

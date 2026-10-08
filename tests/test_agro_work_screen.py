@@ -410,6 +410,123 @@ class WhatCameAfterOnScreen(ScreenCase):
         self.assertIn('Суток с работой по GPS с такими условиями нет', html)
 
 
+
+def row_of(html, number):
+    """Строка таблицы (<tr>...</tr>) заявки: номер -- в её первой ячейке.
+
+    Номер встречается и в чужой строке («заявки: ...» у соседа), поэтому
+    ищется начало строки, а не вхождение.
+    """
+    body = html[html.index('<tbody>'):html.index('</tbody>')]
+    rows = [r for r in re.findall(r'<tr>.*?</tr>', body, re.S)
+            if re.match(r'<tr>\s*<td>%s\s' % re.escape(number), r)]
+    assert len(rows) == 1, (number, len(rows))
+    return ' '.join(rows[0].split())
+
+
+class VolumeOnScreen(ScreenCase):
+    """U2: объём заявки против гектаров GPS -- «Свод» и «Заявка -> работа».
+
+    В основе: A1 (T1, 10..11, по GPS 2,5 га 10-го) и A4 (T3, 15..15, 7,0
+    га) -- «работа была»; A2 -- «работы не было», объём не сравнивается.
+    """
+
+    def set_volume(self, app_id, volume):
+        _sql(["UPDATE agro_work_applications SET volume = ? WHERE id = ?"],
+             (volume, app_id))
+
+    def add_overlapping(self):
+        # A6: T1, окно 10..10 -- пересекается с окном A1 (10..11).
+        _sql(["INSERT INTO agro_work_applications (id, application_number, "
+              "transport_id, work_type_id, work_type_name, unit, volume, "
+              "status, created_at, updated_at, created_day, first_seen_run_id, "
+              "last_seen_run_id, history_updated_at, initial_status, "
+              "completed_day, plate_number) VALUES ('A6', 'APP-TEST-006', "
+              "'T1', 'W1', 'Култивация', 'HECTARE', '1.00', 'COMPLETED', "
+              "'2026-09-10T09:00:00+05:00', 'u', '2026-09-10', 1, 1, 'u', "
+              "'IN_PROGRESS', '2026-09-10', 'PT1')"])
+
+    def test_the_list_shows_the_colour_and_the_numbers(self):
+        self.set_volume('A1', '2.50')
+        self.set_volume('A4', '10.00')
+        html = self.get('/agro-work/applications', lang='ru').get_data(
+            as_text=True)
+        self.assertIn('Объём против GPS', html)
+        ok = row_of(html, 'APP-TEST-001')
+        self.assertIn('В допуске', ok)
+        self.assertIn('в заявке 2.50 га · по GPS 2.50 га', ok)
+        self.assertIn('+0.00 га (0.0%)', ok)
+        fail = row_of(html, 'APP-TEST-004')
+        self.assertIn('Вне допуска', fail)
+        self.assertIn('в заявке 10.00 га · по GPS 7.00 га', fail)
+        self.assertIn('-3.00 га (-30.0%)', fail)
+        # Вне допуска -- раньше, чем в допуске.
+        self.assertLess(html.index('APP-TEST-004'), html.index('APP-TEST-001'))
+        no_work = row_of(html, 'APP-TEST-002')
+        self.assertNotIn('Сверить нельзя', no_work)
+        self.assertNotIn('в заявке', no_work)
+        self.assertTrue(no_work.endswith('<td> — </td> </tr>'), no_work)
+
+    def test_the_list_filters_by_colour(self):
+        self.set_volume('A1', '2.50')
+        self.set_volume('A4', '10.00')
+        html = self.get('/agro-work/applications', lang='ru',
+                        volume='fail').get_data(as_text=True)
+        self.assertIn('<select name="volume"', html)
+        self.assertIn('APP-TEST-004', html)
+        self.assertNotIn('APP-TEST-001', html)
+        html = self.get('/agro-work/applications', lang='ru',
+                        volume='ok').get_data(as_text=True)
+        self.assertIn('APP-TEST-001', html)
+        self.assertNotIn('APP-TEST-004', html)
+        html = self.get('/agro-work/applications', lang='ru',
+                        volume='sverit_nelzya').get_data(as_text=True)
+        self.assertNotIn('APP-TEST-001', html)
+        self.assertNotIn('APP-TEST-002', html)
+
+    def test_the_dashboard_card_counts_and_links(self):
+        html = self.get('/agro-work/', lang='ru').get_data(as_text=True)
+        self.assertIn('Работа была: объём против GPS', html)
+        self.assertIn('Сверить нельзя: 2', html)          # объёма нет у обеих
+        self.set_volume('A1', '2.50')
+        self.set_volume('A4', '10.00')
+        html = self.get('/agro-work/', lang='ru').get_data(as_text=True)
+        for text in ('В допуске: 1', 'На грани: 0', 'Вне допуска: 1',
+                     'Сверить нельзя: 0'):
+            self.assertIn(text, html)
+        self.assertIn('volume=fail', html)
+        self.assertIn('verdict=rabota_est', html)
+
+    def test_a_shared_window_names_the_reason_the_neighbour_and_the_sum(self):
+        self.set_volume('A1', '2.00')
+        self.add_overlapping()
+        html = self.get('/agro-work/applications', lang='ru').get_data(
+            as_text=True)
+        mine = row_of(html, 'APP-TEST-001')
+        self.assertIn('Сверить нельзя', mine)
+        self.assertIn('Окно пересекается с окном другой заявки этой машины', mine)
+        self.assertIn('заявки: APP-TEST-006', mine)
+        self.assertIn('вместе за 10.09 — 11.09: в заявках 3.00 га · по GPS '
+                      '2.50 га', mine)
+        self.assertNotIn('В допуске', mine)
+        self.assertNotIn('Вне допуска', mine)
+
+    def test_both_languages(self):
+        self.set_volume('A1', '2.50')
+        html = self.get('/agro-work/applications', lang='uz').get_data(
+            as_text=True)
+        self.assertIn('Ҳажм GPS га қарши', html)
+        mine = row_of(html, 'APP-TEST-001')
+        self.assertIn('Йўл қўйилишда', mine)
+        self.assertIn('буюртмада 2.50 га · GPS бўйича 2.50 га', mine)
+        self.assertNotIn('в заявке', mine)
+        html = self.get('/agro-work/', lang='uz').get_data(as_text=True)
+        self.assertIn('Иш бўлган: ҳажм GPS га қарши', html)
+        self.assertIn('Йўл қўйилишда: 1', html)
+        for table in (labels.VOLUME, labels.VOLUME_REASONS):
+            for _ru, uz in table.values():
+                self.assertNotRegex(uz.replace('GPS', ''), '[A-Za-z]', uz)
+
 class Access(ScreenCase):
     def test_without_the_wialon_permission_every_page_is_403(self):
         user_id = self.operator([self.org1_id], wialon=False)

@@ -69,6 +69,19 @@
 заявки. Сколько суток заявке позволено быть открытой, решает владелец;
 пока он не назвал это число, список ничего не подсвечивает.
 
+ОБЪЁМ ПРОТИВ GPS (U2; решения сессии по поручению владельца 08.10 --
+раздел 9.2 трека agro-work, не его правила). Светофор допусков «Сверки
+нарядов» (`gps/tolerance.py`) ставится заявке только тогда, когда гектары
+GPS можно отнести к ней без угадывания:
+  * только «работа была», единица «гектар», объём больше нуля;
+  * все сутки окна известны -- иначе гектары неполные;
+  * ни одни сутки окна не могла покрыть другая живая заявка той же машины
+    (тот же критерий, что у покрытия суток). Иначе -- «сверить нельзя» с
+    причиной и номерами; если вся цепочка пересекающихся окон сравнима,
+    показаны её общие числа -- без цвета: цвет цепочки лёг бы и на заявку,
+    которая сама в порядке.
+Вердикты, покрытие, B4 и B5 объём не меняет.
+
 МАШИНА. Заявка -> машина agro-work -> наша техника (связь импорта или
 владельца) -> объект Wialon (`vialon_mappings`, без `skip`). Неоднозначное
 не угадывается: несколько объектов у машины -- причина, как в сверке
@@ -76,9 +89,11 @@
 -- причина.
 """
 
+import math
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 
+from gps import tolerance
 from gps.exclusion import excluded_units
 
 from . import methods, records
@@ -130,6 +145,29 @@ A_NOT_ENTERED = 'ne_zavedena'
 AFTER_KINDS = (A_BACKDATED, A_ORDINARY, A_UNCLEAR, A_NOT_ENTERED)
 DAY_AFTER = 'day_bez_zayavki_potom_'
 
+# Объём заявки против гектаров GPS (U2). Светофор -- общий со «Сверкой
+# нарядов»; четвёртое значение -- «сверить нельзя», причина -- ниже.
+VOL_OK = tolerance.VERDICT_OK
+VOL_WARN = tolerance.VERDICT_WARN
+VOL_FAIL = tolerance.VERDICT_FAIL
+VOL_NONE = 'sverit_nelzya'
+VOLUME_VERDICTS = (VOL_FAIL, VOL_WARN, VOL_NONE, VOL_OK)
+# Счётчик свода: VOL + значение выше; причины -- VOL_REASON + причина.
+VOL = 'vol_'
+VOL_REASON = 'vol_reason_'
+
+# Почему объём сверить нельзя -- в порядке проверки: первая сработавшая и
+# названа. Пересечение: открытая заявка -- худшее (её надо закрыть), затем
+# неизвестное окно, затем пересечение закрытых окон.
+VR_NOT_HECTARE = 'obem_ne_v_gektarakh'
+VR_NO_VOLUME = 'obem_ne_ukazan'
+VR_DAYS_UNKNOWN = 'obem_ne_vse_sutki'
+VR_OPEN = 'obem_otkrytaya_zayavka'
+VR_WINDOW_UNKNOWN = 'obem_okno_neizvestno'
+VR_OVERLAP = 'obem_okna_peresekayutsya'
+VOLUME_REASONS = (VR_NOT_HECTARE, VR_NO_VOLUME, VR_DAYS_UNKNOWN, VR_OPEN,
+                  VR_WINDOW_UNKNOWN, VR_OVERLAP)
+
 # Причины «без вердикта». Слаги ASCII, подписи -- на экране и в отчёте.
 R_OPEN = 'otkryta'
 R_CANCELLED = 'otmenena'
@@ -167,6 +205,26 @@ METHOD_REASON = {None: R_METHOD_UNMARKED, methods.METHOD_NONE: R_METHOD_NONE,
                  methods.METHOD_TRIPS: R_METHOD_TRIPS}
 
 UNIT_HECTARE = 'HECTARE'
+
+# Окно неизвестно, но заявка могла покрыть сутки (`could_cover`).
+UNKNOWN_WINDOW_REASONS = (R_NO_HISTORY, R_NO_CLOSE_DATE, R_BAD_WINDOW,
+                          R_UNKNOWN_STATUS)
+
+
+def parse_volume(value):
+    """Объём заявки числом или None: пусто, не число, не больше нуля.
+
+    API отдаёт десятичные строкой («12.50»), импорт хранит её как пришла.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(str(value).strip().replace(',', '.'))
+    except ValueError:
+        return None
+    if not math.isfinite(number) or number <= 0:
+        return None
+    return number
 
 
 def parse_day(value):
@@ -429,7 +487,11 @@ class Reconciliation:
         row = {'app': app, 'window': app.window, 'equipment_id': equipment_id,
                'wialon_id': wialon_id, 'verdict': V_NONE, 'reason': None,
                'work_days': [], 'unknown_days': 0, 'gps_ha': 0.0,
-               'method': self.methods.get(app.work_type_id)}
+               'method': self.methods.get(app.work_type_id),
+               'volume': parse_volume(app.row.get('volume')),
+               'volume_verdict': None, 'volume_reason': None,
+               'volume_deviation': None, 'volume_share': None,
+               'volume_neighbours': [], 'volume_group': None}
         if app.window_reason:
             row['reason'] = app.window_reason
             return row
@@ -451,11 +513,135 @@ class Reconciliation:
         row['unknown_days'] = unknown
         if row['work_days']:
             row['verdict'] = V_WORK
+            self.volume_check(app, row)
         elif unknown == 0:
             row['verdict'] = V_NO_WORK
         else:
             row['reason'] = R_NO_GPS
         return row
+
+    # --- объём против GPS (U2) ------------------------------------------------------
+
+    def live_apps_of(self, equipment_id):
+        """Живые заявки всех машин agro-work, связанных с этой техникой.
+
+        Отменённая и удалённая в agro-work работу не покрывают (ответы 4 и
+        11 владельца) -- их здесь нет.
+        """
+        apps = []
+        for transport_id in self.transports_by_equipment.get(equipment_id, []):
+            apps.extend(a for a in self.apps_by_transport.get(transport_id, [])
+                        if a.status != records.STATUS_CANCELLED and not a.gone)
+        return apps
+
+    def may_cover(self, app, day):
+        """Могла ли живая заявка покрыть работу этих суток.
+
+        [REASON]: тот же критерий, что у покрытия суток (`coverage`): своё
+        окно; открытая -- с дня создания (срока у открытой заявки нет,
+        владелец, 07.10); неизвестное окно -- `could_cover`; задним числом
+        при неутверждённом N -- сутки не позже ввода. Два разных критерия
+        сделали бы одни и те же сутки «покрытыми» для одной стороны сверки
+        и «ничьими» для другой. Совпадение держит тест.
+        """
+        if app.window:
+            return app.window[0] <= day <= app.window[1]
+        if app.status in records.OPEN_STATUSES:
+            return app.created_day <= day
+        if app.window_reason in UNKNOWN_WINDOW_REASONS:
+            return app.could_cover(day, self.lookback)
+        if app.window_reason == R_BACKDATED:
+            return app.created_day >= day
+        return False
+
+    def volume_check(self, app, row):
+        """Объём заявки против гектаров GPS её окна. Только «работа была».
+
+        Ставит либо светофор (volume_verdict, расхождение, доля), либо
+        причину, почему сверить нельзя, -- ровно одно из двух.
+        """
+        if app.row.get('unit') != UNIT_HECTARE:
+            row['volume_reason'] = VR_NOT_HECTARE
+            return
+        if row['volume'] is None:
+            row['volume_reason'] = VR_NO_VOLUME
+            return
+        if row['unknown_days']:
+            # [REASON]: сутки «неизвестно» -- это не «работы не было»: по ним
+            # гектары не посчитаны, и «по GPS меньше, чем в заявке» было бы
+            # ложным обвинением.
+            row['volume_reason'] = VR_DAYS_UNKNOWN
+            return
+        window_days = list(days_between(*app.window))
+        neighbours = [other for other in self.live_apps_of(row['equipment_id'])
+                      if other is not app
+                      and any(self.may_cover(other, day) for day in window_days)]
+        if neighbours:
+            # [REASON]: гектары суток, которые могла покрыть и другая заявка,
+            # к одной из них не отнести без правила распределения, а его
+            # владелец не давал -- светофора нет, есть номера и, если можно,
+            # общие числа цепочки.
+            neighbours.sort(key=lambda a: (a.created_day, a.number))
+            row['volume_neighbours'] = neighbours
+            if any(a.status in records.OPEN_STATUSES for a in neighbours):
+                row['volume_reason'] = VR_OPEN
+            elif any(a.window is None for a in neighbours):
+                row['volume_reason'] = VR_WINDOW_UNKNOWN
+            else:
+                row['volume_reason'] = VR_OVERLAP
+                row['volume_group'] = self.volume_group(app, row)
+            return
+        verdict, deviation, share = tolerance.verdict_for_ga(row['volume'],
+                                                             row['gps_ha'])
+        row['volume_verdict'] = verdict
+        row['volume_deviation'] = round(deviation, 3)
+        row['volume_share'] = share
+
+    def volume_group(self, app, row):
+        """Общие числа цепочки заявок с пересекающимися окнами, или None.
+
+        Цепочка -- заявки той же машины, связанные пересечением окон. Числа
+        показываются, только если каждая заявка цепочки сравнима (метод
+        «гектары», единица «гектар», объём есть), ни одни сутки общего окна не
+        могла покрыть заявка без окна и все сутки общего окна известны.
+        """
+        apps = [a for a in self.live_apps_of(row['equipment_id']) if a.window]
+        members = {app.id: app}
+        todo = [app]
+        while todo:
+            current = todo.pop()
+            for other in apps:
+                if other.id in members:
+                    continue
+                if (other.window[0] <= current.window[1]
+                        and current.window[0] <= other.window[1]):
+                    members[other.id] = other
+                    todo.append(other)
+        first = min(a.window[0] for a in members.values())
+        last = max(a.window[1] for a in members.values())
+        total = 0.0
+        for member in members.values():
+            volume = parse_volume(member.row.get('volume'))
+            if (self.methods.get(member.work_type_id) != methods.METHOD_GA
+                    or member.row.get('unit') != UNIT_HECTARE
+                    or volume is None):
+                return None
+            total += volume
+        days = list(days_between(first, last))
+        for other in self.live_apps_of(row['equipment_id']):
+            if other.id not in members and not other.window and any(
+                    self.may_cover(other, day) for day in days):
+                return None
+        hectares = 0.0
+        for day in days:
+            state, area = self.state(row['wialon_id'], day)
+            if state == UNKNOWN:
+                return None
+            if state == WORK:
+                hectares += area
+        ordered = sorted(members.values(), key=lambda a: (a.created_day, a.number))
+        return {'apps': ordered, 'first': first, 'last': last,
+                'volume': round(total, 3), 'gps_ha': round(hectares, 3)}
 
     def forward_rows(self):
         rows = []
@@ -497,8 +683,7 @@ class Reconciliation:
         if opened:
             return C_NONE, R_OPEN_COVERS, opened
         unknown = [a for a in apps if a.window is None
-                   and a.window_reason in (R_NO_HISTORY, R_NO_CLOSE_DATE,
-                                           R_BAD_WINDOW, R_UNKNOWN_STATUS)
+                   and a.window_reason in UNKNOWN_WINDOW_REASONS
                    and a.could_cover(day, self.lookback)]
         if unknown:
             return C_NONE, R_WINDOW_UNKNOWN, unknown
@@ -670,6 +855,11 @@ class Reconciliation:
                 counter['app_reason_' + row['reason']] += 1
             else:
                 counter['app_' + row['verdict']] += 1
+            key = volume_key(row)
+            if key:
+                counter[VOL + key] += 1
+                if key == VOL_NONE:
+                    counter[VOL_REASON + row['volume_reason']] += 1
             if row['equipment_id']:
                 machines[key].add(row['equipment_id'])
         for row in reverse:
@@ -722,6 +912,14 @@ class Reconciliation:
             out.append({'day': day, 'states': states, 'apps': on_day,
                         'coverage': coverage, 'late': late, 'after': after})
         return out
+
+
+def volume_key(row):
+    """Светофор объёма строки «заявка -> работа» или VOL_NONE; None -- не
+    сравнивается вовсе (вердикт не «работа была»)."""
+    if row['verdict'] != V_WORK:
+        return None
+    return row['volume_verdict'] or VOL_NONE
 
 
 def measure_lags(con, today=None):

@@ -45,6 +45,9 @@ from flask_login import current_user, login_required
 
 import vs_map
 from gps.exclusion import REASON_TRACK_ONLY
+from gps.tolerance import (TOLERANCE_GA_OK, TOLERANCE_GA_WARN,  # noqa: F401
+                           VERDICT_FAIL, VERDICT_OK, VERDICT_WARN,
+                           verdict_for_ga)
 # [REASON]: коллектор -- чистый stdlib (gps_collector/requirements.txt пуст
 # намеренно), поэтому служба Flask берёт у него путь к файлам точек и их
 # местные сутки, а не заводит вторую копию. Стрелка обратно не идёт никогда.
@@ -433,18 +436,12 @@ def map_layers(points, sites, contours, is_ru):
 
 # ── Сверка наряда: план против факта GPS ─────────────────────────────────────
 
-# [REASON]: допуски заданы владельцем (вопрос В-2, закрыт 2026-08-12) и здесь
-# только записаны, не выведены. Абсолютная добавка обязательна и не является
-# украшением: ручной ввод округляется сеткой 0,5 га, и на поле 2 га одно
-# округление даёт ±12% — процентный допуск в одиночку залил бы очередь
-# ложными «жёлтыми».
+# [REASON]: допуски владельца (вопрос В-2) и светофор живут в
+# `gps/tolerance.py`: той же функцией судит объём заявок сверка agro-work, а
+# её ядро на stdlib этот модуль импортировать не может (Flask). Имена ниже
+# -- те же объекты, не копии.
 UNIT_GA = 'ga'
-TOLERANCE_GA_OK = (0.10, 0.3)      # доля, абсолютная добавка в га
-TOLERANCE_GA_WARN = (0.20, 0.5)
 
-VERDICT_OK = 'ok'
-VERDICT_WARN = 'warn'
-VERDICT_FAIL = 'fail'
 VERDICT_NO_DATA = 'no_data'
 
 # Почему сверить нельзя. Это не отказ, а названная причина: «мы не смогли» и
@@ -469,28 +466,6 @@ NO_DATA_REASONS = {
         'В наряде нет объёма, с чем сверять',
         'Нарядда ҳажм йўқ, солиштиришга нарса йўқ'),
 }
-
-
-def verdict_for_ga(base, fact):
-    """Светофор по гектарам. Возвращает (вердикт, расхождение, доля).
-
-    Сравнивается с тем объёмом, который закрыл человек, а не с планом, если
-    закрытый есть: сверяется факт против того, за что выставят счёт.
-    """
-    deviation = fact - base
-    # [REASON]: округление ДО сравнения, иначе граница решается ошибкой
-    # представления. 2,0 - 1,7 в двоичной плавающей точке даёт
-    # 0.30000000000000004, и расхождение ровно в допуск (0,3 га) уезжало в
-    # «жёлтое». Шесть знаков -- это 0,01 квадратного метра, на четыре порядка
-    # мельче любого реального разрешения метода, и граница ведёт себя так, как
-    # написано в допуске: «не больше» значит не больше.
-    size = round(abs(deviation), 6)
-    share = (deviation / base) if base else None
-    if size <= round(max(TOLERANCE_GA_OK[0] * abs(base), TOLERANCE_GA_OK[1]), 6):
-        return VERDICT_OK, deviation, share
-    if size <= round(max(TOLERANCE_GA_WARN[0] * abs(base), TOLERANCE_GA_WARN[1]), 6):
-        return VERDICT_WARN, deviation, share
-    return VERDICT_FAIL, deviation, share
 
 
 def fact_from_sites(sites):

@@ -91,18 +91,18 @@ class Fixture:
 
     def app(self, transport='T1', status='COMPLETED', created=10, completed=11,
             initial='IN_PROGRESS', history=True, work_type=W_GA,
-            cancelled=None, gone_at=None):
+            cancelled=None, gone_at=None, volume=None, unit='HECTARE'):
         self.number += 1
         app_id = 'app-%03d' % self.number
         self.con.execute(
             "INSERT INTO agro_work_applications (id, application_number, "
-            "transport_id, work_type_id, unit, status, created_at, updated_at, "
-            "created_day, first_seen_run_id, last_seen_run_id, "
+            "transport_id, work_type_id, unit, volume, status, created_at, "
+            "updated_at, created_day, first_seen_run_id, last_seen_run_id, "
             "history_updated_at, initial_status, completed_day, cancelled_at, "
             "gone_at) "
-            "VALUES (?, ?, ?, ?, 'HECTARE', ?, ?, 'u', ?, 1, 1, ?, ?, ?, ?, ?)",
-            (app_id, 'N-%03d' % self.number, transport, work_type, status,
-             '2026-09-%02dT08:00:00+05:00' % created,
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'u', ?, 1, 1, ?, ?, ?, ?, ?)",
+            (app_id, 'N-%03d' % self.number, transport, work_type, unit,
+             volume, status, '2026-09-%02dT08:00:00+05:00' % created,
              '2026-09-%02d' % created, 'u' if history else None,
              initial if history else None,
              ('2026-09-%02d' % completed) if (history and completed) else None,
@@ -741,6 +741,363 @@ class Lags(unittest.TestCase):
         self.assertEqual(rc.percentile([0, 0, 1, 2], 0.9), 2)
         self.assertEqual(rc.percentile([5], 0.95), 5)
         self.assertEqual(rc.percentile(list(range(1, 11)), 0.9), 9)
+
+
+
+class ParseVolume(unittest.TestCase):
+    def test_the_api_string_and_what_is_not_a_volume(self):
+        self.assertEqual(rc.parse_volume('12.50'), 12.5)
+        self.assertEqual(rc.parse_volume('7'), 7.0)
+        self.assertEqual(rc.parse_volume('3,5'), 3.5)
+        self.assertEqual(rc.parse_volume(4.0), 4.0)
+        for value in (None, '', '  ', '0', '0.00', '-1', 'abc', 'nan', 'inf',
+                      True):
+            with self.subTest(value=value):
+                self.assertIsNone(rc.parse_volume(value))
+
+
+class VolumeAgainstGps(unittest.TestCase):
+    """U2: объём заявки против гектаров GPS -- решения сессии по поручению
+    владельца 08.10 (раздел 9.2 трека agro-work).
+
+    Машина 12 (T2, объект 1002): 10-12 сутки без участков, 13-го -- работа
+    3,5 + 0,5 = 4,0 га. Машина 11 (T1, 1001): 10-го -- 2,0 га, 14-го точек
+    нет, 15-е не посчитано.
+    """
+
+    def setUp(self):
+        self.fx = Fixture()
+
+    def tearDown(self):
+        self.fx.close()
+
+    def row(self, app_id, **kwargs):
+        return self.fx.forward(app_id, **kwargs)
+
+    def volume(self, row):
+        return (row['volume_verdict'], row['volume_reason'],
+                row['volume_deviation'])
+
+    def test_the_tolerance_of_orders_decides_both_ways(self):
+        # Объём заявки против 4,0 га по GPS. Допуск -- В-2: 10 % или 0,3 га
+        # (что больше), 20 % или 0,5 га.
+        cases = (('4.00', rc.VOL_OK, 0.0), ('4.30', rc.VOL_OK, -0.3),
+                 ('4.50', rc.VOL_WARN, -0.5), ('5.00', rc.VOL_WARN, -1.0),
+                 ('5.10', rc.VOL_FAIL, -1.1), ('3.70', rc.VOL_OK, 0.3),
+                 ('3.50', rc.VOL_WARN, 0.5), ('3.00', rc.VOL_FAIL, 1.0))
+        for volume, verdict, deviation in cases:
+            with self.subTest(volume=volume):
+                fx = Fixture()
+                self.addCleanup(fx.close)
+                app_id = fx.app(transport='T2', created=12, completed=13,
+                                volume=volume)
+                row = fx.forward(app_id)
+                self.assertEqual(row['verdict'], rc.V_WORK)
+                self.assertEqual(row['gps_ha'], 4.0)
+                self.assertEqual(self.volume(row), (verdict, None, deviation))
+                self.assertEqual(row['volume'], float(volume))
+                self.assertAlmostEqual(row['volume_share'],
+                                       deviation / float(volume))
+
+    def test_only_work_was_done_is_compared(self):
+        no_work = self.fx.app(transport='T2', created=10, completed=11,
+                              volume='5.00')
+        opened = self.fx.app(transport='T1', status='IN_PROGRESS', created=16,
+                             completed=None, volume='5.00')
+        for app_id, verdict in ((no_work, rc.V_NO_WORK), (opened, rc.V_NONE)):
+            row = self.row(app_id)
+            with self.subTest(verdict=verdict):
+                self.assertEqual(row['verdict'], verdict)
+                self.assertEqual(self.volume(row), (None, None, None))
+                self.assertIsNone(rc.volume_key(row))
+                self.assertEqual(row['volume'], 5.0)
+
+    def test_a_volume_not_in_hectares_or_absent_is_not_compared(self):
+        hours = self.fx.app(transport='T2', created=12, completed=13,
+                            volume='8.00', unit='HOUR')
+        self.assertEqual(self.volume(self.row(hours)),
+                         (None, rc.VR_NOT_HECTARE, None))
+        for volume in (None, '', '0.00', 'abc'):
+            with self.subTest(volume=volume):
+                fx = Fixture()
+                self.addCleanup(fx.close)
+                app_id = fx.app(transport='T2', created=12, completed=13,
+                                volume=volume)
+                row = fx.forward(app_id)
+                self.assertEqual(row['verdict'], rc.V_WORK)
+                self.assertEqual(self.volume(row), (None, rc.VR_NO_VOLUME, None))
+                self.assertEqual(rc.volume_key(row), rc.VOL_NONE)
+
+    def test_an_unknown_day_in_the_window_leaves_the_hectares_incomplete(self):
+        # 10..14 у машины 11: работа 10-го, 14-го точек нет.
+        app_id = self.fx.app(transport='T1', created=10, completed=14,
+                             volume='2.00')
+        row = self.row(app_id)
+        self.assertEqual((row['verdict'], row['unknown_days']), (rc.V_WORK, 1))
+        self.assertEqual(self.volume(row), (None, rc.VR_DAYS_UNKNOWN, None))
+        # Отрицательный контроль -- в своей базе, чтобы первая заявка не
+        # пересеклась с ним: окно 10..13 без неизвестных суток сверяется.
+        fx = Fixture()
+        self.addCleanup(fx.close)
+        known = fx.app(transport='T1', created=10, completed=13, volume='2.00')
+        self.assertEqual(self.volume(fx.forward(known)), (rc.VOL_OK, None, 0.0))
+
+    def test_an_open_application_that_could_cover_the_window_blocks_it(self):
+        mine = self.fx.app(transport='T2', created=12, completed=13,
+                           volume='4.00')
+        other = self.fx.app(transport='T2', status='IN_PROGRESS', created=11,
+                            completed=None, volume='9.00')
+        row = self.row(mine)
+        self.assertEqual(self.volume(row), (None, rc.VR_OPEN, None))
+        self.assertEqual([a.id for a in row['volume_neighbours']], [other])
+        self.assertIsNone(row['volume_group'])
+
+    def test_an_open_application_entered_after_the_window_does_not(self):
+        mine = self.fx.app(transport='T2', created=12, completed=13,
+                           volume='4.00')
+        self.fx.app(transport='T2', status='PENDING', created=14,
+                    completed=None)
+        row = self.row(mine)
+        self.assertEqual(self.volume(row), (rc.VOL_OK, None, 0.0))
+        self.assertEqual(row['volume_neighbours'], [])
+
+    def test_an_application_with_an_unknown_window_blocks_it(self):
+        mine = self.fx.app(transport='T2', created=12, completed=13,
+                           volume='4.00')
+        # Без истории: могла покрыть сутки не раньше 15 - N = 13-го.
+        other = self.fx.app(transport='T2', created=15, completed=None,
+                            history=False)
+        row = self.row(mine)
+        self.assertEqual(self.volume(row), (None, rc.VR_WINDOW_UNKNOWN, None))
+        self.assertEqual([a.id for a in row['volume_neighbours']], [other])
+        # Отрицательный контроль: созданная 16-го (16 - 2 = 14) окно 12..13
+        # не задевает.
+        fx = Fixture()
+        self.addCleanup(fx.close)
+        mine = fx.app(transport='T2', created=12, completed=13, volume='4.00')
+        fx.app(transport='T2', created=16, completed=None, history=False)
+        self.assertEqual(self.volume(fx.forward(mine)), (rc.VOL_OK, None, 0.0))
+
+    def test_cancelled_and_deleted_applications_do_not_block(self):
+        mine = self.fx.app(transport='T2', created=12, completed=13,
+                           volume='4.00')
+        self.fx.app(transport='T2', status='CANCELLED', created=12,
+                    completed=None, cancelled='2026-09-14T08:00:00+05:00')
+        self.fx.app(transport='T2', created=12, completed=13, volume='4.00',
+                    gone_at='2026-09-20 03:00:00')
+        self.assertEqual(self.volume(self.row(mine)), (rc.VOL_OK, None, 0.0))
+
+    def test_another_machine_does_not_block(self):
+        mine = self.fx.app(transport='T2', created=12, completed=13,
+                           volume='4.00')
+        self.fx.app(transport='T1', created=12, completed=13, volume='4.00')
+        self.fx.app(transport='T1', status='IN_PROGRESS', created=10,
+                    completed=None)
+        self.assertEqual(self.volume(self.row(mine)), (rc.VOL_OK, None, 0.0))
+
+    def test_a_second_agro_work_vehicle_of_the_same_machine_blocks_it(self):
+        self.fx.con.execute("INSERT INTO agro_work_transports (id, plate_number, "
+                            "plate_norm, equipment_id, match_status, "
+                            "first_seen_at, last_seen_at) VALUES ('T9', 'P-T9', "
+                            "'PT9', 12, 'manual', 't', 't')")
+        self.fx.con.commit()
+        mine = self.fx.app(transport='T2', created=12, completed=13,
+                           volume='4.00')
+        other = self.fx.app(transport='T9', created=13, completed=13,
+                            volume='1.00')
+        row = self.row(mine)
+        self.assertEqual(self.volume(row), (None, rc.VR_OVERLAP, None))
+        self.assertEqual([a.id for a in row['volume_neighbours']], [other])
+
+    def test_overlapping_closed_windows_show_their_sum_without_a_colour(self):
+        first = self.fx.app(transport='T2', created=12, completed=13,
+                            volume='3.00')
+        second = self.fx.app(transport='T2', created=13, completed=13,
+                             volume='1.50')
+        for mine, other in ((first, second), (second, first)):
+            row = self.row(mine)
+            with self.subTest(app=mine):
+                self.assertEqual(self.volume(row), (None, rc.VR_OVERLAP, None))
+                self.assertEqual([a.id for a in row['volume_neighbours']], [other])
+                group = row['volume_group']
+                self.assertEqual([a.id for a in group['apps']], [first, second])
+                self.assertEqual((group['first'], group['last']), (D(12), D(13)))
+                self.assertEqual((group['volume'], group['gps_ha']), (4.5, 4.0))
+
+    def test_the_chain_reaches_past_the_direct_neighbour(self):
+        # 10-11, 11-12, 12-13: первая и третья не пересекаются, но цепочка
+        # одна; общее окно 10..13, по GPS 4,0 га (13-го).
+        first = self.fx.app(transport='T2', created=10, completed=11,
+                            volume='1.00')
+        self.fx.app(transport='T2', created=11, completed=12, volume='1.00')
+        third = self.fx.app(transport='T2', created=12, completed=13,
+                            volume='2.00')
+        row = self.row(third)
+        self.assertEqual(self.volume(row), (None, rc.VR_OVERLAP, None))
+        self.assertEqual(len(row['volume_neighbours']), 1)
+        group = row['volume_group']
+        self.assertEqual(group['apps'][0].id, first)
+        self.assertEqual((group['first'], group['last'], group['volume'],
+                          group['gps_ha']), (D(10), D(13), 4.0, 4.0))
+
+    def test_no_sum_when_the_chain_is_not_comparable(self):
+        cases = {
+            'a member in hours': dict(unit='HOUR', volume='1.00'),
+            'a member without volume': dict(volume=None),
+            'a member of another method': dict(work_type=W_TIME, volume='1.00'),
+        }
+        for name, change in cases.items():
+            with self.subTest(case=name):
+                fx = Fixture()
+                self.addCleanup(fx.close)
+                mine = fx.app(transport='T2', created=12, completed=13,
+                              volume='3.00')
+                fx.app(transport='T2', created=13, completed=13, **change)
+                row = fx.forward(mine)
+                self.assertEqual(self.volume(row), (None, rc.VR_OVERLAP, None))
+                self.assertIsNone(row['volume_group'])
+
+    def test_no_sum_when_the_common_window_has_an_unknown_day(self):
+        # Машина 11: своё окно 10..11 известно (работа 10-го), соседнее
+        # 11..14 задевает 14-е, где точек нет.
+        mine = self.fx.app(transport='T1', created=10, completed=11,
+                           volume='2.00')
+        self.fx.app(transport='T1', created=11, completed=14, volume='1.00')
+        row = self.row(mine)
+        self.assertEqual(self.volume(row), (None, rc.VR_OVERLAP, None))
+        self.assertIsNone(row['volume_group'])
+
+    def test_no_sum_when_an_open_application_could_cover_the_common_window(self):
+        # Машина 11: своё окно 10..10 (работа 2,0 га) открытая, созданная
+        # 12-го, не задевает; цепочка через 10..12 доходит до 12-го.
+        mine = self.fx.app(transport='T1', created=10, completed=10,
+                           volume='2.00')
+        self.fx.app(transport='T1', created=10, completed=12, volume='1.00')
+        self.fx.app(transport='T1', status='IN_PROGRESS', created=12,
+                    completed=None)
+        row = self.row(mine)
+        self.assertEqual(row['verdict'], rc.V_WORK)
+        self.assertEqual(self.volume(row), (None, rc.VR_OVERLAP, None))
+        self.assertIsNone(row['volume_group'])
+        # Отрицательный контроль: без открытой числа цепочки есть.
+        fx = Fixture()
+        self.addCleanup(fx.close)
+        mine = fx.app(transport='T1', created=10, completed=10, volume='2.00')
+        fx.app(transport='T1', created=10, completed=12, volume='1.00')
+        group = fx.forward(mine)['volume_group']
+        self.assertEqual((group['first'], group['last'], group['volume'],
+                          group['gps_ha']), (D(10), D(12), 3.0, 2.0))
+
+    def test_the_worst_neighbour_is_named(self):
+        mine = self.fx.app(transport='T2', created=12, completed=13,
+                           volume='4.00')
+        self.fx.app(transport='T2', created=13, completed=13, volume='1.00')
+        self.fx.app(transport='T2', created=15, completed=None, history=False)
+        self.assertEqual(self.volume(self.row(mine)),
+                         (None, rc.VR_WINDOW_UNKNOWN, None))
+        self.fx.app(transport='T2', status='IN_PROGRESS', created=12,
+                    completed=None)
+        row = self.row(mine)
+        self.assertEqual(self.volume(row), (None, rc.VR_OPEN, None))
+        self.assertEqual(len(row['volume_neighbours']), 3)
+
+    def test_the_verdicts_and_coverage_stay_as_they_were(self):
+        mine = self.fx.app(transport='T2', created=12, completed=13,
+                           volume='9.00')
+        self.fx.app(transport='T2', created=13, completed=13, volume='1.00')
+        ctx = self.fx.run()
+        rows = {r['app'].id: r for r in ctx.forward_rows()}
+        self.assertEqual(rows[mine]['verdict'], rc.V_WORK)
+        self.assertEqual(rows[mine]['gps_ha'], 4.0)
+        day = {(r['equipment_id'], r['day']): r for r in ctx.reverse_rows()}
+        self.assertEqual(day[(12, D(13))]['coverage'], rc.C_COVERED)
+
+    def test_the_summary_adds_up_to_work_was_done(self):
+        self.fx.app(transport='T2', created=12, completed=13, volume='4.00')
+        self.fx.app(transport='T2', created=13, completed=13, volume='1.00',
+                    unit='HOUR')
+        self.fx.app(transport='T1', created=10, completed=14, volume='2.00')
+        self.fx.app(transport='T1', created=10, completed=10, volume='5.00')
+        self.fx.app(transport='T2', created=10, completed=11, volume='5.00')
+        groups, total = self.fx.run().summary()
+        for counter in list(groups.values()) + [total]:
+            self.assertEqual(counter['app_' + rc.V_WORK],
+                             sum(counter[rc.VOL + key]
+                                 for key in rc.VOLUME_VERDICTS))
+            self.assertEqual(counter[rc.VOL + rc.VOL_NONE],
+                             sum(counter[rc.VOL_REASON + reason]
+                                 for reason in rc.VOLUME_REASONS))
+        # T2: 12..13 пересекается с 13..13, у той объём в часах -- она «не в
+        # гектарах»; T1: у 10..14 неизвестный день 14-го, 10..10 с ней
+        # пересекается; 10..11 у T2 -- работы нет и в счёт объёма не идёт.
+        self.assertEqual(total['app_' + rc.V_WORK], 4)
+        self.assertEqual(total[rc.VOL + rc.VOL_NONE], 4)
+        self.assertEqual(total[rc.VOL_REASON + rc.VR_OVERLAP], 2)
+        self.assertEqual(total[rc.VOL_REASON + rc.VR_NOT_HECTARE], 1)
+        self.assertEqual(total[rc.VOL_REASON + rc.VR_DAYS_UNKNOWN], 1)
+
+    def test_the_colours_reach_the_summary(self):
+        self.fx.app(transport='T2', created=12, completed=13, volume='5.10')
+        self.fx.app(transport='T1', created=10, completed=10, volume='2.00')
+        groups, total = self.fx.run().summary()
+        self.assertEqual((total[rc.VOL + rc.VOL_OK], total[rc.VOL + rc.VOL_WARN],
+                          total[rc.VOL + rc.VOL_FAIL],
+                          total[rc.VOL + rc.VOL_NONE]), (1, 0, 1, 0))
+        self.assertEqual(groups[(1, 'mtz')][rc.VOL + rc.VOL_FAIL], 1)
+
+
+class MayCoverIsTheCoverageRule(unittest.TestCase):
+    """«Могла покрыть» объёма и покрытие суток -- один критерий.
+
+    Для каждых суток первая непустая группа по may_cover (окно, открытая,
+    неизвестное окно, задним числом) совпадает с тем, что вернул coverage, --
+    при утверждённом N и при неутверждённом.
+    """
+
+    def test_day_by_day_against_coverage(self):
+        for lookback in (2, None):
+            fx = Fixture()
+            self.addCleanup(fx.close)
+            fx.app(transport='T2', created=12, completed=13)
+            fx.app(transport='T2', created=15, completed=16)
+            fx.app(transport='T2', status='IN_PROGRESS', created=18,
+                   completed=None)
+            fx.app(transport='T2', created=21, completed=None, history=False)
+            fx.app(transport='T2', created=24, completed=24,
+                   initial='COMPLETED')
+            fx.app(transport='T2', status='CANCELLED', created=9,
+                   completed=None, cancelled='2026-09-26T08:00:00+05:00')
+            fx.app(transport='T2', created=9, completed=27,
+                   gone_at='2026-09-27 03:00:00')
+            ctx = fx.run(date_from=8, date_to=27, lookback=lookback)
+            live = ctx.live_apps_of(12)
+            self.assertEqual(len(live), 5)
+            for number in range(8, 28):
+                day = D(number)
+                with self.subTest(lookback=lookback, day=day):
+                    groups = [
+                        (rc.C_COVERED, None,
+                         [a for a in live if a.window and ctx.may_cover(a, day)]),
+                        (rc.C_NONE, rc.R_OPEN_COVERS,
+                         [a for a in live if a.is_open and ctx.may_cover(a, day)]),
+                        (rc.C_NONE, rc.R_WINDOW_UNKNOWN,
+                         [a for a in live if a.window is None
+                          and a.window_reason in rc.UNKNOWN_WINDOW_REASONS
+                          and ctx.may_cover(a, day)]),
+                        (rc.C_NONE, rc.R_MAYBE_BACKDATED,
+                         [a for a in live if a.window_reason == rc.R_BACKDATED
+                          and ctx.may_cover(a, day)])]
+                    expected = next(((cov, reason, [a.id for a in apps])
+                                     for cov, reason, apps in groups if apps),
+                                    (rc.C_UNCOVERED, None, []))
+                    coverage, reason, apps = ctx.coverage(12, day)
+                    self.assertEqual((coverage, reason, [a.id for a in apps]),
+                                     expected)
+                    # Ни одна живая заявка не «могла покрыть» сутки, которые
+                    # покрытие назвало ничьими.
+                    if coverage == rc.C_UNCOVERED:
+                        self.assertFalse([a for a in live
+                                          if ctx.may_cover(a, day)])
 
 
 if __name__ == '__main__':
