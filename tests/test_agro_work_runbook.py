@@ -164,11 +164,12 @@ class Runbook(unittest.TestCase):
         present = {name[:-3] for name in os.listdir(os.path.join(REPO_ROOT, 'tests'))
                    if name.startswith('test_agro_work_') and name.endswith('.py')}
         # Экран и сам ранбук требуют Flask/документа -- на сервере их гоняет
-        # не самопроверка шага 2. Ранбук выпуска v1.22 -- такой же: ему нужны
-        # документ и PowerShell, а не код трека.
+        # не самопроверка шага 2. Ранбуки выпусков v1.22 и v1.24 -- такие же:
+        # им нужны документ и PowerShell, а не код трека.
         self.assertEqual(listed, present - {'test_agro_work_screen',
                                             'test_agro_work_runbook',
-                                            'test_agro_work_release_v122'})
+                                            'test_agro_work_release_v122',
+                                            'test_agro_work_release_v124'})
 
     def test_the_migration_line_is_what_the_migration_prints(self):
         expected = ('Done. %d agro_work tables (%d columns), %d indexes and %d '
