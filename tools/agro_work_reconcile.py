@@ -12,13 +12,18 @@
   Свод           -- организация x категория: машины, заявки (работа была /
                     не было / без вердикта), машино-сутки с работой по GPS
                     (покрыты / без заявки / без вердикта) и из суток без
-                    заявки -- те, у которых есть поздняя заявка задним
-                    числом (B4, пункт 4);
+                    заявки -- что было потом: поздняя заявка задним числом
+                    (B4, пункт 4), обычная заявка позже, заявка позже с
+                    неизвестным порядком ввода, заявка не заведена совсем
+                    (B5);
   Заявка-работа  -- каждая заявка периода: окно, вердикт или причина, сутки
                     с работой, гектары GPS в окне;
   Работа-заявка  -- каждые машино-сутки с работой по GPS и их покрытие; у
                     суток без заявки -- ближайшая заявка той же машины,
                     заведённая задним числом позже, и через сколько суток;
+                    что было потом (B5) и, если позже заведена заявка не
+                    задним числом, -- ближайшая, через сколько суток, её
+                    статус;
   Открытые заявки -- открытые заявки по организациям, от самой старой, с
                     числом суток с ввода (B4, пункт 5);
   Причины        -- сколько строк без вердикта и почему;
@@ -98,6 +103,20 @@ LATE_COLUMN = ('Без заявки: из них с поздней заявко�
                'Буюртмасиз: улардан кейин орқа сана билан киритилган '
                'буюртмаси борлари')
 
+# B5: остальные части суток «без заявки»; с LATE_COLUMN в сумме -- все.
+AFTER_COLUMNS = (
+    (rc.A_ORDINARY, ('Без заявки: из них с обычной заявкой, заведённой позже',
+                     'Буюртмасиз: улардан кейин оддий тартибда киритилган '
+                     'буюртмаси борлари')),
+    (rc.A_UNCLEAR, ('Без заявки: из них с заявкой позже, порядок ввода '
+                    'неизвестен',
+                    'Буюртмасиз: улардан кейин киритилган буюртмаси бор, '
+                    'киритиш тартиби номаълум')),
+    (rc.A_NOT_ENTERED, ('Без заявки: из них заявка не заведена совсем',
+                        'Буюртмасиз: улардан буюртма умуман '
+                        'киритилмаганлари')),
+)
+
 
 def _oldest(ctx):
     rows = ctx.open_applications()
@@ -137,13 +156,16 @@ def build_book(ctx, forward, reverse, lags, excluded, preview):
             counter['app_' + rc.V_NO_WORK], counter['app_' + rc.V_NONE],
             counter['work_days'], counter['day_' + rc.C_COVERED],
             counter['day_' + rc.C_UNCOVERED], counter['day_' + rc.C_NONE],
-            counter[rc.DAY_LATE]))
+            counter[rc.DAY_LATE])
+            + tuple(counter[rc.DAY_AFTER + kind] for kind, _ in AFTER_COLUMNS))
     summary_rows.append((bi(('Итого', 'Жами')), '', total['machines'],
                          total['applications'], total['app_' + rc.V_WORK],
                          total['app_' + rc.V_NO_WORK], total['app_' + rc.V_NONE],
                          total['work_days'], total['day_' + rc.C_COVERED],
                          total['day_' + rc.C_UNCOVERED], total['day_' + rc.C_NONE],
-                         total[rc.DAY_LATE]))
+                         total[rc.DAY_LATE])
+                        + tuple(total[rc.DAY_AFTER + kind]
+                                for kind, _ in AFTER_COLUMNS))
     sheet = sheet_with(
         'Свод',
         (bi(('Организация', 'Ташкилот')), bi(('Категория', 'Тоифа')),
@@ -152,8 +174,9 @@ def build_book(ctx, forward, reverse, lags, excluded, preview):
          bi(labels.VERDICTS[rc.V_NONE]),
          bi(('Машино-суток с работой по GPS', 'GPS бўйича иш бўлган машина-кунлар')),
          bi(labels.COVERAGE[rc.C_COVERED]), bi(labels.COVERAGE[rc.C_UNCOVERED]),
-         bi(labels.COVERAGE[rc.C_NONE]), bi(LATE_COLUMN)),
-        summary_rows, (28, 28, 10, 10, 14, 16, 14, 18, 16, 16, 14, 22))
+         bi(labels.COVERAGE[rc.C_NONE]), bi(LATE_COLUMN))
+        + tuple(bi(title) for _, title in AFTER_COLUMNS),
+        summary_rows, (28, 28, 10, 10, 14, 16, 14, 18, 16, 16, 14, 22, 22, 22, 22))
     notes = [
         bi(('Период: %s — %s' % (ctx.date_from.strftime('%d.%m.%Y'),
                                  ctx.date_to.strftime('%d.%m.%Y')),
@@ -241,7 +264,13 @@ def build_book(ctx, forward, reverse, lags, excluded, preview):
             if row['reason'] else '',
             ', '.join(app.number for app in row['apps'][:5]),
             row['late_app'].number if row.get('late_app') else '',
-            row.get('late_days')))
+            row.get('late_days'),
+            labels.pick(labels.AFTER, row['after'], True)
+            if row.get('after') else '',
+            row['later_app'].number if row.get('later_app') else '',
+            row.get('later_days'),
+            labels.pick(labels.STATUSES, row['later_app'].status, True)
+            if row.get('later_app') else ''))
     sheet_with(
         'Работа-заявка',
         (bi(('Сутки', 'Кун')), bi(('Машина', 'Машина')),
@@ -251,8 +280,14 @@ def build_book(ctx, forward, reverse, lags, excluded, preview):
          bi(('Заявка задним числом, заведена позже',
              'Кейин орқа сана билан киритилган буюртма')),
          bi(('Через сколько суток после работы',
-             'Ишдан неча кун кейин'))),
-        reverse_rows, (12, 26, 20, 26, 10, 22, 48, 40, 24, 16))
+             'Ишдан неча кун кейин')),
+         bi(('Без заявки: что было потом', 'Буюртмасиз: кейин нима бўлган')),
+         bi(('Заявка, заведённая позже (кроме задним числом)',
+             'Кейин киритилган буюртма (орқа санадагиларидан ташқари)')),
+         bi(('Через сколько суток после работы её ввели',
+             'Ишдан неча кун кейин киритилган')),
+         bi(('Статус этой заявки', 'Бу буюртманинг ҳолати'))),
+        reverse_rows, (12, 26, 20, 26, 10, 22, 48, 40, 24, 16, 34, 24, 16, 14))
 
     # B4, пункт 5: открытые заявки по организациям, от самой старой.
     open_rows = []
@@ -423,6 +458,26 @@ def main(argv=None):
         spread = Counter(late)
         print('  days late -> machine-days: %s' % ' | '.join(
             '%d -> %d' % (days, spread[days]) for days in sorted(spread)))
+    # B5: остальные сутки «без заявки» -- что было потом. Вместе со строкой
+    # о заявках задним числом в сумме -- все сутки «без заявки».
+    after = Counter(r['after'] for r in reverse if r.get('after'))
+    later = [r for r in reverse if r.get('after') == rc.A_ORDINARY]
+    print('  of them with a later ordinary application: %d%s' % (
+        len(later), ' (days after: min %d, max %d; still open %d)' % (
+            min(r['later_days'] for r in later),
+            max(r['later_days'] for r in later),
+            sum(1 for r in later if r['later_app'].is_open)) if later else ''))
+    if later:
+        # [REASON]: как у опоздания задним числом -- точные значения, без
+        # порога: 1 сутки и 40 суток читающий различит сам.
+        spread = Counter(r['later_days'] for r in later)
+        print('  days after -> machine-days: %s' % ' | '.join(
+            '%d -> %d' % (days, spread[days]) for days in sorted(spread)))
+    if after[rc.A_UNCLEAR]:
+        print('  of them with a later application of unknown entry order: %d'
+              % after[rc.A_UNCLEAR])
+    print('  of them with no later application at all: %d'
+          % after[rc.A_NOT_ENTERED])
     opened = ctx.open_applications()
     print('open applications: %d%s' % (
         len(opened), ' | oldest open %d days since entry'

@@ -50,6 +50,20 @@
 «насколько поздно» нет: его пришлось бы выдумать, а число суток читающему
 видно само -- 3 похоже на поздний ввод той же работы, 29 -- на другую.
 
+ЧТО БЫЛО ПОТОМ (B5, решение владельца 07.10: «нужно отделять»). Сутки
+«работа без заявки» делятся на четыре части, в сумме -- все такие сутки:
+  * позже заведена заявка задним числом -- это поздняя заявка B4;
+  * позже заведена обычная заявка -- открытая или закрытая, но не сразу
+    «выполненной»; называется ближайшая. Её окно начинается с дня создания
+    (правило 4), поэтому сутки до него она не покрывает и вердикт остаётся
+    «без заявки»: B5 только называет факт;
+  * позже заведена заявка, порядок которой неизвестен -- нет истории
+    статусов или статус незнакомый: задним ли числом, сказать нельзя;
+  * заявка не заведена совсем: после этих суток у машины новых заявок нет
+    (отменённые и удалённые в agro-work не в счёт -- они работу не
+    покрывают, ответы 4 и 11).
+Порога нет, как и в B4: число суток читающему видно.
+
 ОТКРЫТЫЕ ЗАЯВКИ (B4, пункт 5). Список открытых заявок периода от самой
 старой, с числом суток с ввода -- единственной даты, которая есть у каждой
 заявки. Сколько суток заявке позволено быть открытой, решает владелец;
@@ -106,6 +120,15 @@ C_NONE = 'bez_verdikta'
 # Счётчик свода: из суток «без заявки» -- те, у которых есть поздняя заявка
 # задним числом (B4, пункт 4).
 DAY_LATE = 'day_bez_zayavki_pozdnyaya'
+
+# Что было потом у суток «без заявки» (B5). Слаги ASCII, подписи -- в
+# agro_work/labels.py. Счётчик свода -- DAY_AFTER + слаг.
+A_BACKDATED = 'zadnim_chislom_pozzhe'
+A_ORDINARY = 'obychnaya_pozzhe'
+A_UNCLEAR = 'pozzhe_poryadok_neizvesten'
+A_NOT_ENTERED = 'ne_zavedena'
+AFTER_KINDS = (A_BACKDATED, A_ORDINARY, A_UNCLEAR, A_NOT_ENTERED)
+DAY_AFTER = 'day_bez_zayavki_potom_'
 
 # Причины «без вердикта». Слаги ASCII, подписи -- на экране и в отчёте.
 R_OPEN = 'otkryta'
@@ -242,6 +265,10 @@ class Application:
         if self.completed_day < self.created_day:
             return None, R_BAD_WINDOW
         return (self.created_day, self.completed_day), None
+
+    @property
+    def is_open(self):
+        return self.status in records.OPEN_STATUSES
 
     @property
     def listed_span(self):
@@ -504,7 +531,8 @@ class Reconciliation:
                        'gps_ha': round(sum(ha for _, ha in worked), 3)
                        if len(live) == 1 else None,
                        'coverage': C_NONE, 'reason': None, 'apps': [],
-                       'late_app': None, 'late_days': None}
+                       'late_app': None, 'late_days': None,
+                       'after': None, 'later_app': None, 'later_days': None}
                 if len(live) > 1:
                     # [REASON]: у машины несколько объектов Wialon -- сверка
                     # нарядов GPS называет это причиной, а не складывает и не
@@ -518,6 +546,11 @@ class Reconciliation:
                         late = self.late_backdated(equipment_id, day)
                         if late:
                             row['late_app'], row['late_days'] = late
+                        after, app, days = self.what_came_after(
+                            equipment_id, day, late)
+                        row['after'] = after
+                        if after in (A_ORDINARY, A_UNCLEAR):
+                            row['later_app'], row['later_days'] = app, days
                 rows.append(row)
         return rows
 
@@ -543,6 +576,43 @@ class Reconciliation:
             return None
         app = min(late, key=lambda a: (a.created_day, a.number))
         return app, (app.created_day - day).days
+
+    def what_came_after(self, equipment_id, day, late=_DEFAULT):
+        """(что было потом, заявка, суток) у суток «работа без заявки» (B5).
+
+        Поздняя заявка задним числом (B4) -- первой: из-за неё сутки и так
+        названы. Иначе -- ближайшая заявка той же машины, созданная позже
+        суток, не отменённая, не удалённая в agro-work и не заведённая
+        задним числом. `late` -- уже найденный ответ late_backdated, чтобы не
+        искать дважды.
+        """
+        if late is _DEFAULT:
+            late = self.late_backdated(equipment_id, day)
+        if late:
+            return A_BACKDATED, late[0], late[1]
+        transports = self.transports_by_equipment.get(equipment_id, [])
+        if len(transports) != 1:
+            return None, None, None
+        # [REASON]: отменённая и удалённая в agro-work заявка работу не
+        # покрывает (ответы владельца 4 и 11) -- значит, и заведённой работой
+        # её не считать. Заявка задним числом -- забота B4: с окном она уже
+        # названа поздней, без окна (N не утверждено) сутки «без заявки» до
+        # неё не бывает -- они без вердикта.
+        later = [a for a in self.apps_by_transport.get(transports[0], [])
+                 if a.created_day > day and not a.gone and not a.backdated
+                 and a.status != records.STATUS_CANCELLED]
+        # [REASON]: «обычная» -- только та, о которой это известно: открытая
+        # или закрытая с историей статусов, где начальный статус не
+        # «выполнено». Без истории или с незнакомым статусом порядок ввода
+        # неизвестен; такая заявка не делает сутки ни «обычной позже», ни
+        # «не заведена совсем» -- отдельная часть, названная как есть.
+        known = [a for a in later if a.status in records.OPEN_STATUSES
+                 or (a.status == records.STATUS_COMPLETED and a.has_history)]
+        pool, kind = (known, A_ORDINARY) if known else (later, A_UNCLEAR)
+        if not pool:
+            return A_NOT_ENTERED, None, None
+        app = min(pool, key=lambda a: (a.created_day, a.number))
+        return kind, app, (app.created_day - day).days
 
     def open_applications(self):
         """Открытые заявки периода, от самой старой: суток с ввода."""
@@ -613,6 +683,8 @@ class Reconciliation:
                 counter['day_' + row['coverage']] += 1
             if row.get('late_app') is not None:
                 counter[DAY_LATE] += 1
+            if row.get('after'):
+                counter[DAY_AFTER + row['after']] += 1
             machines[key].add(row['equipment_id'])
         total = Counter()
         for key, counter in groups.items():
@@ -640,13 +712,15 @@ class Reconciliation:
                     on_day.append(app)
             coverage = None
             late = None
+            after = None
             if any(state == WORK for _, (state, _) in states) and len(units) == 1 \
                     and units[0] not in self.excluded:
                 coverage = self.coverage(equipment_id, day)
                 if coverage[0] == C_UNCOVERED:
                     late = self.late_backdated(equipment_id, day)
+                    after = self.what_came_after(equipment_id, day, late)
             out.append({'day': day, 'states': states, 'apps': on_day,
-                        'coverage': coverage, 'late': late})
+                        'coverage': coverage, 'late': late, 'after': after})
         return out
 
 

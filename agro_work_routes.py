@@ -231,7 +231,9 @@ def dashboard():
         'agro_work/dashboard.html',
         **_common(date_from, date_to, empty=None, rows=rows, total=total,
                   orphan_days=ctx.orphan_work_days(),
-                  open_groups=open_groups, late_key=rc.DAY_LATE))
+                  open_groups=open_groups,
+                  after_keys=[(kind, rc.DAY_AFTER + kind)
+                              for kind in rc.AFTER_KINDS]))
 
 
 # --- заявка -> работа ----------------------------------------------------------
@@ -298,6 +300,7 @@ def work_days():
     org, category, unmatched = _group_filter()
     coverage = (request.args.get('coverage') or '').strip() or None
     reason = (request.args.get('reason') or '').strip() or None
+    after = (request.args.get('after') or '').strip() or None
     rows = []
     for row in ctx.reverse_rows():
         if not _in_group(ctx, row['equipment_id'], org, category, unmatched):
@@ -305,6 +308,8 @@ def work_days():
         if coverage and row['coverage'] != coverage:
             continue
         if reason and row['reason'] != reason:
+            continue
+        if after and row['after'] != after:
             continue
         row['machine'] = _machine_label(ctx, row['equipment_id'])
         row['org_name'] = ctx.orgs.get(ctx.group_of(row['equipment_id'])[0], '')
@@ -318,7 +323,12 @@ def work_days():
                 (rc.C_UNCOVERED, rc.C_COVERED, rc.C_NONE),
                 lambda key: labels.pick(labels.COVERAGE, key, is_ru), coverage),
         _choice('reason', _aw_t('Сабаб', 'Причина'), rc.REVERSE_REASONS,
-                lambda key: labels.pick(labels.REASONS, key, is_ru), reason)]
+                lambda key: labels.pick(labels.REASONS, key, is_ru), reason),
+        # B5: сутки «без заявки» по тому, что было потом.
+        _choice('after', _aw_t('Буюртмасиз: кейин нима бўлган',
+                               'Без заявки: что было потом'),
+                rc.AFTER_KINDS,
+                lambda key: labels.pick(labels.AFTER, key, is_ru), after)]
     return render_template(
         'agro_work/work_days.html',
         **_common(date_from, date_to, empty=None, rows=rows[:LIST_LIMIT],

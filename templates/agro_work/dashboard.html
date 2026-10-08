@@ -31,7 +31,16 @@
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Из них без заявки' if is_ru else 'Шулардан буюртмасиз' }}</div>
     <div class="vs-stat-value"><a href="{{ url_for('agro_work.work_days', **{'from': date_from.isoformat(), 'to': date_to.isoformat(), 'coverage': 'bez_zayavki'}) }}">{{ total.get('day_bez_zayavki', 0) }}</a></div>
-    {% if total.get(late_key) %}<div class="vs-soft">{{ ('из них с заявкой, заведённой задним числом позже: %d' if is_ru else 'шулардан кейин орқа сана билан киритилган буюртмаси борлари: %d')|format(total.get(late_key)) }}</div>{% endif %}
+    {% if total.get('day_bez_zayavki', 0) %}
+    {% set after_text = {
+      'zadnim_chislom_pozzhe': ('из них с заявкой, заведённой задним числом позже: %d', 'шулардан кейин орқа сана билан киритилган буюртмаси борлари: %d'),
+      'obychnaya_pozzhe': ('с обычной заявкой, заведённой позже: %d', 'кейин оддий тартибда киритилган буюртмаси борлари: %d'),
+      'pozzhe_poryadok_neizvesten': ('с заявкой позже, порядок ввода неизвестен: %d', 'кейин киритилган буюртмаси бор, киритиш тартиби номаълум: %d'),
+      'ne_zavedena': ('заявка не заведена совсем: %d', 'буюртма умуман киритилмаганлари: %d')} %}
+    {% for kind, key in after_keys if kind != 'pozzhe_poryadok_neizvesten' or total.get(key) %}
+    <div class="vs-soft"><a href="{{ url_for('agro_work.work_days', **{'from': date_from.isoformat(), 'to': date_to.isoformat(), 'coverage': 'bez_zayavki', 'after': kind}) }}">{{ (after_text[kind][0] if is_ru else after_text[kind][1])|format(total.get(key, 0)) }}</a></div>
+    {% endfor %}
+    {% endif %}
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Без вердикта: заявок / суток' if is_ru else 'Ҳукмсиз: буюртма / кун' }}</div>

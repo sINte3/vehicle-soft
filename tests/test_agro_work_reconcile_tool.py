@@ -94,7 +94,10 @@ class ReportTool(unittest.TestCase):
                                       total['work_days'], total['day_pokryta'],
                                       total['day_bez_zayavki'],
                                       total['day_bez_verdikta'],
-                                      total[rc.DAY_LATE]))
+                                      total[rc.DAY_LATE],
+                                      total[rc.DAY_AFTER + rc.A_ORDINARY],
+                                      total[rc.DAY_AFTER + rc.A_UNCLEAR],
+                                      total[rc.DAY_AFTER + rc.A_NOT_ENTERED]))
         self.assertEqual(book['Заявка-работа'].max_row - 1, len(forward))
         self.assertEqual(book['Работа-заявка'].max_row - 1, len(reverse))
         notes = ' '.join(str(r[0]) for r in summary if r and r[0])
@@ -122,12 +125,14 @@ class ReportTool(unittest.TestCase):
         day13 = [row for row in book['Работа-заявка'].iter_rows(values_only=True)
                  if row[0] is not None and str(row[0]).startswith('2026-09-13')
                  and '80 012 EA' in (row[1] or '')][0]
-        self.assertEqual(day13[-2:], ('N-005', 5))
+        # Столбцы 9 и 10 -- заявка задним числом и опоздание (B4); столбцы
+        # B5 добавлены после них.
+        self.assertEqual(day13[8:10], ('N-005', 5))
         opened = list(book['Открытые заявки'].iter_rows(values_only=True))[1:]
         self.assertEqual([(r[2], r[-1]) for r in opened], [('N-006', days_open)])
         totals = [row for row in book['Свод'].iter_rows(values_only=True)
                   if row and row[0] == 'Итого / Жами'][0]
-        self.assertEqual(totals[-1], 1)
+        self.assertEqual(totals[11], 1)
 
     def test_days_late_are_listed_exactly_not_in_buckets(self):
         # Машина 12: заявка от 18-го опоздала на 5, 4 и 3 суток для 13-го,
@@ -161,6 +166,79 @@ class ReportTool(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertIn('of them with a later backdated application: 0\n', out)
         self.assertNotIn('days late ->', out)
+
+    def test_what_came_after_reaches_the_console_and_the_book(self):
+        # B5. Машина 12: обычная заявка открыта 15-го -- для работы 13-го и
+        # 14-го это 2 и 1 сутки после работы; 16-е она уже может покрыть
+        # (без вердикта). Машина 11: работа 20-го, позже заявок нет.
+        self.fx.con = sqlite3.connect(self.fx.path)
+        for day in (14, 16):
+            dbh.add_day(self.fx.con, 1002, '2026-09-%02d' % day,
+                        sites=[(1.0, None)])
+        dbh.add_day(self.fx.con, 1001, '2026-09-20', sites=[(1.5, None)])
+        self.fx.con.commit()
+        self.fx.app(transport='T2', status='IN_PROGRESS', created=15,
+                    completed=None)
+        self.fx.con.close()
+        code, out, err = self.main()
+        self.assertEqual(code, 0, err)
+        self.assertTrue(out.isascii())
+        self.assertIn('WITHOUT APPLICATION 3 ', out)
+        self.assertIn('  of them with a later backdated application: 0\n', out)
+        self.assertIn('  of them with a later ordinary application: 2 '
+                      '(days after: min 1, max 2; still open 2)\n', out)
+        self.assertIn('  days after -> machine-days: 1 -> 1 | 2 -> 1\n', out)
+        self.assertIn('  of them with no later application at all: 1\n', out)
+        self.assertNotIn('unknown entry order', out)
+        book = book_of(self.out)
+        header = next(book['Работа-заявка'].iter_rows(values_only=True))
+        self.assertEqual(header[10], 'Без заявки: что было потом / '
+                                     'Буюртмасиз: кейин нима бўлган')
+        # Подпись машины -- «название госномер»: ключ -- госномер в ней.
+        rows = {(str(r[0])[:10], r[1].split(' ', 1)[1]): r
+                for r in book['Работа-заявка'].iter_rows(min_row=2,
+                                                         values_only=True)}
+        self.assertEqual(rows[('2026-09-13', '80 012 EA')][10:14],
+                         ('Позже заведена обычная заявка', 'N-005', 2,
+                          'В процессе'))
+        self.assertEqual(rows[('2026-09-14', '80 012 EA')][12], 1)
+        self.assertEqual(rows[('2026-09-20', '80 011 EA')][10:14],
+                         ('Заявка не заведена совсем', None, None, None))
+        self.assertEqual(rows[('2026-09-16', '80 012 EA')][10:14],
+                         (None, None, None, None))      # без вердикта
+        totals = [row for row in book['Свод'].iter_rows(values_only=True)
+                  if row and row[0] == 'Итого / Жами'][0]
+        # Без заявки -- 3: задним числом 0, обычная позже 2, порядок
+        # неизвестен 0, не заведена 1.
+        self.assertEqual((totals[9], totals[11:15]), (3, (0, 2, 0, 1)))
+
+    def test_still_open_counts_only_the_open_ones(self):
+        # Машина 12: закрытая обычная заявка от 15-го -- для 13-го 2 суток;
+        # машина 11: открытая от 22-го -- для 20-го 2 суток. Из двух
+        # обычных открыта одна: «все» и «открытые» здесь различимы.
+        self.fx.con = sqlite3.connect(self.fx.path)
+        dbh.add_day(self.fx.con, 1001, '2026-09-20', sites=[(1.5, None)])
+        self.fx.con.commit()
+        self.fx.app(transport='T2', created=15, completed=15)
+        self.fx.app(transport='T1', status='PENDING', created=22,
+                    completed=None)
+        self.fx.con.close()
+        code, out, err = self.main()
+        self.assertEqual(code, 0, err)
+        self.assertIn('  of them with a later ordinary application: 2 '
+                      '(days after: min 2, max 2; still open 1)\n', out)
+
+    def test_unknown_entry_order_gets_its_own_console_line(self):
+        self.fx.con = sqlite3.connect(self.fx.path)
+        self.fx.app(transport='T2', created=18, completed=18, history=False)
+        self.fx.con.close()
+        code, out, err = self.main()
+        self.assertEqual(code, 0, err)
+        self.assertIn('  of them with a later ordinary application: 0\n', out)
+        self.assertNotIn('days after ->', out)
+        self.assertIn('  of them with a later application of unknown entry '
+                      'order: 1\n', out)
+        self.assertIn('  of them with no later application at all: 0\n', out)
 
     def test_the_reasons_in_the_console_are_the_reasons_of_the_book(self):
         # Консоль повторяет лист «Причины» и складывается в итоги, которые
