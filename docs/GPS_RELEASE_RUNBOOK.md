@@ -1,4 +1,4 @@
-# Выпуск v1.22 на рабочий сервер — пошагово
+# Выпуск v1.23 на рабочий сервер — пошагово
 
 Для владельца. Всё делается на сервере **SRV-YOQSH**. Каждый шаг — «скопировать,
 вставить, нажать Enter, посмотреть последнюю строку». Трек —
@@ -6,13 +6,14 @@
 («включаем и пересчитываем сентябрь»).
 
 Порядок и блоки шагов 2 и 3 — те же, что у выпуска v1.21, прошедшего на этом
-сервере 02.10, **без миграции**: при выпуске база не меняется. Нового два:
+сервере 02.10, и выпуска v1.22 (B4), **без миграции**: при выпуске
+база не меняется. Нового два:
 шаг 3 проверяет, что на диск приехал новый метод GPS, а шаг 4 пересчитывает
 прошедшие сутки этим методом.
 
 ## Что произойдёт — коротко
 
-1. Программа на сервере обновится с версии `8df5683` (выпуск v1.21) до новой.
+1. Программа на сервере обновится с версии `3434996` (выпуск v1.22, B4) до новой.
    В работе программы меняется одно место: **суточный расчёт GPS** — тот,
    что идёт ночью сам, — начинает считать гектары исправленным методом
    (правило A7). Ложных участков между дорогами, по которым трактор только
@@ -30,6 +31,12 @@
    станет меньше примерно на 1 135 га (с 7 337 до 6 201) — это ложные
    гектары на 72 машино-сутках; 16 из них вы смотрели в KML.
 
+   Вместе с ними поменяются **числа сверки agro-work за сентябрь**: сверка
+   берёт гектары из суточного расчёта GPS. Сутки, где ложные гектары были
+   единственной «работой», в сверке станут сутками без работы: «работа без
+   заявки» и «работа была» могут стать меньше, «работы нет» — больше. Это
+   ожидаемо, а не ошибка.
+
 Шаги 1–3 — около получаса, простой программы — 3–5 минут. Шаг 4 — 1–2 часа
 без простоя.
 
@@ -39,7 +46,7 @@
 
 **Обновление кода в `C:\transport-report`** — не командой `git pull`, а
 перемоткой (`git merge --ff-only`) ровно на проверенную версию и только после
-резервной копии, как в выпуске v1.21.
+резервной копии, как в выпусках v1.21 и v1.22.
 
 ---
 
@@ -81,6 +88,10 @@
 #171. «Влить» — сделать его основной версией, чтобы сервер мог её забрать.
 Сам сервер на этом шаге не меняется.
 
+Начинать — после выпуска v1.22 (B4): на сервере должна стоять его версия
+`3434996`. Шаг 2 проверит это сам и, если версия другая, остановится, ничего
+не тронув.
+
 **Важно: до конца шага 4 не вливайте другие PR с кодом.** Выпуск проверен
 ровно для кода, который сейчас в `main`, плюс этот PR. Документы вливать
 можно. Если в `main` появится другой код, шаги 2 и 3 остановятся сами и ничего
@@ -113,10 +124,10 @@ $db        = 'C:\transport-report\instance\transport.db'
 $py        = 'C:\Program Files\Python314\python.exe'
 $backupBat = 'C:\transport-report\backup_production_db.bat'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
-$baseline  = '8df568394a840054ef6f842c6a8b272ca4c31aa8'
-$reviewed  = '8a052ab103bfafbde3c14748a3cfe94d8e3e1245'
+$baseline  = '3434996a434652b0b590be2cfe08c4dc54cf1fab'
+$reviewed  = 'd48f65506bbf56700eb6726792185a295f595552'
 $work      = 'C:\VehicleSoft_Release'
-$log       = 'C:\VehicleSoft_Release\release_v122_step2.log'
+$log       = 'C:\VehicleSoft_Release\release_v123_step2.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 function Get-OpenItems([string[]]$lines) {
   for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -182,16 +193,15 @@ try { Stop-Transcript | Out-Null } catch { }
 
 **Что должно получиться:** последняя строка перед `LOG FILE` —
 `RESULT: CHECK PASSED - go on to step 3`. Выше — три строки
-`SERVICE ... : Running`, строка `RELEASE: 8df56839... -> ...` и список
-влитых изменений: `#171` (этот выпуск), `#168` (документ площадки Дронов),
-`#167` (отчёт о допуске GPS), `#166` (документы Дронов) и `#165` (записи
-выпуска v1.21). Если в списке есть ещё PR — значит, они только с
-документами: чужой код после проверенной версии блок не пропускает.
+`SERVICE ... : Running`, строка `RELEASE: 3434996a... -> ...` и список
+влитых изменений: `#171` (этот выпуск) и PR с записью выпуска v1.22. Если в
+списке есть ещё PR — значит, они только с документами: чужой код после
+проверенной версии блок не пропускает.
 
 **Если `RESULT: STOP - ...`:** дальше не идти. Программа не тронута и
-работает как раньше. Пришлите `C:\VehicleSoft_Release\release_v122_step2.log`.
+работает как раньше. Пришлите `C:\VehicleSoft_Release\release_v123_step2.log`.
 
-**Прислать:** `C:\VehicleSoft_Release\release_v122_step2.log`. Если в нём
+**Прислать:** `C:\VehicleSoft_Release\release_v123_step2.log`. Если в нём
 `CHECK PASSED`, мой ответ ждать не нужно — можно сразу к шагу 3.
 
 ## Шаг 3. Выпуск — программа не работает 3–5 минут
@@ -229,11 +239,11 @@ $backupBat = 'C:\transport-report\backup_production_db.bat'
 $errLog    = 'C:\transport-report\logs\error.log'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
-$baseline  = '8df568394a840054ef6f842c6a8b272ca4c31aa8'
-$reviewed  = '8a052ab103bfafbde3c14748a3cfe94d8e3e1245'
+$baseline  = '3434996a434652b0b590be2cfe08c4dc54cf1fab'
+$reviewed  = 'd48f65506bbf56700eb6726792185a295f595552'
 $method    = 'overflow-cap-2026-10-07'
 $work      = 'C:\VehicleSoft_Release'
-$log       = 'C:\VehicleSoft_Release\release_v122_step3.log'
+$log       = 'C:\VehicleSoft_Release\release_v123_step3.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 function Get-OpenItems([string[]]$lines) {
   for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -440,7 +450,7 @@ try { Stop-Transcript | Out-Null } catch { }
 **Что должно получиться:** в конце `RESULT: RELEASE PASSED`. Выше, по
 порядку:
 
-- `RELEASE: 8df56839... -> ...`;
+- `RELEASE: 3434996a... -> ...`;
 - `SERVICES: Stopped`;
 - `CLEAN -- no other process has the database open` или
   `STALE: no process holds the database` — оба ответа годятся: второй — известная
@@ -448,7 +458,7 @@ try { Stop-Transcript | Out-Null } catch { }
   известным шумом»);
 - `BACKUP: D:\transport-report-backups\production\daily\transport_....db (...
   bytes, integrity ok, same size as the database)`;
-- `UPDATED: 8df56839... -> ...`;
+- `UPDATED: 3434996a... -> ...`;
 - `MIGRATIONS REGISTERED: 60 -> 60, unchanged`;
 - `GPS METHOD: overflow-cap-2026-10-07 - the nightly computation takes it from
   the next night`;
@@ -461,15 +471,15 @@ try { Stop-Transcript | Out-Null } catch { }
 
 **Если `RESULT: STOP - ...`:** дальше не идти. Программа в любом случае
 снова запущена — блок запускает её сам. Строка `PROGRAM VERSION NOW:`
-говорит, какая версия работает: `8df5683` — прежняя, ничего не поменялось;
-другое значение — новая. Пришлите `C:\VehicleSoft_Release\release_v122_step3.log`.
+говорит, какая версия работает: `3434996` — прежняя, ничего не поменялось;
+другое значение — новая. Пришлите `C:\VehicleSoft_Release\release_v123_step3.log`.
 Если программа в браузере не открывается совсем, — раздел «Откат» в конце.
 
 **Если `RESULT: RELEASE PASSED WITH A WARNING`:** выпуск прошёл, но в журнале
 ошибок программы появились новые записи. Пришлите журнал шага 3 и дождитесь
 ответа до шага 4.
 
-**Прислать:** `C:\VehicleSoft_Release\release_v122_step3.log`.
+**Прислать:** `C:\VehicleSoft_Release\release_v123_step3.log`.
 
 ## Шаг 4. Пересчёт прошедших суток новым методом — 1–2 часа, программа работает
 
@@ -483,8 +493,8 @@ try { Stop-Transcript | Out-Null } catch { }
 
 ```powershell
 cd C:\transport-report
-& C:\gps_venv\Scripts\python.exe -u tools\gps_recompute_days.py --since 2026-09-01 *> C:\VehicleSoft_Release\release_v122_step4_plan.log
-Get-Content C:\VehicleSoft_Release\release_v122_step4_plan.log
+& C:\gps_venv\Scripts\python.exe -u tools\gps_recompute_days.py --since 2026-09-01 *> C:\VehicleSoft_Release\release_v123_step4_plan.log
+Get-Content C:\VehicleSoft_Release\release_v123_step4_plan.log
 ```
 
 Ожидаемо, среди строк:
@@ -515,13 +525,14 @@ Get-Content C:\VehicleSoft_Release\release_v122_step4_plan.log
 `Backup FAILED` — не идти к 4.3, пришлите вывод.
 
 **4.3. Пересчёт — пишет в базу.** Окно не закрывать, идёт 1–2 часа. Пока он
-идёт, на экране «Факт по технике» **не отмечайте «работа/проезд»**: ответ,
-поставленный посреди пересчёта, инструмент заметит и остановится, но лучше,
-чтобы его не было вовсе.
+идёт, на экране «Факт по технике» **не отмечайте «работа/проезд»**. Ответ,
+поставленный посреди пересчёта, не потеряется: сутки этой машины останутся
+прежними вместе с ответом, а пересчёт остановится. Но тогда его придётся
+доводить вместе со мной — лучше, чтобы ответов в это время не было вовсе.
 
 ```powershell
 cd C:\transport-report
-& C:\gps_venv\Scripts\python.exe -u tools\gps_recompute_days.py --since 2026-09-01 --apply *>> C:\VehicleSoft_Release\release_v122_step4_recompute.log
+& C:\gps_venv\Scripts\python.exe -u tools\gps_recompute_days.py --since 2026-09-01 --apply *>> C:\VehicleSoft_Release\release_v123_step4_recompute.log
 "exit $LASTEXITCODE"
 ```
 
@@ -533,7 +544,7 @@ cd C:\transport-report
 сколько дней всего.
 
 ```powershell
-Get-Content C:\VehicleSoft_Release\release_v122_step4_recompute.log -Tail 3
+Get-Content C:\VehicleSoft_Release\release_v123_step4_recompute.log -Tail 3
 ```
 
 Ожидаемо: `exit 0`, а в конце журнала:
@@ -546,11 +557,19 @@ Get-Content C:\VehicleSoft_Release\release_v122_step4_recompute.log -Tail 3
 - последняя: `RESULT: RECOMPUTED ... day(s) by overflow-cap-2026-10-07; rows
   of counted objects left on another method: 0`.
 
+Если в этих двух строках не 0, пересчёт всё равно прошёл: под первой строкой
+перечислены сутки, которые остались прежним методом (например, их точек на
+диске уже нет). Пришлите журнал — разберу, почему они остались.
+
 Если `exit 5` — часть суток не посчиталась из-за сбоя; выполните тот же блок
 4.3 ещё раз: он пересчитает всё окно заново, это безопасно. Во второй сводке
 будет строка `rows of counted objects already on overflow-cap-2026-10-07 before
 this run: ...` — это нормально: «было» в ней — то, что осталось после первого
 раза. Если снова `exit 5` или любой другой код, кроме 0, — пришлите журнал.
+
+Та же строка бывает и при первом запуске, если между шагами 3 и 4 прошла
+ночь: ночной расчёт уже посчитал вчерашние сутки новым методом. Это тоже
+нормально.
 
 **4.4. Глазами.** Откройте
 `http://10.103.25.14:5050/gps/fact?date=2026-09-26&unit=393` — МТЗ-80.1 80 239
@@ -558,8 +577,11 @@ NA за 26.09: вместо 285,47 га — 1,25 га, внизу «Версия
 overflow-cap-2026-10-07». «Факт по технике» за вчера открывается с картой.
 Переключите язык на узбекский и обратно.
 
-**Прислать:** `C:\VehicleSoft_Release\release_v122_step4_plan.log`,
-`C:\VehicleSoft_Release\release_v122_step4_recompute.log`, строку `exit` из 4.3
+Сверка agro-work за сентябрь («Свод») теперь показывает другие числа, чем до
+пересчёта, — так и должно быть (раздел «Что произойдёт», пункт 5).
+
+**Прислать:** `C:\VehicleSoft_Release\release_v123_step4_plan.log`,
+`C:\VehicleSoft_Release\release_v123_step4_recompute.log`, строку `exit` из 4.3
 и «шаг 4 — всё сходится» или что не так. Метку выпуска (тег) поставите вы —
 команду я пришлю после вашего ответа.
 
@@ -580,7 +602,9 @@ overflow-cap-2026-10-07». «Факт по технике» за вчера от
 | `RESULT: STOP - after the update gps\area.py says ...` | на диске не тот метод GPS, который проверялся | прислать журнал; программа запущена, база не менялась; шаг 4 не делать |
 | в 4.1 `operator answers ... in the window:` не 0 | за эти дни операторы уже отвечали «работа/проезд» | не делать 4.2 и 4.3, прислать журнал плана |
 | в 4.3 `exit 3`, в журнале `REFUSED: ... operator answer(s) in the window` | ответы операторов появились между 4.1 и 4.3 | ничего не записано; прислать журнал |
-| в 4.3 `exit 3`, в журнале `REFUSED: ... appeared on` или `... reports operator answers lost on` | ответ появился посреди пересчёта | сутки до названной даты пересчитаны, она и дальше — нет; ответ, если потерян, есть в копии 4.2; прислать журнал |
+| в 4.3 `exit 3`, в журнале `REFUSED: ... appeared on ...` | ответ оператора появился до того, как пересчёт дошёл до его суток | сутки до названной даты пересчитаны, она и дальше — нет; ответ на месте; прислать журнал |
+| в 4.3 `exit 3`, в журнале `REFUSED: ... were given on ... while it was being recomputed` | ответ поставлен, пока его сутки считались | ответ на месте: на новом участке или вместе с прежними строками этой машины за эти сутки; дальнейшие сутки не пересчитаны; прислать журнал |
+| в 4.3 `exit 3`, в журнале `REFUSED: the computation reports ... lost on ...` | ответ потерян — так быть не должно | названные сутки пересчитаны, дальнейшие — нет; ответ надо поставить заново, в копии 4.2 его нет; прислать журнал |
 | в 4.3 `exit 5` | часть суток не посчиталась из-за сбоя, остальные посчитаны | выполнить 4.3 ещё раз; если снова — прислать журнал |
 | в 4.1 или 4.3 `exit 2`, `ERROR: no point file holds any day of the window` | в папке точек нет ни одного дня окна | ничего не записано; прислать журнал |
 | в 4.3 `exit 2` | неверный ввод — не тот день | ничего не записано; прислать журнал |
@@ -589,7 +613,7 @@ overflow-cap-2026-10-07». «Факт по технике» за вчера от
 
 Выполнять **только** если шаг 3 закончился `RESULT: STOP`, программа в
 браузере не открывается совсем, а ответа от меня нет. Блок возвращает
-прежнюю версию программы (`8df5683`, выпуск v1.21): суточный расчёт снова
+прежнюю версию программы (`3434996`, выпуск v1.22): суточный расчёт снова
 пойдёт прежним методом. Базу он **не** трогает: миграций в выпуске нет. Если
 шаг 4 к этому времени уже был, пересчитанные сутки останутся посчитанными
 новым методом — прежняя версия их читает как обычные. Вернуть за них прежние
@@ -603,10 +627,10 @@ $ProgressPreference = 'SilentlyContinue'
 $prod      = 'C:\transport-report'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
-$baseline  = '8df568394a840054ef6f842c6a8b272ca4c31aa8'
-$reviewed  = '8a052ab103bfafbde3c14748a3cfe94d8e3e1245'
+$baseline  = '3434996a434652b0b590be2cfe08c4dc54cf1fab'
+$reviewed  = 'd48f65506bbf56700eb6726792185a295f595552'
 $work      = 'C:\VehicleSoft_Release'
-$log       = 'C:\VehicleSoft_Release\release_v122_rollback.log'
+$log       = 'C:\VehicleSoft_Release\release_v123_rollback.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 function Wait-Services([string]$want, [int]$seconds) {
   $deadline = (Get-Date).AddSeconds($seconds)
@@ -673,7 +697,7 @@ try { Stop-Transcript | Out-Null } catch { }
 }
 ```
 
-**Что должно получиться:** `ROLLED BACK: ... -> 8df56839...`,
+**Что должно получиться:** `ROLLED BACK: ... -> 3434996a...`,
 `SERVICES: Running`, `SMOKE /login: 200`, `RESULT: ROLLBACK PASSED`.
 
 **Почему `git reset --keep`, а не `--hard`.** `--keep` возвращает файлы
@@ -683,5 +707,5 @@ try { Stop-Transcript | Out-Null } catch { }
 историю `main`; здесь двигается только рабочая копия сервера, назад ровно на
 тот коммит, с которого шаг 3 её сдвинул.
 
-**Прислать:** `C:\VehicleSoft_Release\release_v122_rollback.log` и журнал
+**Прислать:** `C:\VehicleSoft_Release\release_v123_rollback.log` и журнал
 шага 3.
