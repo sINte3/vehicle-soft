@@ -932,6 +932,15 @@ def fact():
                     and not counts[aggregate.wialon_id][1])
 
     listed = [a for a in aggregates if fits(a)]
+    listed_ids = {a.wialon_id for a in listed}
+    # [REASON]: набранный номер ищется только среди машин под фильтрами, и
+    # машина, скрытая фильтром, выглядела как «не найдена». Владелец 09.10
+    # набрал «527», не нашёл Puma-210 и решил, что у неё остался номер
+    # вместо имени, -- а её прятала галочка «Только с участками без ответа».
+    # Поэтому экран называет, сколько совпадений спрятали фильтры, и даёт
+    # показать их; ключи поиска скрытых машин уходят и подсказкам в браузере.
+    filtered_out = [a for a in aggregates if a.wialon_id not in listed_ids]
+    hidden_keys = [search_key(machines[a.wialon_id].label) for a in filtered_out]
 
     # Какую машину показать. [REASON]: фильтр «только без ответа» сужает
     # СПИСОК, но не выгоняет машину, которую человек уже открыл: ответив на
@@ -956,7 +965,9 @@ def fact():
         key = search_key(typed)
         found = [a.wialon_id for a in listed
                  if key and key in search_key(machines[a.wialon_id].label)]
-        search = {'text': typed, 'found': len(found)}
+        search = {'text': typed, 'found': len(found),
+                  'hidden': sum(1 for hidden_key in hidden_keys
+                                if key and key in hidden_key)}
         if found:
             unit_id = found[0]
     if unit_id is None and listed:
@@ -983,7 +994,6 @@ def fact():
     # Соседние машины -- по тому же списку, что в подсказках.
     params = _filter_params(filters)
     order = [a.wialon_id for a in aggregates]
-    listed_ids = {a.wialon_id for a in listed}
     neighbours = {'prev': None, 'next': None}
     if unit_id is not None:
         position = order.index(unit_id)
@@ -1073,6 +1083,7 @@ def fact():
         org_options=org_options, category_options=category_options,
         has_unlinked=unlinked, categories=CATEGORIES,
         machine_options=machine_options, listed_count=len(listed),
+        hidden_keys=hidden_keys,
         search=search, neighbour_urls=neighbour_urls, anchor=FACT_ANCHOR,
     )
 

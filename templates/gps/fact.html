@@ -57,7 +57,11 @@
       {% endfor %}
     </select>
   </label>
-  <div class="vs-field vs-combobox gps-fact-machine" data-vs-combobox data-vs-combobox-submit>
+  {# data-vs-combobox-hidden -- ключи поиска машин, которых нет в списке из-за
+     фильтров: подсказки говорят, сколько совпадений спрятано (tojson -- в
+     атрибуте с ОДИНАРНЫМИ кавычками, CLAUDE.md). #}
+  <div class="vs-field vs-combobox gps-fact-machine" data-vs-combobox data-vs-combobox-submit
+       data-vs-combobox-hidden='{{ hidden_keys|tojson }}' data-vs-combobox-more="gps-fact-more">
     <label class="vs-label" for="gps-fact-machine">{{ 'Машина — наберите номер или модель' if is_ru else 'Машина — рақам ёки моделни ёзинг' }}</label>
     <input type="text" id="gps-fact-machine" name="q" class="vs-input"
            value="{{ machine.label if machine else '' }}"
@@ -93,6 +97,16 @@
   {% elif search and search.found > 1 %}
   <span class="vs-hint">{{ ('По «%s» найдено машин: %d — показана первая. Уточните номер или выберите из подсказок.' if is_ru else '«%s» бўйича %d та машина топилди — биринчиси кўрсатилди. Рақамни аниқлаштиринг ёки таклифлардан танланг.')|format(search.text, search.found) }}</span>
   {% endif %}
+  {# Совпадения, которые спрятали фильтры: без скрипта строку пишет сервер по
+     набранному, со скриптом -- подсказки на каждый набор. {n} заменяется
+     раньше {q}: набранный текст дальше не разбирается. #}
+  {% set more_template = 'По «{q}» скрыто фильтрами машин: {n}.' if is_ru else '«{q}» бўйича фильтрлар яширган машиналар: {n}.' %}
+  <span class="vs-hint" id="gps-fact-more" data-vs-more-template="{{ more_template }}"
+        data-vs-more-base="{{ url_for('gps.fact', date=day.isoformat()) }}" data-vs-more-hash="#{{ anchor }}"
+        {% if not (search and search.hidden) %}hidden{% endif %}>
+    <span data-vs-more-text>{% if search and search.hidden %}{{ more_template|replace('{n}', search.hidden|string)|replace('{q}', search.text) }}{% endif %}</span>
+    <a data-vs-more-link href="{{ url_for('gps.fact', date=day.isoformat(), q=search.text if search else none) }}#{{ anchor }}">{{ 'Показать без фильтров' if is_ru else 'Фильтрларсиз кўрсатиш' }}</a>
+  </span>
 </div>
 {% endif %}
 
