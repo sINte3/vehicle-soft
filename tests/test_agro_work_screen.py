@@ -348,6 +348,49 @@ class LateAndOpen(ScreenCase):
         self.assertIn('открыта %d сут. с ввода' % self.days_open, html)
         self.assertNotIn('APP-TEST-001', html)
 
+    @staticmethod
+    def row_of(html, number, last=False):
+        # last -- строка таблицы заявок на странице машины: номер выше
+        # встречается ещё и в таблице суток
+        at = html.rindex(number) if last else html.index(number)
+        start = html.rindex('<tr', 0, at)
+        return html[start:html.index('</tr>', start)]
+
+    def test_an_open_application_is_red_and_others_are_not(self):
+        # Решение владельца 09.10: открытая заявка -- бессрочно, но как
+        # нарушение, красным; вердикт прежний -- «без вердикта».
+        html = self.get('/agro-work/applications', lang='ru').get_data(as_text=True)
+        row = self.row_of(html, 'APP-TEST-007')
+        self.assertTrue(row.startswith('<tr class="is-danger-row">'))
+        self.assertIn('<span class="vs-badge vs-badge-danger">Без вердикта</span>', row)
+        self.assertIn('Заявка открыта', row)
+        # отрицательный контроль: выполненная заявка с вердиктом и закрытая
+        # без него -- не красные строки
+        for number in ('APP-TEST-001', 'APP-TEST-006'):
+            self.assertTrue(self.row_of(html, number).startswith('<tr>'), number)
+
+    def test_the_machine_page_shows_it_red_with_its_age(self):
+        for lang, age in (('ru', 'открыта %d сут. с ввода'),
+                          ('uz', 'киритилгандан бери %d кун очиқ')):
+            html = self.get('/agro-work/machine/%d' % self.eq1_id,
+                            lang=lang).get_data(as_text=True)
+            row = self.row_of(html, 'APP-TEST-007', last=True)
+            self.assertTrue(row.startswith('<tr class="is-danger-row">'), lang)
+            self.assertIn('vs-badge vs-badge-danger', row)
+            self.assertIn(age % self.days_open, row)
+            self.assertTrue(self.row_of(html, 'APP-TEST-001', last=True)
+                            .startswith('<tr>'))
+
+    def test_the_dashboard_card_calls_it_a_violation(self):
+        html = self.get('/agro-work/', lang='ru').get_data(as_text=True)
+        card = html[html.index('Открытые заявки: кто их не закрыл'):]
+        card = card[:card.index('</table>')]
+        self.assertIn('Открытая заявка — нарушение', card)
+        self.assertNotIn('решает владелец', card)
+        self.assertIn('<span class="vs-badge vs-badge-danger">1</span>', card)
+        html = self.get('/agro-work/', lang='uz').get_data(as_text=True)
+        self.assertIn('Очиқ буюртма — қоидабузарлик', html)
+
 
 class WhatCameAfterOnScreen(ScreenCase):
     """B5: у суток «без заявки» -- что было потом, на трёх экранах."""

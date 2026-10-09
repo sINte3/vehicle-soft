@@ -52,7 +52,9 @@
       <tbody>
         {% for row in rows %}
         {% set app = row.app %}
-        <tr>
+        {# Решение владельца 09.10: открытая заявка -- бессрочно, но как
+           нарушение, красным. Вердикт не меняется: «без вердикта». #}
+        <tr{% if row.reason == 'otkryta' %} class="is-danger-row"{% endif %}>
           <td>{{ app.number }}
             <div class="vs-soft">{{ app.row.company_name or '' }}</div>
             {% if app.row.gone_at %}<div><span class="vs-badge vs-badge-warning">{{ 'удалена в agro-work' if is_ru else 'agro-work да ўчирилган' }}</span></div>{% endif %}
@@ -72,7 +74,7 @@
             {% if row.verdict == 'rabota_est' %}<span class="vs-badge vs-badge-success">{{ verdict_label(row.verdict) }}</span>
               <div class="vs-soft">{{ 'сутки: ' if is_ru else 'кунлар: ' }}{% for day in row.work_days %}{{ day.strftime('%d.%m') }}{% if not loop.last %}, {% endif %}{% endfor %}</div>
             {% elif row.verdict == 'rabota_net' %}<span class="vs-badge vs-badge-danger">{{ verdict_label(row.verdict) }}</span>
-            {% else %}<span class="vs-badge">{{ verdict_label(row.verdict) }}</span>
+            {% else %}<span class="vs-badge{% if row.reason == 'otkryta' %} vs-badge-danger{% endif %}">{{ verdict_label(row.verdict) }}</span>
               <div class="vs-soft">{{ reason_label(row.reason) }}{% if row.unknown_days %} ({{ row.unknown_days }}){% endif %}</div>
               {% if row.days_open is not none %}<div class="vs-soft">{{ ('открыта %d сут. с ввода' if is_ru else 'киритилгандан бери %d кун очиқ')|format(row.days_open) }}</div>{% endif %}
             {% endif %}

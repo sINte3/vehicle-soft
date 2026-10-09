@@ -98,14 +98,17 @@
       </thead>
       <tbody>
         {% for row in forward %}
-        <tr>
+        {# Открытая заявка -- нарушение, красным (решение владельца 09.10). #}
+        <tr{% if row.reason == 'otkryta' %} class="is-danger-row"{% endif %}>
           <td>{{ row.app.number }}<div class="vs-soft">{{ status_label(row.app.status) }}</div></td>
           <td>{{ row.work_type }}<div class="vs-soft">{{ method_label(row.method) if row.method else ('метод не размечен' if is_ru else 'усул белгиланмаган') }}</div></td>
           <td>{% if row.window %}{{ row.window[0].strftime('%d.%m') }} — {{ row.window[1].strftime('%d.%m') }}{% else %}—{% endif %}</td>
           <td>
             {% if row.verdict == 'rabota_est' %}<span class="vs-badge vs-badge-success">{{ verdict_label(row.verdict) }}</span>
             {% elif row.verdict == 'rabota_net' %}<span class="vs-badge vs-badge-danger">{{ verdict_label(row.verdict) }}</span>
-            {% else %}<span class="vs-badge">{{ verdict_label(row.verdict) }}</span><div class="vs-soft">{{ reason_label(row.reason) }}</div>{% endif %}
+            {% else %}<span class="vs-badge{% if row.reason == 'otkryta' %} vs-badge-danger{% endif %}">{{ verdict_label(row.verdict) }}</span><div class="vs-soft">{{ reason_label(row.reason) }}</div>
+              {% if row.days_open is not none %}<div class="vs-soft">{{ ('открыта %d сут. с ввода' if is_ru else 'киритилгандан бери %d кун очиқ')|format(row.days_open) }}</div>{% endif %}
+            {% endif %}
           </td>
         </tr>
         {% endfor %}

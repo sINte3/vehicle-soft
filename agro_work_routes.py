@@ -378,6 +378,10 @@ def machine(equipment_id):
     for row in forward:
         row['work_type'] = ctx.work_type_names.get(row['app'].work_type_id) \
             or row['app'].row.get('work_type_name') or ''
+        # Решение владельца 09.10: открытая заявка -- нарушение, с возрастом
+        # рядом, как в списке заявок.
+        row['days_open'] = ((ctx.today - row['app'].created_day).days
+                            if row['reason'] == rc.R_OPEN else None)
     units = ctx.wialon_by_equipment.get(equipment_id, [])
     return render_template(
         'agro_work/machine.html',
