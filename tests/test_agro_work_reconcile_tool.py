@@ -108,6 +108,25 @@ class ReportTool(unittest.TestCase):
         self.assertIn('N для заявок, заведённых задним числом: 2 '
                       '(утверждён владельцем)', notes)
 
+    def test_each_row_counts_its_own_machines(self):
+        # Машина 13 (Jizzax, спецтехника): заявка без суток работы по GPS --
+        # строку «Свода» ей даёт только заявка. Сумма «Машин» по строкам --
+        # это «Итого»: машина принадлежит одной строке.
+        self.fx.con = sqlite3.connect(self.fx.path)
+        self.fx.app(transport='T3')
+        self.fx.con.close()
+        code, out, err = self.main()
+        self.assertEqual(code, 0, err)
+        summary = [row for row in book_of(self.out)['Свод'].iter_rows(values_only=True)
+                   if row and isinstance(row[3], int)]
+        totals = [row for row in summary if row[0] == 'Итого / Жами'][0]
+        rows = [row for row in summary if row[0] != 'Итого / Жами']
+        special = [row for row in rows if row[0] == 'Jizzax'
+                   and row[1] == tool.rc_category('special')]
+        self.assertEqual([row[2] for row in special], [1])
+        self.assertEqual(sum(row[2] for row in rows), totals[2])
+        self.assertGreater(totals[2], 1)
+
     def test_the_late_application_and_the_open_list_reach_the_book(self):
         # B4, пункты 4 и 5: заявка задним числом от 18-го для работы 13-го
         # (опоздание 5 суток при N = 2) и открытая заявка от 10-го.
