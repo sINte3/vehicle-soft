@@ -1,0 +1,101 @@
+/* gps-fact.css -- raskladka ekrana "Fakt po tekhnike" (templates/gps/fact.html).
+ *
+ * Tolko tokeny dizayn-sistemy. Otdelnyy fayl po toy zhe prichine, chto
+ * vs-map.css: design-system.css -- obshchiy fayl proekta.
+ */
+
+/* [REASON]: polka vybora na etom ekrane NE lipkaya. Lipkaya polka v dve
+ * stroki s pyatyu polyami otnimala by u karty vysotu ekrana, a perekhod k
+ * sosedney mashine est i v stroke karty (knopki "Predydushchaya/Sleduyushchaya"
+ * nad nej), kuda vozvrashchaet otvet operatora. */
+.vs-toolbar.gps-fact-toolbar {
+  position: static;
+  align-items: flex-end;
+}
+
+.gps-fact-toolbar > .vs-field {
+  min-width: 150px;
+}
+
+/* Pole "Mashina" shire ostalnyh: v nyom model i gosnomer. */
+.gps-fact-toolbar > .gps-fact-machine {
+  flex: 1 1 320px;
+  min-width: 240px;
+  max-width: 520px;
+}
+
+.gps-fact-open {
+  padding-bottom: 9px;
+}
+
+.gps-fact-found {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 16px;
+  font-size: var(--vs-fs-sm);
+}
+.gps-fact-found .vs-hint {
+  margin-top: 0;
+}
+
+/* Stroka "karta + uchastki". Yakor ostanavlivaetsya pod lipkoy shapkoy. */
+.gps-fact-work {
+  scroll-margin-top: calc(var(--vs-top-h) + 12px);
+}
+
+/* Kakaya mashina otkryta i sosedi po spisku. */
+.gps-fact-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin-bottom: 12px;
+}
+.gps-fact-head-name {
+  font-size: var(--vs-fs-md);
+  font-weight: 700;
+  color: var(--vs-text);
+}
+.gps-fact-head-nav {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.gps-fact-split > * + * {
+  margin-top: 16px;
+}
+
+/* [REASON]: karta i tablica uchastkov ryadom -- tolko kogda obe est i ekran
+ * shire 1280 px. Uzhe -- odna pod drugoy: tablica v polovinu uzkogo ekrana
+ * uhodila by v gorizontalnuyu prokrutku. */
+@media (min-width: 1280px) {
+  .gps-fact-split.has-panel {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) clamp(360px, 32%, 460px);
+    gap: 16px;
+    align-items: start;
+  }
+  .gps-fact-split.has-panel > * + * {
+    margin-top: 0;
+  }
+  .gps-fact-split.has-panel > .gps-fact-sites {
+    /* vysota kartochki karty: kanva (vs-map.css) + zagolovok i legenda */
+    max-height: calc(clamp(400px, calc(100vh - 300px), 860px) + 150px);
+    overflow-y: auto;
+  }
+}
+
+.gps-fact-site-no {
+  font-weight: 700;
+}
+
+.gps-fact-site-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 3px;
+  font-size: var(--vs-fs-sm);
+}

@@ -93,6 +93,10 @@ def collect(client, folder, now=None, backfill_days=config.BACKFILL_DAYS,
 
     units = client.list_units()
     summary.units_total = len(units)
+    # [REASON]: имена кладутся ДО загрузки точек и для всего парка, даже при
+    # --only: это один короткий запрос в файл отметок, а прогон, умерший на
+    # середине, иначе оставил бы экран с номерами вместо машин ещё на сутки.
+    storage.write_unit_names(folder, units)
     wanted = None if not only else {int(u) for u in only}
 
     for number, unit in enumerate(units, 1):

@@ -1,0 +1,73 @@
+/* vs-combobox.css -- pole s podskazkami (static/js/vs-combobox.js).
+ *
+ * Tolko tokeny dizayn-sistemy. Otdelnyy fayl, a ne dopisannyy
+ * design-system.css: tot -- obshchiy fayl proekta, i pravka v nyom vyhodit za
+ * granicy treka (tak zhe ustroen vs-map.css). Podklyuchayut ego tolko
+ * stranicy s takim polem.
+ *
+ * Spisok -- pod polem, poverh soderzhimogo; dlinnyy spisok prokruchivaetsya
+ * vnutri sebya, a ne stranicey.
+ */
+
+.vs-combobox {
+  position: relative;
+}
+
+.vs-combobox-list,
+.vs-combobox-empty {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 500;
+  min-width: 100%;
+  width: max-content;
+  max-width: min(560px, 92vw);
+  background: var(--vs-surface);
+  border: 1px solid var(--vs-border-2);
+  border-radius: var(--vs-r);
+  box-shadow: var(--vs-shadow-lg);
+}
+
+.vs-combobox-list {
+  max-height: 360px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+}
+
+.vs-combobox-list [role="option"] {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 10px;
+  border-radius: var(--vs-r-sm);
+  cursor: pointer;
+}
+
+.vs-combobox-list [role="option"]:hover,
+.vs-combobox-list [role="option"].is-active {
+  background: var(--vs-primary-soft);
+}
+
+/* Otkrytaya seychas mashina -- zhirnym: vidno, otkuda chelovek ushyol. */
+.vs-combobox-list [role="option"][aria-selected="true"] .vs-combobox-main {
+  font-weight: 700;
+}
+
+.vs-combobox-main {
+  color: var(--vs-text);
+  font-size: var(--vs-fs);
+}
+
+.vs-combobox-note {
+  color: var(--vs-text-muted);
+  font-size: var(--vs-fs-xs);
+}
+
+.vs-combobox-empty {
+  padding: 10px 12px;
+  color: var(--vs-text-muted);
+  font-size: var(--vs-fs-sm);
+  white-space: normal;
+}

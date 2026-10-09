@@ -128,5 +128,51 @@ class Watermark(unittest.TestCase):
                          epoch("2026-07-27 06:00"))
 
 
+class UnitNames(unittest.TestCase):
+    """Имена объектов Wialon: экран показывает их вместо голого номера."""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+
+    def names(self):
+        con = storage.open_units(self.folder)
+        try:
+            return dict(con.execute(
+                "SELECT unit_id, name FROM collector_units").fetchall())
+        finally:
+            con.close()
+
+    def test_names_are_stored_and_a_rename_replaces_the_old_one(self):
+        storage.write_unit_names(self.folder, [
+            {"id": 101, "name": "МТЗ 261 EA", "last_t": None},
+            {"id": 102, "name": "Комбайн 741 KA (Ҳокимият)", "last_t": 5}])
+        storage.write_unit_names(self.folder, [
+            {"id": 101, "name": "МТЗ-80Х 80 261 EA", "last_t": None}])
+        self.assertEqual(self.names(), {101: "МТЗ-80Х 80 261 EA",
+                                        102: "Комбайн 741 KA (Ҳокимият)"})
+
+    def test_an_empty_name_does_not_erase_a_known_one(self):
+        storage.write_unit_names(self.folder, [{"id": 101, "name": "МТЗ 261 EA"}])
+        written = storage.write_unit_names(
+            self.folder, [{"id": 101, "name": "  "}, {"id": 103, "name": None}])
+        self.assertEqual(written, 0)
+        self.assertEqual(self.names(), {101: "МТЗ 261 EA"})
+
+    def test_an_object_gone_from_the_fleet_keeps_its_last_name(self):
+        storage.write_unit_names(self.folder, [{"id": 101, "name": "A"},
+                                               {"id": 102, "name": "B"}])
+        storage.write_unit_names(self.folder, [{"id": 101, "name": "A"}])
+        self.assertEqual(self.names(), {101: "A", 102: "B"})
+
+    def test_names_live_beside_the_watermarks_not_in_a_monthly_file(self):
+        storage.set_watermark(self.folder, 101, 1000)
+        storage.write_unit_names(self.folder, [{"id": 101, "name": "A"}])
+        files = sorted(name for name in os.listdir(self.folder)
+                       if not name.endswith(("-wal", "-shm")))
+        self.assertEqual(files, [storage.STATE_FILE])
+        # и отметки при этом на месте: таблицы живут в одном файле рядом
+        self.assertEqual(storage.read_watermark(self.folder, 101), 1000)
+
+
 if __name__ == "__main__":
     unittest.main()

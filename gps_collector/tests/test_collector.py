@@ -175,6 +175,26 @@ class NightlyRun(unittest.TestCase):
                          "the watermark already stands past what the lag "
                          "allows asking for")
 
+    def test_the_run_names_the_whole_fleet_without_asking_more(self):
+        # Имена приходят тем же запросом списка парка: ни одного запроса
+        # сверх прежних, и названы все объекты -- молчащие и не заказанные
+        # через --only тоже, потому что экран показывает и их прошлые сутки.
+        fleet = [{"id": 101, "last_t": NOW - 3600},
+                 {"id": 102, "last_t": NOW - 40 * 86400},
+                 {"id": 103, "last_t": None}]
+        server = FakeServer(fleet=fleet)
+        _, client = run_once(server, self.folder, only=["101"])
+        self.assertEqual(client.requests, 1 + 1 + config.REQUESTS_PER_UNIT + 1)
+        con = storage.open_units(self.folder)
+        try:
+            names = dict(con.execute(
+                "SELECT unit_id, name FROM collector_units").fetchall())
+        finally:
+            con.close()
+        self.assertEqual(names, {101: "МТЗ 261 EA",
+                                 102: "Комбайн 741 KA (Ҳокимият)",
+                                 103: "Doosan 80 553 HA"})
+
 
 class MonthBoundary(unittest.TestCase):
     """Criterion 4."""

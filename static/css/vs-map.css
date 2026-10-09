@@ -14,18 +14,76 @@
   position: relative;
 }
 
+/* [REASON]: vysota -- po ekranu, a ne 460 px: vladelec 09.10.2026 prosil
+ * kartu "krupnoy". Ekran minus shapka stranicy, zagolovok kartochki i
+ * legenda (300 px: vsya kartochka karty vlezaet v ekran celikom), no ne
+ * menshe 400 px -- na nizkom noutbuke karta ne dolzhna stat poloskoy -- i ne
+ * bolshe 860 px. Stranica mozhet zadat svoyu vysotu peremennoy --vs-map-h.
+ *
+ * [REASON]: isolation -- vnutrennie sloi Leaflet nesut z-index 400..1000, i
+ * bez sobstvennogo konteksta nalozheniya oni vsplyvali POVERH lipkoy shapki
+ * stranicy, kogda karta uezzhala pod nee pri prokrutke. */
 .vs-map-canvas {
-  height: 460px;
+  height: var(--vs-map-h, clamp(400px, calc(100vh - 300px), 860px));
   border: 1px solid var(--vs-border);
   border-radius: var(--vs-r);
   overflow: hidden;
   background: var(--vs-surface-2);
+  isolation: isolate;
 }
 
 @media (max-width: 768px) {
   .vs-map-canvas {
-    height: 320px;
+    height: var(--vs-map-h, clamp(300px, 60vh, 520px));
   }
+}
+
+/* Vo ves ekran: Fullscreen API (:fullscreen) ili, gde ego net, klass
+ * is-expanded -- host poverh stranicy. Karta zanimaet vsyo, krome legendy. */
+.vs-map:fullscreen {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: var(--vs-surface);
+}
+.vs-map.is-expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  background: var(--vs-surface);
+}
+.vs-map:fullscreen .vs-map-canvas {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+}
+.vs-map.is-expanded .vs-map-canvas {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+}
+.vs-map:fullscreen .vs-map-legend {
+  margin: 0;
+  padding: 8px 12px;
+}
+.vs-map.is-expanded .vs-map-legend {
+  margin: 0;
+  padding: 8px 12px;
+}
+
+/* Knopki "vo ves ekran" i "pokazat vsyo" -- v stolbike knopok masshtaba. */
+.leaflet-bar a.vs-map-tool {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--vs-text);
 }
 
 .vs-map-fallback[hidden] {
