@@ -179,9 +179,13 @@ class FactScreen(unittest.TestCase):
             db.session.commit()
         html = self._get()
         self.assertIn('8.772', html)
-        selected = re.search(r'<option value="(\d+)" selected>', html)
+        # Выбор машины -- поле с подсказками (09.10.2026): открытая машина --
+        # в скрытом поле `unit` и отмечена в списке подсказок.
+        selected = re.search(r'<input type="hidden" name="unit" value="(\d+)"', html)
         self.assertIsNotNone(selected)
         self.assertEqual(selected.group(1), '9002')
+        self.assertEqual(re.findall(r'data-value="(\d+)"\s+aria-selected="true"', html),
+                         ['9002'])
 
     def test_the_uzbek_interface_shows_uzbek_and_not_russian(self):
         # [REASON]: подпись, забытая на языке исходника, видна только тому, кто
@@ -291,7 +295,8 @@ class FactScreen(unittest.TestCase):
             db.session.add(_aggregate(wialon_id=5000))    # без строки
             db.session.commit()
         html = self._get('/gps/fact?date=2026-07-27')
-        options = re.findall(r'<option value="(\d+)"', html.split('name="unit"')[1])
+        listbox = html.split('role="listbox"')[1].split('</ul>')[0]
+        options = re.findall(r'data-value="(\d+)"', listbox)
         self.assertEqual(options, ['5003', '5002', '5000'])
 
     def test_several_rows_of_one_object_give_one_stable_name(self):

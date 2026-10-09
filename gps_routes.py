@@ -19,6 +19,12 @@
 не нарушает: оно запрещает класть точки В `transport.db`, а здесь одна машина
 за одни сутки читается на время запроса и никуда не копируется.
 
+С 09.10.2026 экран ещё ЧИТАЕТ имена объектов Wialon из файла отметок
+сборщика (`instance/gps_collector_state.db`, таблица `collector_units`) --
+тоже только `mode=ro`: объект без строки сопоставления называется именем, а
+не голым номером. Выбор машины -- поле с подсказками и фильтры организации,
+вида техники и «только без ответа» (замечания владельца 09.10.2026).
+
 [REASON]: маршруты закрыты @module_required('wialon'), а не новым кодом
 модуля. Это те же данные Wialon, что и существующий раздел /wialon, право на
 них уже роздано, а новый код модуля потребовал бы миграции прав, строки в
@@ -34,9 +40,10 @@
 import json
 import math
 import os
+import re
 import sqlite3
 
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, namedtuple
 from datetime import date as date_cls, datetime, timedelta
 
 from flask import (Blueprint, abort, current_app, flash, g, redirect,
@@ -57,6 +64,7 @@ from models import (
     db,
     CAT_PASSENGER,
     CAT_YUK_TRANSPORT,
+    CATEGORIES,
     Equipment,
     FieldContour,
     GPS_DECISION_DISPUTED,
@@ -68,6 +76,7 @@ from models import (
     GpsSyncLog,
     GpsVerdict,
     GpsWorkPolygon,
+    Organization,
     VialonMapping,
     WO_STATUS_CANCELLED,
     WorkOrder,
@@ -109,14 +118,103 @@ def _parse_date(value):
         return None
 
 
+def _wialon_unit_names(folder=None):
+    """wialon_id -> имя объекта в Wialon, как его записал коллектор. Только чтение.
+
+    [REASON]: имя объекта знает только Wialon, и приходит оно коллектору
+    списком парка каждую ночь (gps_collector/storage.py, collector_units).
+    Экран читает файл отметок так же, как файлы точек: `mode=ro`, и нет
+    файла, нет таблицы (коллектор ещё не обновлён), файл занят -- значит
+    имён нет, а страница открывается. Отсутствующий файл не создаётся.
+    """
+    folder = folder or current_app.config.get('GPS_POINTS_DIR') or points_dir()
+    path = point_storage.state_path(folder)
+    if not os.path.exists(path):
+        return {}
+    try:
+        con = sqlite3.connect('file:%s?mode=ro' % path, uri=True, timeout=5)
+    except sqlite3.Error:
+        return {}
+    try:
+        rows = con.execute(
+            'SELECT unit_id, name FROM collector_units').fetchall()
+    except sqlite3.Error:
+        return {}
+    finally:
+        con.close()
+    return {int(unit_id): name.strip() for unit_id, name in rows
+            if isinstance(name, str) and name.strip()}
+
+
+# Машина в выборе экрана: имя, связь с техникой, организация, вид техники.
+# `name` -- None, если имени не знает никто; `label` есть всегда.
+Machine = namedtuple('Machine', 'wialon_id name label linked org_id org_name '
+                                'category')
+
+
+def _machines(wialon_ids, is_ru=True):
+    """wialon_id -> Machine. Имя и связь -- по тем же строкам, что всегда.
+
+    Имя по убыванию надёжности:
+      1. машина из справочника техники -- «модель — номер»;
+      2. имя объекта из строки сопоставления без машины;
+      3. имя объекта, записанное коллектором из списка парка Wialon;
+      4. никто не знает -- «Объект Wialon 3464», а не голое число.
+
+    [REASON]: пункты 3 и 4 -- ответ на замечание владельца 09.10.2026:
+    «заменить id (четырёхзначные значения) на имя транспорта». Имя берётся по
+    тому же номеру объекта, а не по похожести госномера: номер у объекта
+    один, а похожие госномера -- у разных машин (см. _machine_names).
+    Организация и вид техники есть только у связанной машины: объект без
+    машины в справочнике ни к одной организации не относится, и выдумать её
+    по имени нельзя.
+    """
+    if not wialon_ids:
+        return {}
+    rows = (db.session.query(VialonMapping.wialon_id, VialonMapping.vialon_name,
+                             Equipment.name, Equipment.plate,
+                             Equipment.organization_id, Equipment.category,
+                             Organization.short_name, Organization.name)
+            .outerjoin(Equipment, VialonMapping.equipment_id == Equipment.id)
+            .outerjoin(Organization,
+                       Equipment.organization_id == Organization.id)
+            .filter(VialonMapping.wialon_id.in_(list(wialon_ids)))
+            .order_by(VialonMapping.id).all())
+    found = {}
+    for (wialon_id, wialon_name, equipment_name, plate, org_id, category,
+         org_short, org_name) in rows:
+        if equipment_name:
+            if wialon_id in found and found[wialon_id].linked:
+                continue
+            plate = (plate or '').strip()
+            name = ('%s — %s' % (equipment_name, plate) if plate
+                    else equipment_name)
+            found[wialon_id] = Machine(
+                wialon_id, name, name, True, org_id,
+                (org_short or '').strip() or org_name or '', category)
+        elif wialon_name and wialon_id not in found:
+            found[wialon_id] = Machine(wialon_id, wialon_name, wialon_name,
+                                       False, None, '', None)
+    missing = [w for w in wialon_ids if w not in found]
+    collector = _wialon_unit_names() if missing else {}
+    for wialon_id in missing:
+        name = collector.get(int(wialon_id))
+        label = name or ('Объект Wialon %d' % wialon_id if is_ru
+                         else 'Wialon объекти %d' % wialon_id)
+        found[wialon_id] = Machine(wialon_id, name, label, False, None, '',
+                                   None)
+    return found
+
+
 def _machine_names(wialon_ids):
     """wialon_id -> человеческое имя машины, где оно известно.
 
     [REASON]: связка ещё не заполнена (VialonMapping.wialon_id ставит только
-    сопоставление PHASE1, ручной импорт его не трогает), поэтому имя может
-    отсутствовать. Тогда показывается сам wialon_id: подставить сюда имя по
-    похожести номера нельзя -- шесть номеров указывают на несколько объектов,
-    и у одной машины их три.
+    сопоставление PHASE1, ручной импорт его не трогает), поэтому строки
+    сопоставления может не быть. Тогда имя берётся у коллектора -- имя
+    объекта в Wialon по тому же номеру объекта (_machines). Подставить сюда
+    имя по похожести номера нельзя -- шесть номеров указывают на несколько
+    объектов, и у одной машины их три.
 
     [REASON]: имя машины -- это `Equipment.name` ВМЕСТЕ с госномером. Одно
     `name` -- это модель («МТЗ-80.1»), и владелец 28.09 увидел в списке дюжину
@@ -130,25 +228,9 @@ def _machine_names(wialon_ids):
     строки. Иначе имя в списке зависело бы от порядка, в котором база вернула
     строки.
     """
-    if not wialon_ids:
-        return {}
-    rows = (db.session.query(VialonMapping.wialon_id, VialonMapping.vialon_name,
-                             Equipment.name, Equipment.plate)
-            .outerjoin(Equipment, VialonMapping.equipment_id == Equipment.id)
-            .filter(VialonMapping.wialon_id.in_(list(wialon_ids)))
-            .order_by(VialonMapping.id).all())
-    names, from_machine = {}, set()
-    for wialon_id, wialon_name, equipment_name, plate in rows:
-        if equipment_name:
-            if wialon_id in from_machine:
-                continue
-            plate = (plate or '').strip()
-            names[wialon_id] = ('%s — %s' % (equipment_name, plate) if plate
-                                else equipment_name)
-            from_machine.add(wialon_id)
-        elif wialon_name and wialon_id not in names:
-            names[wialon_id] = wialon_name
-    return names
+    return {wialon_id: machine.name
+            for wialon_id, machine in _machines(wialon_ids).items()
+            if machine.name}
 
 
 def _by_machine_name(aggregates, names):
@@ -162,6 +244,92 @@ def _by_machine_name(aggregates, names):
         a.wialon_id not in names,
         (names.get(a.wialon_id) or '').casefold(),
         a.wialon_id))
+
+
+# [REASON]: госномер набирают как придётся -- «80613», «80 613 ea», -- а в
+# справочнике он записан то латиницей («80 584 CA»), то кириллицей-двойником
+# («80 156 СА»: С и А русские). Поиск по точной подстроке не нашёл бы
+# половины машин, и владелец снова искал бы глазами. Ключ поиска -- строчные
+# буквы, кириллица, похожая на латиницу, заменена латиницей, пробелы и знаки
+# выброшены. Та же таблица стоит в static/js/vs-combobox.js (подсказки в
+# браузере); равенство двух таблиц закреплено тестом.
+SEARCH_LOOKALIKE_FROM = 'авеёкмнорстух'
+SEARCH_LOOKALIKE_TO = 'abeekmhopctyx'
+_SEARCH_LOOKALIKE = str.maketrans(SEARCH_LOOKALIKE_FROM, SEARCH_LOOKALIKE_TO)
+# Что остаётся в ключе: цифры, латиница и кириллица (с узбекскими буквами).
+SEARCH_KEEP = '0-9a-z\u0400-\u04ff'
+_SEARCH_DROP = re.compile('[^%s]' % SEARCH_KEEP)
+
+
+def search_key(text):
+    """Ключ поиска машины: «80 156 СА» и «80156ca» дают одно и то же."""
+    return _SEARCH_DROP.sub('', (text or '').lower().translate(_SEARCH_LOOKALIKE))
+
+
+# Фильтр «организация»: id организации или объекты без машины в справочнике.
+FILTER_NOT_LINKED = 'none'
+# Якорь строки «карта + участки»: туда возвращают ответ оператора и соседние
+# машины, чтобы человек не листал страницу заново после каждого щелчка.
+FACT_ANCHOR = 'gps-fact-work'
+# Вид карты «масштаб/широта/долгота»: ответ оператора возвращает карту туда,
+# где человек её оставил, а не к общему виду всех слоёв.
+_MAP_VIEW = re.compile(
+    r'^(\d{1,2}(?:\.\d{1,2})?)/(-?\d{1,2}\.\d{1,7})/(-?\d{1,3}\.\d{1,7})$')
+
+
+def parse_map_view(value):
+    """'17/39.99/64.55' или None. Чужое значение отбрасывается, а не чинится."""
+    found = _MAP_VIEW.match((value or '').strip())
+    if not found:
+        return None
+    zoom, lat, lon = (float(part) for part in found.groups())
+    if zoom > 22 or abs(lat) > 90 or abs(lon) > 180:
+        return None
+    return '/'.join(found.groups())
+
+
+def _fact_filters(args):
+    """Фильтры списка машин из адреса. Незнакомое значение = фильтра нет."""
+    org = (args.get('org') or '').strip()
+    if org != FILTER_NOT_LINKED:
+        org = int(org) if org.isdigit() else None
+    category = (args.get('cat') or '').strip()
+    return {'org': org,
+            'cat': category if category in CATEGORIES else None,
+            'open': args.get('open') == '1'}
+
+
+def _filter_params(filters):
+    """Фильтры обратно в параметры адреса -- для ссылок и формы ответа."""
+    params = {}
+    if filters['org'] is not None:
+        params['org'] = filters['org']
+    if filters['cat']:
+        params['cat'] = filters['cat']
+    if filters['open']:
+        params['open'] = '1'
+    return params
+
+
+def _site_counts(day, aggregates):
+    """wialon_id -> [участков, без ответа] за сутки -- ровно те, что на экране.
+
+    [REASON]: у спецтехники участки не показываются по правилу (fact()), и
+    считать их здесь значило бы позвать оператора отвечать на участки,
+    которых он на экране не увидит.
+    """
+    track_only = {a.wialon_id for a in aggregates
+                  if a.reason == REASON_TRACK_ONLY}
+    counts = defaultdict(lambda: [0, 0])
+    for wialon_id, label in (db.session.query(GpsWorkPolygon.wialon_id,
+                                              GpsWorkPolygon.operator_label)
+                             .filter(GpsWorkPolygon.work_date == day)):
+        if wialon_id in track_only:
+            continue
+        counts[wialon_id][0] += 1
+        if not label:
+            counts[wialon_id][1] += 1
+    return counts
 
 
 # [REASON]: слаг категории «Йўловчи ташиш техникаси» (`CAT_PASSENGER`). Взят
@@ -723,6 +891,7 @@ def orders():
 @module_required('wialon')
 @login_required
 def fact():
+    is_ru = getattr(g, 'lang', 'uz') == 'ru'
     skipped = _excluded_units()
     day_query = db.session.query(GpsDailyAggregate.work_date)
     aggregate_query = GpsDailyAggregate.query
@@ -742,21 +911,63 @@ def fact():
     # пустым -- человек искал бы пропавшую машину там, где её не было.
     aggregates = (aggregate_query.filter_by(work_date=day)
                   .order_by(GpsDailyAggregate.wialon_id).all())
-    names = _machine_names({a.wialon_id for a in aggregates})
+    machines = _machines({a.wialon_id for a in aggregates}, is_ru)
+    names = {wialon_id: machine.name for wialon_id, machine in machines.items()
+             if machine.name}
     aggregates = _by_machine_name(aggregates, names)
+    by_id = {a.wialon_id: a for a in aggregates}
+    counts = _site_counts(day, aggregates)
+    filters = _fact_filters(request.args)
 
-    unit_id = None
+    def fits(aggregate, with_open=True):
+        machine = machines[aggregate.wialon_id]
+        if filters['org'] == FILTER_NOT_LINKED:
+            if machine.linked:
+                return False
+        elif filters['org'] is not None and machine.org_id != filters['org']:
+            return False
+        if filters['cat'] and machine.category != filters['cat']:
+            return False
+        return not (with_open and filters['open']
+                    and not counts[aggregate.wialon_id][1])
+
+    listed = [a for a in aggregates if fits(a)]
+
+    # Какую машину показать. [REASON]: фильтр «только без ответа» сужает
+    # СПИСОК, но не выгоняет машину, которую человек уже открыл: ответив на
+    # её последний участок, он остаётся на ней и видит свой ответ на карте, а
+    # к следующей идёт сам кнопкой «Следующая». Фильтры организации и вида
+    # техники выгоняют: их меняют, чтобы смотреть другие машины.
     asked_unit = (request.args.get('unit') or '').strip()
-    if asked_unit.isdigit():
-        unit_id = int(asked_unit)
-    if unit_id is None or all(a.wialon_id != unit_id for a in aggregates):
+    asked = int(asked_unit) if asked_unit.isdigit() else None
+    typed = (request.args.get('q') or '').strip()
+    # Текст в поле -- имя той же машины, что в скрытом поле: человек ничего
+    # не набирал (сменил фильтр без скрипта, нажал «Показать»), искать нечего.
+    retyped = bool(typed) and not (
+        asked in machines
+        and search_key(typed) == search_key(machines[asked].label))
+    if asked not in by_id or not fits(by_id[asked], with_open=False):
+        asked = None
+    search = None
+    unit_id = asked
+    if retyped:
+        # Набранное вручную и не выбранное из подсказок -- ищется так же, как
+        # ищут подсказки: первая машина списка, в имени которой оно есть.
+        key = search_key(typed)
+        found = [a.wialon_id for a in listed
+                 if key and key in search_key(machines[a.wialon_id].label)]
+        search = {'text': typed, 'found': len(found)}
+        if found:
+            unit_id = found[0]
+    if unit_id is None and listed:
         # [REASON]: по умолчанию открывается машина, у которой в этот день
         # ЕСТЬ что показать. Открывать первую по номеру значило бы в половине
         # случаев встречать человека пустым экраном при непустых сутках.
-        published = [a for a in aggregates if a.reason is None]
-        unit_id = (published or aggregates)[0].wialon_id if aggregates else None
+        published = [a for a in listed if a.reason is None]
+        unit_id = (published or listed)[0].wialon_id
 
-    aggregate = next((a for a in aggregates if a.wialon_id == unit_id), None)
+    aggregate = by_id.get(unit_id)
+    machine = machines.get(unit_id)
     sites = []
     # [REASON]: у спецтехники участков нет по правилу, а не по случаю. Полигоны,
     # оставшиеся от расчёта до решения 28.09, расчёт намеренно не удаляет
@@ -769,8 +980,68 @@ def fact():
                  .order_by(GpsWorkPolygon.site_number).all())
     shapes, svg_width, svg_height = _svg_shapes(sites)
 
+    # Соседние машины -- по тому же списку, что в подсказках.
+    params = _filter_params(filters)
+    order = [a.wialon_id for a in aggregates]
+    listed_ids = {a.wialon_id for a in listed}
+    neighbours = {'prev': None, 'next': None}
+    if unit_id is not None:
+        position = order.index(unit_id)
+        neighbours['prev'] = next((w for w in reversed(order[:position])
+                                   if w in listed_ids), None)
+        neighbours['next'] = next((w for w in order[position + 1:]
+                                   if w in listed_ids), None)
+    neighbour_urls = {
+        side: (url_for('gps.fact', date=day.isoformat(), unit=wialon_id,
+                       **params) + '#' + FACT_ANCHOR)
+        if wialon_id is not None else None
+        for side, wialon_id in neighbours.items()}
+
+    def option_note(a):
+        parts = []
+        option = machines[a.wialon_id]
+        if option.org_name:
+            parts.append(option.org_name)
+        elif not option.linked:
+            parts.append('нет в справочнике техники' if is_ru
+                         else 'техника маълумотномасида йўқ')
+        total, unanswered = counts[a.wialon_id]
+        if total:
+            parts.append(('участков: %d' if is_ru else 'участкалар: %d') % total)
+            if unanswered:
+                parts.append(('без ответа: %d' if is_ru else 'жавобсиз: %d')
+                             % unanswered)
+        elif a.reason:
+            parts.append('нет площади' if is_ru else 'майдон йўқ')
+        else:
+            parts.append('участков нет' if is_ru else 'участкалар йўқ')
+        return ' · '.join(parts)
+
+    machine_options = [{'id': a.wialon_id, 'label': machines[a.wialon_id].label,
+                        'note': option_note(a)} for a in listed]
+
+    # Списки фильтров -- из машин этих суток: организация, у которой сегодня
+    # нет ни одной машины, в выборе была бы пустой дверью.
+    orgs, categories, unlinked = {}, set(), False
+    for a in aggregates:
+        option = machines[a.wialon_id]
+        if option.linked:
+            orgs[option.org_id] = option.org_name
+            if option.category:
+                categories.add(option.category)
+        else:
+            unlinked = True
+    org_order = {org.id: (org.sort_order or 0, (org.name or '').casefold())
+                 for org in Organization.query.filter(
+                     Organization.id.in_([o for o in orgs if o is not None]
+                                         or [0]))}
+    org_options = sorted(((org_id, name) for org_id, name in orgs.items()
+                          if org_id is not None),
+                         key=lambda item: org_order.get(item[0], (0, '')))
+    category_options = [(slug, CATEGORIES[slug]) for slug in CATEGORIES
+                        if slug in categories]
+
     # ── A2: карта суток -- трек, участки, контуры их полей ──
-    is_ru = getattr(g, 'lang', 'uz') == 'ru'
     points = _day_points(unit_id, day) if aggregate is not None else []
     contour_ids = sorted({s.contour_id for s in sites if s.contour_id})
     contours = (FieldContour.query.filter(FieldContour.id.in_(contour_ids))
@@ -780,23 +1051,41 @@ def fact():
     instance_file = current_app.config.get('MAP_COPERNICUS_INSTANCE_FILE')
     map_data = ({'base': vs_map.base_layers(is_ru, key_file, instance_file,
                                             day=day),
-                 'layers': layers} if layers else None)
+                 'layers': layers,
+                 'ui': map_controls(is_ru)} if layers else None)
 
     return render_template(
         'gps/fact.html',
         days=days, day=day, aggregates=aggregates, aggregate=aggregate,
-        unit_id=unit_id, names=names, sites=sites,
+        unit_id=unit_id, machine=machine, names=names, sites=sites,
         shapes=shapes, svg_width=svg_width, svg_height=svg_height,
         reason_labels=REASON_LABELS,
         answered=sum(1 for s in sites if s.operator_label),
         total_ha=round(sum(s.area_ha or 0 for s in sites), 2),
         map_data=map_data,
+        map_view=parse_map_view(request.args.get('view')),
         has_track=any(layer['kind'] == 'track' for layer in layers),
         satellite=vs_map.satellite_configured(key_file, instance_file),
         sharp_on=bool(vs_map.esri_key(key_file)),
         fresh_on=bool(vs_map.copernicus_instance(instance_file)[0]),
         summary=track_summary(points) if points else None,
+        filters=filters, filter_params=params, not_linked=FILTER_NOT_LINKED,
+        org_options=org_options, category_options=category_options,
+        has_unlinked=unlinked, categories=CATEGORIES,
+        machine_options=machine_options, listed_count=len(listed),
+        search=search, neighbour_urls=neighbour_urls, anchor=FACT_ANCHOR,
     )
+
+
+def map_controls(is_ru):
+    """Подписи кнопок карты на языке интерфейса: vs-map.js их не переводит."""
+    return {
+        'fullscreen': 'Развернуть карту на весь экран' if is_ru
+                      else 'Харитани тўлиқ экранга ёйиш',
+        'exit': 'Свернуть карту' if is_ru else 'Харитани кичрайтириш',
+        'fit': 'Показать трек и участки целиком' if is_ru
+               else 'Трек ва участкаларни тўлиқ кўрсатиш',
+    }
 
 
 @gps_bp.route('/fact/answer', methods=['POST'])
@@ -816,5 +1105,13 @@ def fact_answer():
     db.session.commit()
     flash(_gps_t('Жавоб сақланди.', 'Ответ сохранён.') if label
           else _gps_t('Жавоб олиб ташланди.', 'Ответ снят.'), 'success')
+    # [REASON]: возврат -- на ту же машину, с теми же фильтрами, к строке
+    # «карта + участки» и с тем же видом карты. Владелец размечает участки
+    # подряд, и экран, который после каждого щелчка сбрасывал фильтры и
+    # возвращал к общему виду наверху страницы, заставлял бы начинать заново.
+    params = _filter_params(_fact_filters(request.form))
+    view = parse_map_view(request.form.get('view'))
+    if view:
+        params['view'] = view
     return redirect(url_for('gps.fact', date=site.work_date.isoformat(),
-                            unit=site.wialon_id))
+                            unit=site.wialon_id, **params) + '#' + FACT_ANCHOR)

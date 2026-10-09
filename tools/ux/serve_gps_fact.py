@@ -10,6 +10,13 @@ temp, генеральный засев), плюс то, чего генерал
   справочнике и участок на его земле (8,772 га);
 * те же сутки погрузчика 9001 -- спецтехника (`spetstekhnika`), трек без
   участков;
+* выбор машины (замечания владельца 09.10.2026, проверка
+  check_gps_fact_picker.mjs): вторая организация «Когон ПТЗ» с New Holland,
+  чей госномер записан РУССКИМИ С и А («80 156 СА»), с участком, на который
+  уже ответили «проезд»; объект с одной строкой сопоставления без машины
+  («Камаз 80 777 KA»); объект без строки вовсе, чьё имя знает только файл
+  коллектора («Т-28 80 990 HA»); и вторые сутки 26.07 трактора 3464 -- для
+  смены суток с той же машиной;
 * подписанные сессии ux_admin (RU) и ux_admin_uz (UZ) -- файлы storageState
   для Playwright. Пароль не вводится и не печатается.
 
@@ -64,7 +71,9 @@ FAKE_INSTANCE = '00000000-0000-4000-8000-00000000ux01'
 FIXTURES = os.path.join(se.REPO_ROOT, 'gps', 'tests', 'fixtures')
 TZ = timezone(timedelta(hours=5))
 DAY = date(2026, 7, 27)
+DAY_BEFORE = date(2026, 7, 26)
 TRACTOR, LOADER = 3464, 9001
+HOLLAND, KAMAZ, T28 = 102, 103, 7002
 
 
 def fixture_track():
@@ -100,9 +109,9 @@ def loader_track():
     return rows
 
 
-def aggregate(unit, reason, points_total, km):
+def aggregate(unit, reason, points_total, km, day=DAY):
     return GpsDailyAggregate(
-        work_date=DAY, wialon_id=unit, points_total=points_total,
+        work_date=day, wialon_id=unit, points_total=points_total,
         points_work=points_total // 2, track_km=km, interval_median_s=30.0,
         sats_median=14.0, motion_gaps=0, lost_seconds=0.0, gps_jumps=0,
         reason=reason, method_version='adaptive-alpha-2026-08-12',
@@ -138,6 +147,33 @@ def seed_gps():
         alpha_used_m=10.0, pass_spacing_m=5.45, suggested_label='работа'))
     db.session.add(aggregate(LOADER, 'spetstekhnika', 360, 14.4))
     storage.write_points(POINTS_DIR, fixture_track() + loader_track())
+
+    # ── выбор машины: вторая организация, объекты без машины ──
+    kogon = Organization(name='Когон ПТЗ МЧЖ', short_name='Когон ПТЗ',
+                         sort_order=99)
+    db.session.add(kogon)
+    db.session.flush()
+    holland = Equipment(name='New Holland 7060', plate='80 156 СА',
+                        category='yukori', organization_id=kogon.id)
+    db.session.add(holland)
+    db.session.flush()
+    db.session.add_all([
+        VialonMapping(vialon_name='NH 156', wialon_id=HOLLAND,
+                      equipment_id=holland.id, skip=False),
+        VialonMapping(vialon_name='Камаз 80 777 KA', wialon_id=KAMAZ,
+                      skip=False)])
+    db.session.add(aggregate(HOLLAND, None, 900, 21.0))
+    db.session.add(GpsWorkPolygon(
+        work_date=DAY, wialon_id=HOLLAND, site_number=1, area_ha=3.1,
+        minutes=64.0, polygon_geojson=json.dumps({'type': 'Polygon', 'coordinates': [[
+            [64.58, 39.97], [64.59, 39.97], [64.59, 39.975], [64.58, 39.975],
+            [64.58, 39.97]]]}),
+        alpha_used_m=10.0, pass_spacing_m=5.0, suggested_label='работа',
+        operator_label='проезд'))
+    db.session.add(aggregate(KAMAZ, None, 300, 80.0))
+    db.session.add(aggregate(T28, None, 200, 12.0))
+    db.session.add(aggregate(TRACTOR, None, 800, 15.0, day=DAY_BEFORE))
+    storage.write_unit_names(POINTS_DIR, [{'id': T28, 'name': 'Т-28 80 990 HA'}])
 
 
 def write_state(path, value):

@@ -75,7 +75,9 @@ function mapState() {
     canvas: [Math.round(box.width), Math.round(box.height)],
     doc: [de.scrollWidth, de.clientWidth],
     legend: (document.querySelector('.vs-map-legend') || { textContent: '' }).textContent,
-    options: [...document.querySelectorAll('select[name="unit"] option')].map((o) => o.textContent.trim()),
+    // С 09.10.2026 выбор машины -- поле с подсказками (vs-combobox.js), а не
+    // <select>: имена машин -- в вариантах списка подсказок.
+    options: [...document.querySelectorAll('[role="option"] .vs-combobox-main')].map((o) => o.textContent.trim()),
     body: document.body.innerText,
   };
 }
@@ -120,7 +122,7 @@ async function checkTractor(state, lang, size) {
   expect(s.canvas[0] > 250 && s.canvas[1] >= minH, `${tag} map has room (${s.canvas.join('x')})`);
   expect(s.doc[0] <= s.doc[1], `${tag} no horizontal page scroll (${s.doc.join(' > ')})`);
   expect(s.legend.includes(TEXT[lang].legend), `${tag} legend in ${lang}`);
-  // У погрузчика в списке законный хвост «· нет площади»: сравнивается начало.
+  // Сравнивается начало: так проверка не зависит от пояснения к варианту.
   expect(s.options.some((o) => o.startsWith(TEXT[lang].tractor))
     && s.options.some((o) => o.startsWith(TEXT[lang].loader)),
     `${tag} machines listed with plates (${JSON.stringify(s.options)})`);
