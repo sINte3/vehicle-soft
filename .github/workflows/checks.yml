@@ -580,6 +580,13 @@ jobs:
           AGRO_WORK_POWERSHELL: pwsh
         run: python -m unittest tests.test_agro_work_release_v126
 
+      # The GPS collector (gps_collector/) is a separate stdlib-only process:
+      # the point store, the watermark and, since 09.10.2026, the Wialon
+      # object names the /gps/fact screen shows instead of bare numbers. Its
+      # own tests need no Flask and no network (a canned Wialon server).
+      - name: GPS collector self-tests (stdlib)
+        run: python -m unittest discover -s gps_collector/tests -t .
+
   # DRONE-USEFUL-AREA-PILOT-001. The operator console on the server is
   # WINDOWS POWERSHELL 5.1, not pwsh 7, and the two differ exactly where this
   # kit writes files: 5.1 has no `utf8NoBOM`, and its native `>` redirection

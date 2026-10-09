@@ -49,6 +49,21 @@ CREATE_STATE = """
     )
 """
 
+# [REASON]: имена объектов Wialon. Список парка с именами коллектор получает
+# каждым прогоном (`list_units`), но до 09.10.2026 только печатал их -- и
+# экран «Факт по технике» показывал объект без строки сопоставления голым
+# четырёхзначным номером: владелец не мог понять, что это за машина. Имя
+# лежит в файле отметок, а не в помесячном файле точек, по той же причине,
+# что watermark: ретенция удаляет месяц, а сутки, посчитанные по нему,
+# остаются на экране и должны остаться названными.
+CREATE_UNITS = """
+    CREATE TABLE IF NOT EXISTS collector_units (
+        unit_id INTEGER PRIMARY KEY,
+        name    TEXT    NOT NULL,
+        seen_at TEXT    NOT NULL
+    )
+"""
+
 
 def month_key(stamp):
     """'YYYYMM' of an epoch second, in local time (UTC+5).
@@ -88,6 +103,43 @@ def open_points(folder, month):
 def open_state(folder):
     """Connection to the watermark file, schema in place."""
     return _connect(state_path(folder), CREATE_STATE)
+
+
+def open_units(folder):
+    """Connection to the object names -- the same file as the watermarks."""
+    return _connect(state_path(folder), CREATE_UNITS)
+
+
+def write_unit_names(folder, units):
+    """Remember the Wialon name of every object of the fleet list.
+
+    `units` is what Client.list_units() returns: [{"id", "name", "last_t"}].
+    Returns how many names were stored.
+
+    [REASON]: an object with an empty name in the answer is skipped, not
+    stored: replacing a known name with an empty one would bring the bare
+    number back on the screen. A row is never deleted -- an object removed
+    from Wialon keeps its last name, because the days computed while it
+    existed are still on the screen.
+    """
+    seen_at = datetime.now(config.TZ).strftime("%Y-%m-%d %H:%M:%S")
+    rows = []
+    for unit in units:
+        name = (unit.get("name") or "").strip()
+        if unit.get("id") and name:
+            rows.append((int(unit["id"]), name, seen_at))
+    if not rows:
+        return 0
+    con = open_units(folder)
+    try:
+        con.executemany(
+            "INSERT INTO collector_units (unit_id, name, seen_at) "
+            "VALUES (?, ?, ?) ON CONFLICT(unit_id) DO UPDATE SET "
+            "name = excluded.name, seen_at = excluded.seen_at", rows)
+        con.commit()
+    finally:
+        con.close()
+    return len(rows)
 
 
 # [REASON]: обе цифры возвращаются, а не одна. Журнал приёма (GPS-7) держит
