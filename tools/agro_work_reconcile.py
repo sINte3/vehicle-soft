@@ -15,9 +15,12 @@
                     заявки -- что было потом: поздняя заявка задним числом
                     (B4, пункт 4), обычная заявка позже, заявка позже с
                     неизвестным порядком ввода, заявка не заведена совсем
-                    (B5);
+                    (B5); из заявок, где работа была, -- объём против GPS
+                    (U2): в допуске, на грани, вне допуска, сверить нельзя;
   Заявка-работа  -- каждая заявка периода: окно, вердикт или причина, сутки
-                    с работой, гектары GPS в окне;
+                    с работой, гектары GPS в окне; объём в заявке и
+                    светофор объёма или почему сверить нельзя, заявки с
+                    пересекающимся окном и общие числа их цепочки (U2);
   Работа-заявка  -- каждые машино-сутки с работой по GPS и их покрытие; у
                     суток без заявки -- ближайшая заявка той же машины,
                     заведённая задним числом позже, и через сколько суток;
@@ -118,6 +121,19 @@ AFTER_COLUMNS = (
 )
 
 
+# U2: объём против GPS у заявок, где работа была; в сумме -- «Работа была».
+VOLUME_COLUMNS = (
+    (rc.VOL_OK, ('Работа была, объём: в допуске',
+                 'Иш бўлган, ҳажм: йўл қўйилишда')),
+    (rc.VOL_WARN, ('Работа была, объём: на грани',
+                   'Иш бўлган, ҳажм: чегарада')),
+    (rc.VOL_FAIL, ('Работа была, объём: вне допуска',
+                   'Иш бўлган, ҳажм: йўл қўйилишдан ташқари')),
+    (rc.VOL_NONE, ('Работа была, объём: сверить нельзя',
+                   'Иш бўлган, ҳажм: солиштириб бўлмайди')),
+)
+
+
 def _oldest(ctx):
     rows = ctx.open_applications()
     return rows[0]['days_open'] if rows else '—'
@@ -157,7 +173,8 @@ def build_book(ctx, forward, reverse, lags, excluded, preview):
             counter['work_days'], counter['day_' + rc.C_COVERED],
             counter['day_' + rc.C_UNCOVERED], counter['day_' + rc.C_NONE],
             counter[rc.DAY_LATE])
-            + tuple(counter[rc.DAY_AFTER + kind] for kind, _ in AFTER_COLUMNS))
+            + tuple(counter[rc.DAY_AFTER + kind] for kind, _ in AFTER_COLUMNS)
+            + tuple(counter[rc.VOL + key] for key, _ in VOLUME_COLUMNS))
     summary_rows.append((bi(('Итого', 'Жами')), '', total['machines'],
                          total['applications'], total['app_' + rc.V_WORK],
                          total['app_' + rc.V_NO_WORK], total['app_' + rc.V_NONE],
@@ -165,7 +182,9 @@ def build_book(ctx, forward, reverse, lags, excluded, preview):
                          total['day_' + rc.C_UNCOVERED], total['day_' + rc.C_NONE],
                          total[rc.DAY_LATE])
                         + tuple(total[rc.DAY_AFTER + kind]
-                                for kind, _ in AFTER_COLUMNS))
+                                for kind, _ in AFTER_COLUMNS)
+                        + tuple(total[rc.VOL + key]
+                                for key, _ in VOLUME_COLUMNS))
     sheet = sheet_with(
         'Свод',
         (bi(('Организация', 'Ташкилот')), bi(('Категория', 'Тоифа')),
@@ -175,8 +194,10 @@ def build_book(ctx, forward, reverse, lags, excluded, preview):
          bi(('Машино-суток с работой по GPS', 'GPS бўйича иш бўлган машина-кунлар')),
          bi(labels.COVERAGE[rc.C_COVERED]), bi(labels.COVERAGE[rc.C_UNCOVERED]),
          bi(labels.COVERAGE[rc.C_NONE]), bi(LATE_COLUMN))
-        + tuple(bi(title) for _, title in AFTER_COLUMNS),
-        summary_rows, (28, 28, 10, 10, 14, 16, 14, 18, 16, 16, 14, 22, 22, 22, 22))
+        + tuple(bi(title) for _, title in AFTER_COLUMNS)
+        + tuple(bi(title) for _, title in VOLUME_COLUMNS),
+        summary_rows, (28, 28, 10, 10, 14, 16, 14, 18, 16, 16, 14, 22, 22, 22, 22,
+                       18, 18, 18, 18))
     notes = [
         bi(('Период: %s — %s' % (ctx.date_from.strftime('%d.%m.%Y'),
                                  ctx.date_to.strftime('%d.%m.%Y')),
@@ -235,7 +256,8 @@ def build_book(ctx, forward, reverse, lags, excluded, preview):
             ', '.join(d.strftime('%d.%m') for d in row['work_days']),
             row['gps_ha'] if row['work_days'] else None,
             row['unknown_days'] or None,
-            'да' if app.row.get('gone_at') else ''))
+            'да' if app.row.get('gone_at') else '')
+            + _volume_cells(row))
     sheet_with(
         'Заявка-работа',
         (bi(('Номер заявки', 'Буюртма рақами')), bi(('Создана', 'Яратилган')),
@@ -249,9 +271,11 @@ def build_book(ctx, forward, reverse, lags, excluded, preview):
          bi(('Причина', 'Сабаб')), bi(('Сутки с работой', 'Иш бўлган кунлар')),
          bi(('Га по GPS в окне', 'Ойнада GPS бўйича га')),
          bi(('Неизвестных суток', 'Номаълум кунлар')),
-         bi(('Удалена в agro-work', 'agro-work да ўчирилган'))),
+         bi(('Удалена в agro-work', 'agro-work да ўчирилган')))
+        + VOLUME_HEADER,
         forward_rows,
-        (24, 12, 12, 14, 26, 16, 24, 20, 36, 14, 10, 12, 12, 22, 44, 22, 12, 12, 12))
+        (24, 12, 12, 14, 26, 16, 24, 20, 36, 14, 10, 12, 12, 22, 44, 22, 12, 12, 12,
+         12, 16, 14, 12, 44, 26, 16, 14, 14))
 
     reverse_rows = []
     for row in reverse:
@@ -323,11 +347,17 @@ def build_book(ctx, forward, reverse, lags, excluded, preview):
         if row['reason']:
             counts[('reverse', row['reason'])] = counts.get(
                 ('reverse', row['reason']), 0) + 1
+    for row in forward:
+        if row['volume_reason']:
+            counts[('volume', row['volume_reason'])] = counts.get(
+                ('volume', row['volume_reason']), 0) + 1
+    sides = {'forward': (('Заявка → работа', 'Буюртма → иш'), labels.REASONS),
+             'reverse': (('Работа → заявка', 'Иш → буюртма'), labels.REASONS),
+             'volume': (('Объём против GPS', 'Ҳажм GPS га қарши'),
+                        labels.VOLUME_REASONS)}
     for (side, reason), count in sorted(counts.items(), key=lambda kv: -kv[1]):
-        reason_rows.append((bi(('Заявка → работа', 'Буюртма → иш'))
-                            if side == 'forward'
-                            else bi(('Работа → заявка', 'Иш → буюртма')),
-                            bi(labels.REASONS[reason]), reason, count))
+        title, table = sides[side]
+        reason_rows.append((bi(title), bi(table[reason]), reason, count))
     sheet_with('Причины',
                (bi(('Сторона', 'Томон')), bi(('Причина', 'Сабаб')), 'code',
                 bi(('Строк', 'Қаторлар'))),
@@ -359,6 +389,39 @@ def build_book(ctx, forward, reverse, lags, excluded, preview):
         title = EXCLUDED_TITLES.get(reason) or labels.REASONS.get(reason)
         lag_sheet.append((bi(title) if title else reason, count))
     return book
+
+
+VOLUME_HEADER = (
+    bi(('Объём в заявке, га', 'Буюртмадаги ҳажм, га')),
+    bi(('Объём против GPS', 'Ҳажм GPS га қарши')),
+    bi(('Расхождение GPS − заявка, га', 'Фарқ GPS − буюртма, га')),
+    bi(('Расхождение, %', 'Фарқ, %')),
+    bi(('Почему сверить нельзя', 'Нега солиштириб бўлмайди')),
+    bi(('Окно пересекается с заявками', 'Ойнаси кесишадиган буюртмалар')),
+    bi(('Вместе: окно', 'Биргаликда: ойна')),
+    bi(('Вместе: объём заявок, га', 'Биргаликда: буюртмалар ҳажми, га')),
+    bi(('Вместе: га по GPS', 'Биргаликда: GPS бўйича га')),
+)
+
+
+def _volume_cells(row):
+    """Столбцы U2 строки «Заявка-работа»: пусто, где объём не сравнивается."""
+    key = rc.volume_key(row)
+    group = row['volume_group']
+    share = row['volume_share']
+    return (
+        row['volume'],
+        labels.pick(labels.VOLUME, key, True) if key else '',
+        row['volume_deviation'],
+        round(share * 100, 1) if share is not None else None,
+        labels.pick(labels.VOLUME_REASONS, row['volume_reason'], True)
+        if row['volume_reason'] else '',
+        ', '.join(app.number for app in row['volume_neighbours']),
+        '%s — %s' % (group['first'].strftime('%d.%m'),
+                     group['last'].strftime('%d.%m')) if group else '',
+        group['volume'] if group else None,
+        group['gps_ha'] if group else None,
+    )
 
 
 def rc_category(slug):
@@ -442,6 +505,14 @@ def main(argv=None):
     print('applications: %d | work confirmed %d | NO WORK %d | no verdict %d'
           % (total['applications'], total['app_' + rc.V_WORK],
              total['app_' + rc.V_NO_WORK], total['app_' + rc.V_NONE]))
+    # U2: из «работа была» -- объём против GPS; в сумме -- «work confirmed».
+    print('  work confirmed, volume vs GPS: within tolerance %d | borderline %d '
+          '| out of tolerance %d | cannot compare %d'
+          % tuple(total[rc.VOL + key] for key in (rc.VOL_OK, rc.VOL_WARN,
+                                                 rc.VOL_FAIL, rc.VOL_NONE)))
+    print_reasons('  cannot compare the volume, why',
+                  Counter(row['volume_reason'] for row in forward
+                          if rc.volume_key(row) == rc.VOL_NONE))
     print('machine-days with GPS work: %d | covered %d | WITHOUT APPLICATION %d '
           '| no verdict %d' % (total['work_days'], total['day_' + rc.C_COVERED],
                                total['day_' + rc.C_UNCOVERED],

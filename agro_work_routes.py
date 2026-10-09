@@ -136,6 +136,9 @@ def _common(date_from, date_to, **extra):
         'verdict_label': lambda key: labels.pick(labels.VERDICTS, key, is_ru),
         'coverage_label': lambda key: labels.pick(labels.COVERAGE, key, is_ru),
         'reason_label': lambda key: labels.pick(labels.REASONS, key, is_ru),
+        'volume_label': lambda key: labels.pick(labels.VOLUME, key, is_ru),
+        'volume_reason_label': lambda key: labels.pick(labels.VOLUME_REASONS,
+                                                       key, is_ru),
         'status_label': lambda key: labels.pick(labels.STATUSES, key, is_ru),
         'method_label': lambda key: labels.pick(methods.LABELS, key, is_ru)
         if key else '',
@@ -233,7 +236,9 @@ def dashboard():
                   orphan_days=ctx.orphan_work_days(),
                   open_groups=open_groups,
                   after_keys=[(kind, rc.DAY_AFTER + kind)
-                              for kind in rc.AFTER_KINDS]))
+                              for kind in rc.AFTER_KINDS],
+                  volume_keys=[(key, rc.VOL + key)
+                               for key in rc.VOLUME_VERDICTS]))
 
 
 # --- заявка -> работа ----------------------------------------------------------
@@ -250,6 +255,7 @@ def applications():
     org, category, unmatched = _group_filter()
     verdict = (request.args.get('verdict') or '').strip() or None
     reason = (request.args.get('reason') or '').strip() or None
+    volume = (request.args.get('volume') or '').strip() or None
     rows = []
     for row in ctx.forward_rows():
         if not _in_group(ctx, row['equipment_id'], org, category, unmatched):
@@ -257,6 +263,8 @@ def applications():
         if verdict and row['verdict'] != verdict:
             continue
         if reason and row['reason'] != reason:
+            continue
+        if volume and rc.volume_key(row) != volume:
             continue
         row['machine'] = _machine_label(ctx, row['equipment_id'])
         row['work_type'] = ctx.work_type_names.get(row['app'].work_type_id) \
@@ -268,7 +276,10 @@ def applications():
     # [REASON]: нарушения -- первыми: ради них экран и открывают, а в
     # хронологическом порядке они тонут среди подтверждённых.
     rank = {rc.V_NO_WORK: 0, rc.V_NONE: 1, rc.V_WORK: 2}
+    # U2: внутри «работа была» -- вне допуска и на грани первыми.
+    volume_rank = {key: index for index, key in enumerate(rc.VOLUME_VERDICTS)}
     rows.sort(key=lambda r: (rank.get(r['verdict'], 3),
+                             volume_rank.get(rc.volume_key(r), 0),
                              r['app'].created_day, r['app'].number))
     shown = rows[:LIST_LIMIT]
     is_ru = _is_ru()
@@ -277,7 +288,11 @@ def applications():
                 (rc.V_NO_WORK, rc.V_WORK, rc.V_NONE),
                 lambda key: labels.pick(labels.VERDICTS, key, is_ru), verdict),
         _choice('reason', _aw_t('Сабаб', 'Причина'), rc.FORWARD_REASONS,
-                lambda key: labels.pick(labels.REASONS, key, is_ru), reason)]
+                lambda key: labels.pick(labels.REASONS, key, is_ru), reason),
+        # U2: объём заявки против гектаров GPS -- только «работа была».
+        _choice('volume', _aw_t('Ҳажм GPS га қарши', 'Объём против GPS'),
+                rc.VOLUME_VERDICTS,
+                lambda key: labels.pick(labels.VOLUME, key, is_ru), volume)]
     return render_template(
         'agro_work/applications.html',
         **_common(date_from, date_to, empty=None, rows=shown,

@@ -97,7 +97,11 @@ class ReportTool(unittest.TestCase):
                                       total[rc.DAY_LATE],
                                       total[rc.DAY_AFTER + rc.A_ORDINARY],
                                       total[rc.DAY_AFTER + rc.A_UNCLEAR],
-                                      total[rc.DAY_AFTER + rc.A_NOT_ENTERED]))
+                                      total[rc.DAY_AFTER + rc.A_NOT_ENTERED],
+                                      total[rc.VOL + rc.VOL_OK],
+                                      total[rc.VOL + rc.VOL_WARN],
+                                      total[rc.VOL + rc.VOL_FAIL],
+                                      total[rc.VOL + rc.VOL_NONE]))
         self.assertEqual(book['Заявка-работа'].max_row - 1, len(forward))
         self.assertEqual(book['Работа-заявка'].max_row - 1, len(reverse))
         notes = ' '.join(str(r[0]) for r in summary if r and r[0])
@@ -259,7 +263,9 @@ class ReportTool(unittest.TestCase):
         shown = {}
         for line in out.splitlines():
             for side, title in (('forward', 'no verdict, applications: '),
-                                ('reverse', 'no verdict, machine-days: ')):
+                                ('reverse', 'no verdict, machine-days: '),
+                                ('volume',
+                                 '  cannot compare the volume, why: ')):
                 if line.startswith(title):
                     shown[side] = {
                         name: int(number) for name, number in (
@@ -268,7 +274,8 @@ class ReportTool(unittest.TestCase):
         sheet = {}
         for row in list(book_of(self.out)['Причины'].iter_rows(
                 values_only=True))[1:]:
-            side = 'forward' if str(row[0]).startswith('Заявка') else 'reverse'
+            side = {'Заявка': 'forward', 'Работа': 'reverse',
+                    'Объём': 'volume'}[str(row[0]).split(' ')[0]]
             sheet.setdefault(side, {})[row[2]] = row[3]
         self.assertEqual(shown, sheet)
         # Самые частые причины первыми, при равенстве -- по коду.
@@ -340,6 +347,98 @@ class ReportTool(unittest.TestCase):
             self.assertEqual(tool.main(['--db', self.fx.path, '--to', '20.09']), 2)
         self.assertFalse(os.path.exists(self.out))
 
+
+
+class VolumeInTheReport(unittest.TestCase):
+    """U2: объём против GPS -- в консоли, на «Своде», в «Заявка-работа» и
+    в «Причинах»; числа те же, что у ядра."""
+
+    def setUp(self):
+        self.fx = Fixture()
+        # Машина 12: 12..13, по GPS 4,0 га против 5,10 -- вне допуска.
+        self.fx.app(transport='T2', created=12, completed=13, volume='5.10')
+        # Машина 11: 10..10 и 10..11 пересекаются; общее окно 10..11, по GPS
+        # 2,0 га против 1,00 + 1,50.
+        self.fx.app(transport='T1', created=10, completed=10, volume='1.00')
+        self.fx.app(transport='T1', created=10, completed=11, volume='1.50')
+        self.fx.con.close()
+        self.out = os.path.join(os.path.dirname(self.fx.path), 'report.xlsx')
+
+    def main(self):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = tool.main(['--db', self.fx.path, '--from', '2026-09-10',
+                              '--to', '2026-09-20', '--out', self.out])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_console_summary_and_rows(self):
+        code, out, err = self.main()
+        self.assertEqual(code, 0, err)
+        self.assertTrue(out.isascii())
+        self.assertIn('applications: 3 | work confirmed 3 | NO WORK 0', out)
+        self.assertIn('  work confirmed, volume vs GPS: within tolerance 0 | '
+                      'borderline 0 | out of tolerance 1 | cannot compare 2\n',
+                      out)
+        self.assertIn('  cannot compare the volume, why: '
+                      'obem_okna_peresekayutsya 2\n', out)
+        book = book_of(self.out)
+        summary = list(book['Свод'].iter_rows(values_only=True))
+        header = summary[0]
+        totals = [row for row in summary if row and row[0] == 'Итого / Жами'][0]
+        columns = {title: index for index, title in enumerate(header)}
+        volume = [totals[columns[tool.bi(title)]]
+                  for _, title in tool.VOLUME_COLUMNS]
+        self.assertEqual(volume, [0, 0, 1, 2])
+        self.assertEqual(sum(volume),
+                         totals[columns[tool.bi(('Работа была', 'Иш бўлган'))]])
+        # И в строке группы, а не только в итоге: все три заявки -- машины
+        # организации Buxoro, категория «mtz».
+        group = [row for row in summary if row and row[0] == 'Buxoro'][0]
+        self.assertEqual([group[columns[tool.bi(title)]]
+                          for _, title in tool.VOLUME_COLUMNS], [0, 0, 1, 2])
+
+        sheet = list(book['Заявка-работа'].iter_rows(values_only=True))
+        header = sheet[0]
+        at = {title: index for index, title in enumerate(header)}
+        rows = {row[0]: row for row in sheet[1:]}
+
+        def cell(number, title):
+            return rows[number][at[tool.bi(title)]]
+        self.assertEqual(cell('N-001', ('Объём в заявке, га',
+                                        'Буюртмадаги ҳажм, га')), 5.1)
+        self.assertEqual(cell('N-001', ('Объём против GPS',
+                                        'Ҳажм GPS га қарши')), 'Вне допуска')
+        self.assertEqual(cell('N-001', ('Расхождение GPS − заявка, га',
+                                        'Фарқ GPS − буюртма, га')), -1.1)
+        self.assertEqual(cell('N-001', ('Расхождение, %', 'Фарқ, %')), -21.6)
+        self.assertEqual(cell('N-001', ('Почему сверить нельзя',
+                                        'Нега солиштириб бўлмайди')), None)
+        for number, other in (('N-002', 'N-003'), ('N-003', 'N-002')):
+            with self.subTest(application=number):
+                self.assertEqual(cell(number, ('Объём против GPS',
+                                               'Ҳажм GPS га қарши')),
+                                 'Сверить нельзя')
+                self.assertEqual(
+                    cell(number, ('Почему сверить нельзя',
+                                  'Нега солиштириб бўлмайди')),
+                    'Окно пересекается с окном другой заявки этой машины')
+                self.assertEqual(cell(number, ('Окно пересекается с заявками',
+                                               'Ойнаси кесишадиган буюртмалар')),
+                                 other)
+                self.assertEqual(cell(number, ('Вместе: окно',
+                                               'Биргаликда: ойна')),
+                                 '10.09 — 11.09')
+                self.assertEqual(cell(number, ('Вместе: объём заявок, га',
+                                               'Биргаликда: буюртмалар ҳажми, '
+                                               'га')), 2.5)
+                self.assertEqual(cell(number, ('Вместе: га по GPS',
+                                               'Биргаликда: GPS бўйича га')),
+                                 2.0)
+        reasons = [row for row in book['Причины'].iter_rows(values_only=True)
+                   if row[2] == 'obem_okna_peresekayutsya']
+        self.assertEqual(len(reasons), 1)
+        self.assertEqual(reasons[0][3], 2)
+        self.assertTrue(reasons[0][0].startswith('Объём против GPS'))
 
 if __name__ == '__main__':
     unittest.main()
