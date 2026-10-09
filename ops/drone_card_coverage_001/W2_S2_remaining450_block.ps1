@@ -18,7 +18,7 @@
   $site         = 'http://10.103.25.14:5051'
   $prodRoot     = 'C:\transport-report'
   $prodDb       = 'C:\transport-report\instance\transport.db'
-  $prodExpected = '3c5c8c5688b6a1586ef868c0cb62d750e366f34b'
+  $prodExpected = 'fc7896c6c3a3e0d4c930ddfac5b7c17e99fe35bd'
   $prodBase     = '8df568394a840054ef6f842c6a8b272ca4c31aa8'
   $prodDji      = @('drone_collector', 'dji_area', 'drones.py')
   $prodNames    = @('TransportBot', 'TransportBot003', 'TransportReport')

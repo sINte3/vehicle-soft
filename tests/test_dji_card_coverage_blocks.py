@@ -1948,8 +1948,9 @@ W1_TOKEN = 'W1-TOKEN-SECRET-9c41'
 MACHINE_TOKEN = 'MACHINE-TOKEN-SECRET-4b7e'
 SITE_ENV = ['FLASK_ENV=sqlite_prod', 'PORT=5051', 'SECRET_KEY=do-not-print-0f9e', 'DRONE_API_TOKEN=' + W1_TOKEN]
 PROD_NOW = '3434996a434652b0b590be2cfe08c4dc54cf1fab'
-# Production after W1: v1.23 (docs/DEPLOYED.md, 08.10.2026); its DJI code is that of PROD.
-PROD_V123 = '3c5c8c5688b6a1586ef868c0cb62d750e366f34b'
+# Production when W2 runs: read on SRV-YOQSH on 09.10.2026 (after v1.23 and v1.24); its DJI
+# code is that of PROD.
+PROD_W2 = 'fc7896c6c3a3e0d4c930ddfac5b7c17e99fe35bd'
 W1_SESSION_SECRET = 'W1-SESSION-COOKIE-SECRET-5d2e'
 W1_SITE = 'http://10.103.25.14:5051'
 # Present in the stand-in field catalog: a card with this key resolves EXACT.
@@ -2820,7 +2821,7 @@ class W2Text(unittest.TestCase):
                             ('w1NotInCatalog', 27)):
             self.assertRegex(w2, r'(?m)^  \$%s\s*= %d$' % (name, value))
         self.assertEqual(const(w2, 'w2Root'), const(w1, 'work') + '\\w2')
-        self.assertEqual(const(w2, 'prodExpected'), PROD_V123)
+        self.assertEqual(const(w2, 'prodExpected'), PROD_W2)
         self.assertEqual(const(w2, 'prodBase'), PROD)
         # The stop signs of W1, and the session expiring in the middle of a longer run.
         m1 = re.search(r"(?m)^  \$stopMarkers  = (.*)$", w1).group(1)
@@ -2830,10 +2831,10 @@ class W2Text(unittest.TestCase):
     def test_w2_production_dji_code_is_that_of_w1(self):
         """The DJI code of the production W2 expects is that of the commit W1 was checked against."""
         have = [subprocess.run(['git', '-C', REPO_ROOT, 'cat-file', '-e', c + '^{commit}'],
-                               capture_output=True).returncode == 0 for c in (PROD, PROD_V123)]
+                               capture_output=True).returncode == 0 for c in (PROD, PROD_W2)]
         if not all(have):
             self.skipTest('needs the full git history (the windows-powershell-51 job has it)')
-        self.assertEqual(subprocess.run(['git', '-C', REPO_ROOT, 'diff', '--quiet', PROD, PROD_V123, '--',
+        self.assertEqual(subprocess.run(['git', '-C', REPO_ROOT, 'diff', '--quiet', PROD, PROD_W2, '--',
                                          'drone_collector', 'dji_area', 'drones.py']).returncode, 0)
 
     def test_w2_shares_the_checked_functions_of_w1(self):
@@ -2993,8 +2994,8 @@ class W2InPowerShell(unittest.TestCase):
         con.commit()
         con.close()
         cls.post_w1 = read_bytes(srv.db)
-        # Production was released again after W1 (v1.23), its DJI code unchanged.
-        sh('git', '-c', 'advice.detachedHead=false', 'checkout', '-q', PROD_V123, cwd=srv.prod)
+        # Production was released again after W1 (v1.23, v1.24), its DJI code unchanged.
+        sh('git', '-c', 'advice.detachedHead=false', 'checkout', '-q', PROD_W2, cwd=srv.prod)
         cls.pilot_log = os.path.join(srv.src, 'drone_collector', 'logs', 'collector.log')
         cls.pilot_log_bytes = read_bytes(cls.pilot_log)
         cls.pilot = [int(l) for l in read(os.path.join(srv.plan_dir, 'pilot_ids.txt')).splitlines()
@@ -3165,7 +3166,7 @@ class W2InPowerShell(unittest.TestCase):
                      'DIAG NO_KEY flights=3 key_field_absent=1 key_field_empty=2 key_in_card_but_not_read=0',
                      'DIAG NOT_IN_CATALOG flights=33 key_format=[PLAIN_MD5:33]', 'DIAG CATALOG snapshots=1 ',
                      'PILOT_STATUS=COMPLETE', 'W2_STATE=COMPLETE', 'STAGING_AFTER HEAD=' + srv.pin,
-                     'PROD_AFTER HEAD=' + PROD_V123, 'PROD_DJI_CODE_AFTER=unchanged since ' + PROD):
+                     'PROD_AFTER HEAD=' + PROD_W2, 'PROD_DJI_CODE_AFTER=unchanged since ' + PROD):
             self.assertIn(line, out)
         self.assertRegex(out, r'CHANGED_SINCE_W1 flights=\d+ outside_w2=0 w1_canary=0 raw=1 decisions=1 migrations=1')
         for task in ('DroneCollectorDaily', 'DroneAreaDaily', 'DjiAreaRefresh'):
