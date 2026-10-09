@@ -580,6 +580,15 @@ jobs:
           AGRO_WORK_POWERSHELL: pwsh
         run: python -m unittest tests.test_agro_work_release_v126
 
+      # Release v1.27 (docs/AGRO_WORK_RELEASE_V127_RUNBOOK.md, the /gps/fact
+      # machine picker, filters, Wialon names and the large map): the blocks
+      # of v1.26 with new constants, against the same stand-ins, on pwsh 7
+      # here and on Windows PowerShell 5.1 below. Stdlib only.
+      - name: release v1.27 runbook and blocks (pwsh 7)
+        env:
+          AGRO_WORK_POWERSHELL: pwsh
+        run: python -m unittest tests.test_agro_work_release_v127
+
       # The GPS collector (gps_collector/) is a separate stdlib-only process:
       # the point store, the watermark and, since 09.10.2026, the Wialon
       # object names the /gps/fact screen shows instead of bare numbers. Its
@@ -683,3 +692,11 @@ jobs:
         env:
           AGRO_WORK_POWERSHELL: powershell
         run: python -m unittest tests.test_agro_work_release_v126.ReleaseV126ToolFormats tests.test_agro_work_release_v126.ReleaseV126BlocksInPowerShell
+
+      # release v1.27 (docs/AGRO_WORK_RELEASE_V127_RUNBOOK.md): the same stop
+      # paths on the interpreter the owner pastes into.
+      - name: release v1.27 blocks on Windows PowerShell 5.1
+        shell: powershell
+        env:
+          AGRO_WORK_POWERSHELL: powershell
+        run: python -m unittest tests.test_agro_work_release_v127.ReleaseV127ToolFormats tests.test_agro_work_release_v127.ReleaseV127BlocksInPowerShell
