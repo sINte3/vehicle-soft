@@ -706,6 +706,17 @@ class ScopeAndSummary(unittest.TestCase):
                              + counter['day_bez_verdikta'])
         self.assertEqual(total['applications'], 4)
 
+    def test_every_machine_is_counted_in_its_own_row(self):
+        # Машина 13 (Jizzax, спецтехника): заявка есть, суток с работой по GPS
+        # нет -- строку «Свода» ей даёт только заявка. Машина принадлежит
+        # одной строке, поэтому сумма «Машин» по строкам -- это итог. В
+        # выпуске v1.25 строки теряли такие машины: на рабочей базе 152 по
+        # строкам при итоге 246.
+        groups, total = self.fx.run().summary()
+        self.assertEqual(groups[(2, 'special')]['machines'], 1)
+        self.assertEqual(sum(c['machines'] for c in groups.values()),
+                         total['machines'])
+
 
 class Lags(unittest.TestCase):
     def test_lag_from_the_last_work_day_to_the_closing_mark(self):

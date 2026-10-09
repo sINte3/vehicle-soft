@@ -571,6 +571,15 @@ jobs:
           AGRO_WORK_POWERSHELL: pwsh
         run: python -m unittest tests.test_agro_work_release_v125
 
+      # Release v1.26 (docs/AGRO_WORK_RELEASE_V126_RUNBOOK.md, the fix of the
+      # per-row machine count of the agro-work summary): the blocks of v1.25
+      # with new constants, against the same stand-ins, on pwsh 7 here and on
+      # Windows PowerShell 5.1 below. Stdlib only.
+      - name: agro-work release v1.26 runbook and blocks (pwsh 7)
+        env:
+          AGRO_WORK_POWERSHELL: pwsh
+        run: python -m unittest tests.test_agro_work_release_v126
+
   # DRONE-USEFUL-AREA-PILOT-001. The operator console on the server is
   # WINDOWS POWERSHELL 5.1, not pwsh 7, and the two differ exactly where this
   # kit writes files: 5.1 has no `utf8NoBOM`, and its native `>` redirection
@@ -659,3 +668,11 @@ jobs:
         env:
           AGRO_WORK_POWERSHELL: powershell
         run: python -m unittest tests.test_agro_work_release_v125.ReleaseV125ToolFormats tests.test_agro_work_release_v125.ReleaseV125BlocksInPowerShell
+
+      # agro-work release v1.26 (docs/AGRO_WORK_RELEASE_V126_RUNBOOK.md): the
+      # same stop paths on the interpreter the server has.
+      - name: agro-work release v1.26 blocks on Windows PowerShell 5.1
+        shell: powershell
+        env:
+          AGRO_WORK_POWERSHELL: powershell
+        run: python -m unittest tests.test_agro_work_release_v126.ReleaseV126ToolFormats tests.test_agro_work_release_v126.ReleaseV126BlocksInPowerShell

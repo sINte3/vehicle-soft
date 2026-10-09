@@ -855,10 +855,14 @@ class Reconciliation:
                 counter['app_reason_' + row['reason']] += 1
             else:
                 counter['app_' + row['verdict']] += 1
-            key = volume_key(row)
-            if key:
-                counter[VOL + key] += 1
-                if key == VOL_NONE:
+            # [REASON]: своё имя, а не `key`: `key` -- строка «Свода», по ней
+            # считаются машины строки. В выпуске v1.25 светофор занял `key`, и
+            # машина заявки без суток работы по GPS уходила из своей строки
+            # (на рабочей базе 152 по строкам при «Итого» 246).
+            volume = volume_key(row)
+            if volume:
+                counter[VOL + volume] += 1
+                if volume == VOL_NONE:
                     counter[VOL_REASON + row['volume_reason']] += 1
             if row['equipment_id']:
                 machines[key].add(row['equipment_id'])
