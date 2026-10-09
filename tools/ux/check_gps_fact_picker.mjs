@@ -10,6 +10,8 @@
 //     «zzz» -- «нет такой», Enter ничего не делает; Escape возвращает имя;
 //   * смена организации и «только без ответа» сразу показывают новый
 //     список с начала; смена суток оставляет ту же машину;
+//   * набранный номер машины, которую спрятал фильтр, назван строкой «скрыто
+//     фильтрами: N» со ссылкой, открывающей её без фильтров;
 //   * карта по высоте экрана; кнопка «во весь экран» разворачивает её и
 //     сворачивает обратно;
 //   * колесо меняет масштаб сразу, без щелчка, но не отнимает прокрутку
@@ -142,8 +144,52 @@ async function checkFilters(state) {
     page.selectOption('select[name="date"]', '2026-07-26')]);
   expect(unitOf(page) === '3464' && (await headName(page)) === 'МТЗ-80.1 — 80 261 EA',
     `${tag} another day keeps the same machine (${page.url()})`);
-  expect(!(await page.locator('.gps-fact-found .vs-hint').count()),
+  expect(!(await page.locator('.gps-fact-found .vs-hint:visible').count()),
     `${tag} and does not claim a failed search`);
+  expect(errors.length === 0, `${tag} no page errors (${errors.join(' | ')})`);
+  await ctx.close();
+}
+
+// Совпадения, которые спрятали фильтры (шаг 4 v1.27: «527» не нашёл Puma-210,
+// её прятала галочка «только без ответа»). С галочкой в списке только трактор
+// 80 261 EA; New Holland, Камаз, Т-28 и погрузчик скрыты.
+async function checkHidden(state, lang) {
+  const tag = `hidden ${lang}`;
+  const { ctx, page, errors } = await open(state, DAY + '&open=1', [1440, 900]);
+  const input = page.locator('#gps-fact-machine');
+  const more = page.locator('#gps-fact-more');
+  const moreText = () => page.locator('[data-vs-more-text]').textContent().then((t) => t.trim());
+  const say = (q, n) => (lang === 'ru' ? `По «${q}» скрыто фильтрами машин: ${n}.`
+    : `«${q}» бўйича фильтрлар яширган машиналар: ${n}.`);
+  expect(!(await more.isVisible()), `${tag} no line before anything is typed`);
+
+  await input.click();
+  await input.pressSequentially('156');
+  expect((await more.isVisible()) && (await moreText()) === say('156', 1),
+    `${tag} a number the filter hides is counted (${await moreText()})`);
+  expect(await page.locator('.vs-combobox-empty').isVisible(), `${tag} and the list says none of the shown match`);
+  const href = await page.locator('[data-vs-more-link]').getAttribute('href');
+  expect(/[?&]q=156#gps-fact-work$/.test(href) && !/open=/.test(href),
+    `${tag} the way to it keeps the number and drops the filters (${href})`);
+
+  await input.fill('{n}ew');
+  expect((await moreText()) === say('{n}ew', 1), `${tag} typed braces stay as typed (${await moreText()})`);
+  await input.fill('261');
+  expect(!(await more.isVisible()), `${tag} a number only the shown machine has: no line`);
+  await input.fill('80');
+  expect((await moreText()) === say('80', 4), `${tag} every hidden match is counted (${await moreText()})`);
+  await input.press('Escape');
+  expect(!(await more.isVisible()), `${tag} Escape takes the line away with the list`);
+
+  await input.fill('');
+  await input.pressSequentially('156');
+  await Promise.all([page.waitForURL(/q=156/, { timeout: 5000 }).catch(() => {}),
+    page.locator('[data-vs-more-link]').click()]);
+  await page.waitForSelector('[data-vs-combobox-ready="1"]', { timeout: 10000 }).catch(() => {});
+  expect((await headName(page)) === 'New Holland 7060 — 80 156 СА'
+    && !(await page.locator('input[name="open"]').isChecked()),
+  `${tag} the link opens the hidden machine with the filters off (${page.url()})`);
+  expect(!(await more.isVisible()), `${tag} and there is nothing hidden any more`);
   expect(errors.length === 0, `${tag} no page errors (${errors.join(' | ')})`);
   await ctx.close();
 }
@@ -347,6 +393,7 @@ if (!args.state) {
 } else {
   await checkTyping(args.state);
   await checkFilters(args.state);
+  await checkHidden(args.state, 'ru');
   await checkMap(args.state, 'ru');
   await checkWheel(args.state);
   await checkAnswerKeepsPlace(args.state);
@@ -355,6 +402,7 @@ if (!args.state) {
 }
 if (args['state-uz']) {
   await checkMap(args['state-uz'], 'uz');
+  await checkHidden(args['state-uz'], 'uz');
   await checkUzbek(args['state-uz']);
 } else {
   bad('no --state-uz');

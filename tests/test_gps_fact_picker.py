@@ -38,6 +38,7 @@ import sqlite3
 import unittest
 
 from datetime import date, datetime
+from html import unescape
 
 from tests.harness import app, db, reset_db, create_admin, login, CSRF
 from models import (Equipment, GpsDailyAggregate, GpsWorkPolygon, Organization,
@@ -340,6 +341,91 @@ class Filters(Base):
                       self.option_text(html, 101))
         self.assertIn('нет площади', self.option_text(html, 105))
         self.assertIn('нет в справочнике техники', self.option_text(html, 3464))
+
+
+class HiddenByFilters(Base):
+    """Совпадения, которые спрятали фильтры (шаг 4 выпуска v1.27).
+
+    Владелец набрал «527», не нашёл Puma-210 и решил, что у неё остался номер
+    вместо имени; её прятала галочка «Только с участками без ответа», а «527»
+    нашёл другую машину. С галочкой в списке только 101 (участок без ответа),
+    остальные пять машин суток скрыты.
+    """
+
+    def more_link(self, html):
+        found = re.search(r'<a data-vs-more-link href="([^"]+)"', html)
+        self.assertIsNotNone(found)
+        return unescape(found.group(1))
+
+    def more_text(self, html):
+        # само сообщение, а не шаблон подсказок в data-vs-more-template
+        found = re.search(r'<span data-vs-more-text>([^<]*)</span>', html)
+        self.assertIsNotNone(found)
+        return unescape(found.group(1))
+
+    def hidden_keys(self, html):
+        found = re.search(r"data-vs-combobox-hidden='([^']*)'", html)
+        self.assertIsNotNone(found, 'tojson -- в атрибуте с одинарными кавычками')
+        return json.loads(unescape(found.group(1)))
+
+    def test_a_match_hidden_by_a_filter_is_counted_with_a_way_to_it(self):
+        html = self.page('&open=1&q=156')
+        self.assertEqual(self.more_text(html), 'По «156» скрыто фильтрами машин: 1.')
+        self.assertFalse(re.search(r'id="gps-fact-more"[^>]*\shidden>', html))
+        link = self.more_link(html)
+        self.assertIn('q=156', link)
+        self.assertNotIn('open=', link)
+        self.assertTrue(link.endswith('#gps-fact-work'), link)
+        # ссылка ведёт к спрятанной машине, уже без фильтров
+        client = app.test_client()
+        login(client, self.admin_id)
+        resp = client.get(link.split('#')[0])
+        self.assertEqual(resp.status_code, 200)
+        shown = resp.get_data(as_text=True)
+        self.assertEqual(self.opened(shown), 102)
+        self.assertEqual(self.more_text(shown), '')
+
+    def test_a_shown_match_does_not_hide_the_hidden_one(self):
+        # как у владельца: набранное нашло одну машину в списке, а вторую с
+        # тем же номером спрятал фильтр
+        html = self.page('&open=1&q=80 61')
+        self.assertEqual(self.opened(html), 101)
+        self.assertEqual(self.more_text(html), 'По «80 61» скрыто фильтрами машин: 1.')
+
+    def test_without_filters_nothing_is_hidden(self):
+        # отрицательный контроль: без фильтров прятать нечего, и строка
+        # молчит, хотя то же «156» находит машину
+        html = self.page('&q=156')
+        self.assertEqual(self.opened(html), 102)
+        self.assertEqual(self.more_text(html), '')
+        self.assertTrue(re.search(r'id="gps-fact-more"[^>]*\shidden>', html))
+        self.assertEqual(self.hidden_keys(html), [])
+
+    def test_the_suggestions_get_the_keys_of_exactly_the_hidden_machines(self):
+        everything = self.page()
+        labels = {wialon_id: unescape(re.search(
+            r'id="gps-fact-machine-%d".*?<span class="vs-combobox-main">([^<]*)</span>'
+            % wialon_id, everything, re.S).group(1))
+            for wialon_id in self.listed(everything)}
+        keys = self.hidden_keys(self.page('&open=1'))
+        self.assertEqual(sorted(keys), sorted(
+            gps_routes.search_key(labels[w]) for w in labels if w != 101))
+        self.assertNotIn(gps_routes.search_key(labels[101]), keys)
+
+    def test_the_line_speaks_uzbek(self):
+        with app.app_context():
+            User.query.get(self.admin_id).language = 'uz'
+            db.session.commit()
+        html = self.page('&open=1&q=156')
+        self.assertEqual(self.more_text(html),
+                         '«156» бўйича фильтрлар яширган машиналар: 1.')
+        self.assertIn('Фильтрларсиз кўрсатиш', html)
+
+    def test_typed_braces_are_shown_as_typed(self):
+        # {n} подставляется раньше {q}: набранный текст дальше не разбирается.
+        # Ключ «{n}ew» -- «new», его содержит только скрытая 102 (New Holland).
+        html = self.page('&open=1&q={n}ew')
+        self.assertEqual(self.more_text(html), 'По «{n}ew» скрыто фильтрами машин: 1.')
 
 
 class NeighboursAndReturn(Base):

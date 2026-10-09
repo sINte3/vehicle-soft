@@ -18,6 +18,18 @@
  *     <div class="vs-combobox-empty" hidden>nichego ne naydeno</div>
  *   </div>
  *
+ * Neobyazatelno -- sovpadeniya, kotorye spryatali filtry:
+ *   <div data-vs-combobox ... data-vs-combobox-hidden='["klyuch", ...]'
+ *        data-vs-combobox-more="ID">
+ *   <span id="ID" hidden data-vs-more-template="... {q} ... {n} ..."
+ *         data-vs-more-base="/adres?date=..." data-vs-more-hash="#yakor">
+ *     <span data-vs-more-text></span> <a data-vs-more-link href="...">...</a>
+ *   </span>
+ * Na kazhdyy nabor podskazki schitayut, skolko klyuchey skrytyh mashin
+ * soderzhat nabrannoe, i pishut eto chislo v stroku so ssylkoy "pokazat bez
+ * filtrov" (adres + q=nabrannoe). Stroka -- vne vypadayushchego spiska: do nee
+ * dohodit Tab, i ona ne ischezaet, kogda spisok zakryvaetsya.
+ *
  * Vybor varianta kladet ego data-value v skrytoe pole, a tekst -- v vidimoe;
  * s data-vs-combobox-submit forma srazu otpravlyaetsya. Bez skripta pole
  * ostaetsya obychnym tekstovym: nabrannoe ishchet server tem zhe klyuchom.
@@ -62,6 +74,48 @@
     var empty = box.querySelector('.vs-combobox-empty');
     if (!input || !hidden || !list) return;
 
+    // [REASON]: vladelec 09.10 nabral "527", ne nashel Puma-210 i reshil, chto
+    // u nee ostalsya nomer vmesto imeni, -- a ee pryatal filtr "tolko bez
+    // otveta". Spisok podskazok znaet tolko pokazannye mashiny, poetomu server
+    // otdaet i klyuchi skrytyh, a podskazki govoryat, skolko iz nih podhodit.
+    var hiddenKeys = [];
+    try {
+      hiddenKeys = JSON.parse(box.getAttribute('data-vs-combobox-hidden') || '[]');
+    } catch (err) {
+      hiddenKeys = [];
+    }
+    if (!Array.isArray(hiddenKeys)) hiddenKeys = [];
+    var moreId = box.getAttribute('data-vs-combobox-more');
+    var more = moreId ? document.getElementById(moreId) : null;
+    var moreText = more ? more.querySelector('[data-vs-more-text]') : null;
+    var moreLink = more ? more.querySelector('[data-vs-more-link]') : null;
+
+    function tellHidden(text) {
+      if (!more || !moreText || !moreLink) return;
+      var typed = String(text || '').trim();
+      var key = searchKey(typed);
+      var count = 0;
+      if (key) {
+        hiddenKeys.forEach(function (hiddenKey) {
+          if (String(hiddenKey).indexOf(key) >= 0) count++;
+        });
+      }
+      if (!count) {
+        more.hidden = true;
+        return;
+      }
+      // {n} -- ran'she {q}, i zamena funkciey: nabrannoe vstavlyaetsya kak
+      // est', bez razbora "$&" i bez povtornoy podstanovki.
+      var template = more.getAttribute('data-vs-more-template') || '';
+      moreText.textContent = template
+        .replace('{n}', function () { return String(count); })
+        .replace('{q}', function () { return typed; });
+      var base = more.getAttribute('data-vs-more-base') || '';
+      moreLink.href = base + (base.indexOf('?') >= 0 ? '&' : '?') + 'q=' +
+        encodeURIComponent(typed) + (more.getAttribute('data-vs-more-hash') || '');
+      more.hidden = false;
+    }
+
     var entries = Array.prototype.map.call(list.querySelectorAll('[role="option"]'),
       function (node) {
         var main = node.querySelector('.vs-combobox-main') || node;
@@ -98,6 +152,7 @@
       list.hidden = shown.length === 0;
       if (empty) empty.hidden = shown.length !== 0;
       input.setAttribute('aria-expanded', shown.length ? 'true' : 'false');
+      tellHidden(text);
     }
 
     function close() {
@@ -158,6 +213,7 @@
         e.preventDefault();
         close();
         input.value = chosen;
+        tellHidden('');
       } else if (e.key === 'Tab') {
         close();
       }
