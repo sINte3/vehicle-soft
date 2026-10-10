@@ -145,7 +145,7 @@ cd C:\transport-report
 & C:\gps_venv\Scripts\python.exe -m unittest discover -s gps/tests -t .
 ```
 
-Ожидается `Ran 268 tests` и `OK`.
+Ожидается `Ran 333 tests` и `OK`.
 
 ## Как проверен
 
