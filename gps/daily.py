@@ -235,7 +235,8 @@ class DayResult:
         return self.aggregate["reason"]
 
 
-def compute_day(points, contours=None, track_only=False, overflow_cap=True):
+def compute_day(points, contours=None, track_only=False, overflow_cap=True,
+                edge_rule=False):
     """points: [(t, lon, lat, speed, sats)] of one object, one local day.
 
     `track_only` -- the machine's category takes no hectares (special
@@ -243,11 +244,15 @@ def compute_day(points, contours=None, track_only=False, overflow_cap=True):
     `overflow_cap` -- the A7 spacing rule (`gps.area.pass_spacing_on_overflow`),
     the method since 2026-10-07. False reproduces the previous method, and
     the row then says so: its `method_version` is PREVIOUS_METHOD_VERSION.
+    `edge_rule` -- the edge-of-field candidate (gps/edge.py, roadmap 2.12);
+    off unless asked, and the row then names it after the base method.
     """
     aggregate = {"points_total": len(points), "points_work": 0, "track_km": 0.0,
                  "interval_median_s": None, "sats_median": None,
                  "motion_gaps": 0, "lost_seconds": 0.0, "gps_jumps": 0,
-                 "reason": None, "method_version": method_version(overflow_cap)}
+                 "reason": None,
+                 "method_version": method_version(overflow_cap,
+                                                  edge_rule=edge_rule)}
     if not points:
         aggregate["reason"] = REASON_NO_POINTS
         return DayResult(aggregate, [])
@@ -294,7 +299,8 @@ def compute_day(points, contours=None, track_only=False, overflow_cap=True):
         aggregate["reason"] = REASON_RARE
         return DayResult(aggregate, [])
 
-    sites, _ = work_sites(points, contours=contours, overflow_cap=overflow_cap)
+    sites, _ = work_sites(points, contours=contours, overflow_cap=overflow_cap,
+                          edge_rule=edge_rule)
     flag = quality_flag(quality)
     rows = []
     for number, site in enumerate(sites, 1):
