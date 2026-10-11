@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """GPS EDGE -- driving at work speed beside a field is not work (candidate rule).
 
+REJECTED by the data run of 10-11.10.2026 (roadmap 2.12, condition 4): on
+spraying it cuts the work itself -- some sprayers' trackers write points only
+near the ends of a long pass, others drive their passes in pairs, and the margin
+around the core does not reach such passes. The switch stays off; this module stays so that the run can be repeated.
+
 THE OWNER'S DECISION, 03.10.2026: driving in the work speed window near the
 edge of a field -- entries, exits, runs along the headland -- is not work,
 "не считать". The alpha of the area method (at least 10 m) bridges gaps up to
