@@ -199,6 +199,30 @@ PREVIOUS_METHOD_VERSION = "adaptive-alpha-2026-08-12"
 # force -- and the base it ran on stays readable.
 EDGE_RULE_VERSION = "edge-core-2026-10-09"
 
+# [REASON]: round 2 of the edge-of-field rule (gps/edge_scale.py, roadmap
+# 2.13), after round 1 was rejected by the data run of 10-11.10.2026. Its own
+# label, for the same reason as round 1's: a result computed with it names
+# the rule and the base method it trimmed.
+EDGE_SCALE_VERSION = "edge-scale-2026-10-11"
+EDGE_RULES = (EDGE_RULE_VERSION, EDGE_SCALE_VERSION)
+
+
+def edge_rule_version(edge_rule):
+    """The edge rule a switch value asks for: None (off) or its version.
+
+    [REASON]: `True` keeps meaning round 1 -- the run of 10-11.10.2026 and its
+    tests were made with it and must stay reproducible; round 2 is asked for by
+    its version. Any other value is a mistake, not "off": a typo in a version
+    would otherwise compute the method in force and label it as asked.
+    """
+    if edge_rule is None or edge_rule is False:
+        return None
+    if edge_rule is True:
+        return EDGE_RULE_VERSION
+    if edge_rule in EDGE_RULES:
+        return edge_rule
+    raise ValueError("unknown edge rule: %r" % (edge_rule,))
+
 
 def method_version(overflow_cap, alpha_m=None, edge_rule=False):
     """The version string of the method a computation with these switches ran.
@@ -211,7 +235,8 @@ def method_version(overflow_cap, alpha_m=None, edge_rule=False):
         base = "fixed-alpha-%gm" % alpha_m
     else:
         base = METHOD_VERSION if overflow_cap else PREVIOUS_METHOD_VERSION
-    return base + "+" + EDGE_RULE_VERSION if edge_rule else base
+    rule = edge_rule_version(edge_rule)
+    return base + "+" + rule if rule else base
 
 # [REASON]: the tracker writes at most every 30 s while moving (parameter
 # 10050) and transmits every 60 s (10055), so 5 minutes between two CONSECUTIVE
@@ -676,13 +701,16 @@ def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None,
     since 2026-10-07; False reproduces the previous method exactly, and the
     sites then carry PREVIOUS_METHOD_VERSION.
 
-    `edge_rule` -- the edge-of-field candidate (gps/edge.py, roadmap 2.12):
-    driving at work speed beside a field is taken out of today's shape before
-    the sites are cut. Off by default: the method in force is unchanged until
-    the owner adopts it, and a result with it carries EDGE_RULE_VERSION.
+    `edge_rule` -- an edge-of-field candidate: driving at work speed beside a
+    field is taken out of today's shape before the sites are cut. True or
+    EDGE_RULE_VERSION is round 1 (gps/edge.py, roadmap 2.12, rejected),
+    EDGE_SCALE_VERSION is round 2 (gps/edge_scale.py, roadmap 2.13). Off by
+    default: the method in force is unchanged until the owner adopts a rule,
+    and a result with one carries its version.
 
     Returns (sites, quality), sites ordered by area, largest first.
     """
+    rule = edge_rule_version(edge_rule)
     quality_full = track_quality([r[0] for r in track], [r[3] for r in track]) \
         if track else track_quality([0.0], [0.0])
     if not track:
@@ -705,10 +733,13 @@ def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None,
         spacing, alpha = None, alpha_m
 
     shape = alpha_shape(densify(points), alpha)
-    if shape is not None and edge_rule:
+    if shape is not None and rule == EDGE_RULE_VERSION:
         # imported here: gps.edge builds on this module's primitives
         from gps.edge import trim
         shape, _ = trim(points, shape, alpha, min_area_ha)
+    elif shape is not None and rule == EDGE_SCALE_VERSION:
+        from gps.edge_scale import trim as trim_scale
+        shape, _ = trim_scale(points, shape, alpha, spacing, min_area_ha)
     if shape is None:
         return [], quality
 
@@ -737,7 +768,7 @@ def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None,
                 if overlap > best:
                     best, contour_id = overlap, named[int(position)]
         sites.append(WorkArea(contour_id, area_ha, piece, quality, alpha, spacing,
-                              method_version(overflow_cap, alpha_m, edge_rule)))
+                              method_version(overflow_cap, alpha_m, rule)))
     sites.sort(key=lambda s: -s.area_ha)
     return sites, quality
 
