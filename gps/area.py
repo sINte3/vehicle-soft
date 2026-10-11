@@ -193,16 +193,25 @@ MIN_WORK_AREA_HA = 0.3
 METHOD_VERSION = "overflow-cap-2026-10-07"
 PREVIOUS_METHOD_VERSION = "adaptive-alpha-2026-08-12"
 
+# [REASON]: the edge-of-field rule (gps/edge.py, roadmap 2.12) is a candidate
+# behind a switch until the owner adopts it. A result computed with it carries
+# this label after the base method's, so it can never pass for the method in
+# force -- and the base it ran on stays readable.
+EDGE_RULE_VERSION = "edge-core-2026-10-09"
 
-def method_version(overflow_cap, alpha_m=None):
+
+def method_version(overflow_cap, alpha_m=None, edge_rule=False):
     """The version string of the method a computation with these switches ran.
 
     A pinned alpha is neither adaptive method -- no spacing is measured and the
-    cap never runs -- so its result is named by the alpha itself.
+    cap never runs -- so its result is named by the alpha itself. The edge
+    rule, when on, is named after the base method it trimmed.
     """
     if alpha_m is not None:
-        return "fixed-alpha-%gm" % alpha_m
-    return METHOD_VERSION if overflow_cap else PREVIOUS_METHOD_VERSION
+        base = "fixed-alpha-%gm" % alpha_m
+    else:
+        base = METHOD_VERSION if overflow_cap else PREVIOUS_METHOD_VERSION
+    return base + "+" + EDGE_RULE_VERSION if edge_rule else base
 
 # [REASON]: the tracker writes at most every 30 s while moving (parameter
 # 10050) and transmits every 60 s (10055), so 5 minutes between two CONSECUTIVE
@@ -644,7 +653,7 @@ def repair_polygon(polygon):
 
 
 def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None,
-               overflow_cap=True):
+               overflow_cap=True, edge_rule=False):
     """Every patch of ground worked in this interval -- geozone or not.
 
     This is the primary entry point, and it deliberately does NOT need a
@@ -666,6 +675,11 @@ def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None,
     `overflow_cap` -- the A7 rule (`pass_spacing_on_overflow`), the method
     since 2026-10-07; False reproduces the previous method exactly, and the
     sites then carry PREVIOUS_METHOD_VERSION.
+
+    `edge_rule` -- the edge-of-field candidate (gps/edge.py, roadmap 2.12):
+    driving at work speed beside a field is taken out of today's shape before
+    the sites are cut. Off by default: the method in force is unchanged until
+    the owner adopts it, and a result with it carries EDGE_RULE_VERSION.
 
     Returns (sites, quality), sites ordered by area, largest first.
     """
@@ -691,6 +705,10 @@ def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None,
         spacing, alpha = None, alpha_m
 
     shape = alpha_shape(densify(points), alpha)
+    if shape is not None and edge_rule:
+        # imported here: gps.edge builds on this module's primitives
+        from gps.edge import trim
+        shape, _ = trim(points, shape, alpha, min_area_ha)
     if shape is None:
         return [], quality
 
@@ -719,7 +737,7 @@ def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None,
                 if overlap > best:
                     best, contour_id = overlap, named[int(position)]
         sites.append(WorkArea(contour_id, area_ha, piece, quality, alpha, spacing,
-                              method_version(overflow_cap, alpha_m)))
+                              method_version(overflow_cap, alpha_m, edge_rule)))
     sites.sort(key=lambda s: -s.area_ha)
     return sites, quality
 
