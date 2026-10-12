@@ -22,20 +22,26 @@ group, day, machine, manual_ha, manual_note и два столбца гекта�
   Допуск -- зелёный В-2 из `gps.tolerance.verdict_for_ga` (тот же, что у
   экранов сверки): |GPS - ручной| <= max(10 %; 0,3 га), граница включительно.
 
-ВЕРДИКТ (условие 4 раздела 2.12)
+ВЕРДИКТ (условие 4 раздела 2.12; условие 3 раздела 2.13 -- то же)
   FAIL -- медиана |расхождения| у кандидата больше, чем у действующего
   метода, ИЛИ хоть одни сутки, бывшие у действующего метода в зелёном
   допуске, у кандидата ушли в недосчёт за ним. Иначе PASS.
+  --min-rows N: в счёт вошло меньше N суток -- NOT CHECKED (код 3), каким бы
+  ни вышло сравнение: так раздел 2.13 судит набор В-6 (не меньше 10 из 14).
+  --condition -- имя условия в строке вердикта (по умолчанию -- 2.12).
   Отчёт без вердикта: группы (S -- опрыскивание, P -- вспашка, O -- прочие
   почвенные работы) и критерий этапа 2 дорожной карты для обоих методов
   (медиана |расхождения| не больше 5 %, опрыскивание по сумме не хуже -5 %).
 
-КОД ВЫХОДА: 0 -- PASS, 4 -- FAIL, 2 -- неверный ввод (ничего не считалось).
+КОД ВЫХОДА: 0 -- PASS, 4 -- FAIL, 3 -- NOT CHECKED (мало строк в счёте),
+2 -- неверный ввод (ничего не считалось).
 
 Только stdlib и `gps.tolerance` (тоже stdlib): базу и точки не открывает,
 ничего не пишет. Вывод -- ASCII.
 
     python tools/gps_acceptance_compare.py --csv docs/gps_v5_acceptance_set_2026-10-09.csv
+
+    python tools/gps_acceptance_compare.py --csv docs/gps_v6_acceptance_set_2026-10-11.csv --candidate gps_ha_edge_scale --min-rows 10 --condition "roadmap 2.13, condition 3"
 """
 
 import argparse
@@ -56,7 +62,8 @@ GROUPS = (('S', 'spraying'), ('P', 'ploughing'), ('O', 'other soil work'))
 # набора В-5 и здесь только печатается рядом с вердиктом, не судит кандидата.
 STAGE2_MEDIAN_PCT = 5.0
 STAGE2_SPRAYING_PCT = -5.0
-PASS, FAIL = 'PASS', 'FAIL'
+PASS, FAIL, NOT_CHECKED = 'PASS', 'FAIL', 'NOT CHECKED'
+CONDITION = 'roadmap 2.12, condition 4'
 
 
 class BadInput(Exception):
@@ -145,7 +152,8 @@ def stage2(found, key, dev):
     return median, spray_pct, held
 
 
-def report(verdict, found, base, candidate, out):
+def report(verdict, found, base, candidate, out, condition=CONDITION,
+           min_rows=None):
     out('base %s, candidate %s; tolerance: gps.tolerance green band (B-2)'
         % (base, candidate))
     out('%3s %-2s %-10s %8s %8s %9s %8s %8s  %-5s %-5s'
@@ -179,13 +187,22 @@ def report(verdict, found, base, candidate, out):
                '-' if spray is None else '%+.1f%%' % spray,
                'met' if held else 'not met'))
     reasons = []
+    if min_rows is not None and len(found['rows']) < min_rows:
+        # [REASON]: предрегистрация 2.13 судит набор, а не горсть суток:
+        # меньше min_rows строк в счёте -- условие не проверено, и найденное
+        # выше печатается, но вердикта не даёт ни в одну сторону.
+        out('VERDICT (%s): %s -- %d counted row(s), at least %d are needed; the '
+            'comparison above is printed, not judged'
+            % (condition, NOT_CHECKED, len(found['rows']), min_rows))
+        return NOT_CHECKED
     if found['worse']:
         reasons.append('the median |deviation| grows')
     if found['fell']:
         reasons.append('%d machine-day(s) leave the green band into undercount'
                        % len(found['fell']))
-    out('VERDICT (roadmap 2.12, condition 4): %s%s'
-        % (verdict, ' -- ' + '; '.join(reasons) if reasons else ''))
+    out('VERDICT (%s): %s%s'
+        % (condition, verdict, ' -- ' + '; '.join(reasons) if reasons else ''))
+    return verdict
 
 
 def main(argv=None):
@@ -195,7 +212,14 @@ def main(argv=None):
                         help='column of the method in force')
     parser.add_argument('--candidate', default='gps_ha_edge',
                         help='column of the candidate')
+    parser.add_argument('--min-rows', type=int, default=None,
+                        help='fewer counted rows than this: NOT CHECKED')
+    parser.add_argument('--condition', default=CONDITION,
+                        help='the name of the condition in the verdict line')
     args = parser.parse_args(argv)
+    if args.min_rows is not None and args.min_rows < 1:
+        sys.stderr.write('ERROR: --min-rows must be at least 1\n')
+        return 2
     if not os.path.isfile(args.csv):
         sys.stderr.write('ERROR: not found: %s\n' % args.csv)
         return 2
@@ -208,8 +232,9 @@ def main(argv=None):
     if not found['rows']:
         sys.stderr.write('ERROR: no row with a hand measurement\n')
         return 2
-    report(verdict, found, args.base, args.candidate, print)
-    return 0 if verdict == PASS else 4
+    verdict = report(verdict, found, args.base, args.candidate, print,
+                     args.condition, args.min_rows)
+    return {PASS: 0, NOT_CHECKED: 3}.get(verdict, 4)
 
 
 if __name__ == '__main__':

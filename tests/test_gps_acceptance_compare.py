@@ -22,6 +22,10 @@
 
 5. **Неверный ввод -- код 2**, ничего не считалось.
 
+6. **Мало строк в счёте -- не проверено** (раздел 2.13: набор В-6 судится,
+   только если в счёт вошло не меньше 10 суток из 14): ни FAIL, ни PASS не
+   выносятся, код 3; с достаточным числом строк вердикт прежний.
+
 Запуск:
   python -m unittest tests.test_gps_acceptance_compare -v
 """
@@ -195,6 +199,46 @@ class Refusals(Base):
             self.assertEqual(code, 2, (argv, out, err))
             self.assertIn(word, err, argv)
             self.assertEqual(out, '', argv)
+
+
+
+class MinRows(Base):
+
+    FAILING = [['1', 'S', '2026-09-01', 'M', '3.100', '2.600', '3.000', ''],
+               ['2', 'P', '2026-09-02', 'M', '5.000', '1.000', '1.000', ''],
+               ['3', 'O', '2026-09-03', 'M', '9.000', '0.100', '',
+                'Полевые работы не проводились']]
+
+    def test_fewer_counted_rows_than_asked_is_not_checked(self):
+        path = self.write(self.FAILING)
+        code, out, _err = run('--csv', path, '--min-rows', '3', '--condition',
+                              'roadmap 2.13, condition 3')
+        self.assertEqual(code, 3, out)
+        self.assertIn('VERDICT (roadmap 2.13, condition 3): NOT CHECKED -- 2 counted '
+                      'row(s), at least 3 are needed', out)
+        # the comparison itself is still printed
+        self.assertIn('candidate: n=1\n', out)
+        # control: the same file judged without the minimum fails
+        code, out, _err = run('--csv', path)
+        self.assertEqual(code, 4, out)
+        self.assertIn('VERDICT (roadmap 2.12, condition 4): FAIL', out)
+
+    def test_enough_rows_are_judged_as_before(self):
+        path = self.write(self.FAILING)
+        code, out, _err = run('--csv', path, '--min-rows', '2')
+        self.assertEqual(code, 4, out)
+        self.assertIn('VERDICT (roadmap 2.12, condition 4): FAIL', out)
+        passing = self.write([['1', 'P', '2026-09-01', 'M', '1.000', '1.000', '1.000',
+                               ''],
+                              ['2', 'P', '2026-09-02', 'M', '2.000', '2.000', '2.000',
+                               '']], name='passing.csv')
+        code, out, _err = run('--csv', passing, '--min-rows', '2')
+        self.assertEqual(code, 0, out)
+
+    def test_a_minimum_below_one_is_refused(self):
+        code, out, err = run('--csv', self.write(self.FAILING), '--min-rows', '0')
+        self.assertEqual(code, 2, out + err)
+        self.assertIn('--min-rows must be at least 1', err)
 
 
 if __name__ == '__main__':

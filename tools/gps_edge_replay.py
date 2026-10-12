@@ -572,8 +572,12 @@ def print_record(record, out, indent='  '):
 
 # --- часть 1: набор В-5 ----------------------------------------------------------
 
-def load_v5(path):
-    """Строки набора В-5. Неверный файл -- BadInput (код 2), ничего не считалось."""
+def load_v5(path, label='V-5'):
+    """Строки набора В-5. Неверный файл -- BadInput (код 2), ничего не считалось.
+
+    `label` -- имя набора в сообщении об ошибке: тем же чтением второй круг
+    читает набор В-6 (`tools/gps_edge_scale_replay.py`), столбцы те же.
+    """
     with open(path, encoding='utf-8-sig', newline='') as handle:
         reader = csv.DictReader(handle)
         absent = [name for name in V5_COLUMNS
@@ -590,8 +594,8 @@ def load_v5(path):
                         'machine': (row['machine'] or '').strip(),
                         'gps_ha_a7': float(row['gps_ha_a7'])}
             except (AttributeError, KeyError, TypeError, ValueError):
-                raise BadInput('%s line %d is not a V-5 row'
-                               % (console(os.path.basename(path)), line))
+                raise BadInput('%s line %d is not a %s row'
+                               % (console(os.path.basename(path)), line, label))
             if not search_key(item['machine']):
                 raise BadInput('%s line %d has no machine'
                                % (console(os.path.basename(path)), line))

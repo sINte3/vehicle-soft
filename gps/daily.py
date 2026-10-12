@@ -244,8 +244,10 @@ def compute_day(points, contours=None, track_only=False, overflow_cap=True,
     `overflow_cap` -- the A7 spacing rule (`gps.area.pass_spacing_on_overflow`),
     the method since 2026-10-07. False reproduces the previous method, and
     the row then says so: its `method_version` is PREVIOUS_METHOD_VERSION.
-    `edge_rule` -- the edge-of-field candidate (gps/edge.py, roadmap 2.12);
-    off unless asked, and the row then names it after the base method.
+    `edge_rule` -- an edge-of-field candidate, passed to `work_sites`: True --
+    round 1 (gps/edge.py, roadmap 2.12, rejected), EDGE_SCALE_VERSION --
+    round 2 (gps/edge_scale.py, roadmap 2.13); off unless asked, and the row
+    then names it after the base method.
     """
     aggregate = {"points_total": len(points), "points_work": 0, "track_km": 0.0,
                  "interval_median_s": None, "sats_median": None,
