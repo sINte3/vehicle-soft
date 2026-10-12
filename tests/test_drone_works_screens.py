@@ -1010,9 +1010,14 @@ class DroneNavStripTests(unittest.TestCase):
             [label.strip() for _href, label in self._strip()],
             # DRONE-AREA-CONTROL-V2-MEGA: «Контроль площади DJI» -- прямой
             # пункт перед «Отчётами»; «Отчёты» по-прежнему последние.
+            # FIN-RECON-STORAGE-001: «Финансовая сверка» -- тоже перед
+            # «Отчётами», и только потому, что этот клиент -- администратор:
+            # пользователь с правом модуля «Дроны» без роли администратора её
+            # не видит (tests/test_fin_recon_screen.py,
+            # test_nav_link_only_for_admin). Прежние девять не тронуты.
             ['Сводка', 'Вылеты', 'Машины', 'Операторы', 'Работы',
              'Полезная площадь', 'Заказчики', 'Контроль площади DJI',
-             'Отчёты'])
+             'Финансовая сверка', 'Отчёты'])
 
     def test_istochniki_left_the_strip_but_not_the_application(self):
         hrefs = [href for href, _label in self._strip()]
@@ -1970,12 +1975,16 @@ class DroneNumberPlacementTests(unittest.TestCase):
     # DJI-AREA-ACCEPTED-PROPAGATION-001 added the partial _accepted.html.
     # DRONE-FIELD-PASSPORT-001 added field.html, fields.html and
     # flight_passport.html.
+    # FIN-RECON-STORAGE-001 added fin_recon_period.html and
+    # fin_recon_periods.html.
     TEMPLATES = ('_accepted.html', '_dji_refresh.html', '_drones_nav.html',
                  '_money_cell.html',
                  '_period.html', 'area_control.html', 'area_decision.html',
                  'area_evidence.html',
                  'coverage.html', 'customers.html', 'field.html',
-                 'fields.html', 'flight_calendar.html', 'flight_passport.html',
+                 'fields.html', 'fin_recon_period.html',
+                 'fin_recon_periods.html',
+                 'flight_calendar.html', 'flight_passport.html',
                  'health.html', 'list.html',
                  'operator_card.html', 'operator_cash.html',
                  'operators.html', 'reattach.html', 'reports.html',
@@ -2189,12 +2198,24 @@ class DroneNumberPlacementTests(unittest.TestCase):
         #   the provisional RAW and count). The passport carries none: its
         #   hectares of one flight print four decimals, and its identifiers,
         #   hashes and percentages are never grouped.
+        #   FIN-RECON-STORAGE-001 brought fin_recon_period.html 21: the
+        #   ONE call inside the fr_value() macro (every metric, accrual,
+        #   payout and difference cell goes through it), the ten DJI
+        #   figures (flights, RAW, accepted, excluded and its two parts,
+        #   open cases, V4, unattributed hectares and flights), the five
+        #   per-operator hectare figures, the recognized total, the work,
+        #   link and candidate hectares, and the source file size. Snapshot
+        #   row counts, anomaly and work ids, sheet row numbers, months,
+        #   versions and hashes carry none -- identifiers and periods, and
+        #   counts of a few dozen rows that never reach five digits.
+        #   fin_recon_periods.html carries none for the same reason.
         expected = {
             '_accepted.html': 15,
             '_money_cell.html': 1, 'area_control.html': 25,
             'area_evidence.html': 28,
             'coverage.html': 9,
             'customers.html': 2, 'field.html': 6, 'fields.html': 13,
+            'fin_recon_period.html': 21,
             'flight_calendar.html': 3,
             'health.html': 11, 'list.html': 3,
             'operator_cash.html': 19,
@@ -2209,7 +2230,7 @@ class DroneNumberPlacementTests(unittest.TestCase):
                   for name in self.TEMPLATES
                   if '|vs_num' in self.source(name)}
         self.assertEqual(actual, expected)
-        self.assertEqual(sum(actual.values()), 359)
+        self.assertEqual(sum(actual.values()), 380)
 
 
 class DroneUiFixUzbekTests(unittest.TestCase):

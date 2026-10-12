@@ -1,0 +1,451 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Финансовая сверка' if is_ru else 'Молиявий солиштирув' }} {{ v.meta.period }} v{{ v.meta.version }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+{# FIN-RECON-STORAGE-001. Неизменяемый снимок финансовой сверки одного
+   месяца книги. Всё -- из строк снимка (fin_recon/store.load_snapshot), без
+   пересчёта; у каждой суммы рядом её доказательный тип. Неизвестное --
+   словом «неизвестно», никогда не 0. Кнопок «утвердить» и «закрыть» нет:
+   этого решения в программе нет. #}
+
+{% macro fr_value(c) -%}
+{%- if c.unknown -%}
+<span class="vs-badge vs-badge-sm vs-badge-warning">{{ c.unknown_text }}</span>
+{%- else -%}
+{{ c.value|vs_num }}{% if c.unit %} {{ c.unit }}{% endif %} <span class="vs-badge vs-badge-sm {{ c.badge }}">{{ c.evidence_label }}</span>
+{%- endif -%}
+{%- endmacro %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Финансовая сверка' if is_ru else 'Молиявий солиштирув' }}: {{ v.meta.period }} · v{{ v.meta.version }}</div>
+    <div class="vs-hero-sub">{{ v.header.title }}</div>
+  </div>
+</div>
+
+<div class="vs-alert is-warning vs-mb" role="status">
+  <div>
+    <span class="vs-badge vs-badge-warning">{{ v.status.status_label }}</span>
+    <span class="vs-badge vs-badge-danger">{{ v.status.not_approved_label }}</span>
+    <span class="vs-badge vs-badge-danger">{{ v.status.not_closed_label }}</span>
+    <div class="vs-mt-sm">{{ v.header.status_note }}</div>
+    <div class="vs-mt-sm">{{ 'Утверждено владельцем' if is_ru else 'Эгаси тасдиқлаган' }}: <b>{{ v.status.owner_approved_at or ('не утверждено' if is_ru else 'тасдиқланмаган') }}</b>; {{ 'финансово закрыто' if is_ru else 'молиявий ёпилган' }}: <b>{{ v.status.financially_closed_at or ('не закрыто' if is_ru else 'ёпилмаган') }}</b>. {{ 'Утвердить или закрыть месяц в программе нельзя: такой функции нет, это отдельное решение владельца.' if is_ru else 'Дастурда ойни тасдиқлаш ёки ёпиш мумкин эмас: бундай функция йўқ, бу эгасининг алоҳида қарори.' }}</div>
+  </div>
+</div>
+
+{% if not v.seal %}
+<div class="vs-alert is-danger vs-mb" role="alert">
+  <div>{{ 'У снимка нет печати: он загружен не полностью. Цифрам этой страницы доверять нельзя.' if is_ru else 'Суратда муҳр йўқ: у тўлиқ юкланмаган. Бу саҳифа рақамларига ишониб бўлмайди.' }}</div>
+</div>
+{% endif %}
+
+<nav class="vs-pills vs-modulenav vs-mb" aria-label="{{ 'Разделы снимка' if is_ru else 'Сурат бўлимлари' }}">
+  <a class="vs-pill" href="#totals">{{ 'Итоги' if is_ru else 'Якунлар' }}</a>
+  <a class="vs-pill" href="#operators">{{ 'Операторы' if is_ru else 'Операторлар' }} ({{ v.counts.operators }})</a>
+  <a class="vs-pill" href="#works">{{ 'Работы' if is_ru else 'Ишлар' }} ({{ v.counts.works }})</a>
+  <a class="vs-pill" href="#anomalies">{{ 'Аномалии' if is_ru else 'Аномалиялар' }} ({{ v.counts.anomalies }})</a>
+  <a class="vs-pill" href="#sources">{{ 'Источники и решения' if is_ru else 'Манбалар ва қарорлар' }}</a>
+  <a class="vs-pill" href="#cross">{{ 'Переходящие работы' if is_ru else 'Ойлараро ишлар' }} ({{ v.counts.links }})</a>
+  <a class="vs-pill" href="{{ url_for('drones.fin_recon_export', period=v.meta.period, version=v.meta.version) }}">{{ 'Выгрузка XLSX (не источник истины)' if is_ru else 'XLSX кўчирма (ҳақиқат манбаи эмас)' }}</a>
+</nav>
+
+{# ── Итоги ─────────────────────────────────────────────────────────── #}
+<h2 id="totals" class="vs-card-title vs-mb">{{ 'Итоги' if is_ru else 'Якунлар' }}</h2>
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Открытые хозяйственные вопросы' if is_ru else 'Очиқ хўжалик саволлари' }} ({{ v.open_questions|length }})</span>
+  </div>
+  <div class="vs-card-body">
+    <p class="vs-muted">{{ 'Аномалии со статусом «ОТКРЫТО». Технический «0 открытых случаев DJI» их не закрывает: это вопросы книг и денег, а не площади.' if is_ru else '«ОТКРЫТО» ҳолатидаги аномалиялар. DJI бўйича техник «0 очиқ ҳолат» уларни ёпмайди: бу майдон эмас, китоб ва пул саволлари.' }}</p>
+    {% for a in v.open_questions %}
+    <div class="vs-def-item vs-mb-sm">
+      <div class="vs-def-label">{{ a.id }} · {{ a.priority }} · {{ a.group or '' }}</div>
+      <div><b>{{ a.finding }}</b></div>
+      <div class="vs-mt-sm">{{ a.rule }}</div>
+      {% if a.operator_names %}<div class="vs-muted vs-mt-sm">{{ 'Операторы' if is_ru else 'Операторлар' }}: {{ a.operator_names|join(', ') }}</div>{% endif %}
+    </div>
+    {% else %}
+    <div class="vs-muted">{{ 'Открытых вопросов в снимке нет.' if is_ru else 'Суратда очиқ саволлар йўқ.' }}</div>
+    {% endfor %}
+  </div>
+</div>
+
+{% for g in v.metric_groups %}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ g.title }}</span>
+  </div>
+  <div class="vs-table-scroll">
+  <table class="vs-table is-static">
+    <thead>
+      <tr>
+        <th>{{ 'Показатель' if is_ru else 'Кўрсаткич' }}</th>
+        <th class="right">{{ 'Значение и доказательный тип' if is_ru else 'Қиймат ва далил тури' }}</th>
+        <th>{{ 'Проверено импортом' if is_ru else 'Импортда текширилган' }}</th>
+        <th>{{ 'Граница доказательности' if is_ru else 'Далил чегараси' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in g.rows %}
+      <tr>
+        <td>{{ r.label }}</td>
+        <td class="right">{{ fr_value(r.cell) }}</td>
+        <td>{% if r.checked %}{{ 'пересчитано по строкам' if is_ru else 'сатрлар бўйича қайта ҳисобланган' }}{% elif r.identity %}{{ 'тождество с другими показателями' if is_ru else 'бошқа кўрсаткичлар билан айният' }}{% else %}<span class="vs-muted">{{ 'объявлено снимком' if is_ru else 'сурат эълон қилган' }}</span>{% endif %}</td>
+        <td class="vs-muted">{{ r.note or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endfor %}
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-header"><span class="vs-card-title">{{ 'DJI: технический снимок, не основание начисления' if is_ru else 'DJI: техник сурат, ҳисоблаш асоси эмас' }}</span></div>
+  <div class="vs-card-body">
+    <div class="vs-alert is-info vs-mb-sm" role="note"><div>{{ v.dji.accepted_caveat }}</div></div>
+    <div class="vs-def-grid">
+      <div class="vs-def-item"><div class="vs-def-label">{{ 'Период DJI' if is_ru else 'DJI даври' }}</div><div>{{ v.dji.period_from }} — {{ v.dji.period_to }}</div></div>
+      <div class="vs-def-item"><div class="vs-def-label">{{ 'Снимок DJI сделан' if is_ru else 'DJI сурати олинган' }}</div><div>{{ v.dji.captured_at }}</div></div>
+      <div class="vs-def-item"><div class="vs-def-label">{{ 'Вылетов' if is_ru else 'Парвозлар' }}</div><div>{{ v.dji.flights|vs_num }}</div></div>
+      <div class="vs-def-item"><div class="vs-def-label">DJI RAW, {{ 'га' if is_ru else 'га' }}</div><div>{{ v.dji.raw_ha|vs_num }}</div></div>
+      <div class="vs-def-item"><div class="vs-def-label">{{ 'Принято (технически), га' if is_ru else 'Қабул қилинган (техник), га' }}</div><div>{{ v.dji.accepted_ha|vs_num }}</div></div>
+      <div class="vs-def-item"><div class="vs-def-label">{{ 'Исключено, га' if is_ru else 'Чиқарилган, га' }}</div><div>{{ v.dji.excluded_ha|vs_num }} ({{ 'автоматически' if is_ru else 'автоматик' }} {{ v.dji.excluded_auto_ha|vs_num }}, {{ 'решениями администратора' if is_ru else 'администратор қарорлари билан' }} {{ v.dji.excluded_admin_ha|vs_num }})</div></div>
+      <div class="vs-def-item"><div class="vs-def-label">{{ 'Открытых технических случаев' if is_ru else 'Очиқ техник ҳолатлар' }}</div><div>{{ v.dji.open_review|vs_num }} / V4: {{ v.dji.pending_v4|vs_num }}</div></div>
+      <div class="vs-def-item"><div class="vs-def-label">{{ 'Без однозначного оператора, га' if is_ru else 'Аниқ операторсиз, га' }}</div><div>{{ v.dji.unattributed_ha|vs_num if v.dji.unattributed_ha is not none else '—' }} ({{ v.dji.unattributed_flights|vs_num }} {{ 'вылетов' if is_ru else 'парвоз' }})</div></div>
+      <div class="vs-def-item is-full"><div class="vs-def-label">{{ 'Смысл чисел' if is_ru else 'Рақамлар маъноси' }}</div><div>{{ v.dji.semantics_note }}</div></div>
+      {% if v.dji.note %}<div class="vs-def-item is-full"><div class="vs-def-label">{{ 'Происхождение' if is_ru else 'Келиб чиқиши' }}</div><div>{{ v.dji.note }}</div></div>{% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-header"><span class="vs-card-title">{{ 'Границы доказательности' if is_ru else 'Далил чегаралари' }}</span></div>
+  <div class="vs-card-body">
+    <ul>
+      {% for b in v.header.evidence_boundaries %}<li>{{ b }}</li>{% endfor %}
+    </ul>
+    <div class="vs-muted">{{ v.header.money_rounding }}</div>
+  </div>
+</div>
+
+{# ── Операторы ─────────────────────────────────────────────────────── #}
+<h2 id="operators" class="vs-card-title vs-mb">{{ 'Операторы' if is_ru else 'Операторлар' }} ({{ v.counts.operators }})</h2>
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-table-scroll">
+  <table class="vs-table is-static">
+    <thead>
+      <tr>
+        <th>{{ 'Оператор' if is_ru else 'Оператор' }}</th>
+        <th class="right">{{ 'Га в книге' if is_ru else 'Китобда га' }}</th>
+        <th>{{ 'Из них по месяцам' if is_ru else 'Шундан ойлар бўйича' }}</th>
+        <th class="right">{{ 'Начислено' if is_ru else 'Ҳисобланган' }}</th>
+        <th>{{ 'Записи о выдаче' if is_ru else 'Бериш ёзувлари' }}</th>
+        <th class="right">{{ 'Всего признано' if is_ru else 'Жами тан олинган' }}</th>
+        <th class="right">{{ 'Разница (не долг)' if is_ru else 'Фарқ (қарз эмас)' }}</th>
+        <th>{{ 'Основание и ограничения' if is_ru else 'Асос ва чекловлар' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for o in v.operators %}
+      <tr>
+        <td><b>{{ o.key }}</b> {{ o.name }}<div class="vs-muted">{{ o.organization or '' }}</div></td>
+        <td class="right">{{ o.area_total|vs_num }}</td>
+        <td>
+          {% if o.area_spravka %}<div>{{ v.meta.period }} {{ 'справка' if is_ru else 'справка' }}: {{ o.area_spravka|vs_num }}</div>{% endif %}
+          {% if o.area_cash %}<div>{{ v.meta.period }} {{ 'нақд' if is_ru else 'нақд' }}: {{ o.area_cash|vs_num }}</div>{% endif %}
+          {% for part in o.area_other %}<div><span class="vs-badge vs-badge-sm vs-badge-warning">{{ part.work_month }}</span> {{ part.area_ha|vs_num }}</div>{% endfor %}
+          {% if o.unknown_salary_area %}<div class="vs-mt-sm"><span class="vs-badge vs-badge-sm vs-badge-warning">{{ 'зарплата неизвестна' if is_ru else 'иш ҳақи номаълум' }}</span> {{ o.unknown_salary_area|vs_num }} {{ 'га без начисления' if is_ru else 'га ҳисобланмаган' }}</div>{% endif %}
+        </td>
+        <td class="right">{{ fr_value(o.accrued) }}{% if o.accrued_source_value and o.accrued_source_value != o.accrued.value %}<div class="vs-muted">{{ 'в ячейке книги' if is_ru else 'китоб катагида' }}: {{ o.accrued_source_value }}</div>{% endif %}</td>
+        <td>
+          {% for p in o.payouts %}
+          <div class="vs-mb-sm">
+            {{ fr_value(p.cell) }}
+            <div class="vs-muted">{{ p.kind_label }}{% if p.record_date %}, {{ 'дата записи' if is_ru else 'ёзув санаси' }} {{ p.record_date }}{% else %}, {{ 'дата выдачи не указана' if is_ru else 'бериш санаси кўрсатилмаган' }}{% endif %}{% if p.decision %}, {{ 'решение' if is_ru else 'қарор' }} {{ p.decision }}{% endif %}</div>
+            {% if p.text %}<div class="vs-muted">«{{ p.text }}»</div>{% endif %}
+          </div>
+          {% else %}
+          <span class="vs-badge vs-badge-sm vs-badge-warning">{{ 'записи о выдаче нет' if is_ru else 'бериш ёзуви йўқ' }}</span>
+          {% endfor %}
+        </td>
+        <td class="right">{{ o.recognized_total|vs_num }}</td>
+        <td class="right">{{ fr_value(o.difference) }}</td>
+        <td>{{ o.basis }}{% if o.limitations %}<div class="vs-muted">{{ o.limitations }}</div>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+{# ── Работы ────────────────────────────────────────────────────────── #}
+<h2 id="works" class="vs-card-title vs-mb">{{ 'Работы' if is_ru else 'Ишлар' }} ({{ v.counts.works }})</h2>
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-table-scroll">
+  <table class="vs-table is-static">
+    <thead>
+      <tr>
+        <th>{{ 'Работа' if is_ru else 'Иш' }}</th>
+        <th>{{ 'Оператор и хозяйство' if is_ru else 'Оператор ва хўжалик' }}</th>
+        <th class="right">{{ 'Га (книга)' if is_ru else 'Га (китоб)' }}</th>
+        <th>{{ 'Дата в книге' if is_ru else 'Китобдаги сана' }}</th>
+        <th>{{ 'Месяц работы / книги' if is_ru else 'Иш / китоб ойи' }}</th>
+        <th>{{ 'Зарплата' if is_ru else 'Иш ҳақи' }}</th>
+        <th>Vehicle Soft</th>
+        <th>{{ 'Источник' if is_ru else 'Манба' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for w in v.works %}
+      <tr>
+        <td><b>{{ w.key }}</b>{% if w.anomalies %}<div class="vs-muted">{{ w.anomalies|join(', ') }}</div>{% endif %}</td>
+        <td>{{ w.operator }} {{ w.operator_name }}<div class="vs-muted">{{ w.farm or '' }}</div><div class="vs-muted">{{ w.block_label }}</div></td>
+        <td class="right">{{ w.area_ha|vs_num }}<div class="vs-muted">{{ w.area_evidence_label }}</div></td>
+        <td>{{ w.date_text or '—' }}<div class="vs-muted">{{ w.work_dates|join(', ') }}</div></td>
+        <td>{% if w.other_month %}<span class="vs-badge vs-badge-sm vs-badge-warning">{{ w.work_month }}</span>{% else %}{{ w.work_month or '—' }}{% endif %} / {{ w.ledger_month }}</td>
+        <td>{% if w.salary_unknown %}<span class="vs-badge vs-badge-sm vs-badge-warning">{{ w.salary_label }}</span>{% else %}<span class="vs-muted">{{ w.salary_label }}</span>{% endif %}</td>
+        <td>{% if w.vs_label %}<span class="vs-badge vs-badge-sm {{ w.vs_badge }}">{{ w.vs_label }}</span>{% if w.vs_db_rows == 0 %} <span class="vs-badge vs-badge-sm vs-badge-warning">{{ 'нет в базе' if is_ru else 'базада йўқ' }}</span>{% endif %}{% if w.vs_note %}<div class="vs-muted">{{ w.vs_note }}</div>{% endif %}{% else %}—{% endif %}</td>
+        <td class="vs-muted">{{ w.source_name }} · {{ w.sheet }} · {{ 'строка' if is_ru else 'сатр' }} {{ w.row }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+{# ── Аномалии ──────────────────────────────────────────────────────── #}
+<h2 id="anomalies" class="vs-card-title vs-mb">{{ 'Аномалии' if is_ru else 'Аномалиялар' }} ({{ v.counts.anomalies }})</h2>
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-table-scroll">
+  <table class="vs-table is-static">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>{{ 'Статус' if is_ru else 'Ҳолат' }}</th>
+        <th>{{ 'Находка' if is_ru else 'Топилма' }}</th>
+        <th>{{ 'Как учитываем' if is_ru else 'Қандай ҳисобга оламиз' }}</th>
+        <th>{{ 'Операторы' if is_ru else 'Операторлар' }}</th>
+        <th>{{ 'Адрес-основание' if is_ru else 'Асос манзили' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in v.anomalies %}
+      <tr>
+        <td><b>{{ a.id }}</b> {{ a.priority }}</td>
+        <td><span class="vs-badge vs-badge-sm {{ a.badge }}">{{ a.status }}</span><div class="vs-muted">{{ a.group or '' }}</div></td>
+        <td>{{ a.finding }}</td>
+        <td>{{ a.rule }}</td>
+        <td>{{ a.operators|join(', ') }}</td>
+        <td class="vs-muted">{{ a.source_address or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+{# ── Источники и решения ───────────────────────────────────────────── #}
+<h2 id="sources" class="vs-card-title vs-mb">{{ 'Источники и решения' if is_ru else 'Манбалар ва қарорлар' }}</h2>
+
+{% for d in v.decisions %}
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ d.key }} · {{ d.topic }}</span>
+    <span class="vs-badge vs-badge-sm {{ 'vs-badge-purple' if d.kind == 'OWNER_DECISION' else 'vs-badge-info' }}">{{ d.kind_label }}</span>
+  </div>
+  <div class="vs-card-body">
+    <div>{{ d.rule }}</div>
+    {% if d.confirmation or d.decided_on %}<div class="vs-muted vs-mt-sm">{{ d.confirmation or '' }}{% if d.decided_on %} · {{ d.decided_on }}{% endif %}</div>{% endif %}
+    {% for val in d.typed_values %}
+    <div class="vs-mt-sm">{{ val.label }}: {{ fr_value(val.cell) }}{% if val.note %} <span class="vs-muted">— {{ val.note }}</span>{% endif %}</div>
+    {% endfor %}
+    {% if d.anomalies %}<div class="vs-muted vs-mt-sm">{{ 'Аномалии' if is_ru else 'Аномалиялар' }}: {{ d.anomalies|join(', ') }}</div>{% endif %}
+    {% if d.detail %}
+    <details class="vs-mt-sm">
+      <summary>{{ 'Полный текст решения' if is_ru else 'Қарорнинг тўлиқ матни' }}</summary>
+      {% for line in d.detail_lines %}<div class="vs-mt-xxs">{{ line }}</div>{% endfor %}
+    </details>
+    {% endif %}
+  </div>
+</div>
+{% endfor %}
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Административные решения DJI (технические, не аномалии книг)' if is_ru else 'DJI администратор қарорлари (техник, китоб аномалиялари эмас)' }} ({{ v.dji.decisions|length }})</span>
+  </div>
+  <div class="vs-table-scroll">
+  <table class="vs-table is-static">
+    <thead>
+      <tr>
+        <th>{{ 'Дата вылета' if is_ru else 'Парвоз санаси' }}</th>
+        <th>{{ 'Дрон' if is_ru else 'Дрон' }}</th>
+        <th>DJI Flight ID</th>
+        <th class="right">RAW, {{ 'га' if is_ru else 'га' }}</th>
+        <th>{{ 'Действие' if is_ru else 'Ҳаракат' }}</th>
+        <th class="right">{{ 'Принято после, га' if is_ru else 'Кейин қабул қилинган, га' }}</th>
+        <th>{{ 'Комментарий' if is_ru else 'Изоҳ' }}</th>
+        <th>{{ 'Когда, кто' if is_ru else 'Қачон, ким' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for x in v.dji.decisions %}
+      <tr>
+        <td>{{ x.flight_date }}</td><td>{{ x.drone }}</td><td class="vs-mono">{{ x.flight_id }}</td>
+        <td class="right">{{ x.raw_ha }}</td><td>{{ x.action }}</td>
+        <td class="right">{{ x.accepted_after_ha }}</td><td>{{ x.comment or '' }}</td>
+        <td class="vs-muted">{{ x.decided_at }}, {{ x.decided_by }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+{% if v.vs %}
+<div class="vs-card vs-mb">
+  <div class="vs-card-header"><span class="vs-card-title">{{ 'Сверка с копией Vehicle Soft' if is_ru else 'Vehicle Soft нусхаси билан солиштирув' }}</span></div>
+  <div class="vs-card-body">
+    <div class="vs-def-grid">
+      <div class="vs-def-item"><div class="vs-def-label">{{ 'Копия базы' if is_ru else 'База нусхаси' }}</div><div>{{ v.vs.db_copy_label }}</div></div>
+      <div class="vs-def-item"><div class="vs-def-label">{{ 'Сравнено' if is_ru else 'Солиштирилган' }}</div><div>{{ v.vs.compared_at }}</div></div>
+      <div class="vs-def-item"><div class="vs-def-label">{{ 'Строк книг / в базе' if is_ru else 'Китоб / базадаги сатрлар' }}</div><div>{{ v.vs.register_rows }} / {{ v.vs.db_rows }}</div></div>
+      <div class="vs-def-item"><div class="vs-def-label">{{ 'Совпало / ожидаемо / неожиданно / нет в базе' if is_ru else 'Мос / кутилган / кутилмаган / базада йўқ' }}</div><div>{{ v.vs.equal }} / {{ v.vs.expected_only }} / {{ v.vs.unexpected }} / {{ v.vs.missing_in_db }}</div></div>
+      <div class="vs-def-item is-full"><div class="vs-def-label">SHA-256</div><div class="vs-mono">{{ 'база' if is_ru else 'база' }} {{ v.vs.db_copy_sha256 }} · extract_log {{ v.vs.extract_log_sha256 }}</div></div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Источники снимка и их SHA-256' if is_ru else 'Сурат манбалари ва уларнинг SHA-256' }} ({{ v.sources|length }})</span>
+  </div>
+  <div class="vs-table-scroll">
+  <table class="vs-table is-static">
+    <thead>
+      <tr>
+        <th>{{ 'Ключ' if is_ru else 'Калит' }}</th>
+        <th>{{ 'Роль' if is_ru else 'Вазифа' }}</th>
+        <th>{{ 'Файл' if is_ru else 'Файл' }}</th>
+        <th>SHA-256</th>
+        <th class="right">{{ 'Байт' if is_ru else 'Байт' }}</th>
+        <th>{{ 'В приватном пакете' if is_ru else 'Ёпиқ пакетда' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in v.sources %}
+      <tr>
+        <td>{{ s.key }}</td>
+        <td>{{ s.role_label }}</td>
+        <td>{{ s.name }}{% if s.member %}<div class="vs-muted">{{ 'внутри' if is_ru else 'ичида' }} {{ s.container }}: {{ s.member }}</div>{% endif %}{% if s.note %}<div class="vs-muted">{{ s.note }}</div>{% endif %}</td>
+        <td class="vs-mono">{% if s.sha256 %}{{ s.sha256 }}{% else %}<span class="vs-badge vs-badge-sm vs-badge-warning">{{ 'хеш не вычислен' if is_ru else 'хеш ҳисобланмаган' }}</span>{% endif %}</td>
+        <td class="right">{{ s.bytes|vs_num if s.bytes is not none else '—' }}</td>
+        <td>{% if s.external %}<span class="vs-badge vs-badge-sm vs-badge-warning">{{ 'у владельца, вне пакета' if is_ru else 'эгасида, пакетдан ташқари' }}</span>{% elif s.in_package %}{{ 'да' if is_ru else 'ҳа' }}{% else %}{{ 'внутри архива' if is_ru else 'архив ичида' }}{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-header"><span class="vs-card-title">{{ 'Версия снимка и происхождение' if is_ru else 'Сурат версияси ва келиб чиқиши' }}</span></div>
+  <div class="vs-card-body">
+    <div class="vs-def-grid">
+      <div class="vs-def-item"><div class="vs-def-label">{{ 'Месяц книги, версия' if is_ru else 'Китоб ойи, версия' }}</div><div>{{ v.meta.period }} · v{{ v.meta.version }}{% if v.meta.supersedes_id %} ({{ 'заменяет' if is_ru else 'алмаштиради' }} v{{ v.meta.version - 1 }}){% endif %}</div></div>
+      <div class="vs-def-item"><div class="vs-def-label">{{ 'Реестр составлен' if is_ru else 'Реестр тузилган' }}</div><div>{{ v.meta.compiled_at }}</div></div>
+      <div class="vs-def-item"><div class="vs-def-label">{{ 'Загружен в программу (UTC)' if is_ru else 'Дастурга юкланган (UTC)' }}</div><div>{{ v.meta.imported_at }} · {{ v.meta.imported_by }}</div></div>
+      <div class="vs-def-item is-full"><div class="vs-def-label">{{ 'SHA-256 содержимого снимка' if is_ru else 'Сурат мазмунининг SHA-256' }}</div><div class="vs-mono">{{ v.meta.content_sha256 }}</div></div>
+      <div class="vs-def-item is-full"><div class="vs-def-label">{{ 'SHA-256 файлов пакета' if is_ru else 'Пакет файлларининг SHA-256' }}</div><div class="vs-mono">snapshot.json {{ v.meta.snapshot_file_sha256 }} · manifest.json {{ v.meta.manifest_sha256 }}</div></div>
+      <div class="vs-def-item"><div class="vs-def-label">{{ 'Приватный пакет' if is_ru else 'Ёпиқ пакет' }}</div><div>{{ v.meta.package_id }}</div></div>
+      <div class="vs-def-item"><div class="vs-def-label">{{ 'Схема и нормализация' if is_ru else 'Схема ва нормаллаштириш' }}</div><div>{{ v.meta.schema_version }} · {{ v.meta.normalization_version }}</div></div>
+      <div class="vs-def-item"><div class="vs-def-label">{{ 'Печать' if is_ru else 'Муҳр' }}</div><div>{% if v.seal %}{{ v.seal.sealed_at }}{% else %}{{ 'нет' if is_ru else 'йўқ' }}{% endif %}</div></div>
+      <div class="vs-def-item is-full"><div class="vs-def-label">{{ 'Составитель' if is_ru else 'Тузувчи' }}</div><div>{{ v.meta.producer }}</div></div>
+      <div class="vs-def-item is-full"><div class="vs-def-label">{{ 'Доступность приватного архива' if is_ru else 'Ёпиқ архивнинг мавжудлиги' }}</div><div>{{ 'Файлы пакета хранятся вне программы, у владельца; через этот экран они не отдаются. Хеши пакета проверены при загрузке. SHA-256 подтверждает целостность битов, а не подлинность операции и не подпись владельца.' if is_ru else 'Пакет файллари дастурдан ташқарида, эгасида сақланади; бу экран орқали берилмайди. Пакет хешлари юклашда текширилган. SHA-256 битлар бутунлигини тасдиқлайди, операциянинг ҳақиқийлигини ва эгасининг имзосини эмас.' }}</div></div>
+    </div>
+    {% if v.versions|length > 1 %}
+    <div class="vs-mt-sm">{{ 'Версии месяца' if is_ru else 'Ой версиялари' }}:
+      {% for ver in v.versions %}<a class="vs-pill" href="{{ url_for('drones.fin_recon_period', period=v.meta.period, version=ver.version) }}">v{{ ver.version }}</a>{% endfor %}
+    </div>
+    {% for ver in v.versions %}{% if ver.revision_reason %}<div class="vs-muted">v{{ ver.version }}: {{ ver.revision_reason }}</div>{% endif %}{% endfor %}
+    {% endif %}
+  </div>
+</div>
+
+{# ── Переходящие работы ────────────────────────────────────────────── #}
+<h2 id="cross" class="vs-card-title vs-mb">{{ 'Переходящие работы' if is_ru else 'Ойлараро ишлар' }} ({{ v.counts.links }})</h2>
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-table-scroll">
+  <table class="vs-table is-static">
+    <thead>
+      <tr>
+        <th>{{ 'Связь' if is_ru else 'Боғланиш' }}</th>
+        <th>{{ 'Работа' if is_ru else 'Иш' }}</th>
+        <th>{{ 'Месяц работы / книги / начисления' if is_ru else 'Иш / китоб / ҳисоблаш ойи' }}</th>
+        <th class="right">{{ 'Га' if is_ru else 'Га' }}</th>
+        <th class="right">{{ 'Зарплата в начислении месяца книги' if is_ru else 'Китоб ойи ҳисобидаги иш ҳақи' }}</th>
+        <th>{{ 'Дата записи о выдаче' if is_ru else 'Бериш ёзуви санаси' }}</th>
+        <th>{{ 'Правило' if is_ru else 'Қоида' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for x in v.cross.links %}
+      <tr>
+        <td><b>{{ x.key }}</b>{% if x.anomalies %}<div class="vs-muted">{{ x.anomalies|join(', ') }}</div>{% endif %}</td>
+        <td>{{ x.work }} · {{ x.operator_name }}<div class="vs-muted">{{ x.farm or '' }}</div><div class="vs-muted">{{ x.work_dates|join(', ') }}</div></td>
+        <td><span class="vs-badge vs-badge-sm vs-badge-warning">{{ x.work_month }}</span> / {{ x.ledger_month }} / {{ x.accrual_month or ('неизвестно' if is_ru else 'номаълум') }}</td>
+        <td class="right">{{ x.area_ha|vs_num }}</td>
+        <td class="right">{{ fr_value(x.salary) }}</td>
+        <td>{{ x.payout_record_date or '—' }}</td>
+        <td>{{ x.policy }}{% if x.note %}<div class="vs-muted">{{ x.note }}</div>{% endif %}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="vs-muted">{{ 'Работ других месяцев в книге этого месяца нет.' if is_ru else 'Бу ой китобида бошқа ой ишлари йўқ.' }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Кандидаты в межмесячный дубль' if is_ru else 'Ойлараро такрор номзодлари' }} ({{ v.cross.candidates|length }})</span>
+  </div>
+  {% if v.cross.candidates %}
+  <div class="vs-table-scroll">
+  <table class="vs-table is-static">
+    <thead>
+      <tr>
+        <th>{{ 'Связь' if is_ru else 'Боғланиш' }}</th>
+        <th>{{ 'Работа со связью' if is_ru else 'Боғланишли иш' }}</th>
+        <th>{{ 'Похожая работа другого месяца' if is_ru else 'Бошқа ойдаги ўхшаш иш' }}</th>
+        <th class="right">{{ 'Га' if is_ru else 'Га' }}</th>
+        <th>{{ 'Общие даты' if is_ru else 'Умумий саналар' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in v.cross.candidates %}
+      <tr>
+        <td>{{ c.link_period }} · {{ c.link_key }}</td>
+        <td>{{ c.link_work_key }} · {{ c.link_operator }}<div class="vs-muted">{{ c.link_farm or '' }}</div></td>
+        <td><a href="{{ url_for('drones.fin_recon_period', period=c.other_period, version=c.other_version) }}">{{ c.other_period }} v{{ c.other_version }}</a> · {{ c.other_work_key }} · {{ c.other_operator }}<div class="vs-muted">{{ c.other_farm or '' }}</div></td>
+        <td class="right">{{ c.area_ha|vs_num }}</td>
+        <td>{{ c.common_dates|join(', ') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <div class="vs-card-body vs-muted">{{ 'Кандидат -- не вывод: ничего не исключено и не пересчитано. Решает владелец по книгам обоих месяцев.' if is_ru else 'Номзод -- хулоса эмас: ҳеч нарса чиқарилмаган ва қайта ҳисобланмаган. Икки ой китоблари бўйича эгаси ҳал қилади.' }}</div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-sub">{{ 'Снимков соседних месяцев в хранилище нет -- сравнивать пока не с чем. Когда загрузят соседний месяц, совпадения площади и дат появятся здесь кандидатами, без автоматического исключения.' if is_ru else 'Омборда қўшни ойлар суратлари йўқ -- ҳозирча солиштириш учун ҳеч нарса йўқ. Қўшни ой юкланганда майдон ва саналар мослиги бу ерда номзод сифатида пайдо бўлади, автоматик чиқаришсиз.' }}</div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

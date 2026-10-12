@@ -103,6 +103,9 @@
     {'ep': 'drones.customers', 'ru': 'Заказчики', 'uz': 'Буюртмачилар',   'show': True},
     {'ep': 'drones.area_control', 'ru': 'Контроль площади DJI', 'uz': 'DJI майдони назорати', 'show': True,
      'active': ['drones.area_control', 'drones.area_control_flight']},
+    {'ep': 'drones.fin_recon_periods', 'ru': 'Финансовая сверка', 'uz': 'Молиявий солиштирув',
+     'show': _auth and current_user.is_admin,
+     'active': ['drones.fin_recon_periods', 'drones.fin_recon_period']},
     {'ep': 'drones.reports',   'ru': 'Отчёты',    'uz': 'Ҳисоботлар',     'show': True,
      'active': ['drones.reports', 'drones.sources', 'drones.works_reports',
                 'drones.works_debts', 'drones.works_assignment_hints',
@@ -143,6 +146,12 @@
     • Дроны / «Контроль площади DJI» — прямой пункт (DRONE-AREA-CONTROL-V2-
       MEGA): ключевой экран площади больше не спрятан в «Отчёты». Плитка в
       центре отчётов остаётся; карточка вылета подсвечивает этот же пункт.
+    • Дроны / «Финансовая сверка» (FIN-RECON-STORAGE-001) — только
+      `current_user.is_admin`: маршруты закрыты тем же условием, и пункт,
+      который в 403, не показывается. Права модуля «Дроны» недостаточно —
+      на экране ФИО, начисления и выплаты. Стоит перед «Отчётами»:
+      «Отчёты» остаются последним пунктом, как их поставил
+      DRONE-AREA-CONTROL-V2-MEGA.
 -#}
 
 

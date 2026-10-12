@@ -1,0 +1,74 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Дроны — финансовая сверка' if is_ru else 'Дронлар — молиявий солиштирув' }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+{# FIN-RECON-STORAGE-001. Список неизменяемых снимков финансовой сверки
+   операторов: месяц книги, версия, статус. Только администратор, только
+   чтение. Снимок кладёт в базу инструмент оператора, не этот экран. #}
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Финансовая сверка операторов' if is_ru else 'Операторларнинг молиявий солиштируви' }}</div>
+    <div class="vs-hero-sub">{{ 'Неизменяемые снимки помесячной сверки: книги диспетчеров, начисления, записи о выдаче, Vehicle Soft и DJI. Снимок сверен с исключениями и финансово НЕ утверждён; утверждения и закрытия месяца в программе нет.' if is_ru else 'Ойлик солиштирувнинг ўзгармас суратлари: диспетчер китоблари, ҳисоблашлар, бериш ёзувлари, Vehicle Soft ва DJI. Сурат истиснолар билан солиштирилган ва молиявий жиҳатдан ТАСДИҚЛАНМАГАН; дастурда ойни тасдиқлаш ва ёпиш йўқ.' }}</div>
+  </div>
+</div>
+
+{% if reason == 'not_installed' %}
+<div class="vs-alert is-warning vs-mb" role="status">
+  <div>{{ 'Хранилище финансовой сверки не установлено: в этой базе нет таблиц миграции FIN_RECON_STORAGE_001.' if is_ru else 'Молиявий солиштирув омбори ўрнатилмаган: бу базада FIN_RECON_STORAGE_001 миграцияси жадваллари йўқ.' }}</div>
+</div>
+{% elif reason %}
+<div class="vs-alert is-warning vs-mb" role="status">
+  <div>{{ 'База недоступна для чтения снимков.' if is_ru else 'Суратларни ўқиш учун база мавжуд эмас.' }}</div>
+</div>
+{% endif %}
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Снимки по месяцам книги' if is_ru else 'Китоб ойлари бўйича суратлар' }}</span>
+    <span class="vs-soft">{{ 'Всего' if is_ru else 'Жами' }}: {{ rows|length }}</span>
+  </div>
+  {% if rows %}
+  <div class="vs-table-scroll">
+  <table class="vs-table is-static">
+    <thead>
+      <tr>
+        <th>{{ 'Месяц книги' if is_ru else 'Китоб ойи' }}</th>
+        <th>{{ 'Версия' if is_ru else 'Версия' }}</th>
+        <th>{{ 'Статус' if is_ru else 'Ҳолат' }}</th>
+        <th class="right">{{ 'Работ' if is_ru else 'Ишлар' }}</th>
+        <th class="right">{{ 'Операторов' if is_ru else 'Операторлар' }}</th>
+        <th class="right">{{ 'Аномалий' if is_ru else 'Аномалиялар' }}</th>
+        <th>{{ 'Загружен (UTC)' if is_ru else 'Юкланган (UTC)' }}</th>
+        <th>{{ 'SHA-256 содержимого' if is_ru else 'Мазмун SHA-256' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td><a href="{{ url_for('drones.fin_recon_period', period=r.period, version=r.version) }}">{{ r.period }}</a></td>
+        <td>v{{ r.version }}{% if r.superseded_by %} <span class="vs-muted">{{ '(заменена новой версией)' if is_ru else '(янги версия билан алмаштирилган)' }}</span>{% endif %}</td>
+        <td>
+          <span class="vs-badge vs-badge-sm vs-badge-warning">{{ r.status_view.status_label }}</span>
+          <span class="vs-badge vs-badge-sm vs-badge-danger">{{ r.status_view.not_approved_label }}</span>
+          {% if not r.sealed_at %}<span class="vs-badge vs-badge-sm vs-badge-danger">{{ 'НЕТ ПЕЧАТИ' if is_ru else 'МУҲР ЙЎҚ' }}</span>{% endif %}
+        </td>
+        <td class="right">{{ r.row_counts.get('fin_recon_work_row', '—') }}</td>
+        <td class="right">{{ r.row_counts.get('fin_recon_operator_row', '—') }}</td>
+        <td class="right">{{ r.row_counts.get('fin_recon_anomaly', '—') }}</td>
+        <td>{{ r.imported_at }}</td>
+        <td class="vs-mono">{{ r.content_sha256[:16] }}…</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ 'Снимков пока нет' if is_ru else 'Ҳозирча суратлар йўқ' }}</div>
+    <div class="vs-empty-sub">{{ 'Снимок загружает администратор сервера командой из ранбука FIN-RECON-STORAGE-001; через этот экран загрузки нет.' if is_ru else 'Суратни сервер администратори FIN-RECON-STORAGE-001 ранбукидаги буйруқ билан юклайди; бу экран орқали юклаш йўқ.' }}</div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
