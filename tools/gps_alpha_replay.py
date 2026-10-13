@@ -525,7 +525,7 @@ def replay_production(db, folder, since, until, kml_path, out=print,
                 progress('  %d of %d machine-days' % (index, len(days)))
         units = sorted({row['unit'] for row in results})
         kinds = kinds_of(con, units)
-        names = unit_names(con, units)
+        names = unit_names(con, units, folder)
     finally:
         con.close()
     verdicts = report_production(results, missing, kinds, names, out)

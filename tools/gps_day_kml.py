@@ -227,7 +227,8 @@ def main(argv=None):
     con = open_readonly(args.db)
     try:
         entries = [read_day(con, args.dir, day, unit) for day, unit in pairs]
-        names = unit_names(con, sorted({unit for _day, unit in pairs}))
+        names = unit_names(con, sorted({unit for _day, unit in pairs}),
+                           args.dir)
     finally:
         con.close()
     with open(args.out, 'w', encoding='utf-8') as handle:

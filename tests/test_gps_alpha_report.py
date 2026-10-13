@@ -29,6 +29,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 import tools.gps_alpha_report as gar                                # noqa: E402
+from gps_collector import storage                                   # noqa: E402
 from tests.test_gps_units_inventory import DDL                      # noqa: E402
 
 TRACTOR, HOLLAND, NO_MACHINE, NO_MAPPING, ALIEN, TRUCK = (
@@ -260,6 +261,25 @@ class Report(World):
         code, out, _err = self.run_main('--since', '2026-09-01',
                                         '--find', 'nothing like it')
         self.assertIn(": 0 machine-day(s)", out)
+
+    def test_an_unlinked_object_is_found_by_its_name_in_wialon(self):
+        """--dir: объект без строки сопоставления назван и находится по имени
+        из списка парка Wialon, как на экране."""
+        storage.write_unit_names(self.folder, [{'id': NO_MAPPING,
+                                                'name': 'JohnDeere 80 746 KA'}])
+        code, out, _err = self.run_main('--since', '2026-09-01', '--dir', self.folder,
+                                        '--find', '80 746')
+        self.assertEqual(code, 0)
+        found = out.split('find ')[1]
+        self.assertIn(': 1 machine-day(s)', found)
+        self.assertIn('2026-09-23  wialon_id %d' % NO_MAPPING, found)
+        self.assertIn('JohnDeere 80 746 KA', out)
+        out.encode('ascii')
+        # отрицательный контроль: без --dir имени нет и поиск его не находит
+        code, out, _err = self.run_main('--since', '2026-09-01', '--find', '80 746')
+        self.assertEqual(code, 0)
+        self.assertIn(': 0 machine-day(s)', out.split('find ')[1])
+        self.assertNotIn('JohnDeere', out)
 
     def test_a_picked_day_lists_its_sites_with_the_answers(self):
         code, out, _err = self.run_main(

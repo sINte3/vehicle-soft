@@ -327,7 +327,7 @@ def main(argv=None, measure=track_minutes):
         bad, unjudged = judge(con, args.dir, suspects, args.width_m, measure)
         kinds = kinds_of(con, sorted({site['wialon_id'] for site in sites}))
         names = unit_names(con, sorted({site['wialon_id']
-                                        for site in bad[:args.top]}))
+                                        for site in bad[:args.top]}), args.dir)
     finally:
         con.close()
     report(sites, suspects, bad, unjudged, kinds, names, since, until,

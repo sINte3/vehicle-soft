@@ -47,6 +47,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from gps.exclusion import REASON_TRACK_ONLY, excluded_units, track_only_units  # noqa: E402
+from gps_collector import storage as collector_storage              # noqa: E402
 from gps_collector.config import ascii_only                        # noqa: E402
 
 REASON_NO_POINTS = 'net_tochek'
@@ -99,12 +100,14 @@ def days_by_date(con, since):
     return units, table
 
 
-def unit_names(con, units):
+def unit_names(con, units, folder=None):
     """wialon_id -> имя машины так, как его пишет экран «Факт по технике».
 
-    [REASON]: правило -- копия `gps_routes._unit_names`: `equipment.name`
+    [REASON]: правило -- копия `gps_routes._machines`: `equipment.name`
     вместе с госномером у первой строки сопоставления, где есть машина;
-    строка без машины даёт имя объекта в Wialon. Экран -- модуль Flask, а
+    строка без машины даёт имя объекта в Wialon; объект без строки -- имя,
+    которое коллектор записал из списка парка Wialon (`folder` -- папка
+    файлов точек; без неё этого шага нет). Экран -- модуль Flask, а
     инструмент, открывающий боевую базу только на чтение, приложение
     импортировать не может: `app` пишет в базу уже на импорте. Владелец ищет
     машину из вывода в списке экрана, и имя обязано совпадать.
@@ -127,7 +130,39 @@ def unit_names(con, units):
             from_machine.add(wialon_id)
         elif wialon_name and wialon_id not in names:
             names[wialon_id] = wialon_name
+    missing = [unit for unit in units if unit not in names]
+    if missing and folder:
+        collector = collector_names(folder)
+        for unit in missing:
+            if collector.get(int(unit)):
+                names[unit] = collector[int(unit)]
     return names
+
+
+def collector_names(folder):
+    """unit_id -> имя объекта в Wialon, как его записал коллектор. Только чтение.
+
+    [REASON]: 12.10.2026 KML прогона показал владельцу голые номера 8800,
+    7813 -- объекты без строки сопоставления, -- а экран «Факт» с 09.10 пишет
+    их именами из списка парка Wialon (`collector_units`, файл отметок
+    коллектора). Файл открывается `mode=ro`, как у экрана: нет файла или
+    таблицы, файл занят -- имён нет, а отсутствующий файл не создаётся.
+    """
+    path = collector_storage.state_path(folder)
+    if not os.path.isfile(path):
+        return {}
+    try:
+        con = sqlite3.connect('file:%s?mode=ro' % path, uri=True, timeout=5)
+    except sqlite3.Error:
+        return {}
+    try:
+        rows = con.execute('SELECT unit_id, name FROM collector_units').fetchall()
+    except sqlite3.Error:
+        return {}
+    finally:
+        con.close()
+    return {int(unit): name.strip() for unit, name in rows
+            if isinstance(name, str) and name.strip()}
 
 
 def objects_on(con, day, units):

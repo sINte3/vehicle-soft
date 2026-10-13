@@ -45,6 +45,10 @@
 
     & "C:\\Program Files\\Python314\\python.exe" tools\\gps_alpha_report.py --db C:\\transport-report\\instance\\transport.db --since 2026-09-01 --find "80 080" --day 2026-09-26:393 --day 2026-09-13:7286
 
+`--dir` (папка файлов коллектора, обычно `C:\\transport-report\\instance`)
+даёт имена объектам без строки сопоставления -- из списка парка Wialon, как
+на экране; по ним работает и `--find`.
+
 Отсутствующая база не создаётся (код 2). Вывод -- только ASCII: имена машин
 транслитерируются.
 """
@@ -359,6 +363,8 @@ def _pick(value):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--db', required=True, help='path to transport.db')
+    parser.add_argument('--dir', help='folder with the collector files: names '
+                                      'of objects without a mapping row')
     parser.add_argument('--since', required=True, help='first date, YYYY-MM-DD')
     parser.add_argument('--until', help='last date, YYYY-MM-DD (default: none)')
     parser.add_argument('--top', type=int, default=30,
@@ -384,7 +390,7 @@ def main(argv=None):
         units = sorted({row['wialon_id'] for row in days}
                        | {unit for _day_, unit in picks})
         kinds = kinds_of(con, units)
-        names = unit_names(con, units)
+        names = unit_names(con, units, args.dir)
         report(con, days, kinds, names, since, until, args.top, args.find,
                picks)
     finally:

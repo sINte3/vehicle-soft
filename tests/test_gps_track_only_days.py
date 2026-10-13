@@ -29,6 +29,7 @@ if REPO_ROOT not in sys.path:
 
 import tools.gps_track_only_days as tod                             # noqa: E402
 import tools.gps_units_inventory as inv                             # noqa: E402
+from gps_collector import storage                                   # noqa: E402
 from tests.test_gps_units_inventory import DDL                      # noqa: E402
 
 LOADER, TRACTOR, MIXED, ALIEN = 419, 387, 553, 5001
@@ -302,6 +303,52 @@ class OneDateByObject(World):
             code = tod.main(['--db', self.db, '--date', '28.09.2026'])
         self.assertEqual(code, 2)
         self.assertIn('--date must look like YYYY-MM-DD', err.getvalue())
+
+
+class WialonNamesOfUnlinkedObjects(World):
+    """Объект без строки сопоставления -- имя из списка парка Wialon, как на
+    экране «Факт» (gps_routes._machines, пункт 3)."""
+
+    UNLINKED, ROW_ONLY = 8800, 7002
+
+    def collector(self, *pairs):
+        storage.write_unit_names(self.folder, [{'id': unit, 'name': name}
+                                               for unit, name in pairs])
+
+    def names(self, units, folder):
+        con = tod.open_readonly(self.db)
+        try:
+            return tod.unit_names(con, units, folder)
+        finally:
+            con.close()
+
+    def test_an_unlinked_object_takes_the_collector_s_name(self):
+        self.collector((self.UNLINKED, 'JohnDeere 80 746 KA'))
+        self.assertEqual(self.names([self.UNLINKED], self.folder),
+                         {self.UNLINKED: 'JohnDeere 80 746 KA'})
+        # отрицательный контроль: без папки коллектора имени нет, как до 13.10
+        self.assertEqual(self.names([self.UNLINKED], None), {})
+
+    def test_the_machine_and_the_mapping_row_come_first(self):
+        self.mapping('Каток 12, строка без машины', self.ROW_ONLY, None)
+        self.collector((LOADER, 'Wialon: погрузчик'), (self.ROW_ONLY, 'Wialon: каток'),
+                       (self.UNLINKED, 'JohnDeere 80 746 KA'))
+        names = self.names([LOADER, self.ROW_ONLY, self.UNLINKED], self.folder)
+        self.assertEqual(names, {LOADER: 'Погрузчик 326 HA',
+                                 self.ROW_ONLY: 'Каток 12, строка без машины',
+                                 self.UNLINKED: 'JohnDeere 80 746 KA'})
+
+    def test_no_file_or_no_table_means_no_names_and_nothing_is_created(self):
+        path = storage.state_path(self.folder)
+        self.assertEqual(self.names([self.UNLINKED], self.folder), {})
+        self.assertFalse(os.path.exists(path))
+        con = sqlite3.connect(path)
+        try:
+            con.execute('CREATE TABLE watermarks (unit_id INTEGER)')
+            con.commit()
+        finally:
+            con.close()
+        self.assertEqual(self.names([self.UNLINKED], self.folder), {})
 
 
 class SameNamesAsTheEngine(unittest.TestCase):
