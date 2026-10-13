@@ -1,7 +1,8 @@
 # tests/fin_recon_runbook_harness.ps1 -- runs ONE block of
 # docs/FIN_RECON_STORAGE_001_RUNBOOK.md with stand-ins for what only the
-# Windows server has: the host name, the services, the TCP listeners, the
-# firewall, the clone process, icacls, sc.exe, the disks and the web site.
+# Windows server has: the host name, the services, the TCP listeners and the
+# addresses they listen on, the clone process, the folder rights (icacls and
+# Get-Acl), sc.exe, the disks and the web site.
 #
 # Called by tests/test_fin_recon_runbook.py, which first points every
 # constant of the block (folders, python, repository, commit, hashes, period)
@@ -11,11 +12,27 @@
 # staging checkouts. git calls are recorded on their way through, so the test
 # can prove which subcommands touched which folder.
 #
-# The stand-ins keep the "server" (live processes, listeners, firewall rules)
-# in a small text file, so blocks run one after another in separate processes
-# see each other's effects, as the owner's console would. Functions win over
-# cmdlets and programs of the same name inside this script and the block it
-# runs, so nothing here can reach a real service, port or firewall.
+# The stand-ins keep the "server" (live processes, listeners, the folders
+# whose rights icacls restricted) in a small text file, so blocks run one
+# after another in separate processes see each other's effects, as the
+# owner's console would. Functions win over cmdlets and programs of the same
+# name inside this script and the block it runs, so nothing here can reach a
+# real service, port, firewall or folder right.
+#
+# Folder rights, as Get-Acl shows them by SID on the server: a folder that
+# icacls restricted is protected and grants Administrators (S-1-5-32-544) and
+# SYSTEM (S-1-5-18) full control of everything inside; everything below it
+# inherits exactly that; any other folder or file also grants Users
+# (S-1-5-32-545) and Authenticated Users (S-1-5-11), as the root of C: does.
+# A scenario can make icacls fail on a folder (IcaclsFailPath), succeed there
+# without effect (IcaclsIgnoredPath -- a share that ignores it), make the
+# rights of a path unreadable (GetAclFails), set exactly what a path shows
+# (AclOverride), or add an explicit grant for one more account on a path
+# (AclForeign -- what Explorer's "Continue" does).
+#
+# The firewall cmdlets and netsh are tripwires: the clone listens on
+# 127.0.0.1 only and no block may open a port, so a call is recorded as
+# "FIREWALL ..." and the test requires that there is none.
 #
 # ASCII only, Windows PowerShell 5.1 and PowerShell 7 alike: the server runs
 # 5.1, CI runs the same scenarios on both.
@@ -33,8 +50,22 @@ $global:partitionCalls = 0
 
 function Add-Call([string]$text) { [void]$global:calls.Add($text) }
 
+function Get-NormalPath([string]$path) {
+  return [System.IO.Path]::GetFullPath($path).TrimEnd([char[]]@('\', '/'))
+}
+
+function Test-SamePath([string]$path, $other) {
+  if (-not $other) { return $false }
+  return [string]::Equals($path, (Get-NormalPath ([string]$other)), [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-Under([string]$path, [string]$root) {
+  if ([string]::Equals($path, $root, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+  return $path.StartsWith($root + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
 function Read-ServerState {
-  $server = @{ Processes = @(); Listeners = @(); Rules = @() }
+  $server = @{ Processes = @(); Listeners = @(); Locked = @() }
   $path = [string]$global:scenario.StateFile
   if (Test-Path -LiteralPath $path) {
     foreach ($line in [System.IO.File]::ReadAllLines($path)) {
@@ -42,9 +73,9 @@ function Read-ServerState {
       if ($f[0] -eq 'process') {
         $server.Processes += , @{ Id = [int]$f[1]; Ticks = [long]$f[2] }
       } elseif ($f[0] -eq 'listen') {
-        $server.Listeners += , @{ Port = [int]$f[1]; Owner = [int]$f[2] }
-      } elseif ($f[0] -eq 'rule') {
-        $server.Rules += $line.Substring(5)
+        $server.Listeners += , @{ Port = [int]$f[1]; Owner = [int]$f[2]; Address = [string]$f[3] }
+      } elseif ($f[0] -eq 'acl') {
+        $server.Locked += $line.Substring(4)
       }
     }
   }
@@ -54,8 +85,8 @@ function Read-ServerState {
 function Write-ServerState($server) {
   $out = New-Object System.Collections.ArrayList
   foreach ($p in $server.Processes) { [void]$out.Add('process ' + $p.Id + ' ' + $p.Ticks) }
-  foreach ($l in $server.Listeners) { [void]$out.Add('listen ' + $l.Port + ' ' + $l.Owner) }
-  foreach ($r in $server.Rules) { [void]$out.Add('rule ' + $r) }
+  foreach ($l in $server.Listeners) { [void]$out.Add('listen ' + $l.Port + ' ' + $l.Owner + ' ' + $l.Address) }
+  foreach ($r in $server.Locked) { [void]$out.Add('acl ' + $r) }
   [System.IO.File]::WriteAllLines([string]$global:scenario.StateFile, [string[]]@($out))
 }
 
@@ -81,36 +112,17 @@ function Get-NetTCPConnection {
   [CmdletBinding()]
   param([int]$LocalPort, [string]$State)
   foreach ($l in (Read-ServerState).Listeners) {
-    if ($l.Port -eq $LocalPort) { [pscustomobject]@{ LocalPort = $l.Port; OwningProcess = $l.Owner } }
+    if ($l.Port -eq $LocalPort) { [pscustomobject]@{ LocalAddress = $l.Address; LocalPort = $l.Port; OwningProcess = $l.Owner } }
   }
 }
 
-function Get-NetFirewallRule {
-  [CmdletBinding()]
-  param([string]$DisplayName, [string]$Direction, [string]$Enabled)
-  foreach ($r in (Read-ServerState).Rules) {
-    if ((-not $DisplayName) -or ($r -eq $DisplayName)) { [pscustomobject]@{ DisplayName = $r } }
-  }
-}
-
-function New-NetFirewallRule {
-  [CmdletBinding()]
-  param([string]$DisplayName, [string]$Direction, [string]$Protocol, [int]$LocalPort, [string]$RemoteAddress, [string]$Action)
-  Add-Call ('New-NetFirewallRule ' + $DisplayName + ' ' + $Direction + ' ' + $Protocol + ' ' + $LocalPort + ' ' + $RemoteAddress + ' ' + $Action)
-  $server = Read-ServerState
-  $server.Rules += $DisplayName
-  Write-ServerState $server
-  return [pscustomobject]@{ DisplayName = $DisplayName }
-}
-
-function Remove-NetFirewallRule {
-  [CmdletBinding()]
-  param([string]$DisplayName)
-  Add-Call ('Remove-NetFirewallRule ' + $DisplayName)
-  $server = Read-ServerState
-  $server.Rules = @($server.Rules | Where-Object { $_ -ne $DisplayName })
-  Write-ServerState $server
-}
+function New-NetFirewallRule { Add-Call ('FIREWALL New-NetFirewallRule ' + ($args -join ' ')) }
+function Set-NetFirewallRule { Add-Call ('FIREWALL Set-NetFirewallRule ' + ($args -join ' ')) }
+function Enable-NetFirewallRule { Add-Call ('FIREWALL Enable-NetFirewallRule ' + ($args -join ' ')) }
+function Remove-NetFirewallRule { Add-Call ('FIREWALL Remove-NetFirewallRule ' + ($args -join ' ')) }
+function Get-NetFirewallRule { Add-Call ('FIREWALL Get-NetFirewallRule ' + ($args -join ' ')) }
+function netsh { Add-Call ('FIREWALL netsh ' + ($args -join ' ')) }
+function netsh.exe { Add-Call ('FIREWALL netsh.exe ' + ($args -join ' ')) }
 
 function Start-Process {
   [CmdletBinding()]
@@ -125,11 +137,15 @@ function Start-Process {
   $newId = [int]$global:scenario.ClonePid
   $ticks = [long]$global:scenario.CloneTicks
   $exited = [bool]$global:scenario.StartExits
+  # run_server.py listens on the address it is given in HOST; a scenario can
+  # make the clone listen elsewhere, as an edited run_server.py would.
+  $address = [string][Environment]::GetEnvironmentVariable('HOST', 'Process')
+  if ($global:scenario.ListenAddress) { $address = [string]$global:scenario.ListenAddress }
   if (-not $exited) {
     $server = Read-ServerState
     $server.Processes += , @{ Id = $newId; Ticks = $ticks }
     if (-not $global:scenario.StartNoListen) {
-      $server.Listeners += , @{ Port = [int][Environment]::GetEnvironmentVariable('PORT', 'Process'); Owner = $newId }
+      $server.Listeners += , @{ Port = [int][Environment]::GetEnvironmentVariable('PORT', 'Process'); Owner = $newId; Address = $address }
     }
     Write-ServerState $server
   }
@@ -168,9 +184,70 @@ function Invoke-WebRequest {
 }
 
 function icacls {
-  Add-Call ('icacls ' + (@($args | ForEach-Object { [string]$_ }) -join ' '))
-  $global:LASTEXITCODE = [int]$global:scenario.IcaclsCode
-  'processed file: ' + [string]$args[0]
+  $a = @($args | ForEach-Object { [string]$_ })
+  Add-Call ('icacls ' + ($a -join ' '))
+  $target = Get-NormalPath $a[0]
+  if (Test-SamePath $target $global:scenario.IcaclsFailPath) {
+    $global:LASTEXITCODE = 5
+    $a[0] + ': Access is denied.'
+    'Successfully processed 0 files; Failed processing 1 files'
+    return
+  }
+  if (($a -contains '/inheritance:r') -and (-not (Test-SamePath $target $global:scenario.IcaclsIgnoredPath))) {
+    $server = Read-ServerState
+    if (@($server.Locked | Where-Object { [string]::Equals($_, $target, [System.StringComparison]::OrdinalIgnoreCase) }).Count -eq 0) {
+      $server.Locked += $target
+      Write-ServerState $server
+    }
+  }
+  $global:LASTEXITCODE = 0
+  'processed file: ' + $a[0]
+  'Successfully processed 1 files; Failed processing 0 files'
+}
+
+function New-AclRule([string]$sid, [bool]$inherited) {
+  return [pscustomobject]@{
+    IdentityReference = [pscustomobject]@{ Value = $sid }
+    FileSystemRights = 'FullControl'
+    AccessControlType = 'Allow'
+    InheritanceFlags = 'ContainerInherit, ObjectInherit'
+    IsInherited = $inherited
+  }
+}
+
+function Get-Acl {
+  [CmdletBinding()]
+  param([string]$LiteralPath)
+  $path = Get-NormalPath $LiteralPath
+  foreach ($failing in @($global:scenario.GetAclFails)) {
+    if (Test-SamePath $path $failing) { throw 'Attempted to perform an unauthorized operation.' }
+  }
+  if (-not (Test-Path -LiteralPath $LiteralPath)) { throw ('Cannot find path ' + $LiteralPath + ' because it does not exist.') }
+  $locked = @((Read-ServerState).Locked | Where-Object { Test-Under $path $_ })
+  $protected = @($locked | Where-Object { [string]::Equals($_, $path, [System.StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
+  $rules = New-Object System.Collections.ArrayList
+  if ($locked.Count -gt 0) {
+    foreach ($sid in @('S-1-5-32-544', 'S-1-5-18')) { [void]$rules.Add((New-AclRule $sid (-not $protected))) }
+  } else {
+    foreach ($sid in @('S-1-5-32-544', 'S-1-5-18', 'S-1-5-32-545', 'S-1-5-11')) { [void]$rules.Add((New-AclRule $sid $true)) }
+  }
+  # AclOverride: the exact rights a path shows, whatever icacls did -- a root
+  # that still inherits, or one where an account lacks full control.
+  foreach ($override in @($global:scenario.AclOverride)) {
+    if ($override -and (Test-SamePath $path $override.Path)) {
+      $protected = [bool]$override.Protected
+      $rules.Clear()
+      foreach ($r in @($override.Rules)) {
+        [void]$rules.Add([pscustomobject]@{ IdentityReference = [pscustomobject]@{ Value = [string]$r.Sid }; FileSystemRights = [string]$r.Rights; AccessControlType = 'Allow'; InheritanceFlags = [string]$r.Inheritance; IsInherited = [bool]$r.Inherited })
+      }
+    }
+  }
+  foreach ($extra in @($global:scenario.AclForeign)) {
+    if ($extra -and (Test-SamePath $path $extra.Path)) { [void]$rules.Add((New-AclRule ([string]$extra.Sid) $false)) }
+  }
+  $acl = [pscustomobject]@{ Path = $path; AreAccessRulesProtected = $protected; Rules = $rules.ToArray() }
+  $acl | Add-Member -MemberType ScriptMethod -Name GetAccessRules -Value { param($includeExplicit, $includeInherited, $targetType) return $this.Rules }
+  return $acl
 }
 
 function sc.exe {

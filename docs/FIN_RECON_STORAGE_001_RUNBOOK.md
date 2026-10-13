@@ -17,15 +17,23 @@
 2. **Базовый staging (`C:\transport-report-staging`, порт 5051) не
    меняется ни одним блоком.** Ни код, ни база, ни службы. Его база только
    копируется штатным инструментом онлайн-копии `backup_transport_db.py`.
-3. Мартовский приватный пакет кладётся в `D:\fin-recon-evidence\2026-03\v1`
+3. **Приватные данные лежат только в двух папках, закрытых правами «только
+   администраторы и SYSTEM»:** `C:\VehicleSoft_FinRecon` (inbox, копия
+   базы staging, клон, журналы, базы проверки восстановления) и
+   `D:\fin-recon-evidence` (архив). Каждый блок, который что-то пишет,
+   **сначала** ставит и проверяет эти права и останавливается до первой
+   записи, если поставить или проверить их не удалось.
+4. Мартовский приватный пакет кладётся в `D:\fin-recon-evidence\2026-03\v1`
    и проверяется по SHA-256 каждого файла.
-4. Восстановление из пакета проверяется в **новой пустой** базе — без
+5. Восстановление из пакета проверяется в **новой пустой** базе — без
    staging и production.
-5. Экран «Дроны → Финансовая сверка» показывается на **изолированном клоне
+6. Экран «Дроны → Финансовая сверка» показывается на **изолированном клоне
    staging**: отдельная папка `C:\VehicleSoft_FinRecon\app` с кодом ветки и
-   копией базы staging, отдельный процесс на порту **5052**. Клон
-   останавливается и удаляется отдельными блоками; базовый staging при этом
-   не затрагивается.
+   копией базы staging, отдельный процесс на `127.0.0.1:5052`. **Клон
+   доступен только с самого сервера**: порт в сеть не открывается, правило
+   брандмауэра не создаётся. Экран смотрят в браузере на сервере, в окне
+   InPrivate. Клон останавливается и удаляется отдельными блоками; базовый
+   staging при этом не затрагивается.
 
 Почему клон, а не сам staging. По `docs/STAGING.md` площадка 5051 с
 02.10.2026 занята инкрементом DRONE-CARD-COVERAGE-001 (исторический пилот:
@@ -56,25 +64,33 @@ staging clone и точный план». Клон даёт ту же прове
 `STEP FAILED: ...` — блок остановился сам на первой проблеме и сказал
 почему; дальше этой проверки он ничего не делал. Пришлите весь вывод.
 
-**Порядок:** 1 → 2 → 3 → 4 → (проверка экрана глазами) → 5. Блоки 6, 7, 8 —
-когда понадобятся (7 — пока папка клона не удалена блоком 6: он берёт из
-неё инструмент проверки; после 6 сначала снова блок 2). Повторный запуск
+**Порядок:** 1 → 2 → 3 → 4 → (проверка экрана на сервере) → 5. Блоки 6, 7,
+8 — когда понадобятся (7 — пока папка клона не удалена блоком 6: он берёт
+из неё инструмент проверки; после 6 сначала снова блок 2). Повторный запуск
 любого блока безопасен: блок либо видит, что всё уже сделано, либо
 останавливается.
 
-**До блока 2** положите файл `FIN_RECON_EVIDENCE_2026-03_v1.zip` из
-приватного комплекта в папку `C:\VehicleSoft_FinRecon\inbox` (создайте её).
-Файл приватный — только по закрытому каналу, не в почту и не в GitHub.
+**Приватный ZIP.** Сохраните `FIN_RECON_EVIDENCE_2026-03_v1.zip` из
+приватного комплекта в папку **«Загрузки» (Downloads) или на «Рабочий
+стол»** своей учётной записи на сервере. Папки `C:\VehicleSoft_FinRecon`
+вручную не создавайте: блок 2 сам создаст её закрытой, скопирует ZIP туда
+(копия получает закрытые права) и напомнит удалить исходную копию. Файл
+приватный — только по закрытому каналу, не в почту и не в GitHub.
+
+**Не открывайте закрытые папки в Проводнике.** Проводник работает без прав
+администратора и на закрытой папке предлагает «Продолжить»; эта кнопка
+добавляет вашу учётную запись в права папки — следующий блок увидит лишнее
+право и остановится (так и задумано). Всё нужное блоки печатают сами.
 
 ---
 
 ## Блок 1. Проверка перед началом — ничего не меняет
 
 Печатает, что стоит на production и staging, какие службы запущены, где
-лежат базы, сколько свободно на дисках, какие приватные папки уже есть,
-свободен ли порт 5052. Ничего не создаёт и не меняет. Базу production не
-открывает; базу staging читает только её собственным инструментом
-`tools\state_snapshot.py` в режиме только чтения.
+лежат базы, сколько свободно на дисках, есть ли уже приватные папки и
+закрыты ли они правами, свободен ли порт 5052. Ничего не создаёт и не
+меняет. Базу production не открывает; базу staging читает только её
+собственным инструментом `tools\state_snapshot.py` в режиме только чтения.
 
 ```powershell
 & {
@@ -84,7 +100,6 @@ staging clone и точный план». Клон даёт ту же прове
   $stagingRoot = 'C:\transport-report-staging'
   $finRoot = 'C:\VehicleSoft_FinRecon'
   $evidenceRoot = 'D:\fin-recon-evidence'
-  $backupRoot = 'D:\transport-report-backups\staging\fin_recon_storage_001'
   $python = 'C:\Program Files\Python314\python.exe'
   $stagingUrl = 'http://10.103.25.14:5051/login'
   $port = 5052
@@ -93,6 +108,29 @@ staging clone и точный план». Клон даёт ту же прове
     $global:LASTEXITCODE = -1
     $lines = @(& $exe @arguments 2>&1 | ForEach-Object { "$_" })
     [pscustomobject]@{ Code = $LASTEXITCODE; Lines = $lines; Text = ($lines -join "`n").Trim() }
+  }
+  function Test-PrivateAcl([string]$path, [bool]$isRoot) {
+    try {
+      $acl = Get-Acl -LiteralPath $path
+      $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+    } catch {
+      return ('the rights of ' + $path + ' cannot be read: ' + $_.Exception.Message)
+    }
+    $foreign = @($rules | Where-Object { ([string]$_.AccessControlType -eq 'Allow') -and (@('S-1-5-32-544', 'S-1-5-18') -notcontains $_.IdentityReference.Value) })
+    if ($foreign.Count -gt 0) {
+      $problem = $path + ' also grants access to ' + (@($foreign | ForEach-Object { $_.IdentityReference.Value } | Select-Object -Unique) -join ', ')
+      $explicit = @($foreign | Where-Object { -not $_.IsInherited } | ForEach-Object { '*' + $_.IdentityReference.Value } | Select-Object -Unique)
+      if ($explicit.Count -gt 0) { $problem = $problem + ' -- to take that access away run: icacls "' + $path + '" /remove:g ' + ($explicit -join ' ') + ' /T /C' }
+      return $problem
+    }
+    if ($isRoot) {
+      if (-not $acl.AreAccessRulesProtected) { return ($path + ' still inherits rights from its parent folder') }
+      foreach ($sid in @('S-1-5-32-544', 'S-1-5-18')) {
+        $full = @($rules | Where-Object { ($_.IdentityReference.Value -eq $sid) -and ([string]$_.AccessControlType -eq 'Allow') -and ([string]$_.FileSystemRights -eq 'FullControl') -and ([string]$_.InheritanceFlags -eq 'ContainerInherit, ObjectInherit') })
+        if ($full.Count -eq 0) { return ($path + ' does not give ' + $sid + ' full control of everything inside') }
+      }
+    }
+    return ''
   }
 
   if ((hostname) -ne $expectedHost) { throw "STEP FAILED: this computer is $(hostname), not $expectedHost" }
@@ -143,16 +181,18 @@ staging clone и точный план». Клон даёт ту же прове
     Write-Output ('STAGING_LOGIN=ERROR ' + $_.Exception.Message)
   }
 
-  foreach ($dir in @($finRoot, $evidenceRoot, $backupRoot)) {
-    if (Test-Path -LiteralPath $dir) {
-      $names = @(Get-ChildItem -LiteralPath $dir -Force | ForEach-Object { $_.Name })
-      Write-Output ('PRIVATE_DIR ' + $dir + ' : ' + ($names -join ', '))
+  foreach ($root in @($finRoot, $evidenceRoot)) {
+    if (Test-Path -LiteralPath $root) {
+      $problem = Test-PrivateAcl $root $true
+      if ($problem) { Write-Output ('PRIVATE_ACL ' + $root + ' : NOT restricted -- ' + $problem) } else { Write-Output ('PRIVATE_ACL ' + $root + ' : Administrators and SYSTEM only') }
+      $names = @(Get-ChildItem -LiteralPath $root -Force | ForEach-Object { $_.Name })
+      Write-Output ('PRIVATE_DIR ' + $root + ' : ' + ($names -join ', '))
     } else {
-      Write-Output ('PRIVATE_DIR ' + $dir + ' : absent')
+      Write-Output ('PRIVATE_ACL ' + $root + ' : absent -- block 2 creates it restricted')
     }
   }
 
-  $drives = @(@($finRoot, $evidenceRoot, $backupRoot) | ForEach-Object { [System.IO.Path]::GetPathRoot($_) } | Select-Object -Unique)
+  $drives = @(@($finRoot, $evidenceRoot) | ForEach-Object { [System.IO.Path]::GetPathRoot($_) } | Select-Object -Unique)
   foreach ($drive in $drives) {
     if (Test-Path -LiteralPath $drive) {
       $info = New-Object System.IO.DriveInfo $drive
@@ -164,37 +204,45 @@ staging clone и точный план». Клон даёт ту же прове
 
   $listening = @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
   if ($listening.Count -gt 0) { Write-Output ('PORT_' + $port + '=BUSY process ' + $listening[0].OwningProcess) } else { Write-Output ('PORT_' + $port + '=free') }
-  foreach ($rule in @(Get-NetFirewallRule -Direction Inbound -Enabled True -ErrorAction SilentlyContinue | Where-Object { ($_.DisplayName -like '*505*') -or ($_.DisplayName -like '*FinRecon*') })) {
-    Write-Output ('FIREWALL_RULE ' + $rule.DisplayName)
-  }
-  Write-Output 'PLAN=isolated staging clone on port 5052; production and the base staging are not changed'
+  Write-Output 'PLAN=isolated staging clone on 127.0.0.1:5052 only; production and the base staging are not changed'
   Write-Output 'STEP=PASS'
 }
 ```
 
 Ключевые строки ответа: `PROD_HEAD`, `STAGING_HEAD`, `STAGING_BRANCH`,
 `STAGING_TRACKED_CHANGES`, строки `SERVICE`, блок состояния staging (число
-миграций и последние пять), `FREE`, `PORT_5052`, `STEP=PASS`.
+миграций и последние пять), `PRIVATE_ACL`, `FREE`, `PORT_5052`, `STEP=PASS`.
 
 ---
 
-## Блок 2. Код ветки, приватный архив и восстановление в пустую базу
+## Блок 2. Закрытые папки, код ветки, архив и восстановление в пустую базу
 
-Что делает блок:
+Что делает блок, по порядку:
 
+* **сначала** создаёт `C:\VehicleSoft_FinRecon` и `D:\fin-recon-evidence`
+  и ставит им права «только администраторы и SYSTEM» (`icacls`), затем
+  проверяет права по SID — без наследования от диска, без чужих записей;
+  проверяет и всё, что в этих папках уже лежит. Не удалось поставить или
+  проверить — остановка, ничего приватного не записано;
+* ищет приватный ZIP: в `C:\VehicleSoft_FinRecon\inbox`, иначе в
+  «Загрузках» и на «Рабочем столе» вашей учётной записи — и копирует его в
+  закрытую inbox. Нет нигде — остановка с просьбой сохранить его туда;
+* сразу сверяет SHA-256 ZIP с ожидаемым. Не совпало — откладывает файл в
+  сторону (`...zip.rejected_<время>` в той же закрытой inbox) и
+  останавливается: сохраните правильный файл и запустите блок снова;
 * кладёт код ветки в **отдельную** папку `C:\VehicleSoft_FinRecon\app` ровно
   на проверенный коммит (из GitHub; staging и production не трогает) и
   прогоняет тесты задачи этим питоном на этом сервере;
-* сверяет SHA-256 приватного ZIP с ожидаемым, распаковывает его во
-  временную папку на `D:`, проверяет пакет целиком (каждый файл по
-  SHA-256, манифест, контракт снимка, контрольные ожидания марта) и только
-  потом переименовывает папку в `D:\fin-recon-evidence\2026-03\v1`;
-  закрывает папку архива правами (только администраторы и SYSTEM) и
-  ставит файлам пакета «только чтение»;
+* распаковывает ZIP во временную папку
+  внутри закрытого `D:\fin-recon-evidence`, проверяет пакет целиком
+  (каждый файл по SHA-256, манифест, контракт снимка, контрольные ожидания
+  марта) и только потом переименовывает папку в
+  `D:\fin-recon-evidence\2026-03\v1`; ставит файлам пакета «только чтение»;
 * восстанавливает снимок в **новую пустую** базу
   (`C:\VehicleSoft_FinRecon\restore\<время запуска>`): миграция, загрузка,
   сверка с пакетом и с контрольными числами, повторная загрузка — ни одной
-  записи, файл базы не меняется ни на байт.
+  записи, файл базы не меняется ни на байт;
+* в конце ещё раз проверяет права на всём, что записал.
 
 Если пакет уже лежит на месте, блок проверяет его заново и повторяет
 восстановление в новую пустую базу.
@@ -222,15 +270,84 @@ staging clone и точный план». Клон даёт ту же прове
     $lines = @(& $exe @arguments 2>&1 | ForEach-Object { "$_" })
     [pscustomobject]@{ Code = $LASTEXITCODE; Lines = $lines; Text = ($lines -join "`n").Trim() }
   }
+  function Test-PrivateAcl([string]$path, [bool]$isRoot) {
+    try {
+      $acl = Get-Acl -LiteralPath $path
+      $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+    } catch {
+      return ('the rights of ' + $path + ' cannot be read: ' + $_.Exception.Message)
+    }
+    $foreign = @($rules | Where-Object { ([string]$_.AccessControlType -eq 'Allow') -and (@('S-1-5-32-544', 'S-1-5-18') -notcontains $_.IdentityReference.Value) })
+    if ($foreign.Count -gt 0) {
+      $problem = $path + ' also grants access to ' + (@($foreign | ForEach-Object { $_.IdentityReference.Value } | Select-Object -Unique) -join ', ')
+      $explicit = @($foreign | Where-Object { -not $_.IsInherited } | ForEach-Object { '*' + $_.IdentityReference.Value } | Select-Object -Unique)
+      if ($explicit.Count -gt 0) { $problem = $problem + ' -- to take that access away run: icacls "' + $path + '" /remove:g ' + ($explicit -join ' ') + ' /T /C' }
+      return $problem
+    }
+    if ($isRoot) {
+      if (-not $acl.AreAccessRulesProtected) { return ($path + ' still inherits rights from its parent folder') }
+      foreach ($sid in @('S-1-5-32-544', 'S-1-5-18')) {
+        $full = @($rules | Where-Object { ($_.IdentityReference.Value -eq $sid) -and ([string]$_.AccessControlType -eq 'Allow') -and ([string]$_.FileSystemRights -eq 'FullControl') -and ([string]$_.InheritanceFlags -eq 'ContainerInherit, ObjectInherit') })
+        if ($full.Count -eq 0) { return ($path + ' does not give ' + $sid + ' full control of everything inside') }
+      }
+    }
+    return ''
+  }
+  function Lock-PrivateRoot([string]$root) {
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    $set = Invoke-Native 'icacls' @($root, '/inheritance:r', '/grant:r', '*S-1-5-32-544:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F')
+    if ($set.Code -ne 0) { throw ('STEP FAILED: the rights of ' + $root + ' could not be restricted -- ' + $set.Text + ' -- this block wrote no private data') }
+    $problem = Test-PrivateAcl $root $true
+    if ($problem) { throw ('STEP FAILED: ' + $problem + ' -- this block wrote no private data') }
+    Write-Output ('PRIVATE_ACL ' + $root + ' = Administrators and SYSTEM only, verified')
+  }
+  function Assert-PrivateTree([string[]]$folders) {
+    $count = 0
+    foreach ($folder in $folders) {
+      if (-not (Test-Path -LiteralPath $folder)) { continue }
+      foreach ($item in @(@(Get-Item -LiteralPath $folder -Force) + @(Get-ChildItem -LiteralPath $folder -Recurse -Force))) {
+        $problem = Test-PrivateAcl $item.FullName $false
+        if ($problem) { throw ('STEP FAILED: ' + $problem) }
+        $count = $count + 1
+      }
+    }
+    Write-Output ('PRIVATE_ACL_ITEMS_VERIFIED=' + $count)
+  }
 
   if ((hostname) -ne $expectedHost) { throw "STEP FAILED: this computer is $(hostname), not $expectedHost" }
   $appDir = Join-Path $finRoot 'app'
   $inbox = Join-Path $finRoot 'inbox'
+  Lock-PrivateRoot $finRoot
+  Lock-PrivateRoot $evidenceRoot
+  New-Item -ItemType Directory -Force -Path $inbox | Out-Null
+  Assert-PrivateTree @($finRoot, $evidenceRoot)
+
   $cloneDb = Join-Path (Join-Path $appDir 'instance') 'transport.db'
   $tool = Join-Path (Join-Path $appDir 'tools') 'fin_recon_storage.py'
   $periodDir = Join-Path $evidenceRoot $period
   $target = Join-Path $periodDir ('v' + $version)
+  $zipPath = Join-Path $inbox $packageZip
   $runName = Get-Date -Format 'yyyyMMdd_HHmmss_fff'
+  if (-not (Test-Path -LiteralPath $target)) {
+    if (-not (Test-Path -LiteralPath $zipPath)) {
+      foreach ($place in @('Downloads', 'Desktop')) {
+        $candidate = Join-Path (Join-Path $env:USERPROFILE $place) $packageZip
+        if ((-not (Test-Path -LiteralPath $zipPath)) -and (Test-Path -LiteralPath $candidate)) {
+          Copy-Item -LiteralPath $candidate -Destination $zipPath
+          Write-Output ('PACKAGE_ZIP_COPIED_TO_INBOX from ' + $candidate + ' -- delete that copy once this block has passed')
+        }
+      }
+      if (-not (Test-Path -LiteralPath $zipPath)) { throw ('STEP FAILED: ' + $packageZip + ' not found -- save it into Downloads or Desktop of this Windows account, then run block 2 again') }
+    }
+    $zipHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash.ToLower()
+    Write-Output ('PACKAGE_ZIP_SHA256=' + $zipHash)
+    if ($zipHash -ne $packageZipSha) {
+      $aside = $zipPath + '.rejected_' + $runName
+      Move-Item -LiteralPath $zipPath -Destination $aside
+      throw ('STEP FAILED: ' + $packageZip + ' has SHA-256 ' + $zipHash + ', expected ' + $packageZipSha + ' -- it was set aside as ' + $aside + '; save the right file into Downloads or Desktop, then run block 2 again')
+    }
+  }
+
   $runDir = Join-Path (Join-Path $finRoot 'runs') $runName
   New-Item -ItemType Directory -Force -Path $runDir | Out-Null
   Write-Output ('RUN=' + $runDir)
@@ -272,11 +389,6 @@ staging clone и точный план». Клон даёт ту же прове
   if (($tests.Code -ne 0) -or (-not $ran.Success)) { throw ('STEP FAILED: the tests did not pass -- see ' + (Join-Path $runDir 'tests.txt')) }
 
   if (-not (Test-Path -LiteralPath $target)) {
-    $zipPath = Join-Path $inbox $packageZip
-    if (-not (Test-Path -LiteralPath $zipPath)) { throw "STEP FAILED: put $packageZip into $inbox first" }
-    $zipHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash.ToLower()
-    Write-Output ('PACKAGE_ZIP_SHA256=' + $zipHash)
-    if ($zipHash -ne $packageZipSha) { throw "STEP FAILED: $packageZip has SHA-256 $zipHash, expected $packageZipSha" }
     $free = (New-Object System.IO.DriveInfo ([System.IO.Path]::GetPathRoot($evidenceRoot))).AvailableFreeSpace
     if ($free -lt (20 * (Get-Item -LiteralPath $zipPath).Length)) { throw "STEP FAILED: not enough free space for $evidenceRoot" }
     New-Item -ItemType Directory -Force -Path $periodDir | Out-Null
@@ -299,26 +411,32 @@ staging clone и точный план». Клон даёт ту же прове
   Set-Content -LiteralPath (Join-Path $runDir 'check_package.txt') -Value $check.Text -Encoding UTF8
   Write-Output $check.Text
   if (($check.Code -ne 0) -or (-not $check.Text.Contains('RESULT=PASS package=' + $packageId + ' content_sha256=' + $contentSha))) { throw "STEP FAILED: the package in $target does not verify or is not the reviewed one" }
-  $acl = Invoke-Native 'icacls' @($evidenceRoot, '/inheritance:r', '/grant:r', '*S-1-5-32-544:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F')
-  if ($acl.Code -ne 0) { throw "STEP FAILED: icacls on $evidenceRoot -- $($acl.Text)" }
   Get-ChildItem -LiteralPath $target -Recurse -File | ForEach-Object { $_.IsReadOnly = $true }
-  Write-Output 'ARCHIVE_RIGHTS=Administrators and SYSTEM only; package files read-only'
+  Write-Output 'ARCHIVE_FILES=read-only'
 
   $restoreDir = Join-Path (Join-Path $finRoot 'restore') $runName
   $restore = Invoke-Native $python @('-I', $tool, 'restore-test', '--package', $target, '--workdir', $restoreDir, '--expect', $expect)
   Set-Content -LiteralPath (Join-Path $runDir 'restore_test.txt') -Value $restore.Text -Encoding UTF8
   Write-Output $restore.Text
   if (($restore.Code -ne 0) -or (-not $restore.Text.Contains('RESULT=PASS restore-test period=' + $period + ' version=' + $version + ' content_sha256=' + $contentSha))) { throw 'STEP FAILED: restore into a new empty database' }
+  Assert-PrivateTree @($finRoot, $evidenceRoot)
   Write-Output 'STEP=PASS'
 }
 ```
 
-Ключевые строки: `APP_HEAD`, `TESTS=Ran N tests exit=0`,
-`PACKAGE_ZIP_SHA256` (при первом запуске), `PACKAGE_PLACED` (или
+Первый запуск без ZIP в «Загрузках» или на «Рабочем столе» закончится
+`STEP FAILED: FIN_RECON_EVIDENCE_2026-03_v1.zip not found` — это ожидаемо:
+закрытые папки уже созданы, сохраните ZIP и запустите блок 2 снова.
+
+Ключевые строки: две `PRIVATE_ACL ... verified`, `PRIVATE_ACL_ITEMS_VERIFIED`
+(в начале и в конце), `PACKAGE_ZIP_COPIED_TO_INBOX` (если ZIP взят из
+«Загрузок» или с «Рабочего стола» — после `STEP=PASS` **удалите** оттуда
+исходную копию: Shift+Delete, мимо корзины), `PACKAGE_ZIP_SHA256`,
+`APP_HEAD`, `TESTS=Ran N tests exit=0`, `PACKAGE_PLACED` (или
 `PACKAGE_ALREADY_PLACED`), строки `CONTROL` и `EXPECT OK` (контрольные
 числа марта), `EXPECTATIONS N checked, 0 failed`, `RESULT=PASS package=`,
-`ARCHIVE_RIGHTS`, `import #1=IMPORTED`, `import #2=ALREADY_IMPORTED
-rows_written=0`, `unchanged=True`, `RESULT=PASS restore-test`, `STEP=PASS`.
+`import #1=IMPORTED`, `import #2=ALREADY_IMPORTED rows_written=0`,
+`unchanged=True`, `RESULT=PASS restore-test`, `STEP=PASS`.
 
 ---
 
@@ -326,18 +444,21 @@ rows_written=0`, `unchanged=True`, `RESULT=PASS restore-test`, `STEP=PASS`.
 
 Что делает блок:
 
+* сначала ставит и проверяет права обеих закрытых папок и всего, что в них
+  лежит; не удалось — остановка до первой записи;
 * записывает состояние production и базового staging (HEAD и службы) —
   в конце блока сверяет, что оно не изменилось; сохраняет отчёт
   `state_snapshot.py` staging и конфигурацию его службы (`sc.exe qc`) в
   журнал прогона;
 * делает **онлайн-копию базы staging** штатным `backup_transport_db.py` с
-  `integrity_check` в
-  `D:\transport-report-backups\staging\fin_recon_storage_001\<время>`;
-  копирует её в `C:\VehicleSoft_FinRecon\app\instance\transport.db` и
-  сверяет SHA-256 копии;
+  `integrity_check` в закрытую
+  `C:\VehicleSoft_FinRecon\staging_backup\<время>`; копирует её в
+  `C:\VehicleSoft_FinRecon\app\instance\transport.db` и сверяет SHA-256
+  копии;
 * на **копии**: печатает, каких миграций кода ветки в ней нет (только
   отчёт), применяет `FIN_RECON_STORAGE_001`, загружает мартовский снимок,
-  сверяет копию с пакетом и с контрольными числами.
+  сверяет копию с пакетом и с контрольными числами;
+* в конце ещё раз проверяет права на всём, что записал.
 
 Если клон уже создан, блок останавливается и отсылает к блоку 4
 (запустить) или к блокам 5 и 6 (удалить и создать заново).
@@ -350,7 +471,6 @@ rows_written=0`, `unchanged=True`, `RESULT=PASS restore-test`, `STEP=PASS`.
   $stagingRoot = 'C:\transport-report-staging'
   $finRoot = 'C:\VehicleSoft_FinRecon'
   $evidenceRoot = 'D:\fin-recon-evidence'
-  $backupRoot = 'D:\transport-report-backups\staging\fin_recon_storage_001'
   $python = 'C:\Program Files\Python314\python.exe'
   $sha = 'a267782679f83deb68d17a8871d66c6ea91707a4'
   $contentSha = '42d09d775958e110de396a5cb3b3737292aaf5a647806b5b91574276a4973b6e'
@@ -364,6 +484,49 @@ rows_written=0`, `unchanged=True`, `RESULT=PASS restore-test`, `STEP=PASS`.
     $lines = @(& $exe @arguments 2>&1 | ForEach-Object { "$_" })
     [pscustomobject]@{ Code = $LASTEXITCODE; Lines = $lines; Text = ($lines -join "`n").Trim() }
   }
+  function Test-PrivateAcl([string]$path, [bool]$isRoot) {
+    try {
+      $acl = Get-Acl -LiteralPath $path
+      $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+    } catch {
+      return ('the rights of ' + $path + ' cannot be read: ' + $_.Exception.Message)
+    }
+    $foreign = @($rules | Where-Object { ([string]$_.AccessControlType -eq 'Allow') -and (@('S-1-5-32-544', 'S-1-5-18') -notcontains $_.IdentityReference.Value) })
+    if ($foreign.Count -gt 0) {
+      $problem = $path + ' also grants access to ' + (@($foreign | ForEach-Object { $_.IdentityReference.Value } | Select-Object -Unique) -join ', ')
+      $explicit = @($foreign | Where-Object { -not $_.IsInherited } | ForEach-Object { '*' + $_.IdentityReference.Value } | Select-Object -Unique)
+      if ($explicit.Count -gt 0) { $problem = $problem + ' -- to take that access away run: icacls "' + $path + '" /remove:g ' + ($explicit -join ' ') + ' /T /C' }
+      return $problem
+    }
+    if ($isRoot) {
+      if (-not $acl.AreAccessRulesProtected) { return ($path + ' still inherits rights from its parent folder') }
+      foreach ($sid in @('S-1-5-32-544', 'S-1-5-18')) {
+        $full = @($rules | Where-Object { ($_.IdentityReference.Value -eq $sid) -and ([string]$_.AccessControlType -eq 'Allow') -and ([string]$_.FileSystemRights -eq 'FullControl') -and ([string]$_.InheritanceFlags -eq 'ContainerInherit, ObjectInherit') })
+        if ($full.Count -eq 0) { return ($path + ' does not give ' + $sid + ' full control of everything inside') }
+      }
+    }
+    return ''
+  }
+  function Lock-PrivateRoot([string]$root) {
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    $set = Invoke-Native 'icacls' @($root, '/inheritance:r', '/grant:r', '*S-1-5-32-544:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F')
+    if ($set.Code -ne 0) { throw ('STEP FAILED: the rights of ' + $root + ' could not be restricted -- ' + $set.Text + ' -- this block wrote no private data') }
+    $problem = Test-PrivateAcl $root $true
+    if ($problem) { throw ('STEP FAILED: ' + $problem + ' -- this block wrote no private data') }
+    Write-Output ('PRIVATE_ACL ' + $root + ' = Administrators and SYSTEM only, verified')
+  }
+  function Assert-PrivateTree([string[]]$folders) {
+    $count = 0
+    foreach ($folder in $folders) {
+      if (-not (Test-Path -LiteralPath $folder)) { continue }
+      foreach ($item in @(@(Get-Item -LiteralPath $folder -Force) + @(Get-ChildItem -LiteralPath $folder -Recurse -Force))) {
+        $problem = Test-PrivateAcl $item.FullName $false
+        if ($problem) { throw ('STEP FAILED: ' + $problem) }
+        $count = $count + 1
+      }
+    }
+    Write-Output ('PRIVATE_ACL_ITEMS_VERIFIED=' + $count)
+  }
   function Get-SiteState {
     $prodHead = (Invoke-Native 'git' @('-C', $prodRoot, 'rev-parse', 'HEAD')).Text
     $stagingHead = (Invoke-Native 'git' @('-C', $stagingRoot, 'rev-parse', 'HEAD')).Text
@@ -373,7 +536,12 @@ rows_written=0`, `unchanged=True`, `RESULT=PASS restore-test`, `STEP=PASS`.
 
   if ((hostname) -ne $expectedHost) { throw "STEP FAILED: this computer is $(hostname), not $expectedHost" }
   $appDir = Join-Path $finRoot 'app'
+  Lock-PrivateRoot $finRoot
+  Lock-PrivateRoot $evidenceRoot
+  Assert-PrivateTree @($finRoot, $evidenceRoot)
+
   $stateDir = Join-Path $finRoot 'state'
+  $backupRoot = Join-Path $finRoot 'staging_backup'
   $cloneDb = Join-Path (Join-Path $appDir 'instance') 'transport.db'
   $stagingDb = Join-Path (Join-Path $stagingRoot 'instance') 'transport.db'
   $target = Join-Path (Join-Path $evidenceRoot $period) ('v' + $version)
@@ -404,11 +572,8 @@ rows_written=0`, `unchanged=True`, `RESULT=PASS restore-test`, `STEP=PASS`.
   $serviceConfig = Invoke-Native 'sc.exe' @('qc', $stagingService)
   Set-Content -LiteralPath (Join-Path $runDir 'staging_service_qc.txt') -Value $serviceConfig.Text -Encoding UTF8
 
-  $need = [long](1.3 * $stagingBytes)
-  foreach ($dir in @($backupRoot, $finRoot)) {
-    $free = (New-Object System.IO.DriveInfo ([System.IO.Path]::GetPathRoot($dir))).AvailableFreeSpace
-    if ($free -lt $need) { throw "STEP FAILED: not enough free space for a copy of the staging database under $dir" }
-  }
+  $free = (New-Object System.IO.DriveInfo ([System.IO.Path]::GetPathRoot($finRoot))).AvailableFreeSpace
+  if ($free -lt [long](2.6 * $stagingBytes)) { throw "STEP FAILED: not enough free space under $finRoot for the backup and the clone of the staging database" }
 
   $backupDir = Join-Path $backupRoot $runName
   $backup = Invoke-Native $python @('-I', (Join-Path $appDir 'backup_transport_db.py'), '--source', $stagingDb, '--dest-dir', $backupDir, '--suffix', 'staging_before_finrecon')
@@ -449,6 +614,7 @@ rows_written=0`, `unchanged=True`, `RESULT=PASS restore-test`, `STEP=PASS`.
   Write-Output $verify.Text
   if (($verify.Code -ne 0) -or (-not $verify.Text.Contains('RESULT=PASS verify period=' + $period + ' version=' + $version + ' content_sha256=' + $contentSha))) { throw 'STEP FAILED: the clone database does not match the package' }
 
+  Assert-PrivateTree @($finRoot, $evidenceRoot)
   $after = Get-SiteState
   if ($after -ne $before) { throw ('STEP FAILED: production or staging changed while this block ran (the block does not touch them) -- before: ' + $before + ' after: ' + $after) }
   Write-Output 'PROD_AND_STAGING_UNCHANGED=yes'
@@ -456,30 +622,35 @@ rows_written=0`, `unchanged=True`, `RESULT=PASS restore-test`, `STEP=PASS`.
 }
 ```
 
-Ключевые строки: `BASELINE ...`, `STAGING_BACKUP=... integrity=ok`,
-`CLONE_DB`, `CLONE_MIGRATIONS_NOT_IN_STAGING_COPY` (только отчёт: каких
-миграций кода ветки в копии нет; среди них `FIN_RECON_STORAGE_001`, которую
-блок применяет следом; остальные на экран финансовой сверки не влияют),
+Ключевые строки: две `PRIVATE_ACL ... verified`, `PRIVATE_ACL_ITEMS_VERIFIED`,
+`BASELINE ...`, `STAGING_BACKUP=... integrity=ok`, `CLONE_DB`,
+`CLONE_MIGRATIONS_NOT_IN_STAGING_COPY` (только отчёт: каких миграций кода
+ветки в копии нет; среди них `FIN_RECON_STORAGE_001`, которую блок
+применяет следом; остальные на экран финансовой сверки не влияют),
 `MIGRATION=Done...`, `IMPORT=IMPORTED`, все `CHECK OK`, `EXPECTATIONS N
 checked, 0 failed`, `RESULT=PASS verify`, `PROD_AND_STAGING_UNCHANGED=yes`,
 `STEP=PASS`.
 
 ---
 
-## Блок 4. Клон staging: запустить и проверить
+## Блок 4. Клон staging: запустить и проверить (только 127.0.0.1)
 
 Что делает блок:
 
+* сначала ставит и проверяет права обеих закрытых папок; не удалось —
+  клон не запускается;
 * ещё раз сверяет базу клона с пакетом (только чтение);
-* запускает клон — `run_server.py` из папки клона, порт **5052**, отдельное
-  свёрнутое окно `python`. У клона свой случайный ключ сессий; ключи
-  интеграций (Topaz, сборщик дронов, бот) клону не передаются — приём от
-  них на 5052 отклоняется. Ботов, сборщиков и служб клон не запускает;
+* запускает клон — `run_server.py` из папки клона, адрес
+  **`127.0.0.1:5052`**, отдельное свёрнутое окно `python`. Порт в сеть не
+  открывается, правила брандмауэра нет. У клона свой случайный ключ
+  сессий; ключи интеграций (Topaz, сборщик дронов, бот) клону не
+  передаются. Ботов, сборщиков и служб клон не запускает;
+* проверяет, что клон слушает **только** `127.0.0.1` — иначе останавливает
+  его и сообщает;
 * проверяет: `/login` отвечает формой входа, `/drones/fin-recon` без входа
   ведёт на форму входа. Если проверка не прошла, только что запущенный
   клон блок сам останавливает;
-* открывает порт 5052 в брандмауэре только для сети `10.103.0.0/16`
-  (правило `VehicleSoft-FinRecon-Clone-5052`; блок 5 его удаляет);
+* печатает, какой браузер для просмотра есть на сервере;
 * сверяет, что production и базовый staging за время блока не изменились.
 
 Если клон уже запущен, блок только проверяет.
@@ -499,14 +670,54 @@ checked, 0 failed`, `RESULT=PASS verify`, `PROD_AND_STAGING_UNCHANGED=yes`,
   $version = 1
   $expectName = 'task_contract_2026-03_v1.json'
   $port = 5052
-  $lan = '10.103.0.0/16'
-  $ruleName = 'VehicleSoft-FinRecon-Clone-5052'
-  $publicHost = '10.103.25.14'
   function Invoke-Native([string]$exe, [string[]]$arguments) {
     $ErrorActionPreference = 'Continue'
     $global:LASTEXITCODE = -1
     $lines = @(& $exe @arguments 2>&1 | ForEach-Object { "$_" })
     [pscustomobject]@{ Code = $LASTEXITCODE; Lines = $lines; Text = ($lines -join "`n").Trim() }
+  }
+  function Test-PrivateAcl([string]$path, [bool]$isRoot) {
+    try {
+      $acl = Get-Acl -LiteralPath $path
+      $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+    } catch {
+      return ('the rights of ' + $path + ' cannot be read: ' + $_.Exception.Message)
+    }
+    $foreign = @($rules | Where-Object { ([string]$_.AccessControlType -eq 'Allow') -and (@('S-1-5-32-544', 'S-1-5-18') -notcontains $_.IdentityReference.Value) })
+    if ($foreign.Count -gt 0) {
+      $problem = $path + ' also grants access to ' + (@($foreign | ForEach-Object { $_.IdentityReference.Value } | Select-Object -Unique) -join ', ')
+      $explicit = @($foreign | Where-Object { -not $_.IsInherited } | ForEach-Object { '*' + $_.IdentityReference.Value } | Select-Object -Unique)
+      if ($explicit.Count -gt 0) { $problem = $problem + ' -- to take that access away run: icacls "' + $path + '" /remove:g ' + ($explicit -join ' ') + ' /T /C' }
+      return $problem
+    }
+    if ($isRoot) {
+      if (-not $acl.AreAccessRulesProtected) { return ($path + ' still inherits rights from its parent folder') }
+      foreach ($sid in @('S-1-5-32-544', 'S-1-5-18')) {
+        $full = @($rules | Where-Object { ($_.IdentityReference.Value -eq $sid) -and ([string]$_.AccessControlType -eq 'Allow') -and ([string]$_.FileSystemRights -eq 'FullControl') -and ([string]$_.InheritanceFlags -eq 'ContainerInherit, ObjectInherit') })
+        if ($full.Count -eq 0) { return ($path + ' does not give ' + $sid + ' full control of everything inside') }
+      }
+    }
+    return ''
+  }
+  function Lock-PrivateRoot([string]$root) {
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    $set = Invoke-Native 'icacls' @($root, '/inheritance:r', '/grant:r', '*S-1-5-32-544:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F')
+    if ($set.Code -ne 0) { throw ('STEP FAILED: the rights of ' + $root + ' could not be restricted -- ' + $set.Text + ' -- this block wrote no private data') }
+    $problem = Test-PrivateAcl $root $true
+    if ($problem) { throw ('STEP FAILED: ' + $problem + ' -- this block wrote no private data') }
+    Write-Output ('PRIVATE_ACL ' + $root + ' = Administrators and SYSTEM only, verified')
+  }
+  function Assert-PrivateTree([string[]]$folders) {
+    $count = 0
+    foreach ($folder in $folders) {
+      if (-not (Test-Path -LiteralPath $folder)) { continue }
+      foreach ($item in @(@(Get-Item -LiteralPath $folder -Force) + @(Get-ChildItem -LiteralPath $folder -Recurse -Force))) {
+        $problem = Test-PrivateAcl $item.FullName $false
+        if ($problem) { throw ('STEP FAILED: ' + $problem) }
+        $count = $count + 1
+      }
+    }
+    Write-Output ('PRIVATE_ACL_ITEMS_VERIFIED=' + $count)
   }
   function Get-SiteState {
     $prodHead = (Invoke-Native 'git' @('-C', $prodRoot, 'rev-parse', 'HEAD')).Text
@@ -517,9 +728,16 @@ checked, 0 failed`, `RESULT=PASS verify`, `PROD_AND_STAGING_UNCHANGED=yes`,
   function Get-Listeners {
     @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | ForEach-Object { [int]$_.OwningProcess })
   }
+  function Get-ListenAddresses([int]$owner) {
+    @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Where-Object { [int]$_.OwningProcess -eq $owner } | ForEach-Object { [string]$_.LocalAddress } | Select-Object -Unique)
+  }
 
   if ((hostname) -ne $expectedHost) { throw "STEP FAILED: this computer is $(hostname), not $expectedHost" }
   $appDir = Join-Path $finRoot 'app'
+  Lock-PrivateRoot $finRoot
+  Lock-PrivateRoot $evidenceRoot
+  Assert-PrivateTree @($finRoot, $evidenceRoot)
+
   $stateDir = Join-Path $finRoot 'state'
   $cloneDb = Join-Path (Join-Path $appDir 'instance') 'transport.db'
   $target = Join-Path (Join-Path $evidenceRoot $period) ('v' + $version)
@@ -565,7 +783,7 @@ checked, 0 failed`, `RESULT=PASS verify`, `PROD_AND_STAGING_UNCHANGED=yes`,
     try {
       [Environment]::SetEnvironmentVariable('SECRET_KEY', ([BitConverter]::ToString($bytes) -replace '-', ''), 'Process')
       [Environment]::SetEnvironmentVariable('PORT', [string]$port, 'Process')
-      [Environment]::SetEnvironmentVariable('HOST', '0.0.0.0', 'Process')
+      [Environment]::SetEnvironmentVariable('HOST', '127.0.0.1', 'Process')
       [Environment]::SetEnvironmentVariable('FLASK_ENV', 'sqlite_prod', 'Process')
       foreach ($name in @('FUEL_API_TOKEN', 'DRONE_API_TOKEN', 'TG_BOT_TOKEN')) { [Environment]::SetEnvironmentVariable($name, $null, 'Process') }
       $running = Start-Process -FilePath $python -ArgumentList 'run_server.py' -WorkingDirectory $appDir -WindowStyle Minimized -PassThru
@@ -588,6 +806,15 @@ checked, 0 failed`, `RESULT=PASS verify`, `PROD_AND_STAGING_UNCHANGED=yes`,
     }
   }
 
+  $addresses = @(Get-ListenAddresses $running.Id)
+  $exposed = @($addresses | Where-Object { @('127.0.0.1', '::1') -notcontains $_ })
+  if (($addresses.Count -eq 0) -or ($exposed.Count -gt 0)) {
+    Stop-Process -Id $running.Id -Force
+    Remove-Item -LiteralPath $pidFile -Force
+    throw ('STEP FAILED: the clone listened on ' + ($addresses -join ', ') + ' -- it must listen on 127.0.0.1 only; it was stopped')
+  }
+  Write-Output ('CLONE_LISTENS=' + ($addresses -join ', ') + ' port ' + $port + ' only')
+
   try {
     $login = Invoke-WebRequest -Uri ('http://127.0.0.1:' + $port + '/login') -UseBasicParsing -TimeoutSec 30
     if (($login.StatusCode -ne 200) -or ($login.Content -notmatch 'vs-login-form')) { throw '/login did not render the login form' }
@@ -604,41 +831,60 @@ checked, 0 failed`, `RESULT=PASS verify`, `PROD_AND_STAGING_UNCHANGED=yes`,
   Write-Output 'CLONE_LOGIN=200'
   Write-Output 'CLONE_FIN_RECON_ANONYMOUS=login form (sign-in required)'
 
-  $rules = @(Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)
-  if ($rules.Count -eq 0) {
-    New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Protocol TCP -LocalPort $port -RemoteAddress $lan -Action Allow | Out-Null
-    Write-Output ('FIREWALL_RULE=created ' + $ruleName + ' TCP ' + $port + ' from ' + $lan)
-  } else {
-    Write-Output ('FIREWALL_RULE=exists ' + $ruleName)
-  }
-
   $after = Get-SiteState
   if ($after -ne $before) { throw ('STEP FAILED: production or staging changed while this block ran (the block does not touch them) -- before: ' + $before + ' after: ' + $after) }
   Write-Output 'PROD_AND_STAGING_UNCHANGED=yes'
-  Write-Output ('CLONE_URL=http://' + $publicHost + ':' + $port + '/drones/fin-recon')
+  $url = 'http://127.0.0.1:' + $port + '/drones/fin-recon'
+  Write-Output ('CLONE_URL=' + $url)
+  $edge = @(@('C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe', 'C:\Program Files\Microsoft\Edge\Application\msedge.exe') | Where-Object { Test-Path -LiteralPath $_ })
+  $chrome = @(@('C:\Program Files\Google\Chrome\Application\chrome.exe', 'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe') | Where-Object { Test-Path -LiteralPath $_ })
+  if ($edge.Count -gt 0) {
+    Write-Output 'VIEW=on this server open the Run box (right-click Start, Run), paste the next line, press Enter -- Edge opens an InPrivate window'
+    Write-Output ('"' + $edge[0] + '" --inprivate ' + $url)
+  } elseif ($chrome.Count -gt 0) {
+    Write-Output 'VIEW=on this server open the Run box (right-click Start, Run), paste the next line, press Enter -- Chrome opens an incognito window'
+    Write-Output ('"' + $chrome[0] + '" --incognito ' + $url)
+  } else {
+    Write-Output ('VIEW=neither Edge nor Chrome is installed on this server; Internet Explorer shows the page without styles -- in it press Ctrl+Shift+P (InPrivate) and open ' + $url)
+  }
   Write-Output 'STEP=PASS'
 }
 ```
 
-Ключевые строки: `CLONE_VERIFY=PASS`, `CLONE_STARTED` (или
-`CLONE_ALREADY_RUNNING`), `CLONE_LOGIN=200`, `CLONE_FIN_RECON_ANONYMOUS`,
-`FIREWALL_RULE`, `PROD_AND_STAGING_UNCHANGED=yes`, `CLONE_URL`, `STEP=PASS`.
+Ключевые строки: две `PRIVATE_ACL ... verified`, `CLONE_VERIFY=PASS`,
+`CLONE_STARTED` (или `CLONE_ALREADY_RUNNING`), `CLONE_LISTENS=127.0.0.1 port
+5052 only`, `CLONE_LOGIN=200`, `CLONE_FIN_RECON_ANONYMOUS`,
+`PROD_AND_STAGING_UNCHANGED=yes`, `CLONE_URL`, `VIEW=` и строка под ней,
+`STEP=PASS`.
 
-### Проверка экрана глазами
+### Проверка экрана — на самом сервере
 
-1. Откройте `CLONE_URL` в **окне InPrivate / инкогнито** браузера. Cookie
-   сессии у браузера общая для всех портов одного адреса: вход на клон в
-   обычном окне выкинет вас из production (5050) и staging (5051).
-2. Войдите своей учётной записью администратора **staging** — у клона
-   копия базы staging.
-3. Пункт «Финансовая сверка» в полосе раздела «Дроны» виден только
+1. Клон доступен **только с этого сервера**: адрес из строки `CLONE_URL` —
+   `http://127.0.0.1:5052/drones/fin-recon`. С других компьютеров он не
+   открывается — так и задумано.
+2. В том же сеансе удалённого рабочего стола откройте окно «Выполнить»
+   (правой кнопкой по «Пуску» → «Выполнить», или Win+R), вставьте строку,
+   которую блок 4 напечатал **под** строкой `VIEW=`, и нажмите Enter:
+   откроется Edge в отдельном окне **InPrivate** (или Chrome в окне
+   инкогнито) сразу на нужном адресе. Окно «Выполнить» запускает браузер
+   от вашей учётной записи, а не от администратора, — так и нужно; из окна
+   PowerShell браузер не запускайте. Если блок написал, что ни Edge, ни
+   Chrome на сервере нет, — Internet Explorer: `Ctrl+Shift+P` (InPrivate)
+   и тот же адрес; страница в нём без оформления.
+3. Войдите учётной записью администратора **staging** — у клона копия базы
+   staging.
+4. Пункт «Финансовая сверка» в полосе раздела «Дроны» виден только
    администратору. Проверьте экран по приватному списку
    `OWNER_UAT_CHECKLIST.md` (5–8 пунктов с ожидаемыми цифрами марта).
-4. Проверьте отказ: войдите на клон пользователем без роли администратора
+5. Проверьте отказ: войдите на клон пользователем без роли администратора
    (если такой есть в копии staging) — пункта нет, прямой адрес
    `/drones/fin-recon` отвечает «доступ запрещён».
-5. Клон работает, пока открыто его окно `python` и вы не вышли из сеанса
-   Windows. Когда проверка закончена — блок 5.
+6. Выгрузка XLSX сохраняется в «Загрузки» даже из окна InPrivate. Если
+   открывали её — после проверки удалите файл оттуда (Shift+Delete). Закройте
+   окно InPrivate — сессия клона в браузере не сохранится. Затем блок 5.
+
+Клон работает, пока открыто его окно `python` и вы не вышли из сеанса
+Windows.
 
 ---
 
@@ -648,9 +894,8 @@ checked, 0 failed`, `RESULT=PASS verify`, `PROD_AND_STAGING_UNCHANGED=yes`,
 **времени старта** и тому, что именно он слушает порт 5052; номер процесса
 после перезагрузки может достаться другой программе (в том числе службе
 staging или production — у них тот же `python.exe`), и такой процесс блок
-не тронет. Удаляет правило брандмауэра, сверяет, что production и базовый
-staging не изменились. Папку клона и базу клона не удаляет — клон можно
-запустить снова блоком 4.
+не тронет. Сверяет, что production и базовый staging не изменились. Папку
+клона и базу клона не удаляет — клон можно запустить снова блоком 4.
 
 ```powershell
 & {
@@ -660,7 +905,6 @@ staging не изменились. Папку клона и базу клона 
   $stagingRoot = 'C:\transport-report-staging'
   $finRoot = 'C:\VehicleSoft_FinRecon'
   $port = 5052
-  $ruleName = 'VehicleSoft-FinRecon-Clone-5052'
   function Invoke-Native([string]$exe, [string[]]$arguments) {
     $ErrorActionPreference = 'Continue'
     $global:LASTEXITCODE = -1
@@ -703,13 +947,6 @@ staging не изменились. Папку клона и базу клона 
   $busy = @(Get-Listeners)
   if ($busy.Count -gt 0) { throw "STEP FAILED: port $port is still used by process $($busy[0])" }
   Write-Output ('PORT_' + $port + '=free')
-  $rules = @(Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)
-  if ($rules.Count -gt 0) {
-    Remove-NetFirewallRule -DisplayName $ruleName
-    Write-Output ('FIREWALL_RULE=removed ' + $ruleName)
-  } else {
-    Write-Output 'FIREWALL_RULE=absent'
-  }
   $after = Get-SiteState
   if ($after -ne $before) { throw ('STEP FAILED: production or staging changed while this block ran (the block does not touch them) -- before: ' + $before + ' after: ' + $after) }
   Write-Output 'PROD_AND_STAGING_UNCHANGED=yes'
@@ -723,8 +960,10 @@ staging не изменились. Папку клона и базу клона 
 
 Удаляет папку `C:\VehicleSoft_FinRecon\app` — код ветки и базу клона.
 Запускать после блока 5. **Не удаляет**: приватный архив на `D:`,
-онлайн-копию базы staging, базы проверки восстановления, журналы прогонов.
-Базовый staging и production не менялись — откатывать на них нечего.
+онлайн-копию базы staging (`C:\VehicleSoft_FinRecon\staging_backup`), базы
+проверки восстановления, журналы прогонов — они остаются в закрытых
+папках. Базовый staging и production не менялись — откатывать на них
+нечего.
 
 ```powershell
 & {
@@ -746,7 +985,7 @@ staging не изменились. Папку клона и базу клона 
   } else {
     Write-Output ('CLONE_ABSENT=' + $appDir)
   }
-  Write-Output 'KEPT=archive on D:, staging backup, restore test databases, run logs'
+  Write-Output 'KEPT=archive, staging backup copy, restore test databases, run logs -- all in the restricted folders'
   Write-Output 'STEP=PASS'
 }
 ```
@@ -755,9 +994,15 @@ staging не изменились. Папку клона и базу клона 
 
 ## Блок 7. Второй независимый экземпляр архива
 
-Копия пакета на **другой физический диск** (съёмный или второй диск сервера)
-или в сетевую папку резервного хранилища. Соседняя папка на том же диске
-резервом не считается — блок такой путь не примет.
+Копия пакета на **другой физический диск** (второй диск сервера или
+съёмный диск **NTFS**) или в сетевую папку резервного хранилища. Соседняя
+папка на том же диске резервом не считается — блок такой путь не примет.
+
+Копия — те же приватные данные, поэтому перед копированием блок ставит и
+проверяет на `выбранный корень\fin-recon-evidence` те же права «только
+администраторы и SYSTEM». Не удалось (носитель FAT/exFAT без прав NTFS;
+сетевая папка, где ваша учётная запись не администратор) — остановка, ничего
+не скопировано.
 
 Блок запускается дважды:
 
@@ -765,9 +1010,9 @@ staging не изменились. Папку клона и базу клона 
    останавливается, ничего не копируя;
 2. впишите в первую строку блока выбранный корень — например букву
    съёмного диска `E:\` или сетевую папку `\\сервер\папка` — и запустите
-   снова: блок скопирует пакет в
-   `выбранный корень\fin-recon-evidence\2026-03\v1`, проверит каждый файл
-   копии по SHA-256 и допишет, где лежит копия, в
+   снова: блок закроет правами
+   `выбранный корень\fin-recon-evidence`, скопирует туда пакет, проверит
+   каждый файл копии по SHA-256 и допишет, где лежит копия, в
    `D:\fin-recon-evidence\2026-03\COPIES.txt`.
 
 ```powershell
@@ -787,8 +1032,53 @@ staging не изменились. Папку клона и базу клона 
     $lines = @(& $exe @arguments 2>&1 | ForEach-Object { "$_" })
     [pscustomobject]@{ Code = $LASTEXITCODE; Lines = $lines; Text = ($lines -join "`n").Trim() }
   }
+  function Test-PrivateAcl([string]$path, [bool]$isRoot) {
+    try {
+      $acl = Get-Acl -LiteralPath $path
+      $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+    } catch {
+      return ('the rights of ' + $path + ' cannot be read: ' + $_.Exception.Message)
+    }
+    $foreign = @($rules | Where-Object { ([string]$_.AccessControlType -eq 'Allow') -and (@('S-1-5-32-544', 'S-1-5-18') -notcontains $_.IdentityReference.Value) })
+    if ($foreign.Count -gt 0) {
+      $problem = $path + ' also grants access to ' + (@($foreign | ForEach-Object { $_.IdentityReference.Value } | Select-Object -Unique) -join ', ')
+      $explicit = @($foreign | Where-Object { -not $_.IsInherited } | ForEach-Object { '*' + $_.IdentityReference.Value } | Select-Object -Unique)
+      if ($explicit.Count -gt 0) { $problem = $problem + ' -- to take that access away run: icacls "' + $path + '" /remove:g ' + ($explicit -join ' ') + ' /T /C' }
+      return $problem
+    }
+    if ($isRoot) {
+      if (-not $acl.AreAccessRulesProtected) { return ($path + ' still inherits rights from its parent folder') }
+      foreach ($sid in @('S-1-5-32-544', 'S-1-5-18')) {
+        $full = @($rules | Where-Object { ($_.IdentityReference.Value -eq $sid) -and ([string]$_.AccessControlType -eq 'Allow') -and ([string]$_.FileSystemRights -eq 'FullControl') -and ([string]$_.InheritanceFlags -eq 'ContainerInherit, ObjectInherit') })
+        if ($full.Count -eq 0) { return ($path + ' does not give ' + $sid + ' full control of everything inside') }
+      }
+    }
+    return ''
+  }
+  function Lock-PrivateRoot([string]$root) {
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    $set = Invoke-Native 'icacls' @($root, '/inheritance:r', '/grant:r', '*S-1-5-32-544:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F')
+    if ($set.Code -ne 0) { throw ('STEP FAILED: the rights of ' + $root + ' could not be restricted -- ' + $set.Text + ' -- this block wrote no private data') }
+    $problem = Test-PrivateAcl $root $true
+    if ($problem) { throw ('STEP FAILED: ' + $problem + ' -- this block wrote no private data') }
+    Write-Output ('PRIVATE_ACL ' + $root + ' = Administrators and SYSTEM only, verified')
+  }
+  function Assert-PrivateTree([string[]]$folders) {
+    $count = 0
+    foreach ($folder in $folders) {
+      if (-not (Test-Path -LiteralPath $folder)) { continue }
+      foreach ($item in @(@(Get-Item -LiteralPath $folder -Force) + @(Get-ChildItem -LiteralPath $folder -Recurse -Force))) {
+        $problem = Test-PrivateAcl $item.FullName $false
+        if ($problem) { throw ('STEP FAILED: ' + $problem) }
+        $count = $count + 1
+      }
+    }
+    Write-Output ('PRIVATE_ACL_ITEMS_VERIFIED=' + $count)
+  }
 
   if ((hostname) -ne $expectedHost) { throw "STEP FAILED: this computer is $(hostname), not $expectedHost" }
+  Lock-PrivateRoot $evidenceRoot
+  Assert-PrivateTree @($evidenceRoot)
   $periodDir = Join-Path $evidenceRoot $period
   $source = Join-Path $periodDir ('v' + $version)
   $tool = Join-Path (Join-Path (Join-Path $finRoot 'app') 'tools') 'fin_recon_storage.py'
@@ -800,10 +1090,10 @@ staging не изменились. Папку клона и базу клона 
     foreach ($volume in @(Get-Volume | Where-Object { $_.DriveLetter -and $_.FileSystem })) {
       $disk = (Get-Partition -DriveLetter $volume.DriveLetter).DiskNumber
       if ($disk -ne $sourceDisk) {
-        Write-Output ('CANDIDATE ' + $volume.DriveLetter + ':\ DISK=' + $disk + ' TYPE=' + $volume.DriveType + ' FREE_GB=' + [math]::Round($volume.SizeRemaining / 1GB, 1))
+        Write-Output ('CANDIDATE ' + $volume.DriveLetter + ':\ DISK=' + $disk + ' TYPE=' + $volume.DriveType + ' FS=' + $volume.FileSystem + ' FREE_GB=' + [math]::Round($volume.SizeRemaining / 1GB, 1))
       }
     }
-    throw 'STEP FAILED: write a drive of ANOTHER disk or a network share into $secondRoot on the first line of this block, then run it again'
+    throw 'STEP FAILED: write a drive of ANOTHER disk (NTFS) or a network share into $secondRoot on the first line of this block, then run it again'
   }
   if ($secondRoot -like '\\*') {
     $kind = 'network share'
@@ -813,7 +1103,9 @@ staging не изменились. Папку клона и базу клона 
     $kind = 'disk ' + $secondDisk
   }
   if (-not (Test-Path -LiteralPath $secondRoot)) { throw "STEP FAILED: $secondRoot is not reachable" }
-  $copy = Join-Path (Join-Path (Join-Path $secondRoot 'fin-recon-evidence') $period) ('v' + $version)
+  $copyRoot = Join-Path $secondRoot 'fin-recon-evidence'
+  Lock-PrivateRoot $copyRoot
+  $copy = Join-Path (Join-Path $copyRoot $period) ('v' + $version)
   if (Test-Path -LiteralPath $copy) {
     Write-Output ('SECOND_COPY_EXISTS=' + $copy)
   } else {
@@ -821,6 +1113,7 @@ staging не изменились. Папку клона и базу клона 
     Copy-Item -LiteralPath $source -Destination $copy -Recurse
     Write-Output ('SECOND_COPY_WRITTEN=' + $copy + ' (' + $kind + ')')
   }
+  Assert-PrivateTree @($copyRoot)
   $check = Invoke-Native $python @('-I', $tool, 'check-package', '--package', $copy)
   Write-Output $check.Text
   if (($check.Code -ne 0) -or (-not $check.Text.Contains('content_sha256=' + $contentSha))) { throw 'STEP FAILED: the second copy did not verify' }
@@ -836,12 +1129,15 @@ staging не изменились. Папку клона и базу клона 
 
 `FIN_RECON_MARCH_FULL_EVIDENCE_20261012.zip` — в нём большой оригинал книги
 Агрокластера с фотографиями (78 958 503 байт). Исполнителю он не
-передавался, его хеша в пакете нет. Положите архив в
-`C:\VehicleSoft_FinRecon\inbox` и запустите блок: он проверит, что внутри
-есть ровно один файл в 78 958 503 байт, скопирует архив в
-`D:\fin-recon-evidence\2026-03\v1-full-evidence` и запишет SHA-256 и размер
-архива и самого большого оригинала в `FULL_EVIDENCE_SHA256SUMS.txt` рядом.
-Пакет `v1` при этом не меняется.
+передавался, его хеша в пакете нет. Сохраните архив в «Загрузки» или на
+«Рабочий стол» своей учётной записи на сервере и запустите блок: он
+сначала проверит права закрытых папок, скопирует архив в закрытую
+`C:\VehicleSoft_FinRecon\inbox` (и напомнит удалить исходную копию),
+проверит, что внутри есть ровно один файл в 78 958 503 байт (не тот файл
+блок отложит в сторону в той же inbox и остановится), скопирует
+архив в `D:\fin-recon-evidence\2026-03\v1-full-evidence` и запишет SHA-256
+и размер архива и самого большого оригинала в
+`FULL_EVIDENCE_SHA256SUMS.txt` рядом. Пакет `v1` при этом не меняется.
 
 ```powershell
 & {
@@ -852,9 +1148,64 @@ staging не изменились. Папку клона и базу клона 
   $period = '2026-03'
   $fullZip = 'FIN_RECON_MARCH_FULL_EVIDENCE_20261012.zip'
   $largeOriginalBytes = 78958503
+  function Invoke-Native([string]$exe, [string[]]$arguments) {
+    $ErrorActionPreference = 'Continue'
+    $global:LASTEXITCODE = -1
+    $lines = @(& $exe @arguments 2>&1 | ForEach-Object { "$_" })
+    [pscustomobject]@{ Code = $LASTEXITCODE; Lines = $lines; Text = ($lines -join "`n").Trim() }
+  }
+  function Test-PrivateAcl([string]$path, [bool]$isRoot) {
+    try {
+      $acl = Get-Acl -LiteralPath $path
+      $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+    } catch {
+      return ('the rights of ' + $path + ' cannot be read: ' + $_.Exception.Message)
+    }
+    $foreign = @($rules | Where-Object { ([string]$_.AccessControlType -eq 'Allow') -and (@('S-1-5-32-544', 'S-1-5-18') -notcontains $_.IdentityReference.Value) })
+    if ($foreign.Count -gt 0) {
+      $problem = $path + ' also grants access to ' + (@($foreign | ForEach-Object { $_.IdentityReference.Value } | Select-Object -Unique) -join ', ')
+      $explicit = @($foreign | Where-Object { -not $_.IsInherited } | ForEach-Object { '*' + $_.IdentityReference.Value } | Select-Object -Unique)
+      if ($explicit.Count -gt 0) { $problem = $problem + ' -- to take that access away run: icacls "' + $path + '" /remove:g ' + ($explicit -join ' ') + ' /T /C' }
+      return $problem
+    }
+    if ($isRoot) {
+      if (-not $acl.AreAccessRulesProtected) { return ($path + ' still inherits rights from its parent folder') }
+      foreach ($sid in @('S-1-5-32-544', 'S-1-5-18')) {
+        $full = @($rules | Where-Object { ($_.IdentityReference.Value -eq $sid) -and ([string]$_.AccessControlType -eq 'Allow') -and ([string]$_.FileSystemRights -eq 'FullControl') -and ([string]$_.InheritanceFlags -eq 'ContainerInherit, ObjectInherit') })
+        if ($full.Count -eq 0) { return ($path + ' does not give ' + $sid + ' full control of everything inside') }
+      }
+    }
+    return ''
+  }
+  function Lock-PrivateRoot([string]$root) {
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    $set = Invoke-Native 'icacls' @($root, '/inheritance:r', '/grant:r', '*S-1-5-32-544:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F')
+    if ($set.Code -ne 0) { throw ('STEP FAILED: the rights of ' + $root + ' could not be restricted -- ' + $set.Text + ' -- this block wrote no private data') }
+    $problem = Test-PrivateAcl $root $true
+    if ($problem) { throw ('STEP FAILED: ' + $problem + ' -- this block wrote no private data') }
+    Write-Output ('PRIVATE_ACL ' + $root + ' = Administrators and SYSTEM only, verified')
+  }
+  function Assert-PrivateTree([string[]]$folders) {
+    $count = 0
+    foreach ($folder in $folders) {
+      if (-not (Test-Path -LiteralPath $folder)) { continue }
+      foreach ($item in @(@(Get-Item -LiteralPath $folder -Force) + @(Get-ChildItem -LiteralPath $folder -Recurse -Force))) {
+        $problem = Test-PrivateAcl $item.FullName $false
+        if ($problem) { throw ('STEP FAILED: ' + $problem) }
+        $count = $count + 1
+      }
+    }
+    Write-Output ('PRIVATE_ACL_ITEMS_VERIFIED=' + $count)
+  }
 
   if ((hostname) -ne $expectedHost) { throw "STEP FAILED: this computer is $(hostname), not $expectedHost" }
-  $source = Join-Path (Join-Path $finRoot 'inbox') $fullZip
+  $inbox = Join-Path $finRoot 'inbox'
+  Lock-PrivateRoot $finRoot
+  Lock-PrivateRoot $evidenceRoot
+  New-Item -ItemType Directory -Force -Path $inbox | Out-Null
+  Assert-PrivateTree @($finRoot, $evidenceRoot)
+
+  $source = Join-Path $inbox $fullZip
   $dir = Join-Path (Join-Path $evidenceRoot $period) 'v1-full-evidence'
   $dest = Join-Path $dir $fullZip
   $sums = Join-Path $dir 'FULL_EVIDENCE_SHA256SUMS.txt'
@@ -866,21 +1217,40 @@ staging не изменились. Папку клона и базу клона 
     Write-Output 'STEP=PASS'
     return
   }
-  if (-not (Test-Path -LiteralPath $source)) { throw "STEP FAILED: put $fullZip into $(Split-Path -Parent $source) first" }
-  Add-Type -AssemblyName System.IO.Compression.FileSystem
-  $zip = [System.IO.Compression.ZipFile]::OpenRead($source)
-  try {
-    $large = @($zip.Entries | Where-Object { $_.Length -eq $largeOriginalBytes })
-    if ($large.Count -ne 1) { throw "STEP FAILED: $fullZip does not hold exactly one file of $largeOriginalBytes bytes" }
-    $stream = $large[0].Open()
-    try {
-      $memberHash = ([BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash($stream)) -replace '-', '').ToLower()
-    } finally {
-      $stream.Dispose()
+  if (-not (Test-Path -LiteralPath $source)) {
+    foreach ($place in @('Downloads', 'Desktop')) {
+      $candidate = Join-Path (Join-Path $env:USERPROFILE $place) $fullZip
+      if ((-not (Test-Path -LiteralPath $source)) -and (Test-Path -LiteralPath $candidate)) {
+        Copy-Item -LiteralPath $candidate -Destination $source
+        Write-Output ('FULL_EVIDENCE_COPIED_TO_INBOX from ' + $candidate + ' -- delete that copy once this block has passed')
+      }
     }
-    $memberName = $large[0].FullName
+    if (-not (Test-Path -LiteralPath $source)) { throw ('STEP FAILED: ' + $fullZip + ' not found -- save it into Downloads or Desktop of this Windows account, then run block 8 again') }
+  }
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $large = @()
+  $zip = $null
+  try {
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($source)
+    $large = @($zip.Entries | Where-Object { $_.Length -eq $largeOriginalBytes })
+    if ($large.Count -eq 1) {
+      $stream = $large[0].Open()
+      try {
+        $memberHash = ([BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash($stream)) -replace '-', '').ToLower()
+      } finally {
+        $stream.Dispose()
+      }
+      $memberName = $large[0].FullName
+    }
+  } catch {
+    $large = @()
   } finally {
-    $zip.Dispose()
+    if ($zip) { $zip.Dispose() }
+  }
+  if ($large.Count -ne 1) {
+    $aside = $source + '.rejected_' + (Get-Date -Format 'yyyyMMdd_HHmmss_fff')
+    Move-Item -LiteralPath $source -Destination $aside
+    throw ('STEP FAILED: ' + $fullZip + ' is not a ZIP holding exactly one file of ' + $largeOriginalBytes + ' bytes -- it was set aside as ' + $aside + '; save the right file into Downloads or Desktop, then run block 8 again')
   }
   New-Item -ItemType Directory -Force -Path $dir | Out-Null
   Copy-Item -LiteralPath $source -Destination $dest
@@ -893,6 +1263,7 @@ staging не изменились. Папку клона и базу клона 
   )
   Set-Content -LiteralPath $sums -Value $lines -Encoding UTF8
   Get-ChildItem -LiteralPath $dir -File | ForEach-Object { $_.IsReadOnly = $true }
+  Assert-PrivateTree @($finRoot, $evidenceRoot)
   Write-Output ('FULL_EVIDENCE=' + $dest + ' BYTES=' + $size + ' SHA256=' + $hash)
   Write-Output ('LARGE_ORIGINAL_SHA256=' + $memberHash + ' BYTES=' + $largeOriginalBytes)
   Write-Output 'STEP=PASS'
@@ -908,11 +1279,22 @@ staging не изменились. Папку клона и базу клона 
 
 * Блок остановился на `STEP FAILED` — пришлите весь вывод. Всё, что блок
   успел сделать до этой строки, перечислено в его выводе выше неё.
-* Клон не открывается в браузере с вашего компьютера, а `CLONE_LOGIN=200`
-  есть — брандмауэр или сеть: откройте
-  `http://127.0.0.1:5052/drones/fin-recon` в браузере на самом сервере.
+* Остановка на правах (`could not be restricted`, `cannot be read`, `also
+  grants access to`, `still inherits`) — блок остановился до записи
+  приватного. Чаще всего это след Проводника: кнопка «Продолжить» на
+  закрытой папке добавила вашу учётную запись в её права. Тогда в той же
+  строке после `to take that access away run:` блок печатает готовую
+  команду `icacls`, которая убирает именно эту запись. Выполните её в том
+  же окне PowerShell и запустите блок снова. Других прав вручную не
+  меняйте; если команды в строке нет — пришлите вывод.
+* Блок отложил ZIP (`set aside as ...rejected_...`) — в «Загрузках» или на
+  «Рабочем столе» лежит не тот файл. Сохраните туда правильный и запустите
+  блок снова; отложенная копия остаётся в закрытой inbox.
+* Экран клона открывается только в браузере **на самом сервере** по
+  `http://127.0.0.1:5052/drones/fin-recon`. С другого компьютера он не
+  открывается — так и задумано.
 * Окно клона (`python`) можно закрыть — клон остановится; потом выполните
-  блок 5: он уберёт запись о запуске и правило брандмауэра.
+  блок 5: он уберёт запись о запуске.
 * Ни один блок не меняет production и базовый staging. Если блок пишет, что
   они изменились, — изменил кто-то другой: остановитесь и пришлите вывод.
 
@@ -920,8 +1302,9 @@ staging не изменились. Папку клона и базу клона 
 
 * **Клон** — блоки 5 и 6. Больше на сервере откатывать нечего: базовый
   staging и production этой задачей не менялись, база staging только
-  копировалась. Её онлайн-копия, снятая блоком 3, — доказательство
-  состояния на момент копирования, восстанавливать из неё ничего не нужно.
+  копировалась, порт и брандмауэр не трогались. Онлайн-копия базы staging,
+  снятая блоком 3, — доказательство состояния на момент копирования,
+  восстанавливать из неё ничего не нужно.
 * **Архив** на `D:\fin-recon-evidence` откатывать не нужно — это хранилище
   доказательств. Удалять его нельзя без отдельного решения владельца.
 * **Код в `main`** (если PR когда-нибудь вольют) — `git revert` коммитов
