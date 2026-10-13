@@ -202,7 +202,8 @@ EDGE_RULE_VERSION = "edge-core-2026-10-09"
 # [REASON]: round 2 of the edge-of-field rule (gps/edge_scale.py, roadmap
 # 2.13), after round 1 was rejected by the data run of 10-11.10.2026. Its own
 # label, for the same reason as round 1's: a result computed with it names
-# the rule and the base method it trimmed.
+# the rule and the base method it trimmed. Rejected in its turn by the owner's
+# KML review of 13.10.2026 (condition 2); the switch stays off.
 EDGE_SCALE_VERSION = "edge-scale-2026-10-11"
 EDGE_RULES = (EDGE_RULE_VERSION, EDGE_SCALE_VERSION)
 
@@ -704,9 +705,9 @@ def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None,
     `edge_rule` -- an edge-of-field candidate: driving at work speed beside a
     field is taken out of today's shape before the sites are cut. True or
     EDGE_RULE_VERSION is round 1 (gps/edge.py, roadmap 2.12, rejected),
-    EDGE_SCALE_VERSION is round 2 (gps/edge_scale.py, roadmap 2.13). Off by
-    default: the method in force is unchanged until the owner adopts a rule,
-    and a result with one carries its version.
+    EDGE_SCALE_VERSION is round 2 (gps/edge_scale.py, roadmap 2.13,
+    rejected). Off by default: the method in force is unchanged until the
+    owner adopts a rule, and a result with one carries its version.
 
     Returns (sites, quality), sites ordered by area, largest first.
     """
