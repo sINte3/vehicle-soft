@@ -2,12 +2,12 @@
 """GPS EDGE, ROUND 2 -- edge driving measured against the site's own pass step.
 
 REJECTED by the owner's review of 13.10.2026 (roadmap 2.13, condition 2): on
-three sites -- two John Deere 9970 cotton pickers and a CASE 420 -- the owner
-marked removed ground as worked that day, and each site lost more than the B-2
-tolerance. Those pieces hold no track point at all, so no rule over the track
-can tell such work from empty ground. Conditions 1 and 3 passed (V-6: median
-|deviation| 23.69 % -> 18.85 %). The switch stays off; this module stays so
-that the run can be repeated.
+three sites of cotton pickers -- two John Deere 9970 and a CASE CE 420 -- the
+owner marked removed ground as worked that day, and each site lost more than
+the B-2 tolerance. Those pieces hold no track point at all, so no rule over the
+track can tell such work from empty ground. Conditions 1 and 3 passed (V-6:
+median |deviation| 23.69 % -> 18.85 %). The owner closed the topic the same
+day. The switch stays off; this module stays so that the run can be repeated.
 
 A CANDIDATE RULE behind a switch (`gps.area.work_sites(..., edge_rule=
 EDGE_SCALE_VERSION)`); the nightly computation does not ask for it, so the
