@@ -621,6 +621,9 @@ def resolve_v5(con, row):
     units = [int(unit) for (unit,) in con.execute(
         'SELECT wialon_id FROM gps_daily_aggregates WHERE work_date = ? '
         'AND reason IS NULL ORDER BY wialon_id', (row['day'],))]
+    # [REASON]: без папки коллектора намеренно. Строка набора ищется по имени
+    # из сопоставления, как в прогонах 10-12.10.2026; имя из списка Wialon
+    # могло бы задним числом сменить выбранный объект.
     names = unit_names(con, units)
     key = search_key(row['machine'])
     named = [unit for unit in units if search_key(names.get(unit)) == key]
@@ -780,7 +783,7 @@ def owner_condition(record, stored, out):
 def part_days(con, folder, contours, pairs, out):
     out('=== PART 2 -- machine-days asked for (2026-10-01:1273 -- roadmap 2.12, '
         'condition 3): %d ===' % len(pairs))
-    names = unit_names(con, sorted({unit for _day, unit in pairs}))
+    names = unit_names(con, sorted({unit for _day, unit in pairs}), folder)
     verdicts = []
     for day, unit in pairs:
         out('--- %s unit %d %s' % (day, unit, console(names.get(unit) or '')))
@@ -1261,7 +1264,8 @@ def part_period(con, folder, contours, since, until, kml_path, out, progress=Non
             progress('  %d of %d machine-days' % (index, len(counted)))
     verdict = report_period(records, len(days), len(days) - len(counted), gone, out)
     largest, rest = pick_for_kml(records)
-    names = unit_names(con, sorted({row['unit'] for row in largest + rest}))
+    names = unit_names(con, sorted({row['unit'] for row in largest + rest}),
+                       folder)
     out('KML for the owner\'s eye -- %d machine-day(s) with the largest removal and '
         '%d more changed ones by sha1 of "day:unit":' % (len(largest), len(rest)))
     for title, picked in (('largest removal', largest), ('by sha1', rest)):
@@ -1340,7 +1344,7 @@ def part_labels(con, folder, contours, since, until, out, progress=None):
     groups = defaultdict(list)
     for site in sites:
         groups[(site['day'], site['unit'])].append(site)
-    names = unit_names(con, sorted({unit for _day, unit in groups}))
+    names = unit_names(con, sorted({unit for _day, unit in groups}), folder)
     measured, untrusted = [], []
     skipped = Counter()
     for index, ((day, unit), mine) in enumerate(sorted(groups.items()), 1):

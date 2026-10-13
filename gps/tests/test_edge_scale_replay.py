@@ -692,6 +692,28 @@ class Production(World):
                       '[beyond B-2] [deleted]', out)
         out.encode('ascii')
 
+    def test_an_unlinked_object_is_named_as_wialon_names_it(self):
+        """No mapping row: the KML names the object as the collector wrote it
+        from the Wialon fleet list, like the screen. The run of 12.10.2026 showed
+        the owner bare numbers; the test above, without that file, is the
+        negative control."""
+        points = os.path.join(self.scratch, 'points')
+        shutil.copytree(self.folder, points)
+        storage.write_unit_names(points, [{'id': ROADONLY,
+                                           'name': 'JohnDeere 80 746 KA'}])
+        kml = os.path.join(self.scratch, 'edge.kml')
+        code, out, _err = run_main('--db', self.untampered(), '--dir', points,
+                                   '--since', '2026-09-01', '--until', '2026-09-30',
+                                   '--kml', kml)
+        self.assertEqual(code, 3, out)
+        titles = [f.find('k:name', NS).text
+                  for f in ET.parse(kml).getroot().findall('.//k:Folder', NS)]
+        self.assertTrue(titles[0].startswith('JohnDeere 80 746 KA · 18.09.2026 · '),
+                        titles[0])
+        # the console keeps the number and adds the name
+        self.assertIn('unit %d: A7 0.514 -> rule 0.000 ha' % ROADONLY, out)
+        self.assertIn('JohnDeere 80 746 KA', out)
+
     def test_strips_kept_as_passes_have_their_own_layer(self):
         points = replay.read_day_readonly(self.folder, PASSES, '2026-09-16')
         played = replay.replay(points, None)
