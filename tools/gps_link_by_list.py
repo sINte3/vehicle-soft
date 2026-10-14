@@ -204,10 +204,11 @@ NEXT_STEP = {
     OLD_NAME_HELD: ('нынешнее имя строки (mapping_name) носит другой объект '
                     'Wialon: импорт моточасов, возможно, уже находит по нему '
                     'машину -- пришлите CSV сессии'),
-    NAME_SPACES: ('в имени объекта в Wialon двойные пробелы (или табуляция): '
-                  'экран и инструмент их сводят, а импорт моточасов сравнивает '
-                  'имя как есть -- строка по такому имени машину не найдёт; '
-                  'поправить имя объекта в Wialon или пришлите CSV сессии'),
+    NAME_SPACES: ('в имени объекта в Wialon двойной пробел (или табуляция): '
+                  'экран такие пробелы сводит, а импорт моточасов сравнивает '
+                  'имя как есть -- строка со сведённым именем машину не '
+                  'найдёт; убрать двойной пробел из имени объекта в Wialon '
+                  'или пришлите CSV сессии'),
 }
 
 # [REASON]: у svyazat_stroku «у машины есть строка» значит другое: строка
@@ -316,19 +317,20 @@ def counted_as(category):
     return 'da'
 
 
-def attach_status(unit_id, equipment_id, name, spaced, own, by_machine, by_key,
+def attach_status(unit_id, equipment_id, raw, spaced, own, by_machine, by_key,
                   holders):
     """svyazat_stroku: (статус, строки для отчёта, номер строки для записи).
 
     Строка, которую меняют, -- единственная строка машины без пометки. У неё
     нет id, или id уже этого объекта, а имя прежнее (так бывает после GPS-10
-    `--set`). Всё остальное -- человеку.
+    `--set`). Всё остальное -- человеку. `raw` -- имя объекта у сборщика без
+    краёв: именно его сравнивает импорт моточасов.
     """
     rows = by_machine.get(equipment_id, [])
     if own:
         if not (len(own) == 1 and own[0] in rows):
             return HAS_ROW, own, None
-        if name and not spaced and own[0]['vialon_name'] == name:
+        if raw and own[0]['vialon_name'] == raw:
             return DONE, own, None
     if not rows:
         return NO_ROW, [], None
@@ -339,13 +341,17 @@ def attach_status(unit_id, equipment_id, name, spaced, own, by_machine, by_key,
     row = rows[0]
     if row['wialon_id'] is not None and int(row['wialon_id']) != unit_id:
         return MACHINE_HAS_ROW, [row], None
-    if len(name) < MIN_NAME_LENGTH:
+    if len(raw) < MIN_NAME_LENGTH:
         return NO_NAME, [row], None
-    if spaced:
+    # [REASON]: строка, чьё имя уже точно имя из выгрузки (и с двойным
+    # пробелом), импорт находит -- ей нужен только id. Переименовывать её в
+    # такое имя инструмент не берётся: экран сводит пробелы, импорт нет, и
+    # какое из двух верное, решается не здесь («Что открыто» трека).
+    if spaced and row['vialon_name'] != raw:
         return NAME_SPACES, [row], None
-    if holders.get(name_key(name), set()) - {unit_id}:
+    if holders.get(name_key(raw), set()) - {unit_id}:
         return NAME_SHARED, [row], None
-    takers = [other for other in by_key.get(name_key(name), [])
+    takers = [other for other in by_key.get(name_key(raw), [])
               if other['id'] != row['id']]
     if takers:
         return NAME_TAKEN, takers, None
@@ -391,9 +397,11 @@ def plan(con, wanted, names):
         raw = (names.get(unit_id, ('', ''))[0] or '').strip()
         name = normalize_name(raw)
         # [REASON]: импорт моточасов ищет строку по имени из выгрузки Wialon,
-        # снимая только края (`wialon_import.parse_moto_csv`), а экран и этот
-        # инструмент сводят пробелы внутри. Для имени объекта с двойным
-        # пробелом записанная строка совпала бы с экраном, но не с импортом.
+        # снимая только края (`wialon_import.parse_moto_csv`), а экран сводит
+        # пробелы внутри. Поэтому имя строки сравнивается с `raw`, а строку с
+        # именем объекта, где двойной пробел, инструмент не создаёт и не
+        # переименовывает -- совпала бы она с экраном или с импортом, но не
+        # с обоими.
         spaced = raw != name
         machine = machines[equipment_id]
         own = by_id.get(unit_id, [])
@@ -405,12 +413,12 @@ def plan(con, wanted, names):
                 status = MACHINE_OFF
             else:
                 status, others, row_id = attach_status(
-                    unit_id, equipment_id, name, spaced, own, by_machine,
+                    unit_id, equipment_id, raw, spaced, own, by_machine,
                     by_key, holders)
             if status == RENAME:
                 old = others[0]['vialon_name']
-                by_key.setdefault(name_key(name), []).append(
-                    {'id': row_id, 'vialon_name': name, 'skip': False,
+                by_key.setdefault(name_key(raw), []).append(
+                    {'id': row_id, 'vialon_name': raw, 'skip': False,
                      'equipment_id': equipment_id})
         elif own and all(row['equipment_id'] == equipment_id and not row['skip']
                          for row in own):
@@ -438,10 +446,8 @@ def plan(con, wanted, names):
                 # пробел в имени строки моточасов не найдут.
                 if not name:
                     status = NO_NAME
-                elif spaced:
-                    status = NAME_SPACES
-                elif kept != name:
-                    status = NAME_STALE
+                elif kept != raw:
+                    status = NAME_SPACES if spaced else NAME_STALE
                 elif holders.get(name_key(kept), set()) - {unit_id}:
                     status = NAME_SHARED
                 else:
@@ -487,7 +493,7 @@ def plan(con, wanted, names):
         items.append({
             'status': status, 'wialon_id': unit_id,
             'equipment_id': equipment_id, 'deystvie': action, 'osnovanie': basis,
-            'wialon_name': name, 'machine': machine['name'],
+            'wialon_name': raw, 'machine': machine['name'],
             'plate': machine['plate'], 'category': machine['category'],
             'v_plan_fakte': counted_as(machine['category']),
             'days_computed': done.get('days', 0),
@@ -495,7 +501,7 @@ def plan(con, wanted, names):
             'last_day': done.get('last', ''), 'izmenena': '',
             'mapping_id': ' '.join(str(row['id']) for row in others),
             'mapping_name': ' | '.join(row['vialon_name'] for row in others),
-            'raznitsa': difference(old, name) if status == RENAME else '',
+            'raznitsa': difference(old, raw) if status == RENAME else '',
             'bylo': bylo, 'primechanie': note,
             '_row_id': row_id, '_old_name': old})
     return items

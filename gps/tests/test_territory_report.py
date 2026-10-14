@@ -743,15 +743,47 @@ class Extra(unittest.TestCase):
         self.assertNotIn(self.sites['in'], [(d, u, int(n)) for d, u, n in sites])
 
     def test_a_database_path_with_a_hash_is_refused_and_nothing_is_created(self):
-        folder = os.path.join(self.root, 'a#b')
-        os.mkdir(folder)
-        moved = os.path.join(folder, 'transport.db')
-        shutil.copy(self.db, moved)
-        before = sorted(os.listdir(self.root))
-        code, output = self.run_tool(db=moved)
-        self.assertEqual(code, 2, output)
-        self.assertIn('#', output)
-        self.assertEqual(sorted(os.listdir(self.root)), before)
+        for mark in '#?%':
+            with self.subTest(mark=mark):
+                folder = os.path.join(self.root, 'a%sb' % mark)
+                os.mkdir(folder)
+                moved = os.path.join(folder, 'transport.db')
+                shutil.copy(self.db, moved)
+                before = sorted(os.listdir(self.root))
+                code, output = self.run_tool(db=moved)
+                self.assertEqual(code, 2, output)
+                self.assertIn('contains #, ? or %', output)
+                self.assertEqual(sorted(os.listdir(self.root)), before)
+
+    def test_a_zone_with_an_empty_is_active_is_a_territory(self):
+        # Как у расчёта: пустой is_active -- контур есть.
+        self.sql("UPDATE field_contours SET is_active = NULL "
+                 "WHERE source = 'wialon' AND external_id = '520'")
+        code, output = self.run_tool()
+        self.assertEqual(code, 0, output)
+        zones = {int(z['zona_id']): z for z in read_csv(self.zones_out)}
+        self.assertEqual(zones[520]['geometriya'], 'da')
+        self.assertEqual(zones[520]['v_pravile'], 'da')
+
+    def test_a_failed_site_does_not_enter_the_day_share(self):
+        # Два участка суток на зоне 520 по 0,36 га; на втором падает GEOS.
+        # Доля суток -- по измеренному: 0,36 / 0,36, а не 0,36 / 0,72.
+        self.add_site(3105, polygon(rect(20, 20, 80, 80)), number=1, area=0.36)
+        self.add_site(3105, polygon(rect(20, 100, 80, 160)), number=2, area=0.36)
+        real = terr.measure_site
+
+        def failing(site, territories, tree):
+            if abs(site.centroid.y - (Y0 + 130)) < 1:
+                raise GEOSException('TopologyException: test')
+            return real(site, territories, tree)
+
+        with mock.patch.object(terr, 'measure_site', failing):
+            code, output = self.run_tool()
+        self.assertEqual(code, 3, output)
+        day = [row for row in read_csv(self.days_out)
+               if int(row['wialon_id']) == 3105][0]
+        self.assertEqual(float(day['dolya_dnya']), 1.0)
+        self.assertAlmostEqual(float(day['ga_vsego']), 0.72, 4)
 
 
 class Window(unittest.TestCase):

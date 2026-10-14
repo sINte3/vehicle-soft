@@ -1185,16 +1185,44 @@ class DoubleSpacedObjectNames(AttachBase):
         self.assertEqual(self.plan_rows()[PICKER]['status'], link.NAME_SPACES)
         self.assertEqual(self.rows_of(PICKER), [])
 
-    def test_unmarking_is_left(self):
+    def test_unmarking_a_screen_row_of_a_spaced_object_is_left(self):
+        # Строка сохранена экраном (пробелы сведены), а имя в выгрузке -- с
+        # двойным пробелом: импорт её не найдёт.
         self.world()
         self.names((MARKED, 'МТЗ-80 Х  951 JA', TODAY))
-        self.sql("UPDATE vialon_mappings SET vialon_name = 'МТЗ-80 Х  951 JA' "
-                 'WHERE id = ?', (self.marked_row,))
         self.listing('%d,%d,snyat_pometku,x' % (MARKED, self.tractor))
         code, output = self.run_tool('--apply')
         self.assertEqual(code, 3, output)
         self.assertEqual(self.plan_rows()[MARKED]['status'], link.NAME_SPACES)
         self.assertEqual(self.excluded().get(MARKED), EXCLUDED_NOT_OURS)
+
+    def test_unmarking_a_row_named_exactly_as_the_export_is_released(self):
+        # Имя строки -- точно имя из выгрузки, с двойным пробелом: импорт её
+        # находит, снять пометку можно.
+        spaced = 'МТЗ-80 Х  951 JA'
+        self.world()
+        self.names((MARKED, ' ' + spaced + ' ', TODAY))
+        self.sql('UPDATE vialon_mappings SET vialon_name = ? WHERE id = ?',
+                 (spaced, self.marked_row))
+        self.listing('%d,%d,snyat_pometku,x' % (MARKED, self.tractor))
+        code, output = self.run_tool('--apply')
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.plan_rows()[MARKED]['status'], link.RELEASE)
+        con = sqlite3.connect(self.db)
+        try:
+            found = con.execute('SELECT equipment_id, skip FROM vialon_mappings '
+                                'WHERE vialon_name = ?', (spaced,)).fetchall()
+        finally:
+            con.close()
+        self.assertEqual(found, [(self.tractor, 0)])
+
+    def test_a_tab_in_the_object_name_counts_as_spaced(self):
+        self.world()
+        self.names((PICKER, 'JohnDeere\t80 543 JA', TODAY))
+        self.listing('%d,%d,svyazat,x' % (PICKER, self.picker))
+        code, output = self.run_tool()
+        self.assertEqual(code, 3, output)
+        self.assertEqual(self.plan_rows()[PICKER]['status'], link.NAME_SPACES)
 
     def test_attaching_is_left(self):
         self.world_attach(object_name=OBJECT_NAME.replace(' ', '  '))
@@ -1204,16 +1232,35 @@ class DoubleSpacedObjectNames(AttachBase):
         self.assertEqual(self.plan_rows()[ATTACHED]['status'], link.NAME_SPACES)
         self.assertEqual(self.row_by_id(self.row), before)
 
-    def test_a_row_already_named_with_the_double_space_is_not_done(self):
-        # Строка с id объекта и тем же «двойным» именем -- не «уже связана»:
-        # инструмент такое имя не подтверждает.
+    def test_a_row_with_the_exact_spaced_name_and_the_id_is_done(self):
+        # Имя строки -- точно имя из выгрузки, id стоит: импорт и план-факт
+        # её находят, менять нечего.
         spaced = OBJECT_NAME.replace(' ', '  ')
         self.world_attach(row_name=spaced, object_name=spaced)
+        self.sql('UPDATE vialon_mappings SET wialon_id = ? WHERE id = ?',
+                 (ATTACHED, self.row))
+        code, output = self.run_tool('--apply')
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.plan_rows()[ATTACHED]['status'], link.DONE)
+
+    def test_a_row_with_the_screen_name_of_a_spaced_object_is_left(self):
+        # Строка с id, но с именем, которое свёл экран: импорт её не найдёт,
+        # а «уже связана» сказало бы обратное.
+        spaced = OBJECT_NAME.replace(' ', '  ')
+        self.world_attach(row_name=OBJECT_NAME, object_name=spaced)
         self.sql('UPDATE vialon_mappings SET wialon_id = ? WHERE id = ?',
                  (ATTACHED, self.row))
         code, output = self.run_tool()
         self.assertEqual(code, 3, output)
         self.assertEqual(self.plan_rows()[ATTACHED]['status'], link.NAME_SPACES)
+
+    def test_a_row_with_the_exact_spaced_name_only_gets_the_id(self):
+        spaced = OBJECT_NAME.replace(' ', '  ')
+        self.world_attach(row_name=spaced, object_name=spaced)
+        code, output = self.run_tool('--apply')
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.row_by_id(self.row)[:2], (spaced, ATTACHED))
+        self.assertEqual(self.plan_rows()[ATTACHED]['raznitsa'], 'net')
 
 
 class AttachMore(AttachBase):
