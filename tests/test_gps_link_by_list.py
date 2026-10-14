@@ -124,7 +124,7 @@ class Base(unittest.TestCase):
         """Комбайн без строки и МТЗ, помеченный «не наша», -- оба наши."""
         self.picker = self.machine('John Deere 9970', 'combine', '80 543 JA')
         self.tractor = self.machine('МТЗ-80Х', 'mtz', '80 951 JA')
-        self.names((PICKER, ' JohnDeere  80 543 JA', TODAY),
+        self.names((PICKER, ' JohnDeere 80 543 JA ', TODAY),
                    (MARKED, 'МТЗ-80 Х 951 JA', TODAY))
         self.marked_row = self.mapping('МТЗ-80 Х 951 JA', wialon_id=MARKED, skip=1)
         self.day(PICKER, '2026-10-05', 6.5)
@@ -824,16 +824,26 @@ class UnmarkNames(Base):
         self.assertEqual(self.plan_rows()[MARKED]['status'], link.NAME_SHARED)
         self.assertEqual(self.excluded().get(MARKED), EXCLUDED_NOT_OURS)
 
-    def test_a_row_name_differing_only_in_spaces_is_released(self):
-        # Пробелы экран сводит при сохранении -- это то же имя.
+    def test_a_row_name_differing_only_in_spaces_is_left_to_a_person(self):
+        # Импорт моточасов сравнивает имя из выгрузки как есть (края сняты):
+        # строка с лишним пробелом внутри машину не найдёт.
         self.world()
-        self.sql("UPDATE vialon_mappings SET vialon_name = ' МТЗ-80  Х 951 JA ' "
+        self.sql("UPDATE vialon_mappings SET vialon_name = 'МТЗ-80  Х 951 JA' "
                  'WHERE id = ?', (self.marked_row,))
+        self.listing('%d,%d,snyat_pometku,x' % (MARKED, self.tractor))
+        code, output = self.run_tool('--apply')
+        self.assertEqual(code, 3, output)
+        self.assertEqual(self.plan_rows()[MARKED]['status'], link.NAME_STALE)
+        self.assertEqual(self.excluded().get(MARKED), EXCLUDED_NOT_OURS)
+
+    def test_edge_spaces_of_the_collector_name_do_not_matter(self):
+        # Края имени снимают и импорт, и экран -- это то же имя.
+        self.world()
+        self.names((MARKED, '  МТЗ-80 Х 951 JA ', TODAY))
         self.listing('%d,%d,snyat_pometku,x' % (MARKED, self.tractor))
         code, output = self.run_tool('--apply')
         self.assertEqual(code, 0, output)
         self.assertEqual(self.plan_rows()[MARKED]['status'], link.RELEASE)
-        self.assertNotIn(MARKED, self.excluded())
 
     def test_a_row_name_differing_only_in_case_is_left_to_a_person(self):
         # Импорт моточасов ищет строку по имени точно: «мтз» вместо «МТЗ»
@@ -1156,6 +1166,106 @@ class AttachAllOrNothing(AttachBase):
             code, output = self.run_tool(*extra)
             self.assertEqual(code, 0, output)
             output.encode('ascii')
+
+
+
+class DoubleSpacedObjectNames(AttachBase):
+    """Объект с двойным пробелом в имени -- человеку на всех трёх путях.
+
+    Экран и инструмент сводят пробелы, а импорт моточасов берёт имя из
+    выгрузки как есть: строка со сведённым именем машину не нашла бы.
+    """
+
+    def test_linking_is_left(self):
+        self.world()
+        self.names((PICKER, 'JohnDeere  80 543 JA', TODAY))
+        self.listing('%d,%d,svyazat,x' % (PICKER, self.picker))
+        code, output = self.run_tool('--apply')
+        self.assertEqual(code, 3, output)
+        self.assertEqual(self.plan_rows()[PICKER]['status'], link.NAME_SPACES)
+        self.assertEqual(self.rows_of(PICKER), [])
+
+    def test_unmarking_is_left(self):
+        self.world()
+        self.names((MARKED, 'МТЗ-80 Х  951 JA', TODAY))
+        self.sql("UPDATE vialon_mappings SET vialon_name = 'МТЗ-80 Х  951 JA' "
+                 'WHERE id = ?', (self.marked_row,))
+        self.listing('%d,%d,snyat_pometku,x' % (MARKED, self.tractor))
+        code, output = self.run_tool('--apply')
+        self.assertEqual(code, 3, output)
+        self.assertEqual(self.plan_rows()[MARKED]['status'], link.NAME_SPACES)
+        self.assertEqual(self.excluded().get(MARKED), EXCLUDED_NOT_OURS)
+
+    def test_attaching_is_left(self):
+        self.world_attach(object_name=OBJECT_NAME.replace(' ', '  '))
+        before = self.row_by_id(self.row)
+        code, output = self.run_tool('--apply')
+        self.assertEqual(code, 3, output)
+        self.assertEqual(self.plan_rows()[ATTACHED]['status'], link.NAME_SPACES)
+        self.assertEqual(self.row_by_id(self.row), before)
+
+    def test_a_row_already_named_with_the_double_space_is_not_done(self):
+        # Строка с id объекта и тем же «двойным» именем -- не «уже связана»:
+        # инструмент такое имя не подтверждает.
+        spaced = OBJECT_NAME.replace(' ', '  ')
+        self.world_attach(row_name=spaced, object_name=spaced)
+        self.sql('UPDATE vialon_mappings SET wialon_id = ? WHERE id = ?',
+                 (ATTACHED, self.row))
+        code, output = self.run_tool()
+        self.assertEqual(code, 3, output)
+        self.assertEqual(self.plan_rows()[ATTACHED]['status'], link.NAME_SPACES)
+
+
+class AttachMore(AttachBase):
+    def test_an_object_with_the_machines_row_and_a_marked_row_is_left(self):
+        # Две строки с id объекта: строка машины и «не наша» -- не та
+        # ситуация, которую решает переименование.
+        self.world_attach()
+        self.sql('UPDATE vialon_mappings SET wialon_id = ? WHERE id = ?',
+                 (ATTACHED, self.row))
+        self.mapping(OBJECT_NAME + ' (staraya)', wialon_id=ATTACHED, skip=1)
+        code, output = self.run_tool()
+        self.assertEqual(code, 3, output)
+        self.assertEqual(self.plan_rows()[ATTACHED]['status'], link.HAS_ROW)
+
+    def test_a_row_with_whitespace_only_differences_is_renamed(self):
+        # Лишний пробел в строке -- импорт её не находит; переименование
+        # приводит имя к имени объекта.
+        self.world_attach(row_name=OBJECT_NAME.replace(' ', '  '))
+        self.sql('UPDATE vialon_mappings SET wialon_id = ? WHERE id = ?',
+                 (ATTACHED, self.row))
+        code, output = self.run_tool('--apply')
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.row_by_id(self.row)[0], OBJECT_NAME)
+        self.assertEqual(self.plan_rows()[ATTACHED]['raznitsa'], 'probely')
+
+    def test_a_legacy_null_skip_becomes_zero(self):
+        # /gps/orders ищет объект машины по `skip IS 0`: пустой skip там не
+        # виден.
+        self.world_attach()
+        self.sql('UPDATE vialon_mappings SET skip = NULL WHERE id = ?',
+                 (self.row,))
+        self.assertEqual(self.run_tool('--apply')[0], 0)
+        self.assertEqual(self.row_by_id(self.row)[3], 0)
+
+    def test_a_row_tied_to_another_object_says_so(self):
+        self.world_attach()
+        self.sql('UPDATE vialon_mappings SET wialon_id = 4444 WHERE id = ?',
+                 (self.row,))
+        code, output = self.run_tool()
+        self.assertEqual(code, 3, output)
+        row = self.plan_rows()[ATTACHED]
+        self.assertEqual(row['status'], link.MACHINE_HAS_ROW)
+        self.assertIn('wialon_id=4444', row['bylo'])
+        self.assertNotIn('svyazat_stroku', row['primechanie'])
+
+    def test_lowercase_lookalikes_are_named(self):
+        self.world_attach(row_name=CYRILLIC_NAME.lower(),
+                          object_name=OBJECT_NAME.lower())
+        code, output = self.run_tool()
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.plan_rows()[ATTACHED]['raznitsa'],
+                         'kirillitsa_latinitsa')
 
 
 if __name__ == '__main__':

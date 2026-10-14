@@ -28,10 +28,12 @@
       «не наша» и без машины: ставит ей машину и снимает пометку
       (`skip = 0`). Только по явному действию в списке: пометку когда-то
       поставил человек.
-  deystvie = svyazat_stroku -- у объекта строк нет, у машины ровно одна строка
-      без пометки и без id: ставит ей id объекта и имя объекта, как его
-      последним записал сборщик. Машина и `skip` не меняются. Прежнее имя --
-      в отчёте (`bylo`), чем имена различаются -- в `raznitsa`.
+  deystvie = svyazat_stroku -- у машины ровно одна строка без пометки, без id
+      (или уже с id этого объекта -- так бывает после GPS-10 `--set` -- и
+      прежним именем), у объекта других строк нет: ставит строке id объекта
+      и его имя, как его последним записал сборщик. Машина не меняется,
+      пустой `skip` становится 0. Прежнее имя -- в отчёте (`bylo`), чем имена
+      различаются -- в `raznitsa`.
 Проверки экрана сопоставления (`wialon_import._validate_mapping_decision`)
 повторены: машина должна быть в справочнике и активна, и у неё не должно
 быть другой строки без пометки -- иначе строка остаётся человеку.
@@ -42,10 +44,11 @@
       так же, как у всех связанных машин; снятая пометка перестаёт класть их
       в «пропущенные». Это ровно то, что сделал бы экран сопоставления.
       Поэтому имя строки обязано быть нынешним именем объекта и только его
-      (пробелы сведены, как их сводит экран; регистр различается, как в
-      импорте): строка с другим или общим именем -- человеку
-      (`imya_ne_sovpadaet`, `imya_obshchee`), без имени у сборщика --
-      тоже (`net_imeni`).
+      и совпадать с ним точно, как его сравнивает импорт: строка с другим
+      или общим именем -- человеку (`imya_ne_sovpadaet`, `imya_obshchee`),
+      без имени у сборщика -- тоже (`net_imeni`). Объект с двойным пробелом
+      в имени -- тоже человеку (`imya_s_probelami`): экран такие пробелы
+      сводит, а импорт нет, и строка с таким именем машину не нашла бы.
   Сверка заявок agro-work начинает находить работу этих машин.
   Категория машины решает, как её считать: полевая -- с гектарами,
       спецтехника -- след без гектаров, непольевая -- исключена.
@@ -57,12 +60,14 @@
       -- в CSV человеку, колонка `primechanie` говорит, что делать.
   Не решает, чья машина. Список составляет человек; неизвестный объект или
       машина, повтор в списке -- отказ всего прогона.
-  Не пересчитывает прошлые сутки. Ночной `--catch-up` смотрит только окно
+  Не пересчитывает прошлые сутки. Ночной `--catch-up` смотрит окно
       последних 30 суток (`CATCH_UP_WINDOW_DAYS` в gps/daily.py): объекту, с
       которого снята пометка, он досчитает сутки окна, у которых есть точки и
       нет строки; спецтехнике в окне уберёт гектары. Сутки старше окна
-      остаются как были. Моточасы прошлых дат не дописываются: импорт
-      находит машину только в выгрузках, загруженных после связки.
+      остаются как были -- кроме суток `sbor_nepolnyy`: их проход окна не
+      знает и пересчитает в первую же ночь. Моточасы прошлых дат не
+      дописываются: импорт находит машину только в выгрузках, загруженных
+      после связки.
 
 ОТКАТ
 Строки, изменённые прогоном, -- строки CSV записи с `izmenena = da`; номер
@@ -71,13 +76,20 @@
 объект снова без строки, как до прогона. Строка со снятой пометкой: значок
 «Нет в системе» у неё на экране сопоставления -- та же строка снова «не
 наша» без машины, с тем же номером и `wialon_id`. Переименованная строка
-(`pereimenuyu`): прежнее имя -- в `bylo` после `vialon_name=`; экран
-переименовать не умеет, поэтому -- корзина у строки и «+ Добавить» с прежним
-именем (скопировать из CSV, не набирать: кириллица и латиница выглядят
-одинаково) и той же машиной -- строка снова под старым именем и без id, но с
-новым номером (на номер строки ничего не ссылается). Одно `gps_link_mappings.py
---unset` -- не откат: имя осталось бы именем объекта, и автоплан GPS-10
-поставил бы id снова. Код: схема и работа программы не меняются; откатывать
+(`pereimenuyu`): прежнее имя -- в `bylo` после `vialon_name=`; кнопки
+переименования на экране нет, поэтому -- корзина у строки и «+ Добавить» с
+прежним именем (скопировать из CSV, не набирать: кириллица и латиница
+выглядят одинаково) и той же машиной -- строка снова под старым именем и без
+id, но с новым номером (на номер строки ничего не ссылается). Если в `bylo`
+стоит `wialon_id=N`, у строки до прогона был id -- после «+ Добавить» ещё
+`gps_link_mappings.py --set НОВЫЙ_НОМЕР=N --apply`. Экран сводит пробелы в
+имени: прежнее имя с лишними пробелами так не вернуть -- но по нему импорт
+и до прогона машину не находил. Одно `gps_link_mappings.py --unset` -- не
+откат: имя осталось бы именем объекта, и автоплан GPS-10 поставил бы id
+снова. Отчёт записи -- единственное место, где прежнее имя лежит рядом с
+номером строки (оно есть и в отчёте сухого прогона): повторный `--apply` с
+тем же `--out` перепишет его строками `uzhe_svyazan`, поэтому отчёт первой
+записи хранить. Код: схема и работа программы не меняются; откатывать
 нечего.
 
 СУХОЙ ПРОГОН ПО УМОЛЧАНИЮ. Без `--apply` база открывается `mode=ro`. Файл
@@ -147,11 +159,12 @@ MACHINE_OFF = 'mashina_otklyuchena'       # машина неактивна -- �
 NO_ROW = 'u_mashiny_net_stroki'           # svyazat_stroku: строки у машины нет
 MANY_ROWS = 'u_mashiny_neskolko_strok'    # svyazat_stroku: строк несколько
 OLD_NAME_HELD = 'staroe_imya_u_obekta'    # имя строки носит другой объект
+NAME_SPACES = 'imya_s_probelami'          # в имени объекта лишние пробелы
 
 WRITES = (CREATE, RELEASE, RENAME)
 LEFT_TO_PERSON = (HAS_ROW, NAME_TAKEN, NAME_SHARED, NAME_STALE, NO_NAME,
                   MACHINE_HAS_ROW, MACHINE_OFF, NO_ROW, MANY_ROWS,
-                  OLD_NAME_HELD)
+                  OLD_NAME_HELD, NAME_SPACES)
 CSV_ORDER = LEFT_TO_PERSON + (CREATE, RELEASE, RENAME, DONE)
 CSV_COLUMNS = ('status', 'wialon_id', 'equipment_id', 'deystvie', 'osnovanie',
                'wialon_name', 'machine', 'plate', 'category', 'v_plan_fakte',
@@ -191,7 +204,18 @@ NEXT_STEP = {
     OLD_NAME_HELD: ('нынешнее имя строки (mapping_name) носит другой объект '
                     'Wialon: импорт моточасов, возможно, уже находит по нему '
                     'машину -- пришлите CSV сессии'),
+    NAME_SPACES: ('в имени объекта в Wialon двойные пробелы (или табуляция): '
+                  'экран и инструмент их сводят, а импорт моточасов сравнивает '
+                  'имя как есть -- строка по такому имени машину не найдёт; '
+                  'поправить имя объекта в Wialon или пришлите CSV сессии'),
 }
+
+# [REASON]: у svyazat_stroku «у машины есть строка» значит другое: строка
+# машины уже связана с ДРУГИМ объектом, и совет «svyazat_stroku» здесь --
+# тот же путь по кругу.
+ATTACH_MACHINE_HAS_ROW = ('строка машины уже связана с другим объектом '
+                          '(его id -- в bylo): какой трекер её, решает '
+                          'человек -- пришлите CSV сессии')
 
 
 def difference(old, new):
@@ -292,7 +316,7 @@ def counted_as(category):
     return 'da'
 
 
-def attach_status(unit_id, equipment_id, name, own, by_machine, by_key,
+def attach_status(unit_id, equipment_id, name, spaced, own, by_machine, by_key,
                   holders):
     """svyazat_stroku: (статус, строки для отчёта, номер строки для записи).
 
@@ -304,7 +328,7 @@ def attach_status(unit_id, equipment_id, name, own, by_machine, by_key,
     if own:
         if not (len(own) == 1 and own[0] in rows):
             return HAS_ROW, own, None
-        if name and normalize_name(own[0]['vialon_name']) == name:
+        if name and not spaced and own[0]['vialon_name'] == name:
             return DONE, own, None
     if not rows:
         return NO_ROW, [], None
@@ -317,6 +341,8 @@ def attach_status(unit_id, equipment_id, name, own, by_machine, by_key,
         return MACHINE_HAS_ROW, [row], None
     if len(name) < MIN_NAME_LENGTH:
         return NO_NAME, [row], None
+    if spaced:
+        return NAME_SPACES, [row], None
     if holders.get(name_key(name), set()) - {unit_id}:
         return NAME_SHARED, [row], None
     takers = [other for other in by_key.get(name_key(name), [])
@@ -362,7 +388,13 @@ def plan(con, wanted, names):
 
     items = []
     for unit_id, equipment_id, action, basis in wanted:
-        name = normalize_name(names.get(unit_id, ('', ''))[0])
+        raw = (names.get(unit_id, ('', ''))[0] or '').strip()
+        name = normalize_name(raw)
+        # [REASON]: импорт моточасов ищет строку по имени из выгрузки Wialon,
+        # снимая только края (`wialon_import.parse_moto_csv`), а экран и этот
+        # инструмент сводят пробелы внутри. Для имени объекта с двойным
+        # пробелом записанная строка совпала бы с экраном, но не с импортом.
+        spaced = raw != name
         machine = machines[equipment_id]
         own = by_id.get(unit_id, [])
         others, row_id, old = [], None, None
@@ -373,8 +405,8 @@ def plan(con, wanted, names):
                 status = MACHINE_OFF
             else:
                 status, others, row_id = attach_status(
-                    unit_id, equipment_id, name, own, by_machine, by_key,
-                    holders)
+                    unit_id, equipment_id, name, spaced, own, by_machine,
+                    by_key, holders)
             if status == RENAME:
                 old = others[0]['vialon_name']
                 by_key.setdefault(name_key(name), []).append(
@@ -401,13 +433,14 @@ def plan(con, wanted, names):
                 # не принесёт, а экран не даст добавить строку с настоящим
                 # именем для той же машины. Имя, которое носит ещё один
                 # объект, отдало бы машине моточасы чужого трекера. Всё это
-                # -- человеку, как и у связки. Сравнение -- с учётом регистра:
-                # импорт ищет строку по имени точно (`apply_mappings`), и
-                # «мтз» вместо «МТЗ» моточасов не найдёт. Пробелы сведены, как
-                # их сводит экран при сохранении строки.
+                # -- человеку, как и у связки. Сравнение -- точное, правилом
+                # импорта (`apply_mappings`): «мтз» вместо «МТЗ» или лишний
+                # пробел в имени строки моточасов не найдут.
                 if not name:
                     status = NO_NAME
-                elif normalize_name(kept) != name:
+                elif spaced:
+                    status = NAME_SPACES
+                elif kept != name:
                     status = NAME_STALE
                 elif holders.get(name_key(kept), set()) - {unit_id}:
                     status = NAME_SHARED
@@ -420,6 +453,8 @@ def plan(con, wanted, names):
             status, others = HAS_ROW, own
         elif len(name) < MIN_NAME_LENGTH:
             status = NO_NAME
+        elif spaced:
+            status = NAME_SPACES
         elif holders.get(name_key(name), set()) - {unit_id}:
             # [REASON]: связь живёт в имени: по нему импорт моточасов найдёт
             # машину. Имя, общее с другим объектом, отдало бы моточасы
@@ -433,6 +468,8 @@ def plan(con, wanted, names):
                                        'skip': False, 'equipment_id': equipment_id}]
         done = history.get(unit_id, {})
         note = NEXT_STEP.get(status, '')
+        if action == ATTACH and status == MACHINE_HAS_ROW:
+            note = ATTACH_MACHINE_HAS_ROW
         if status == OLD_NAME_HELD:
             note += ' (объект: %s)' % ' '.join(str(other) for other in sorted(
                 holders.get(name_key(others[0]['vialon_name']), set())
@@ -440,11 +477,13 @@ def plan(con, wanted, names):
         bylo = ' | '.join('skip=%d equipment_id=%s'
                           % (int(row['skip']), row['equipment_id'] or '')
                           for row in others)
-        if status == RENAME:
+        if status == RENAME or (action == ATTACH
+                                and status == MACHINE_HAS_ROW):
             # [REASON]: имя -- последним и как есть, без нормализации: всё
             # после `vialon_name=` -- точное прежнее имя для отката.
             bylo = 'skip=0 equipment_id=%s wialon_id=%s vialon_name=%s' % (
-                equipment_id, others[0]['wialon_id'] or '', old)
+                equipment_id, others[0]['wialon_id'] or '',
+                others[0]['vialon_name'])
         items.append({
             'status': status, 'wialon_id': unit_id,
             'equipment_id': equipment_id, 'deystvie': action, 'osnovanie': basis,
@@ -505,7 +544,7 @@ def write_links(con, items):
         elif item['status'] == RENAME:
             cursor = con.execute(
                 'UPDATE vialon_mappings SET vialon_name = ?, wialon_id = ?, '
-                'updated_at = ? WHERE id = ? '
+                'skip = 0, updated_at = ? WHERE id = ? '
                 'AND (wialon_id IS NULL OR wialon_id = ?) '
                 'AND equipment_id = ? AND COALESCE(skip, 0) = 0 '
                 'AND vialon_name = ?',
@@ -538,7 +577,9 @@ def postcondition(con, items, changed):
         # проверка -- его правилом: точное имя находит ровно эту строку с
         # этой машиной, и другой строки с тем же именем без учёта регистра
         # нет (SQLite `lower()` кириллицу не сворачивает -- считается здесь).
-        found = con.execute('SELECT id, equipment_id, COALESCE(skip, 0) '
+        # `skip` строго 0, а не пустой: экран заказов (/gps/orders) ищет
+        # объект машины по `skip IS 0`, и пустой skip связь там не покажет.
+        found = con.execute('SELECT id, equipment_id, skip '
                             'FROM vialon_mappings WHERE vialon_name = ?',
                             (item['wialon_name'],)).fetchall()
         if keys is None:
