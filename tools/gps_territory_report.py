@@ -7,20 +7,26 @@
 не гектары». Территории -- группы геозон ресурса Wialon 285: группа 16
 «Агрокластер» (45 зон) и группа 3 «АЗСлар» (29 АЗС), список --
 `docs/gps_territory_zones_2026-10-14.csv` (`zona_id,gruppa_id,tip`). Правило
-в расчёте ещё не выбрано. Прежде чем его писать и включать, нужны замеры с
-боевой базы: какие сохранённые участки лежат на территориях и сколько
-гектаров сняли бы два правила-кандидата. Инструмент их меряет; владелец
-запускает его на сервере и присылает три CSV сессии. Сутки, которые
+записано до замера (дорожная карта, §2.14, «Правило территорий»): вычесть
+территорию, а участок, который лежит на ней наполовину и больше, не считать
+гектарами целиком; зона больше 50 га в правило не входит. Включать его или
+нет, решают условия, записанные там же, по замерам с боевой базы. Инструмент
+эти замеры делает: два крайних варианта по отдельности (гибрид выводится из
+их столбцов) и всё, что нужно условиям; владелец запускает его на сервере и
+присылает три CSV и журнал консоли. Сутки, которые
 владелец назвал «трактор весь день на территории», сессия сверяет по CSV
 суток: в нём и участки вне территорий, без них доля суток не видна.
 
 ЧТО ДЕЛАЕТ
 1. Территории: по каждой зоне списка -- контур из зеркала `field_contours`
-   (`source='wialon'`, `external_id` -- id зоны). Контур читается и чинится
-   той же функцией, что у расчёта (`gps.daily._utm_polygon_from_geojson`:
-   UTM 41N, `repair_polygon`) -- зоны рисуют мышкой, и «бабочка» без
-   починки роняет GEOS. Зона без пригодного контура (нет в зеркале, круг
-   или линия) считается и называется по id.
+   (`source='wialon'`, `external_id` -- id зоны, строка не выключена -- как
+   у расчёта, `load_contours`). Контур читается и чинится той же функцией,
+   что у расчёта (`gps.daily._utm_polygon_from_geojson`: UTM 41N,
+   `repair_polygon`) -- зоны рисуют мышкой, и «бабочка» без починки роняет
+   GEOS. Зона без пригодного контура (нет в зеркале, выключена, круг или
+   линия) считается и называется по id. Зона больше 50 га в объединение
+   территорий не входит (§2.14, п. 1): в CSV зон она с `v_pravile = net`,
+   её участки не мерятся, в консоли она названа.
 2. Участки: строки `gps_work_polygons` опубликованных суток окна
    (`gps_daily_aggregates.reason IS NULL`). Участок, чья рамка не задевает
    ни одной зоны (пространственный индекс STRtree), только считается.
@@ -45,8 +51,8 @@
      --zones-out  строка на зону списка: есть ли контур, площадь зоны,
                   сколько участков её задевает, их гектары на ЭТОЙ зоне,
                   сколько объектов и дат; по убыванию ga_na_zone;
-     --days-out   строка на опубликованные машино-сутки окна, у которых
-                  есть хоть один участок, -- и без перекрытия тоже:
+     --days-out   строка на каждые опубликованные машино-сутки окна -- и
+                  без перекрытия, и без участков (тогда всё по нулям):
                   участков, ga_vsego (сумма `area_ha`), ga_na_territorii,
                   dolya_dnya (на территории / сумма площадей
                   многоугольников; 0, если перекрытия нет) и суммы суток
@@ -102,7 +108,9 @@ ga_na_zone может быть больше итога по территории
   2 -- неверный ввод, ничего не считалось и не записано: нет базы (она не
        создаётся), в базе нет нужной таблицы или столбца, кривой список зон
        (нет файла или столбца, id не число или повторён, список пуст),
-       неверная дата, --out / --zones-out / --days-out указывает на базу,
+       неверная дата, в пути к базе есть `#`, `?` или `%` (SQLite прочёл
+       бы его как адрес и открыл бы другой файл на запись),
+       --out / --zones-out / --days-out указывает на базу,
        её -wal/-shm, список зон, другой из трёх отчётов или любой файл
        SQLite, папки нет или файл не открывается на запись (открыт в
        Excel);
@@ -113,11 +121,13 @@ ga_na_zone может быть больше итога по территории
 Запуск -- окружением расчёта (нужна геометрия), PowerShell, по одной
 команде на строку:
 
-  & C:\\gps_venv\\Scripts\\python.exe C:\\gps-tools\\tools\\gps_territory_report.py --db C:\\transport-report\\instance\\transport.db --zones C:\\gps-tools\\docs\\gps_territory_zones_2026-10-14.csv --out C:\\gps-tools\\check\\territory_sites.csv --zones-out C:\\gps-tools\\check\\territory_zones.csv --days-out C:\\gps-tools\\check\\territory_days.csv
+  & C:\\gps_venv\\Scripts\\python.exe C:\\gps-tools\\tools\\gps_territory_report.py --db C:\\transport-report\\instance\\transport.db --zones C:\\gps-tools\\docs\\gps_territory_zones_2026-10-14.csv --out C:\\gps-tools\\check\\territory_sites.csv --zones-out C:\\gps-tools\\check\\territory_zones.csv --days-out C:\\gps-tools\\check\\territory_days.csv *> C:\\gps-tools\\check\\territory.log
 
   $LASTEXITCODE
 
-Без --since / --until берутся все сутки базы. Вывод в консоль -- ASCII.
+Без --since / --until берутся все сутки базы. Вывод в консоль -- ASCII; часть
+чисел условий (итог ответов «работа» по всем участкам) -- только в нём,
+поэтому журнал консоли присылается вместе с CSV.
 """
 
 import argparse
@@ -154,8 +164,9 @@ SITE_CSV_COLUMNS = ('work_date', 'wialon_id', 'site_number', 'machine', 'plate',
                     'ga_na_territorii', 'ga_posle_vychitaniya',
                     'ga_posle_otbrosa', 'zony', 'tipy', 'contour_id',
                     'kontur_territoriya', 'operator_label')
-ZONE_CSV_COLUMNS = ('zona_id', 'gruppa_id', 'tip', 'geometriya', 'ploshchad_ga',
-                    'uchastkov', 'ga_na_zone', 'ob_ektov', 'dney')
+ZONE_CSV_COLUMNS = ('zona_id', 'gruppa_id', 'tip', 'geometriya', 'v_pravile',
+                    'ploshchad_ga', 'uchastkov', 'ga_na_zone', 'ob_ektov',
+                    'dney')
 DAY_CSV_COLUMNS = ('work_date', 'wialon_id', 'machine', 'category', 'isklyuchen',
                    'uchastkov', 'ga_vsego', 'ga_na_territorii', 'dolya_dnya',
                    'ga_posle_vychitaniya', 'ga_posle_otbrosa')
@@ -166,14 +177,15 @@ REQUIRED = {
     'gps_daily_aggregates': ('work_date', 'wialon_id', 'reason'),
     'gps_work_polygons': ('work_date', 'wialon_id', 'site_number', 'area_ha',
                           'polygon_geojson', 'contour_id', 'operator_label'),
-    'field_contours': ('id', 'source', 'external_id', 'geometry_geojson'),
+    'field_contours': ('id', 'source', 'external_id', 'geometry_geojson',
+                       'is_active'),
     'vialon_mappings': ('wialon_id', 'equipment_id', 'skip'),
     'equipment': ('id', 'name', 'plate', 'category'),
 }
 
-# [REASON]: вариант Б -- кандидат «участок, половина и больше которого на
-# территории, -- не гектары». Порог -- число кандидата, а не утверждённое
-# правило: инструмент только меряет, сколько он снял бы.
+# [REASON]: порог из правила §2.14 (п. 2): участок, половина и больше
+# которого на территории, -- не гектары. Вариант Б меряет его отдельно от
+# вычитания, гибрид правила выводится из обоих столбцов.
 DROP_SHARE = 0.5
 SHARE_DIGITS = 3
 HA_DIGITS = 4
@@ -312,7 +324,8 @@ def load_zones(con, listed):
     rows = {}
     for row_id, external, geometry in con.execute(
             'SELECT id, external_id, geometry_geojson FROM field_contours '
-            'WHERE source = ? AND external_id IN (%s)' % marks,
+            'WHERE source = ? AND (is_active IS NULL OR is_active = 1) '
+            'AND external_id IN (%s)' % marks,
             [SOURCE] + [str(zone) for zone, _group, _tip in listed]):
         rows[str(external)] = (row_id, geometry)
     zones = []
@@ -321,10 +334,13 @@ def load_zones(con, listed):
         polygon = _utm_polygon_from_geojson(geometry) if geometry else None
         if polygon is not None and polygon.area <= 0:
             polygon = None
+        area_ha = polygon.area / 10000.0 if polygon is not None else None
         zones.append({'zona_id': zone, 'gruppa_id': group, 'tip': tip,
-                      'polygon': polygon,
-                      'area_ha': (polygon.area / 10000.0 if polygon is not None
-                                  else None),
+                      'polygon': polygon, 'area_ha': area_ha,
+                      # [REASON]: §2.14, п. 1: двор завода или пункта -- это
+                      # единицы гектаров; зона в десятки гектаров накрывает
+                      # поля, и правило её не берёт.
+                      'in_rule': area_ha is not None and area_ha <= LARGE_ZONE_HA,
                       'row_id': row_id,
                       'sites': 0, 'ha': 0.0, 'units': set(), 'days': set()})
     return zones
@@ -422,6 +438,14 @@ def published_days(con, since, until):
     return int(count or 0), int(dates or 0), first, last
 
 
+def published_keys(con, since, until):
+    """(дата, объект) всех опубликованных суток окна."""
+    clause, args = _window(since, until)
+    return con.execute(
+        'SELECT a.work_date, a.wialon_id FROM gps_daily_aggregates a '
+        'WHERE a.reason IS NULL' + clause.format('a'), args).fetchall()
+
+
 def published_sites(con, since, until):
     """Участки опубликованных суток окна -- по одному, без загрузки всех сразу.
 
@@ -443,7 +467,7 @@ def published_sites(con, since, until):
 def scan(con, listed, since, until):
     """Всё, что пишется в CSV и в консоль. Ничего не пишет."""
     zones = load_zones(con, listed)
-    usable = [zone for zone in zones if zone['polygon'] is not None]
+    usable = [zone for zone in zones if zone['in_rule']]
     territories = [zone['polygon'] for zone in usable]
     tree = shapely.STRtree(territories) if territories else None
     territory_rows = {zone['row_id'] for zone in zones
@@ -542,6 +566,14 @@ def scan(con, listed, since, until):
     rows.sort(key=lambda row: (-round(row['ga_na_territorii'], HA_DIGITS),
                                row['work_date'], row['wialon_id'],
                                row['site_number']))
+    # [REASON]: сутки наборов Z/ZA сверяются по CSV суток; опубликованные
+    # сутки без участков -- тоже ответ (0 га), и отсутствие строки не должно
+    # значить ни «нет суток», ни «нет участков».
+    for day, unit in published_keys(con, since, until):
+        by_day.setdefault((str(day), int(unit)), {
+            'work_date': str(day), 'wialon_id': int(unit), 'sites': 0,
+            'stored': 0.0, 'geom': 0.0, 'on': 0.0, 'kept_a': 0.0,
+            'kept_b': 0.0})
     return {'zones': zones, 'rows': rows, 'failed': failed, 'days': days,
             'totals': totals,
             'day_rows': day_rows(by_day, machine_of, excluded)}
@@ -616,6 +648,7 @@ def write_zones(path, zones):
             writer.writerow([
                 zone['zona_id'], zone['gruppa_id'], zone['tip'],
                 'da' if zone['polygon'] is not None else 'net',
+                'da' if zone['in_rule'] else 'net',
                 '' if zone['area_ha'] is None else round(zone['area_ha'], HA_DIGITS),
                 zone['sites'], round(zone['ha'], HA_DIGITS), len(zone['units']),
                 len(zone['days'])])
@@ -671,7 +704,7 @@ def report(result, since, until, out=print):
         out('window covered     : (no published day in the window)')
     out('published days     : %d machine-days' % count)
     out('  with a site      : %d, of them with a site on territory: %d'
-        % (len(result['day_rows']),
+        % (sum(1 for row in result['day_rows'] if row['uchastkov']),
            sum(1 for row in result['day_rows'] if row['ga_na_territorii'] > 0)))
     out('sites scanned      : %d, %.2f ha stored'
         % (totals['sites'], totals['stored_ha']))
@@ -710,8 +743,11 @@ def report(result, since, until, out=print):
             for zone in largest[:LARGEST_SHOWN]))
         large = [zone['zona_id'] for zone in largest
                  if zone['area_ha'] > LARGE_ZONE_HA]
-        out('  larger than %.0f ha: %s' % (LARGE_ZONE_HA,
-                                          ' '.join(str(z) for z in large) or 'none'))
+        out('  larger than %.0f ha: %s%s' % (
+            LARGE_ZONE_HA, ' '.join(str(z) for z in large) or 'none',
+            ' -- NOT in the rule and not measured (2.14, p. 1)' if large else ''))
+        out('  in the rule      : %d zone(s)'
+            % sum(1 for zone in zones if zone['in_rule']))
 
     out('')
     on_ha = sum(row['ga_na_territorii'] for row in rows)
@@ -797,7 +833,7 @@ def main(argv=None):
     parser.add_argument('--zones-out', default='gps_territory_zones.csv',
                         help='CSV with a row per listed zone')
     parser.add_argument('--days-out', default='gps_territory_days.csv',
-                        help='CSV with a row per published machine-day with sites')
+                        help='CSV with a row per published machine-day')
     args = parser.parse_args(argv)
 
     try:
@@ -810,6 +846,12 @@ def main(argv=None):
         # расчёта нашёл бы её вместо боевой.
         if not os.path.isfile(args.db):
             raise BadInput('database not found at %s - refusing to run' % args.db)
+        # [REASON]: база открывается адресом `file:...?mode=ro`; `#`, `?` и `%`
+        # в пути SQLite читает как часть адреса -- режим «только чтение»
+        # отпал бы, и рядом создался бы новый файл базы.
+        if any(mark in args.db for mark in '#?%'):
+            raise BadInput('the database path contains #, ? or %% - move the '
+                           'database or use another path: %s' % args.db)
         listed = read_zones(args.zones)
         check_outputs(args)
     except BadInput as problem:

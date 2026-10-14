@@ -70,7 +70,7 @@ X0, Y0 = round(float(_X)), round(float(_Y))
 D0, D1, D2, D_SPEC = '2026-10-01', '2026-10-05', '2026-10-10', '2026-10-06'
 U_MTZ, U_ALIEN, U_FREE, U_COMB = 3001, 3002, 3003, 3004
 U_FIELD, U_EMPTY = 3005, 3006   # сутки без перекрытия; сутки без участков
-MTZ_NAME = 'Трактор МТЗ-80 Ҳамид'
+MTZ_NAME = 'Трактор МТЗ-80 Ҳовли'
 WORK, PASSAGE = 'работа', 'проезд'
 
 DDL = (
@@ -446,7 +446,7 @@ class World(unittest.TestCase):
         self.assertEqual((row['gruppa_id'], row['tip']), ('16', 'ptm'))
 
     def test_large_zones_are_visible(self):
-        self.assertIn('larger than 50 ha: 17922', self.output)
+        self.assertIn('larger than 50 ha: 17922 -- NOT in the rule', self.output)
         self.assertIn('largest zones    : 17922 pakhta_zavod 64.00 ha',
                       self.output)
 
@@ -513,7 +513,7 @@ class World(unittest.TestCase):
 
     def test_console_is_ascii_and_names_no_machine(self):
         self.assertTrue(self.output.isascii())
-        for word in ('Traktor', 'Hamid', 'Kombajn', 'Case', 'Chuzhoj'):
+        for word in ('Traktor', 'Hovli', 'Kombajn', 'Case', 'Chuzhoj'):
             self.assertNotIn(word, self.output)
         self.assertIn('nothing was written to the database: it was opened '
                       'mode=ro', self.output)
@@ -597,13 +597,17 @@ class World(unittest.TestCase):
         self.assertAlmostEqual(float(row['ga_posle_vychitaniya']), 4.005, 4)
         self.assertAlmostEqual(float(row['ga_posle_otbrosa']), 5.325, 4)
 
-    def test_days_cover_every_published_day_with_a_site_and_only_those(self):
+    def test_days_cover_every_published_day_and_only_those(self):
+        # Опубликованные сутки без участков -- строкой с нулями: для наборов
+        # Z/ZA отсутствие строки значит только «сутки не опубликованы».
         keys = [(row['work_date'], int(row['wialon_id'])) for row in self.day_rows]
         self.assertEqual(keys, sorted(keys))
         self.assertEqual(keys, [(D0, U_MTZ), (D1, U_MTZ), (D1, U_ALIEN),
                                 (D1, U_FREE), (D1, U_COMB), (D1, U_FIELD),
-                                (D2, U_MTZ)])
-        self.assertIsNone(self.day(D1, U_EMPTY))
+                                (D1, U_EMPTY), (D2, U_MTZ)])
+        empty = self.day(D1, U_EMPTY)
+        self.assertEqual((empty['uchastkov'], float(empty['ga_vsego']),
+                          float(empty['dolya_dnya'])), ('0', 0.0, 0.0))
         self.assertIsNone(self.day(D_SPEC, U_MTZ))
         self.assertIn('with a site      : 7, of them with a site on territory: 6',
                       self.output)
@@ -614,6 +618,140 @@ class World(unittest.TestCase):
         self.assertAlmostEqual(on_days, on_sites, 3)
         self.assertEqual(sum(int(row['uchastkov']) for row in self.day_rows), 16)
         self.assertEqual(self.day(D1, U_ALIEN)['isklyuchen'], 'ne_nasha')
+
+
+class Extra(unittest.TestCase):
+    """Мир теста плюс одна добавка на тест -- итоги World не трогаются."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.db, self.sites = build_world(self.root)
+        self.zones = os.path.join(self.root, 'zones.csv')
+        write_zones_list(self.zones)
+        self.out = os.path.join(self.root, 'sites.csv')
+        self.zones_out = os.path.join(self.root, 'zones_out.csv')
+        self.days_out = os.path.join(self.root, 'days_out.csv')
+
+    def sql(self, statement, params=()):
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute(statement, params)
+            con.commit()
+        finally:
+            con.close()
+
+    def add_site(self, unit, text, number=1, area=1.0, day=D1):
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute('INSERT OR IGNORE INTO gps_daily_aggregates (work_date, '
+                        "wialon_id, reason, method_version) VALUES (?, ?, NULL, "
+                        "'test')", (day, unit))
+            con.execute('INSERT INTO gps_work_polygons (work_date, wialon_id, '
+                        'site_number, area_ha, minutes, polygon_geojson) '
+                        'VALUES (?, ?, ?, ?, 0, ?)', (day, unit, number, area, text))
+            con.commit()
+        finally:
+            con.close()
+
+    def run_tool(self, *extra, db=None):
+        return run_main('--db', db or self.db, '--zones', self.zones,
+                        '--out', self.out, '--zones-out', self.zones_out,
+                        '--days-out', self.days_out, *extra)
+
+    def site_row(self, unit):
+        rows = [row for row in read_csv(self.out) if int(row['wialon_id']) == unit]
+        return rows[0] if rows else None
+
+    def test_a_zone_over_50_ha_is_not_in_the_rule(self):
+        # Участок 2 га: половина на зоне 64 га, половина на зоне 4 га. В
+        # правило входит только малая зона -- на территории 1 га, не 2.
+        self.sql("INSERT INTO field_contours (source, external_id, name, "
+                 "geometry_geojson, is_active) VALUES ('wialon', '17923', 'Z', "
+                 "?, 1)", (polygon(rect(10800, 0, 11000, 200)),))
+        with open(self.zones, 'a', encoding='utf-8') as handle:
+            handle.write('17923,16,ptm\n')
+        self.add_site(3101, polygon(rect(10700, 50, 10900, 150)), area=2.0)
+        code, output = self.run_tool()
+        self.assertEqual(code, 0, output)
+        row = self.site_row(3101)
+        self.assertAlmostEqual(float(row['ga_na_territorii']), 1.0, 3)
+        self.assertEqual(float(row['dolya']), 0.5)
+        self.assertEqual(row['zony'], '17923')
+        zones = {int(z['zona_id']): z for z in read_csv(self.zones_out)}
+        self.assertEqual((zones[17922]['v_pravile'], zones[17922]['uchastkov']),
+                         ('net', '0'))
+        self.assertEqual(zones[17923]['v_pravile'], 'da')
+
+    def test_a_partial_overlap_of_two_zones_counts_their_union(self):
+        # Зоны 699 и 700 наложены; участок задевает обе и выходит за них:
+        # на территории 1,5 га (объединение), а не 2,0 (сумма перекрытий).
+        self.add_site(3102, polygon(rect(2150, 50, 2350, 150)), area=2.0)
+        code, output = self.run_tool()
+        self.assertEqual(code, 0, output)
+        self.assertAlmostEqual(float(self.site_row(3102)['ga_na_territorii']),
+                               1.5, 3)
+
+    def test_every_part_of_a_multipart_site_is_measured(self):
+        # Малая часть -- на зоне 520, большая -- в поле: доля 0,36 / 1,36.
+        text = json.dumps({'type': 'MultiPolygon', 'coordinates': [
+            [ring(rect(20, 20, 80, 80))], [ring(rect(600, 1500, 700, 1600))]]})
+        self.add_site(3103, text, area=1.36)
+        code, output = self.run_tool()
+        self.assertEqual(code, 0, output)
+        row = self.site_row(3103)
+        self.assertAlmostEqual(float(row['ga_na_territorii']), 0.36, 3)
+        self.assertEqual(float(row['dolya']), 0.265)
+
+    def test_the_first_mapping_row_names_the_machine(self):
+        self.sql("INSERT INTO equipment (id, name, plate, category) "
+                 "VALUES (4, 'Pervaya', '', 'mtz')")
+        self.sql("INSERT INTO equipment (id, name, plate, category) "
+                 "VALUES (5, 'Vtoraya', '', 'combine')")
+        self.sql("INSERT INTO vialon_mappings (vialon_name, wialon_id, "
+                 "equipment_id, skip) VALUES ('A1', 3104, 4, 0)")
+        self.sql("INSERT INTO vialon_mappings (vialon_name, wialon_id, "
+                 "equipment_id, skip) VALUES ('A2', 3104, 5, 0)")
+        self.add_site(3104, polygon(rect(20, 20, 80, 80)), area=0.36)
+        code, output = self.run_tool()
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.site_row(3104)['machine'], 'Pervaya')
+
+    def test_a_run_with_no_zone_in_the_rule_keeps_every_hectare(self):
+        write_zones_list(self.zones, zone_ids=[17922, NOT_MIRRORED])
+        code, output = self.run_tool()
+        self.assertEqual(code, 0, output)
+        self.assertEqual(read_csv(self.out), [])
+        self.assertIn('in the rule      : 0 zone(s)', output)
+        days = read_csv(self.days_out)
+        self.assertTrue(days)
+        for row in days:
+            self.assertEqual(float(row['ga_posle_vychitaniya']),
+                             float(row['ga_vsego']))
+
+    def test_a_switched_off_zone_is_not_a_territory(self):
+        # Как у расчёта (`load_contours`): выключенная строка зеркала -- не
+        # контур.
+        self.sql("UPDATE field_contours SET is_active = 0 "
+                 "WHERE source = 'wialon' AND external_id = '520'")
+        code, output = self.run_tool()
+        self.assertEqual(code, 0, output)
+        zones = {int(z['zona_id']): z for z in read_csv(self.zones_out)}
+        self.assertEqual(zones[520]['geometriya'], 'net')
+        sites = [(row['work_date'], int(row['wialon_id']), row['site_number'])
+                 for row in read_csv(self.out)]
+        self.assertNotIn(self.sites['in'], [(d, u, int(n)) for d, u, n in sites])
+
+    def test_a_database_path_with_a_hash_is_refused_and_nothing_is_created(self):
+        folder = os.path.join(self.root, 'a#b')
+        os.mkdir(folder)
+        moved = os.path.join(folder, 'transport.db')
+        shutil.copy(self.db, moved)
+        before = sorted(os.listdir(self.root))
+        code, output = self.run_tool(db=moved)
+        self.assertEqual(code, 2, output)
+        self.assertIn('#', output)
+        self.assertEqual(sorted(os.listdir(self.root)), before)
 
 
 class Window(unittest.TestCase):
