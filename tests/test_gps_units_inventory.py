@@ -27,6 +27,15 @@
 7. **Консоль ASCII** при узбекских именах -- та самая буква U+04B2, что убила
    прогон 18.08 на cp1251.
 
+8. **Объект, удалённый из Wialon, не пропадает из инвентаря**, пока у него
+   есть сутки в окне: 14.10 владелец назвал четыре фермерских объекта,
+   которых «сейчас нет в Виалоне», а их гектары считались -- и инвентарь их
+   не видел.
+
+9. **Машины без объекта Wialon видны со своей стороны** -- с кандидатами по
+   госномеру: «связать которые не связаны» (14.10) иначе не из чего
+   предложить.
+
 Сети не требуется: сервер заменён консервами.
 
 Запуск:
@@ -505,6 +514,250 @@ class Console(Base):
         self.assertIn('bez_ga', log)
         self.assertIn('track only, no hectares', log)
         log.encode('ascii')
+
+
+
+class GoneFromWialon(Base):
+    """Пункт 8."""
+
+    FARMER = 3557
+
+    def collector_name(self, unit_id, name):
+        con = storage.open_units(self.folder)
+        try:
+            con.execute('INSERT INTO collector_units (unit_id, name, seen_at) '
+                        'VALUES (?, ?, ?)', (unit_id, name, '2026-10-12 06:00:00'))
+            con.commit()
+        finally:
+            con.close()
+
+    def test_an_object_with_days_but_no_place_in_wialon_is_listed(self):
+        server = self.world()
+        self.collector_name(self.FARMER, 'Arion 630 ф/х')
+        self.aggregate(self.FARMER, 3, area=6.2)
+        self.points(self.FARMER, 3)
+        code, log = self.run_tool(server)
+        self.assertEqual(code, 0, log)
+        row = self.by_id()[self.FARMER]
+        self.assertEqual(row['v_wialon'], 'net')
+        self.assertEqual(row['status'], inv.NO_ROW)
+        # Сутки его на экране, значит считается -- и это надо сказать прямо.
+        self.assertEqual(row['v_plan_fakte'], 'da')
+        self.assertEqual(row['wialon_name'], 'Arion 630 ф/х')
+        self.assertEqual(float(row['ha_total']), 6.2)
+        self.assertIn('of them not in Wialon  : 1', log)
+
+    def test_an_object_gone_long_ago_without_days_in_the_window_is_not_listed(self):
+        # Отрицательный контроль окна: иначе в инвентарь попадала бы вся
+        # история парка.
+        server = self.world()
+        self.collector_name(self.FARMER, 'Arion 630 ф/х')
+        self.aggregate(self.FARMER, inv.WINDOW_DAYS + 5, area=6.2)
+        self.run_tool(server)
+        self.assertNotIn(self.FARMER, self.by_id())
+
+    def test_objects_in_wialon_say_so(self):
+        self.run_tool(self.world())
+        self.assertEqual({row['v_wialon'] for row in self.csv_rows()}, {'da'})
+
+    def test_an_object_marked_not_ours_is_listed_once_as_gone(self):
+        server = self.world()
+        self.collector_name(self.FARMER, 'Arion 630 ф/х')
+        self.aggregate(self.FARMER, 3, area=6.2)
+        self.mapping('Arion 630 ф/х', wialon_id=self.FARMER, skip=1)
+        self.run_tool(server)
+        rows = [row for row in self.csv_rows()
+                if row['wialon_id'] == str(self.FARMER)]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['status'], inv.GONE)
+        self.assertEqual(rows[0]['v_plan_fakte'], 'net')
+
+    def test_a_live_object_without_a_row_but_with_days_is_listed_once(self):
+        # Самый частый случай парка: объект в Wialon, строки нет, сутки есть.
+        server = self.world()
+        self.points(ORPHAN, 2)
+        self.aggregate(ORPHAN, 2, area=1.0)
+        code, log = self.run_tool(server)
+        self.assertEqual(code, 0, log)
+        rows = [row for row in self.csv_rows() if row['wialon_id'] == str(ORPHAN)]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['v_wialon'], 'da')
+        self.assertIn('of them not in Wialon  : 0', log)
+
+    def test_an_object_gone_from_wialon_with_points_only_is_listed(self):
+        # Точки есть, опубликованных суток нет (все отказаны) -- объект всё
+        # равно должен быть виден: его трек ещё собирается.
+        server = self.world()
+        self.collector_name(self.FARMER, 'Arion 630 ф/х')
+        self.points(self.FARMER, 3)
+        self.aggregate(self.FARMER, 3, reason='redkaya_zapis')
+        self.run_tool(server)
+        self.assertEqual(self.by_id()[self.FARMER]['v_wialon'], 'net')
+
+    def test_a_vanished_mapping_row_is_not_in_wialon_and_not_counted(self):
+        server = self.world()
+        tractor = self.equipment('MTZ 80', 'mtz')
+        self.mapping('Snyatyy s ucheta', wialon_id=999999, equipment_id=tractor)
+        code, log = self.run_tool(server)
+        self.assertEqual(code, 0, log)
+        self.assertEqual(self.by_id()[999999]['v_wialon'], 'net')
+        self.assertIn('of them not in Wialon  : 0', log)
+
+    def test_the_summary_with_a_gone_object(self):
+        # «Объектов в Wialon» -- только живые; удалённый, но считаемый -- в
+        # «считается», и он же -- в «из них нет в Wialon».
+        server = self.world()
+        self.collector_name(self.FARMER, 'Arion 630 ф/х')
+        self.aggregate(self.FARMER, 3, area=6.2)
+        code, log = self.run_tool(server)
+        self.assertEqual(code, 0, log)
+        self.assertIn('objects in Wialon        : 5', log)
+        self.assertIn('counted by plan-fact     : 4', log)
+        self.assertIn('of them not in Wialon  : 1', log)
+
+    def test_a_row_found_by_name_is_shown_for_an_object_gone_from_wialon(self):
+        # Строка есть, id ей не поставлен (связка ищет только живые объекты):
+        # объект считается, и инвентарь обязан показать, чья это строка.
+        server = self.world()
+        self.collector_name(self.FARMER, 'Arion 630 ф/х')
+        self.aggregate(self.FARMER, 3, area=6.2)
+        row_id = self.mapping('Arion 630 ф/х')
+        self.run_tool(server)
+        row = self.by_id()[self.FARMER]
+        self.assertEqual(row['status'], inv.NO_EQUIPMENT)
+        self.assertEqual(row['mapping_id'], str(row_id))
+
+
+
+class UnlinkedEquipment(Base):
+    """Пункт 9."""
+
+    PICKER = 8806
+
+    def equipment_rows(self):
+        path = os.path.join(self.folder, 'gps_equipment_unlinked.csv')
+        with open(path, encoding='utf-8-sig', newline='') as fh:
+            return {int(row['equipment_id']): row
+                    for row in csv.DictReader(fh, delimiter=';')}
+
+    def test_a_machine_without_an_object_is_listed_with_its_plate_candidate(self):
+        server = self.world()
+        picker = self.equipment('John Deere 9970', 'kombayn', '80 543 JA')
+        last = int(self.today.timestamp()) - 600
+        server.units.append((self.PICKER, 'JohnDeere 80 543 JA', last))
+        code, log = self.run_tool(server)
+        self.assertEqual(code, 0, log)
+        row = self.equipment_rows()[picker]
+        self.assertIn('%d [%s] JohnDeere 80 543 JA' % (self.PICKER, inv.NO_ROW),
+                      row['kandidaty'])
+        self.assertIn('machines without a Wialon object : ', log)
+
+    def test_a_linked_machine_is_not_listed(self):
+        server = self.world()
+        code, log = self.run_tool(server)
+        self.assertEqual(code, 0, log)
+        tractor_ids = {int(row['equipment_id']) for row in self.equipment_rows()
+                       .values() if row['name'] == 'MTZ 892'}
+        self.assertEqual(tractor_ids, set())
+
+    def test_a_row_without_an_id_does_not_count_as_a_link(self):
+        # Строка по имени без wialon_id расчёту ничего не даёт: машина без
+        # связи, и строку надо показать -- её и связывать.
+        server = self.world()
+        picker = self.equipment('John Deere 9970', 'kombayn', '80 543 JA')
+        row_id = self.mapping('JohnDeere 80 543 JA', equipment_id=picker)
+        self.run_tool(server)
+        row = self.equipment_rows()[picker]
+        self.assertEqual(row['mapping_id'], str(row_id))
+        self.assertEqual(row['vialon_name'], 'JohnDeere 80 543 JA')
+
+    def test_a_machine_without_a_plate_has_no_candidates(self):
+        server = self.world()
+        loader = self.equipment('Pogruzchik', 'special', '')
+        self.run_tool(server)
+        self.assertEqual(self.equipment_rows()[loader]['kandidaty'], '')
+
+    def test_a_candidate_gone_from_wialon_says_so(self):
+        # Связка GPS-10 удалённый объект не найдёт: подсказка обязана это
+        # сказать.
+        server = self.world()
+        picker = self.equipment('John Deere 9970', 'kombayn', '80 543 JA')
+        con = storage.open_units(self.folder)
+        try:
+            con.execute('INSERT INTO collector_units (unit_id, name, seen_at) '
+                        "VALUES (?, 'JohnDeere 80 543 JA', '2026-10-01 06:00:00')",
+                        (self.PICKER,))
+            con.commit()
+        finally:
+            con.close()
+        self.aggregate(self.PICKER, 3, area=4.0)
+        self.run_tool(server)
+        self.assertIn('%d [%s, net v Wialon] JohnDeere 80 543 JA'
+                      % (self.PICKER, inv.NO_ROW),
+                      self.equipment_rows()[picker]['kandidaty'])
+
+    def test_the_summary_line_counts_machines_and_candidates(self):
+        server = self.world()
+        self.equipment('John Deere 9970', 'kombayn', '80 543 JA')
+        self.equipment('Pogruzchik', 'special', '')
+        last = int(self.today.timestamp()) - 600
+        server.units.append((self.PICKER, 'JohnDeere 80 543 JA', last))
+        code, log = self.run_tool(server)
+        self.assertEqual(code, 0, log)
+        self.assertIn('machines without a Wialon object : 2 (with a plate '
+                      'candidate: 1)', log)
+
+    def test_the_equipment_query_runs_on_a_readonly_connection(self):
+        server = self.world()
+        real, seen = inv.unlinked_equipment, []
+
+        def probe(con, items):
+            try:
+                con.execute('CREATE TABLE probe (x)')
+                seen.append('written')
+            except sqlite3.OperationalError as problem:
+                seen.append(str(problem))
+            return real(con, items)
+
+        saved = inv.unlinked_equipment
+        inv.unlinked_equipment = probe
+        try:
+            code, log = self.run_tool(server)
+        finally:
+            inv.unlinked_equipment = saved
+        self.assertEqual(code, 0, log)
+        self.assertEqual(len(seen), 1)
+        self.assertIn('readonly', seen[0])
+
+    def test_the_equipment_csv_has_a_bom(self):
+        self.run_tool(self.world())
+        with open(os.path.join(self.folder, 'gps_equipment_unlinked.csv'),
+                  'rb') as fh:
+            self.assertEqual(fh.read(3), b'\xef\xbb\xbf')
+
+    def test_equipment_out_is_honoured(self):
+        server = self.world()
+        picker = self.equipment('John Deere 9970', 'kombayn', '80 543 JA')
+        target = os.path.join(self.folder, 'mashiny.csv')
+        self.run_tool(server, '--equipment-out', target)
+        self.assertFalse(os.path.exists(
+            os.path.join(self.folder, 'gps_equipment_unlinked.csv')))
+        with open(target, encoding='utf-8-sig', newline='') as fh:
+            ids = {int(row['equipment_id'])
+                   for row in csv.DictReader(fh, delimiter=';')}
+        self.assertIn(picker, ids)
+
+    def test_an_inactive_machine_says_so(self):
+        server = self.world()
+        old = self.equipment('MTZ 50', 'mtz', '80 001 AA')
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute('UPDATE equipment SET is_active = 0 WHERE id = ?', (old,))
+            con.commit()
+        finally:
+            con.close()
+        self.run_tool(server)
+        self.assertEqual(self.equipment_rows()[old]['is_active'], '0')
 
 
 if __name__ == '__main__':
