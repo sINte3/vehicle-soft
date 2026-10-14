@@ -671,13 +671,13 @@ class ScreenRulesOnEveryPath(Base):
     def test_an_object_known_only_by_its_mapping_row_is_not_refused(self):
         # Объект известен только своей строкой «не наша»: это не опечатка
         # (код 2), но имени у сборщика нет -- сверить имя строки не с чем,
-        # и снятие пометки остаётся человеку.
+        # и снятие пометки остаётся человеку с причиной «нет имени».
         self.world()
         self.mapping('MTZ bez imeni', wialon_id=3333, skip=1)
         self.listing('3333,%d,snyat_pometku,x' % self.tractor)
         code, output = self.run_tool('--apply')
         self.assertEqual(code, 3, output)
-        self.assertEqual(self.plan_rows()[3333]['status'], link.NAME_STALE)
+        self.assertEqual(self.plan_rows()[3333]['status'], link.NO_NAME)
         self.assertEqual(self.rows_of(3333)[0][2:4], (None, 1))
 
     # 34: dry run exit code 3 when something is left to a person
@@ -809,14 +809,28 @@ class UnmarkNames(Base):
         self.assertEqual(self.plan_rows()[MARKED]['status'], link.NAME_SHARED)
         self.assertEqual(self.excluded().get(MARKED), EXCLUDED_NOT_OURS)
 
-    def test_a_row_name_differing_only_in_spaces_and_case_is_released(self):
+    def test_a_row_name_differing_only_in_spaces_is_released(self):
+        # Пробелы экран сводит при сохранении -- это то же имя.
         self.world()
-        self.sql("UPDATE vialon_mappings SET vialon_name = 'мтз-80  х 951 ja' "
+        self.sql("UPDATE vialon_mappings SET vialon_name = ' МТЗ-80  Х 951 JA ' "
                  'WHERE id = ?', (self.marked_row,))
         self.listing('%d,%d,snyat_pometku,x' % (MARKED, self.tractor))
         code, output = self.run_tool('--apply')
         self.assertEqual(code, 0, output)
         self.assertEqual(self.plan_rows()[MARKED]['status'], link.RELEASE)
+        self.assertNotIn(MARKED, self.excluded())
+
+    def test_a_row_name_differing_only_in_case_is_left_to_a_person(self):
+        # Импорт моточасов ищет строку по имени точно: «мтз» вместо «МТЗ»
+        # машину не найдёт.
+        self.world()
+        self.sql("UPDATE vialon_mappings SET vialon_name = 'мтз-80 х 951 ja' "
+                 'WHERE id = ?', (self.marked_row,))
+        self.listing('%d,%d,snyat_pometku,x' % (MARKED, self.tractor))
+        code, output = self.run_tool('--apply')
+        self.assertEqual(code, 3, output)
+        self.assertEqual(self.plan_rows()[MARKED]['status'], link.NAME_STALE)
+        self.assertEqual(self.excluded().get(MARKED), EXCLUDED_NOT_OURS)
 
 
 class CollectorFiles(Base):
