@@ -27,6 +27,11 @@
 7. **Консоль ASCII** при узбекских именах -- та самая буква U+04B2, что убила
    прогон 18.08 на cp1251.
 
+8. **Объект, удалённый из Wialon, не пропадает из инвентаря**, пока у него
+   есть сутки в окне: 14.10 владелец назвал четыре фермерских объекта,
+   которых «сейчас нет в Виалоне», а их гектары считались -- и инвентарь их
+   не видел.
+
 Сети не требуется: сервер заменён консервами.
 
 Запуск:
@@ -505,6 +510,75 @@ class Console(Base):
         self.assertIn('bez_ga', log)
         self.assertIn('track only, no hectares', log)
         log.encode('ascii')
+
+
+
+class GoneFromWialon(Base):
+    """Пункт 8."""
+
+    FARMER = 3557
+
+    def collector_name(self, unit_id, name):
+        con = storage.open_units(self.folder)
+        try:
+            con.execute('INSERT INTO collector_units (unit_id, name, seen_at) '
+                        'VALUES (?, ?, ?)', (unit_id, name, '2026-10-12 06:00:00'))
+            con.commit()
+        finally:
+            con.close()
+
+    def test_an_object_with_days_but_no_place_in_wialon_is_listed(self):
+        server = self.world()
+        self.collector_name(self.FARMER, 'Arion 630 ф/х')
+        self.aggregate(self.FARMER, 3, area=6.2)
+        self.points(self.FARMER, 3)
+        code, log = self.run_tool(server)
+        self.assertEqual(code, 0, log)
+        row = self.by_id()[self.FARMER]
+        self.assertEqual(row['v_wialon'], 'net')
+        self.assertEqual(row['status'], inv.NO_ROW)
+        # Сутки его на экране, значит считается -- и это надо сказать прямо.
+        self.assertEqual(row['v_plan_fakte'], 'da')
+        self.assertEqual(row['wialon_name'], 'Arion 630 ф/х')
+        self.assertEqual(float(row['ha_total']), 6.2)
+        self.assertIn('of them not in Wialon  : 1', log)
+
+    def test_an_object_gone_long_ago_without_days_in_the_window_is_not_listed(self):
+        # Отрицательный контроль окна: иначе в инвентарь попадала бы вся
+        # история парка.
+        server = self.world()
+        self.collector_name(self.FARMER, 'Arion 630 ф/х')
+        self.aggregate(self.FARMER, inv.WINDOW_DAYS + 5, area=6.2)
+        self.run_tool(server)
+        self.assertNotIn(self.FARMER, self.by_id())
+
+    def test_objects_in_wialon_say_so(self):
+        self.run_tool(self.world())
+        self.assertEqual({row['v_wialon'] for row in self.csv_rows()}, {'da'})
+
+    def test_an_object_marked_not_ours_is_listed_once_as_gone(self):
+        server = self.world()
+        self.collector_name(self.FARMER, 'Arion 630 ф/х')
+        self.aggregate(self.FARMER, 3, area=6.2)
+        self.mapping('Arion 630 ф/х', wialon_id=self.FARMER, skip=1)
+        self.run_tool(server)
+        rows = [row for row in self.csv_rows()
+                if row['wialon_id'] == str(self.FARMER)]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['status'], inv.GONE)
+        self.assertEqual(rows[0]['v_plan_fakte'], 'net')
+
+    def test_a_row_found_by_name_is_shown_for_an_object_gone_from_wialon(self):
+        # Строка есть, id ей не поставлен (связка ищет только живые объекты):
+        # объект считается, и инвентарь обязан показать, чья это строка.
+        server = self.world()
+        self.collector_name(self.FARMER, 'Arion 630 ф/х')
+        self.aggregate(self.FARMER, 3, area=6.2)
+        row_id = self.mapping('Arion 630 ф/х')
+        self.run_tool(server)
+        row = self.by_id()[self.FARMER]
+        self.assertEqual(row['status'], inv.NO_EQUIPMENT)
+        self.assertEqual(row['mapping_id'], str(row_id))
 
 
 if __name__ == '__main__':

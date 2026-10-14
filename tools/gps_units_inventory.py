@@ -20,7 +20,8 @@
       строкой `file:...?mode=ro`, и SQLite отвергает запись сам, а не по
       обещанию скрипта. Решения принимаются на существующих экранах --
       сопоставление Wialon (там же галочка «нет в системе») и карточка
-      техники (там категория).
+      техники (там категория), -- а пометку «не наша» по утверждённому
+      списку ставит отдельный инструмент GPS-16.
   Не ставит `VialonMapping.skip`. Этот признак значит «не наша техника» и
       выключает машину ещё и из импорта моточасов
       (`wialon_import.apply_mappings` кладёт помеченные строки в `skipped`) --
@@ -46,6 +47,14 @@
   protivorechie   у одного id строки говорят противоположное -- считается
                   (с гектарами), разбирать человеку
   ischez          в строке стоит id, которого в Wialon больше нет
+
+`v_wialon` -- есть ли объект в списке Wialon сейчас. `net` у строки без
+статуса `ischez` -- объект из Wialon удалён, строки с его id нет, а в окне у
+него есть точки или посчитанные сутки: они на экране и в сверке, и гектары
+его считаются (14.10: четыре фермерских объекта). Имя у такого объекта --
+последнее, что записал сборщик (`collector_units`). Пометить его «не наша»
+экраном нельзя -- связка GPS-10 удалённый объект не найдёт; для этого есть
+`tools/gps_mark_not_ours.py` (GPS-16) по списку, утверждённому человеком.
 
 ТОЛЬКО STDLIB, как и `gps_link_mappings.py`: `app = create_app()` вызывает
 `db.create_all()` на импорте, и любой скрипт с `from app import app`
@@ -82,6 +91,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from gps_collector import config, storage                           # noqa: E402
 from gps_collector.wialon import Client, login_failure              # noqa: E402
+from tools.gps_track_only_days import collector_names               # noqa: E402
 from gps.exclusion import (EXCLUDED_NON_FIELD, EXCLUDED_NOT_OURS,   # noqa: E402
                            NON_FIELD_CATEGORIES, REASON_TRACK_ONLY,
                            TRACK_ONLY_CATEGORIES, excluded_units,
@@ -109,7 +119,7 @@ CSV_COLUMNS = ('status', 'v_plan_fakte', 'pochemu_net', 'wialon_id',
                'wialon_name', 'equipment', 'plate', 'category', 'mapping_id',
                'vialon_name', 'skip', 'last_message', 'days_with_points',
                'points_total', 'first_point', 'last_point', 'days_computed',
-               'ha_total', 'km_total')
+               'ha_total', 'km_total', 'v_wialon')
 
 
 def normalize_name(text):
@@ -251,8 +261,56 @@ def status_of(unit_id, rows_of_unit, excluded, track_only=frozenset()):
     return NO_EQUIPMENT
 
 
-def inventory(units, rows, excluded, activity, computed, track_only=frozenset()):
-    """Строки CSV и сводка. Ничего не пишет."""
+def unit_item(unit, by_id, by_key, excluded, activity, computed, track_only):
+    """Строка CSV об одном объекте парка (или объекте, из парка ушедшем)."""
+    unit_id = unit['id']
+    # Строка находится по id; если id ещё не проставлен связкой -- по имени.
+    rows_of_unit = by_id.get(unit_id) or by_key.get(
+        normalize_name(unit['name']), [])
+    rows_of_unit = [row for row in rows_of_unit
+                    if row['wialon_id'] in (None, unit_id)]
+    status = status_of(unit_id, by_id.get(unit_id, []), excluded, track_only)
+    if status == NO_ROW and rows_of_unit:
+        # Строка есть, но связка ей id ещё не поставила: расчёт объект
+        # считает (он работает по id), и это надо показать как есть.
+        status = NO_EQUIPMENT if not any(
+            row['equipment_id'] for row in rows_of_unit) else FIELD
+    why = excluded.get(unit_id, '')
+    points = activity.get(unit_id) or {}
+    done = computed.get(unit_id) or {}
+    return {
+        'status': status,
+        'v_plan_fakte': 'net' if why else 'da',
+        'pochemu_net': why,
+        'wialon_id': unit_id,
+        'wialon_name': unit['name'],
+        'equipment': ' | '.join(sorted({row['equipment'] for row in rows_of_unit
+                                        if row['equipment']})),
+        'plate': ' | '.join(sorted({row['plate'] for row in rows_of_unit
+                                    if row['plate']})),
+        'category': ' | '.join(sorted({row['category'] for row in rows_of_unit
+                                       if row['category']})),
+        'mapping_id': ' '.join(str(row['id']) for row in rows_of_unit),
+        'vialon_name': ' | '.join(row['vialon_name'] for row in rows_of_unit),
+        'skip': 1 if any(row['skip'] for row in rows_of_unit) else '',
+        'last_message': local_stamp(unit['last_t']),
+        'days_with_points': points.get('days', 0),
+        'points_total': points.get('points', 0),
+        'first_point': local_stamp(points.get('first')),
+        'last_point': local_stamp(points.get('last')),
+        'days_computed': done.get('days', 0),
+        'ha_total': round(done.get('ha', 0.0), 2),
+        'km_total': round(done.get('km', 0.0), 1),
+        'v_wialon': 'da'}
+
+
+def inventory(units, rows, excluded, activity, computed, track_only=frozenset(),
+              names=None):
+    """Строки CSV и сводка. Ничего не пишет.
+
+    `names` -- имена объектов, как их записал сборщик (`collector_names`):
+    нужны объектам, которых в списке Wialon уже нет.
+    """
     by_id = defaultdict(list)
     by_key = defaultdict(list)
     for row in rows:
@@ -260,47 +318,8 @@ def inventory(units, rows, excluded, activity, computed, track_only=frozenset())
             by_id[int(row['wialon_id'])].append(row)
         by_key[normalize_name(row['vialon_name'])].append(row)
 
-    items = []
-    for unit in units:
-        unit_id = unit['id']
-        # Строка находится по id; если id ещё не проставлен связкой -- по имени.
-        rows_of_unit = by_id.get(unit_id) or by_key.get(
-            normalize_name(unit['name']), [])
-        rows_of_unit = [row for row in rows_of_unit
-                        if row['wialon_id'] in (None, unit_id)]
-        status = status_of(unit_id, by_id.get(unit_id, []), excluded,
-                           track_only)
-        if status == NO_ROW and rows_of_unit:
-            # Строка есть, но связка ей id ещё не поставила: расчёт объект
-            # считает (он работает по id), и это надо показать как есть.
-            status = NO_EQUIPMENT if not any(
-                row['equipment_id'] for row in rows_of_unit) else FIELD
-        why = excluded.get(unit_id, '')
-        points = activity.get(unit_id) or {}
-        done = computed.get(unit_id) or {}
-        items.append({
-            'status': status,
-            'v_plan_fakte': 'net' if why else 'da',
-            'pochemu_net': why,
-            'wialon_id': unit_id,
-            'wialon_name': unit['name'],
-            'equipment': ' | '.join(sorted({row['equipment'] for row in rows_of_unit
-                                            if row['equipment']})),
-            'plate': ' | '.join(sorted({row['plate'] for row in rows_of_unit
-                                        if row['plate']})),
-            'category': ' | '.join(sorted({row['category'] for row in rows_of_unit
-                                           if row['category']})),
-            'mapping_id': ' '.join(str(row['id']) for row in rows_of_unit),
-            'vialon_name': ' | '.join(row['vialon_name'] for row in rows_of_unit),
-            'skip': 1 if any(row['skip'] for row in rows_of_unit) else '',
-            'last_message': local_stamp(unit['last_t']),
-            'days_with_points': points.get('days', 0),
-            'points_total': points.get('points', 0),
-            'first_point': local_stamp(points.get('first')),
-            'last_point': local_stamp(points.get('last')),
-            'days_computed': done.get('days', 0),
-            'ha_total': round(done.get('ha', 0.0), 2),
-            'km_total': round(done.get('km', 0.0), 1)})
+    items = [unit_item(unit, by_id, by_key, excluded, activity, computed,
+                       track_only) for unit in units]
 
     # Строки, чей id в Wialon больше не существует. Это не объект парка, но
     # владельцу надо знать: трек такой машины не соберётся никогда.
@@ -316,13 +335,32 @@ def inventory(units, rows, excluded, activity, computed, track_only=frozenset())
             'mapping_id': ' '.join(str(row['id']) for row in rows_of_unit),
             'vialon_name': ' | '.join(row['vialon_name'] for row in rows_of_unit),
             'days_with_points': 0, 'points_total': 0, 'days_computed': 0,
-            'ha_total': 0, 'km_total': 0})
+            'ha_total': 0, 'km_total': 0, 'v_wialon': 'net'})
+
+    # [REASON]: 14.10 владелец назвал четыре фермерских объекта, которых «сейчас
+    # нет в Виалоне», -- а их сутки на экране «Факт» и в сверке остались, и
+    # гектары считались. Инвентарь строился по списку Wialon и таких объектов
+    # не видел вовсе: ни строки сопоставления, ни места в парке. Объект, у
+    # которого в окне есть точки или посчитанные сутки, а в списке Wialon его
+    # нет и строки с его id тоже нет, показывается здесь же -- с именем,
+    # которое сборщик записал последним, и `v_wialon = net`.
+    names = names or {}
+    gone = (set(activity) | set(computed)) - live - set(by_id)
+    for unit_id in sorted(gone):
+        item = unit_item({'id': unit_id, 'name': names.get(unit_id, ''),
+                          'last_t': None}, by_id, by_key, excluded, activity,
+                         computed, track_only)
+        item['v_wialon'] = 'net'
+        items.append(item)
 
     summary = Counter(item['status'] for item in items)
     summary['objects'] = len(units)
     summary['in_plan_fakt'] = sum(1 for item in items
                                   if item['v_plan_fakte'] == 'da'
                                   and item['status'] != GONE)
+    summary['not_in_wialon'] = sum(1 for item in items
+                                   if item['v_wialon'] == 'net'
+                                   and item['status'] != GONE)
     return items, summary
 
 
@@ -352,6 +390,8 @@ def report(items, summary, categories, log=print):
     log('')
     log('objects in Wialon        : %d' % summary['objects'])
     log('counted by plan-fact     : %d' % summary['in_plan_fakt'])
+    log('  of them not in Wialon  : %d (days on screen, no object any more)'
+        % summary.get('not_in_wialon', 0))
     for status in CSV_ORDER:
         if summary.get(status):
             log('  %-14s : %d' % (status, summary[status]))
@@ -424,7 +464,7 @@ def main(argv=None):
     print('mapping rows     : %d' % len(rows))
 
     items, summary = inventory(units, rows, excluded, activity, computed,
-                               track_only)
+                               track_only, collector_names(folder))
     write_inventory(args.out, items)
     report(items, summary, category_counts(items))
     print('')
