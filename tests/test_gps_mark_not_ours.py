@@ -472,6 +472,9 @@ class OtherRowsAreNotTouched(Base):
         self.assertEqual(code, 0, output)
         self.assertEqual(self.rows_of(TWIN_A)[0][0], 'DAMAS 80 977 (wialon 7001)')
         self.assertEqual(self.rows_of(TWIN_B)[0][0], 'DAMAS 80 977 (wialon 7002)')
+        # В отчёте -- имя строки, как её покажет экран, а не имя объекта.
+        self.assertEqual(self.plan_rows()[TWIN_A]['mapping_name'],
+                         'DAMAS 80 977 (wialon 7001)')
         self.assertEqual(self.excluded().get(TWIN_A), EXCLUDED_NOT_OURS)
         self.assertEqual(self.excluded().get(TWIN_B), EXCLUDED_NOT_OURS)
 
@@ -729,6 +732,23 @@ class Refusals(Base):
         with open(self.ids, encoding='utf-8') as handle:
             self.assertIn('wialon_id', handle.read())
 
+    def test_another_name_of_the_database_file_is_refused(self):
+        # Тот же файл под другим именем: жёсткая ссылка (на NTFS -- без прав
+        # администратора), а на сервере -- ещё короткое имя 8.3 или диск
+        # вместо UNC. Сравнение путей их не видит, `samefile` -- видит.
+        self.farmer_world()
+        self.listing('%d,fx_01_10' % FARMER)
+        alias = os.path.join(self.folder, 'report.csv')
+        os.link(self.db, alias)
+        before = self.digest()
+        for extra in ((), ('--apply',)):
+            with self.subTest(extra=extra):
+                self.out = alias
+                code, output = self.run_tool(*extra)
+                self.assertEqual(code, 2, output)
+                self.assertIn('refusing to overwrite', output)
+                self.assertEqual(self.digest(), before)
+
     def test_a_short_lock_held_by_the_service_is_waited_out(self):
         # Служба пишет в базу секунды; ждать её -- обещание кода 4 («дольше
         # 30 с»), а не отказ при первой же занятости.
@@ -794,6 +814,8 @@ class Refusals(Base):
         self.assertEqual(code, 5, output)
         self.assertIn('written: 1 row(s)', output)
         self.assertIn('ARE written', output)
+        # Отчёт потерян -- номера строк должны остаться хотя бы в консоли.
+        self.assertIn('created mapping rows: 1', output)
         self.assertEqual(self.excluded().get(FARMER), EXCLUDED_NOT_OURS)
 
     def test_the_plan_is_built_under_the_write_lock(self):
