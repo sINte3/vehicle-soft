@@ -398,8 +398,14 @@ def unlinked_equipment(con, items):
     for mapping_id, vialon_name, wialon_id, equipment_id in rows:
         if wialon_id is None:
             named[equipment_id].append((mapping_id, vialon_name or ''))
+    # [REASON]: объект, удалённый из Wialon, связке GPS-10 недоступен -- она
+    # ищет только живые объекты. Он остаётся в подсказках (его сутки на
+    # экране), но с пометкой: человек должен видеть, что связать его
+    # прежним путём нельзя. Выбор показа -- сессии.
     objects = [{'id': item['wialon_id'], 'name': item['wialon_name'],
-                'status': item['status']} for item in items
+                'status': item['status'] if item['v_wialon'] == 'da'
+                else '%s, net v Wialon' % item['status']}
+               for item in items
                if item['status'] != GONE and item['wialon_name']]
     out = []
     for equipment_id, name, plate, category, is_active in machines:

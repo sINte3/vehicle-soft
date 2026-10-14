@@ -45,7 +45,10 @@ Wialon (`collector_units`), `wialon_id` -- этот id, `skip = 1`,
       только по строке сопоставления.
 
 ОТКАТ
-Номера созданных строк -- в колонке `mapping_id` CSV записи.
+Строки, созданные прогоном, -- это строки CSV записи с `sozdana = da`:
+номер строки -- в `mapping_id`; те же номера печатаются в консоль после
+«written». Строки с другими статусами инструменту не принадлежат (их делал
+человек или прошлый прогон) -- их не трогать.
 Данные, одна строка: на экране сопоставления Wialon (/wialon/mapping) --
 значок корзины у этой строки. Объект снова считается со следующей ночи, его
 прошлые сутки снова видны на экране и в сверке. Галочки «нет в системе» у
@@ -58,9 +61,10 @@ GPS-10 вернёт id, пока объект с тем же именем ест
 Код: инструмент не меняет ни схемы, ни работы программы; откатывать нечего.
 
 СУХОЙ ПРОГОН ПО УМОЛЧАНИЮ. Без `--apply` база открывается `mode=ro`, и
-пишется только CSV плана. С `--apply` файл отчёта открывается на запись ДО
-базы (открыт в Excel -- отказ с кодом 2, база не тронута); затем одна
-транзакция `BEGIN IMMEDIATE`:
+пишется только CSV плана. В обоих режимах файл отчёта проверяется на запись
+ДО базы (открыт в Excel -- отказ с кодом 2, база не тронута), а --out,
+совпадающий с базой или списком, -- отказ. С `--apply` -- одна транзакция
+`BEGIN IMMEDIATE`:
 план пересобирается внутри неё (между сухим прогоном и записью человек мог
 добавить строку на экране), вставляются только строки со статусом `pomechu`,
 и до фиксации на том же соединении проверяется постусловие -- правило
@@ -125,8 +129,8 @@ LEFT_TO_PERSON = (HAS_ROW, NAME_TAKEN, NO_NAME)
 CSV_ORDER = (HAS_ROW, NAME_TAKEN, NO_NAME, MARK, ALREADY, NON_FIELD)
 CSV_COLUMNS = ('status', 'wialon_id', 'osnovanie', 'wialon_name', 'row_name',
                'v_wialon', 'seen_at', 'days_computed', 'ha_total', 'first_day',
-               'last_day', 'mapping_id', 'mapping_name', 'skip', 'equipment_id',
-               'primechanie')
+               'last_day', 'sozdana', 'mapping_id', 'mapping_name', 'skip',
+               'equipment_id', 'primechanie')
 
 EXIT_BUSY = 4
 BUSY_TIMEOUT_S = 30
@@ -378,6 +382,7 @@ def plan(con, wanted, names):
             'skip': ' '.join('1' if row['skip'] else '0' for row in others),
             'equipment_id': ' '.join(str(row['equipment_id'] or '')
                                      for row in others).strip(),
+            'sozdana': '',
             'primechanie': note})
     return items
 
@@ -392,6 +397,26 @@ def write_plan(path, items):
         writer.writerow(CSV_COLUMNS)
         for item in ordered:
             writer.writerow([item[column] for column in CSV_COLUMNS])
+
+
+def out_clash(out, protected):
+    """'' или какой из защищённых файлов совпал с --out.
+
+    [REASON]: опечатка в --out (путь базы вместо отчёта) открыла бы боевую
+    базу на запись 'w' и заменила её CSV -- даже в сухом прогоне. Сравнение
+    -- по нормализованному пути и, если файлы есть, по `samefile`.
+    """
+    key = os.path.normcase(os.path.abspath(out))
+    for path in protected:
+        if os.path.normcase(os.path.abspath(path)) == key:
+            return path
+        try:
+            if os.path.exists(out) and os.path.exists(path) \
+                    and os.path.samefile(out, path):
+                return path
+        except OSError:
+            continue
+    return ''
 
 
 def out_writable(path):
@@ -415,12 +440,15 @@ def out_writable(path):
 def insert_marks(con, items):
     """Строки «не наша» для плана. Вызывается внутри открытой транзакции.
 
+    Возвращает [(item, номер новой строки)]; в сами строки плана номера
+    кладёт `record_created` -- только после COMMIT.
+
     [REASON]: `created_by` пуст -- запись сделана инструментом, а не
     пользователем экрана; время -- UTC, как пишет модель (`datetime.utcnow`)
     и связка GPS-10.
     """
     stamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-    written = 0
+    created = []
     for item in items:
         if item['status'] != MARK:
             continue
@@ -429,13 +457,23 @@ def insert_marks(con, items):
             'equipment_id, skip, created_by, created_at, updated_at) '
             'VALUES (?, ?, NULL, 1, NULL, ?, ?)',
             (item['row_name'], item['wialon_id'], stamp, stamp))
-        # Номер новой строки -- в отчёт: по нему владелец найдёт её на
-        # экране, если решение придётся отменить.
-        item['mapping_id'] = str(cursor.lastrowid)
+        created.append((item, cursor.lastrowid))
+    return created
+
+
+def record_created(created):
+    """Номера созданных строк -- в отчёт. Только после COMMIT.
+
+    [REASON]: по номеру владелец найдёт строку на экране, если решение
+    придётся отменить. Номер, записанный в отчёт до COMMIT, после отката
+    указал бы на строку, которой нет, -- а SQLite отдаст этот номер
+    следующей строке, и по отчёту удалили бы чужую.
+    """
+    for item, row_id in created:
+        item['mapping_id'] = str(row_id)
         item['mapping_name'] = item['row_name']
         item['skip'] = '1'
-        written += 1
-    return written
+        item['sozdana'] = 'da'
 
 
 def postcondition(con, items):
@@ -499,6 +537,19 @@ def main(argv=None):
     out_dir = os.path.dirname(os.path.abspath(args.out))
     if not os.path.isdir(out_dir):
         return _refuse('folder for --out does not exist: %s' % out_dir)
+    clash = out_clash(args.out, (args.db, args.db + '-wal', args.db + '-shm',
+                                 args.ids))
+    if clash:
+        return _refuse('--out points at %s - refusing to overwrite it' % clash)
+    # [REASON]: файл отчёта проверяется до базы, в обоих режимах. Открыт в
+    # Excel (обычный случай: план сухого прогона смотрят перед --apply) --
+    # отказ с кодом 2, пока в базе ничего не тронуто; иначе строки
+    # записались бы, а владелец увидел бы трассировку и решил, что запись
+    # не прошла.
+    why = out_writable(args.out)
+    if why:
+        return _refuse('cannot write --out %s (%s) - nothing was written'
+                       % (args.out, why))
     try:
         wanted = read_ids(args.ids)
     except BadInput as problem:
@@ -526,14 +577,6 @@ def main(argv=None):
         print('plan: %s' % args.out)
         return 3 if any(counts.get(status) for status in LEFT_TO_PERSON) else 0
 
-    # [REASON]: файл отчёта проверяется до базы. Открыт в Excel (частый
-    # случай: та же команда, что у сухого прогона, плюс --apply) -- отказ
-    # с кодом 2, пока в базе ничего не тронуто; иначе строки записались бы,
-    # а владелец увидел бы трассировку и решил, что запись не прошла.
-    why = out_writable(args.out)
-    if why:
-        return _refuse('cannot write --out %s (%s) - nothing was written'
-                       % (args.out, why))
     return _apply(args, wanted, names)
 
 
@@ -552,10 +595,12 @@ def _apply(args, wanted, names):
             return EXIT_BUSY
         try:
             items = plan(con, wanted, names)
-            written = insert_marks(con, items)
+            created = insert_marks(con, items)
             failed = postcondition(con, items)
             if failed:
                 con.execute('ROLLBACK')
+                for item, _ in created:
+                    item['primechanie'] = 'откат -- строка не записана'
                 try:
                     write_plan(args.out, items)
                 except OSError:
@@ -574,9 +619,13 @@ def _apply(args, wanted, names):
             raise
     finally:
         con.close()
+    record_created(created)
     counts = report(items)
     print('')
-    print('written: %d row(s) "not ours", one transaction' % written)
+    print('written: %d row(s) "not ours", one transaction' % len(created))
+    if created:
+        print('created mapping rows: %s'
+              % ' '.join(str(row_id) for _, row_id in created))
     try:
         write_plan(args.out, items)
     except OSError as problem:

@@ -677,6 +677,88 @@ class UnlinkedEquipment(Base):
         self.run_tool(server)
         self.assertEqual(self.equipment_rows()[loader]['kandidaty'], '')
 
+    def test_a_candidate_gone_from_wialon_says_so(self):
+        # Связка GPS-10 удалённый объект не найдёт: подсказка обязана это
+        # сказать.
+        server = self.world()
+        picker = self.equipment('John Deere 9970', 'kombayn', '80 543 JA')
+        con = storage.open_units(self.folder)
+        try:
+            con.execute('INSERT INTO collector_units (unit_id, name, seen_at) '
+                        "VALUES (?, 'JohnDeere 80 543 JA', '2026-10-01 06:00:00')",
+                        (self.PICKER,))
+            con.commit()
+        finally:
+            con.close()
+        self.aggregate(self.PICKER, 3, area=4.0)
+        self.run_tool(server)
+        self.assertIn('%d [%s, net v Wialon] JohnDeere 80 543 JA'
+                      % (self.PICKER, inv.NO_ROW),
+                      self.equipment_rows()[picker]['kandidaty'])
+
+    def test_the_summary_line_counts_machines_and_candidates(self):
+        server = self.world()
+        self.equipment('John Deere 9970', 'kombayn', '80 543 JA')
+        self.equipment('Pogruzchik', 'special', '')
+        last = int(self.today.timestamp()) - 600
+        server.units.append((self.PICKER, 'JohnDeere 80 543 JA', last))
+        code, log = self.run_tool(server)
+        self.assertEqual(code, 0, log)
+        self.assertIn('machines without a Wialon object : 2 (with a plate '
+                      'candidate: 1)', log)
+
+    def test_the_equipment_query_runs_on_a_readonly_connection(self):
+        server = self.world()
+        real, seen = inv.unlinked_equipment, []
+
+        def probe(con, items):
+            try:
+                con.execute('CREATE TABLE probe (x)')
+                seen.append('written')
+            except sqlite3.OperationalError as problem:
+                seen.append(str(problem))
+            return real(con, items)
+
+        saved = inv.unlinked_equipment
+        inv.unlinked_equipment = probe
+        try:
+            code, log = self.run_tool(server)
+        finally:
+            inv.unlinked_equipment = saved
+        self.assertEqual(code, 0, log)
+        self.assertEqual(len(seen), 1)
+        self.assertIn('readonly', seen[0])
+
+    def test_the_equipment_csv_has_a_bom(self):
+        self.run_tool(self.world())
+        with open(os.path.join(self.folder, 'gps_equipment_unlinked.csv'),
+                  'rb') as fh:
+            self.assertEqual(fh.read(3), b'\xef\xbb\xbf')
+
+    def test_equipment_out_is_honoured(self):
+        server = self.world()
+        picker = self.equipment('John Deere 9970', 'kombayn', '80 543 JA')
+        target = os.path.join(self.folder, 'mashiny.csv')
+        self.run_tool(server, '--equipment-out', target)
+        self.assertFalse(os.path.exists(
+            os.path.join(self.folder, 'gps_equipment_unlinked.csv')))
+        with open(target, encoding='utf-8-sig', newline='') as fh:
+            ids = {int(row['equipment_id'])
+                   for row in csv.DictReader(fh, delimiter=';')}
+        self.assertIn(picker, ids)
+
+    def test_an_inactive_machine_says_so(self):
+        server = self.world()
+        old = self.equipment('MTZ 50', 'mtz', '80 001 AA')
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute('UPDATE equipment SET is_active = 0 WHERE id = ?', (old,))
+            con.commit()
+        finally:
+            con.close()
+        self.run_tool(server)
+        self.assertEqual(self.equipment_rows()[old]['is_active'], '0')
+
 
 if __name__ == '__main__':
     unittest.main()

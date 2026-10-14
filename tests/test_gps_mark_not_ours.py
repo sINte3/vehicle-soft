@@ -316,17 +316,47 @@ class Apply(Base):
         self.assertIsNone(created_by)
         self.assertTrue(created_at)
 
-    def test_the_report_names_the_row_to_remove_if_the_decision_is_undone(self):
+    def test_the_report_names_each_inserted_row_by_its_own_id(self):
+        # Чужая строка заранее: номер новой строки не совпадает ни с числом
+        # записанных, ни с единицей.
+        self.farmer_world()
+        self.names((ALIEN, 'Chuzhoy kran', TODAY))
+        self.mapping('Chuzhoy kran', wialon_id=ALIEN, skip=1)
+        self.listing('%d,fx_01_10' % FARMER, '%d,vladelets_14_10' % FARMER_GONE,
+                     '%d,fx_01_10' % ALIEN)
+        code, output = self.run_tool('--apply')
+        self.assertEqual(code, 0, output)
+        self.assertIn('written: 2 row(s)', output)
+        plan = self.plan_rows()
+        con = sqlite3.connect(self.db)
+        try:
+            created = []
+            for unit in (FARMER, FARMER_GONE):
+                row_id, name = con.execute(
+                    'SELECT id, vialon_name FROM vialon_mappings WHERE '
+                    'wialon_id = ?', (unit,)).fetchone()
+                created.append(str(row_id))
+                self.assertEqual(plan[unit]['mapping_id'], str(row_id))
+                self.assertEqual(plan[unit]['mapping_name'], name)
+                self.assertEqual(plan[unit]['skip'], '1')
+                self.assertEqual(plan[unit]['sozdana'], 'da')
+        finally:
+            con.close()
+        # Чужая строка -- не создана этим прогоном, и это видно.
+        self.assertEqual(plan[ALIEN]['sozdana'], '')
+        self.assertIn('created mapping rows: %s' % ' '.join(sorted(created, key=int)),
+                      output)
+
+    def test_a_second_run_does_not_claim_the_rows_of_the_first(self):
         self.farmer_world()
         self.listing('%d,fx_01_10' % FARMER)
         self.run_tool('--apply')
-        con = sqlite3.connect(self.db)
-        try:
-            row_id = con.execute('SELECT id FROM vialon_mappings WHERE '
-                                 'wialon_id = ?', (FARMER,)).fetchone()[0]
-        finally:
-            con.close()
-        self.assertEqual(self.plan_rows()[FARMER]['mapping_id'], str(row_id))
+        code, output = self.run_tool('--apply')
+        self.assertEqual(code, 0, output)
+        row = self.plan_rows()[FARMER]
+        self.assertEqual(row['status'], mark.ALREADY)
+        self.assertEqual(row['sozdana'], '')
+        self.assertNotIn('created mapping rows', output)
 
     @unittest.skipUnless(hasattr(time, 'tzset'), 'needs time.tzset')
     def test_the_stamps_are_utc_and_both_set(self):
@@ -451,8 +481,60 @@ class OtherRowsAreNotTouched(Base):
         self.listing('%d,legkovaya_01_10' % TWIN_A, '%d,legkovaya_01_10' % TWIN_B)
         code, output = self.run_tool('--apply')
         self.assertEqual(code, 0, output)
+        self.assertEqual(self.rows_of(TWIN_A)[0][0], 'DAMAS 80 977 (wialon 7001)')
         self.assertEqual(self.rows_of(TWIN_B)[0][0], 'Damas 80 977 (wialon 7002)')
         self.assertEqual(self.count_rows(), 2)
+
+    def test_a_row_holding_the_plain_shared_name_does_not_block_the_numbered_row(self):
+        self.names((FARMER, 'MTZ-80', TODAY), (TWIN_A, 'MTZ-80', TODAY))
+        self.day(FARMER, '2026-10-05', area=2.0)
+        plain = self.mapping('MTZ-80')
+        self.listing('%d,fx_01_10' % FARMER)
+        code, output = self.run_tool('--apply')
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.rows_of(FARMER)[0][0], 'MTZ-80 (wialon %d)' % FARMER)
+        self.assertEqual(self.count_rows(), 2)
+        con = sqlite3.connect(self.db)
+        try:
+            self.assertEqual(con.execute(
+                'SELECT vialon_name, wialon_id, skip FROM vialon_mappings '
+                'WHERE id = ?', (plain,)).fetchone(), ('MTZ-80', None, 0))
+        finally:
+            con.close()
+
+    def test_a_numbered_name_already_taken_is_left_to_a_person_with_both_notes(self):
+        # Строка с именем-номером могла остаться после `--unset`: вторую
+        # строку о той же машине заводить нельзя.
+        self.names((FARMER, 'MTZ-80', TODAY), (TWIN_A, 'MTZ-80', TODAY))
+        self.day(FARMER, '2026-10-05', area=2.0)
+        row_id = self.mapping('mtz-80 (wialon %d)' % FARMER, skip=1)
+        self.listing('%d,fx_01_10' % FARMER)
+        rows = self.count_rows()
+        code, output = self.run_tool('--apply')
+        self.assertEqual(code, 3, output)
+        row = self.plan_rows()[FARMER]
+        self.assertEqual(row['status'], mark.NAME_TAKEN)
+        self.assertEqual(row['mapping_id'], str(row_id))
+        self.assertIn(str(TWIN_A), row['primechanie'])
+        self.assertIn(mark.NEXT_STEP[mark.NAME_TAKEN], row['primechanie'])
+        self.assertEqual(self.count_rows(), rows)
+
+    def test_left_to_a_person_rows_have_guidance_and_no_row_name(self):
+        self.farmer_world()
+        self.mapping('МТЗ-80 292 HA', wialon_id=COUNTED)
+        self.mapping('new holland 80 413 fa ф/х')
+        self.listing('%d,fx_01_10' % COUNTED, '%d,vladelets_14_10' % FARMER_GONE,
+                     '%d,fx_01_10' % FARMER)
+        code, output = self.run_tool()
+        self.assertEqual(code, 3, output)
+        plan = self.plan_rows()
+        self.assertEqual(plan[COUNTED]['status'], mark.HAS_ROW)
+        self.assertEqual(plan[FARMER_GONE]['status'], mark.NAME_TAKEN)
+        for unit in (COUNTED, FARMER_GONE):
+            self.assertEqual(plan[unit]['row_name'], '')
+            self.assertTrue(plan[unit]['primechanie'])
+        self.assertEqual(plan[FARMER]['row_name'], '6070 Фермер ф/х')
+        self.assertEqual(plan[FARMER]['primechanie'], '')
 
     def test_a_name_shared_with_an_unlisted_object_is_not_claimed(self):
         # Второй объект с тем же именем -- не в списке, возможно наш. Строка
@@ -610,9 +692,12 @@ class Refusals(Base):
         self.farmer_world()
         self.listing('%d,fx_01_10' % FARMER)
         self.out = os.path.join(self.folder, 'net', 'plan.csv')
-        code, output = self.run_tool('--apply')
-        self.assertEqual(code, 2, output)
-        self.assertEqual(self.count_rows(), 0)
+        for extra in ((), ('--apply',)):
+            with self.subTest(extra=extra):
+                code, output = self.run_tool(*extra)
+                self.assertEqual(code, 2, output)
+                self.assertIn('folder for --out does not exist', output)
+                self.assertEqual(self.count_rows(), 0)
 
     def test_a_report_file_that_cannot_be_written_stops_before_the_write(self):
         # Каталог вместо файла -- то же, что CSV, открытый в Excel на Windows:
@@ -621,10 +706,52 @@ class Refusals(Base):
         self.listing('%d,fx_01_10' % FARMER)
         self.out = os.path.join(self.folder, 'plan_dir')
         os.mkdir(self.out)
-        code, output = self.run_tool('--apply')
-        self.assertEqual(code, 2, output)
-        self.assertIn('nothing was written', output)
-        self.assertEqual(self.count_rows(), 0)
+        for extra in ((), ('--apply',)):
+            with self.subTest(extra=extra):
+                code, output = self.run_tool(*extra)
+                self.assertEqual(code, 2, output)
+                self.assertIn('nothing was written', output)
+                self.assertEqual(self.count_rows(), 0)
+
+    def test_an_out_that_is_the_database_or_the_list_is_refused(self):
+        # Опечатка: --out на месте базы заменила бы боевую базу CSV-файлом.
+        self.farmer_world()
+        self.listing('%d,fx_01_10' % FARMER)
+        before = self.digest()
+        for target in (self.db, self.ids, self.db + '-wal'):
+            for extra in ((), ('--apply',)):
+                with self.subTest(target=os.path.basename(target), extra=extra):
+                    self.out = target
+                    code, output = self.run_tool(*extra)
+                    self.assertEqual(code, 2, output)
+                    self.assertIn('refusing to overwrite', output)
+                    self.assertEqual(self.digest(), before)
+        with open(self.ids, encoding='utf-8') as handle:
+            self.assertIn('wialon_id', handle.read())
+
+    def test_a_short_lock_held_by_the_service_is_waited_out(self):
+        # Служба пишет в базу секунды; ждать её -- обещание кода 4 («дольше
+        # 30 с»), а не отказ при первой же занятости.
+        import threading
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute('PRAGMA journal_mode=WAL')
+        finally:
+            con.close()
+        self.farmer_world()
+        self.listing('%d,fx_01_10' % FARMER)
+        holder = sqlite3.connect(self.db, isolation_level=None,
+                                 check_same_thread=False)
+        holder.execute('BEGIN IMMEDIATE')
+        timer = threading.Timer(0.5, lambda: holder.execute('ROLLBACK'))
+        timer.start()
+        try:
+            code, output = self.run_tool('--apply')
+        finally:
+            timer.join()
+            holder.close()
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.excluded().get(FARMER), EXCLUDED_NOT_OURS)
 
     def test_a_previous_report_survives_a_refused_check(self):
         # Проверка записи не обрезает прежний отчёт и не оставляет пустых
@@ -651,7 +778,7 @@ class Refusals(Base):
         finally:
             holder.execute('ROLLBACK')
             holder.close()
-        self.assertEqual(code, mark.EXIT_BUSY, output)
+        self.assertEqual(code, 4, output)
         self.assertIn('database is busy', output)
         self.assertEqual(self.count_rows(), 0)
 
@@ -664,7 +791,7 @@ class Refusals(Base):
 
         with mock.patch.object(mark, 'write_plan', disk_full):
             code, output = self.run_tool('--apply')
-        self.assertEqual(code, mark.EXIT_REPORT_FAILED, output)
+        self.assertEqual(code, 5, output)
         self.assertIn('written: 1 row(s)', output)
         self.assertIn('ARE written', output)
         self.assertEqual(self.excluded().get(FARMER), EXCLUDED_NOT_OURS)
@@ -720,6 +847,13 @@ class Refusals(Base):
         self.assertIn('rolled back', output)
         self.assertEqual(self.count_rows(), before)
         self.assertNotIn(FARMER, self.excluded())
+        # Отчёт отката не называет номеров: строк нет, а SQLite отдаст эти
+        # номера следующим строкам.
+        plan = self.plan_rows()
+        for unit in (FARMER, FARMER_GONE):
+            self.assertEqual(plan[unit]['mapping_id'], '')
+            self.assertEqual(plan[unit]['sozdana'], '')
+            self.assertIn('откат', plan[unit]['primechanie'])
 
 
 class Console(Base):
