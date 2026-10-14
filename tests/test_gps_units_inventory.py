@@ -32,6 +32,10 @@
    которых «сейчас нет в Виалоне», а их гектары считались -- и инвентарь их
    не видел.
 
+9. **Машины без объекта Wialon видны со своей стороны** -- с кандидатами по
+   госномеру: «связать которые не связаны» (14.10) иначе не из чего
+   предложить.
+
 Сети не требуется: сервер заменён консервами.
 
 Запуск:
@@ -568,6 +572,49 @@ class GoneFromWialon(Base):
         self.assertEqual(rows[0]['status'], inv.GONE)
         self.assertEqual(rows[0]['v_plan_fakte'], 'net')
 
+    def test_a_live_object_without_a_row_but_with_days_is_listed_once(self):
+        # Самый частый случай парка: объект в Wialon, строки нет, сутки есть.
+        server = self.world()
+        self.points(ORPHAN, 2)
+        self.aggregate(ORPHAN, 2, area=1.0)
+        code, log = self.run_tool(server)
+        self.assertEqual(code, 0, log)
+        rows = [row for row in self.csv_rows() if row['wialon_id'] == str(ORPHAN)]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['v_wialon'], 'da')
+        self.assertIn('of them not in Wialon  : 0', log)
+
+    def test_an_object_gone_from_wialon_with_points_only_is_listed(self):
+        # Точки есть, опубликованных суток нет (все отказаны) -- объект всё
+        # равно должен быть виден: его трек ещё собирается.
+        server = self.world()
+        self.collector_name(self.FARMER, 'Arion 630 ф/х')
+        self.points(self.FARMER, 3)
+        self.aggregate(self.FARMER, 3, reason='redkaya_zapis')
+        self.run_tool(server)
+        self.assertEqual(self.by_id()[self.FARMER]['v_wialon'], 'net')
+
+    def test_a_vanished_mapping_row_is_not_in_wialon_and_not_counted(self):
+        server = self.world()
+        tractor = self.equipment('MTZ 80', 'mtz')
+        self.mapping('Snyatyy s ucheta', wialon_id=999999, equipment_id=tractor)
+        code, log = self.run_tool(server)
+        self.assertEqual(code, 0, log)
+        self.assertEqual(self.by_id()[999999]['v_wialon'], 'net')
+        self.assertIn('of them not in Wialon  : 0', log)
+
+    def test_the_summary_with_a_gone_object(self):
+        # «Объектов в Wialon» -- только живые; удалённый, но считаемый -- в
+        # «считается», и он же -- в «из них нет в Wialon».
+        server = self.world()
+        self.collector_name(self.FARMER, 'Arion 630 ф/х')
+        self.aggregate(self.FARMER, 3, area=6.2)
+        code, log = self.run_tool(server)
+        self.assertEqual(code, 0, log)
+        self.assertIn('objects in Wialon        : 5', log)
+        self.assertIn('counted by plan-fact     : 4', log)
+        self.assertIn('of them not in Wialon  : 1', log)
+
     def test_a_row_found_by_name_is_shown_for_an_object_gone_from_wialon(self):
         # Строка есть, id ей не поставлен (связка ищет только живые объекты):
         # объект считается, и инвентарь обязан показать, чья это строка.
@@ -579,6 +626,56 @@ class GoneFromWialon(Base):
         row = self.by_id()[self.FARMER]
         self.assertEqual(row['status'], inv.NO_EQUIPMENT)
         self.assertEqual(row['mapping_id'], str(row_id))
+
+
+
+class UnlinkedEquipment(Base):
+    """Пункт 9."""
+
+    PICKER = 8806
+
+    def equipment_rows(self):
+        path = os.path.join(self.folder, 'gps_equipment_unlinked.csv')
+        with open(path, encoding='utf-8-sig', newline='') as fh:
+            return {int(row['equipment_id']): row
+                    for row in csv.DictReader(fh, delimiter=';')}
+
+    def test_a_machine_without_an_object_is_listed_with_its_plate_candidate(self):
+        server = self.world()
+        picker = self.equipment('John Deere 9970', 'kombayn', '80 543 JA')
+        last = int(self.today.timestamp()) - 600
+        server.units.append((self.PICKER, 'JohnDeere 80 543 JA', last))
+        code, log = self.run_tool(server)
+        self.assertEqual(code, 0, log)
+        row = self.equipment_rows()[picker]
+        self.assertIn('%d [%s] JohnDeere 80 543 JA' % (self.PICKER, inv.NO_ROW),
+                      row['kandidaty'])
+        self.assertIn('machines without a Wialon object : ', log)
+
+    def test_a_linked_machine_is_not_listed(self):
+        server = self.world()
+        code, log = self.run_tool(server)
+        self.assertEqual(code, 0, log)
+        tractor_ids = {int(row['equipment_id']) for row in self.equipment_rows()
+                       .values() if row['name'] == 'MTZ 892'}
+        self.assertEqual(tractor_ids, set())
+
+    def test_a_row_without_an_id_does_not_count_as_a_link(self):
+        # Строка по имени без wialon_id расчёту ничего не даёт: машина без
+        # связи, и строку надо показать -- её и связывать.
+        server = self.world()
+        picker = self.equipment('John Deere 9970', 'kombayn', '80 543 JA')
+        row_id = self.mapping('JohnDeere 80 543 JA', equipment_id=picker)
+        self.run_tool(server)
+        row = self.equipment_rows()[picker]
+        self.assertEqual(row['mapping_id'], str(row_id))
+        self.assertEqual(row['vialon_name'], 'JohnDeere 80 543 JA')
+
+    def test_a_machine_without_a_plate_has_no_candidates(self):
+        server = self.world()
+        loader = self.equipment('Pogruzchik', 'special', '')
+        self.run_tool(server)
+        self.assertEqual(self.equipment_rows()[loader]['kandidaty'], '')
 
 
 if __name__ == '__main__':

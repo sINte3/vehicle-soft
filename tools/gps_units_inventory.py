@@ -13,7 +13,9 @@
 сообщений не грузит), затем только чтение локальных файлов: строки
 сопоставления и техника из `transport.db`, точки из `instance/gps_points_*.db`,
 посчитанные сутки и участки из `gps_daily_aggregates` / `gps_work_polygons`.
-Пишет `gps_units_inventory.csv` и сводку в консоль.
+Пишет `gps_units_inventory.csv`, рядом с ним -- `gps_equipment_unlinked.csv`
+(машины программы без объекта Wialon, с кандидатами по госномеру -- для
+связки, 14.10), и сводку в консоль.
 
 ЧЕГО НЕ ДЕЛАЕТ
   НИЧЕГО НЕ ПИШЕТ В БАЗУ. Ни одной команды записи: все базы открываются
@@ -91,6 +93,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from gps_collector import config, storage                           # noqa: E402
 from gps_collector.wialon import Client, login_failure              # noqa: E402
+from tools.gps_link_mappings import candidates_by_plate            # noqa: E402
 from tools.gps_track_only_days import collector_names               # noqa: E402
 from gps.exclusion import (EXCLUDED_NON_FIELD, EXCLUDED_NOT_OURS,   # noqa: E402
                            NON_FIELD_CATEGORIES, REASON_TRACK_ONLY,
@@ -364,6 +367,65 @@ def inventory(units, rows, excluded, activity, computed, track_only=frozenset(),
     return items, summary
 
 
+EQUIPMENT_COLUMNS = ('equipment_id', 'name', 'plate', 'category', 'is_active',
+                     'mapping_id', 'vialon_name', 'kandidaty')
+
+
+def unlinked_equipment(con, items):
+    """Машины программы, у которых нет объекта Wialon, и кандидаты по госномеру.
+
+    [REASON]: 14.10 владелец попросил «связать которые не связаны». Сторона
+    объектов в инвентаре есть (`bez_stroki`), стороны машин -- не было: какой
+    карточке техники принадлежит объект без строки, из списка объектов не
+    видно. Машина «без связи» -- ни одна её строка сопоставления не несёт
+    `wialon_id`. Кандидаты -- объекты, в имени которых стоит госномер машины
+    (`gps_link_mappings.candidates_by_plate`, то же правило, что у подсказок
+    GPS-10), с их статусом в инвентаре. Это только подсказка: связь решает
+    человек, инструмент ничего не пишет.
+    """
+    try:
+        machines = con.execute(
+            'SELECT id, name, plate, category, is_active FROM equipment '
+            'ORDER BY category, name').fetchall()
+    except sqlite3.OperationalError:
+        return []
+    rows = con.execute('SELECT id, vialon_name, wialon_id, equipment_id '
+                       'FROM vialon_mappings WHERE equipment_id IS NOT NULL '
+                       'ORDER BY id').fetchall()
+    linked = {equipment_id for _, _, wialon_id, equipment_id in rows
+              if wialon_id is not None}
+    named = defaultdict(list)
+    for mapping_id, vialon_name, wialon_id, equipment_id in rows:
+        if wialon_id is None:
+            named[equipment_id].append((mapping_id, vialon_name or ''))
+    objects = [{'id': item['wialon_id'], 'name': item['wialon_name'],
+                'status': item['status']} for item in items
+               if item['status'] != GONE and item['wialon_name']]
+    out = []
+    for equipment_id, name, plate, category, is_active in machines:
+        if equipment_id in linked:
+            continue
+        candidates = candidates_by_plate(plate or '', objects)
+        out.append({
+            'equipment_id': equipment_id, 'name': name or '',
+            'plate': plate or '', 'category': category or '',
+            'is_active': '' if is_active is None else int(bool(is_active)),
+            'mapping_id': ' '.join(str(row[0]) for row in named[equipment_id]),
+            'vialon_name': ' | '.join(row[1] for row in named[equipment_id]),
+            'kandidaty': ' | '.join('%d [%s] %s' % (unit['id'], unit['status'],
+                                                    unit['name'])
+                                    for unit in candidates)})
+    return out
+
+
+def write_equipment(path, machines):
+    with open(path, 'w', encoding='utf-8-sig', newline='') as fh:
+        writer = csv.writer(fh, delimiter=';')
+        writer.writerow(EQUIPMENT_COLUMNS)
+        for machine in machines:
+            writer.writerow([machine[column] for column in EQUIPMENT_COLUMNS])
+
+
 def write_inventory(path, items):
     order = {status: index for index, status in enumerate(CSV_ORDER)}
     ordered = sorted(items, key=lambda item: (order.get(item['status'], 99),
@@ -414,6 +476,9 @@ def main(argv=None):
                         help='how far back the activity columns look '
                              '(default %d)' % WINDOW_DAYS)
     parser.add_argument('--out', default='gps_units_inventory.csv')
+    parser.add_argument('--equipment-out', default=None,
+                        help='machines of the program without a Wialon object '
+                             '(default: gps_equipment_unlinked.csv next to --out)')
     args = parser.parse_args(argv)
 
     if args.window_days < 1:
@@ -424,6 +489,8 @@ def main(argv=None):
                          % args.db)
         return 2
     folder = args.dir or config.points_dir()
+    equipment_out = args.equipment_out or os.path.join(
+        os.path.dirname(os.path.abspath(args.out)), 'gps_equipment_unlinked.csv')
 
     token = config.read_token()
     client = Client(pause=args.pause)
@@ -465,12 +532,23 @@ def main(argv=None):
 
     items, summary = inventory(units, rows, excluded, activity, computed,
                                track_only, collector_names(folder))
+    con = open_readonly(args.db)
+    try:
+        machines = unlinked_equipment(con, items)
+    finally:
+        con.close()
     write_inventory(args.out, items)
+    write_equipment(equipment_out, machines)
     report(items, summary, category_counts(items))
+    print('')
+    print('machines without a Wialon object : %d (with a plate candidate: %d)'
+          % (len(machines), sum(1 for machine in machines
+                                if machine['kandidaty'])))
     print('')
     print('window           : %s .. today (%d day(s))'
           % (since_day, args.window_days))
     print('written          : %s' % args.out)
+    print('written          : %s' % equipment_out)
     print('')
     print('nothing was written to the database: every file was opened mode=ro')
     return 0

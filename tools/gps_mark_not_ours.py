@@ -2,20 +2,20 @@
 """GPS-16 -- пометка «не наша техника» по списку объектов, утверждённому владельцем.
 
 ЗАЧЕМ
-Решение владельца 01.10: техника «ф/х» -- фермерская, «в нашей программе не
-должна быть», исключить; легковые и малотоннажные -- исключить. 14.10 он
-повторил его по четырём фермерским объектам, которых в Wialon уже нет, и
-попросил инвентаризацию: «удалить не нужные, связать которые не связаны».
+Решение владельца 01.10: «техника с пометкой «ф/х» - это техника фермеров.
+Они нам не нужны. В нашей программе они не должны быть»; легковые и
+малотоннажные -- исключить. 14.10 он повторил это по четырём фермерским
+объектам, которых в Wialon уже нет, и попросил инвентаризацию: «удалить не
+нужные, связать которые не связаны».
 
-До расчёта решение 01.10 не дошло. План-факт исключает объект только по
-строке сопоставления (`gps/exclusion.py`): объект без строки считается -- и у
-фермерской техники строки нет. Существующие пути её не создают:
-  экран сопоставления («+ Добавить», «Нет в системе») создаёт строку по
-      точному имени, а `wialon_id` ей не ставит;
-  `gps_link_mappings.py` ставит `wialon_id` только объекту, который сейчас
-      есть в списке Wialon, -- а удалённый из Wialon объект там уже не найти,
-      хотя его посчитанные сутки на экране остаются.
-За 02-12.10 так посчиталось около 793 га фермерской техники (прогон 14.10).
+01.10 решение исполнено для объектов из списка сорока, который владелец
+видел: строки добавлены на экране и связаны GPS-10 02.10. Остальные
+фермерские объекты в тот список не попали, строки у них нет, а объект без
+строки план-факт считает (`gps/exclusion.py`). Пометить их прежним путём --
+по одной строке на экране и связкой GPS-10 -- можно, пока объект есть в
+Wialon; удалённый из Wialon объект GPS-10 уже не найдёт, хотя его сутки на
+экране остаются. За 02-12.10 так посчиталось 803 га у 50 фермерских объектов
+(прогон 14.10).
 
 ЧТО ДЕЛАЕТ
 Для каждого id из файла `--ids` (столбец `wialon_id`) создаёт ту же строку,
@@ -23,16 +23,20 @@
 `vialon_name` -- имя объекта, как его последним записал сборщик из списка
 Wialon (`collector_units`), `wialon_id` -- этот id, `skip = 1`,
 `equipment_id` пуст. С этой строкой расчёт объект больше не считает, а экран
-«Факт по технике» прячет его вместе с прошлыми сутками.
+«Факт по технике» и сверка заявок agro-work прячут его вместе с прошлыми
+сутками.
+
+Имя, которое у сборщика носит ещё хоть один объект, пишется с номером:
+«<имя> (wialon <id>)». По имени строку находят импорт моточасов и экран
+«+ Добавить»; строка «не наша» под общим именем объявила бы чужой и второй
+объект -- а под именем с номером она касается только своего id.
 
 ЧЕГО НЕ ДЕЛАЕТ
   Ничего не удаляет: ни строк, ни посчитанных суток, ни точек. Сутки объекта
-      остаются в базе как были; их прячет экран, и вернуть их -- снять
-      галочку.
+      остаются в базе как были; их прячет экран.
   Не трогает существующие строки. Объект, у которого строка с этим id уже
-      есть, и объект, чьё имя уже занято строкой без этого id, идут в CSV, а
-      не в базу: что делать с чужой строкой, решает человек на экране
-      сопоставления.
+      есть, и объект, чьё имя уже занято строкой сопоставления, идут в CSV, а
+      не в базу; в колонке `primechanie` -- что с ним делать.
   Не решает, чья техника. Список составляет человек; инструмент проверяет,
       что каждый id ему известен (имя у сборщика или посчитанные сутки), и
       неизвестный id -- скорее опечатка -- отменяет прогон целиком.
@@ -41,13 +45,22 @@ Wialon (`collector_units`), `wialon_id` -- этот id, `skip = 1`,
       только по строке сопоставления.
 
 ОТКАТ
-Данные: на экране сопоставления Wialon снять у строки галочку «нет в
-системе». Строка остаётся, `wialon_id` у неё остаётся, объект снова
-считается со следующей ночи, а прошлые сутки снова видны на экране. Код:
-инструмент не меняет ни схемы, ни работы программы; откатывать нечего.
+Номера созданных строк -- в колонке `mapping_id` CSV записи.
+Данные, одна строка: на экране сопоставления Wialon (/wialon/mapping) --
+значок корзины у этой строки. Объект снова считается со следующей ночи, его
+прошлые сутки снова видны на экране и в сверке. Галочки «нет в системе» у
+существующей строки на экране нет: «Изменить» без машины экран не сохранит
+(«Выберите технику или отметьте «Нет в системе»»). Если объект окажется
+нашим и машина у него есть -- «Изменить», выбрать машину, «Сохранить»:
+строка станет связью, `wialon_id` останется. Снять только id, не удаляя
+строку, -- `gps_link_mappings.py --unset СТРОКА --apply`; но тогда автоплан
+GPS-10 вернёт id, пока объект с тем же именем есть в Wialon.
+Код: инструмент не меняет ни схемы, ни работы программы; откатывать нечего.
 
 СУХОЙ ПРОГОН ПО УМОЛЧАНИЮ. Без `--apply` база открывается `mode=ro`, и
-пишется только CSV плана. С `--apply` -- одна транзакция `BEGIN IMMEDIATE`:
+пишется только CSV плана. С `--apply` файл отчёта открывается на запись ДО
+базы (открыт в Excel -- отказ с кодом 2, база не тронута); затем одна
+транзакция `BEGIN IMMEDIATE`:
 план пересобирается внутри неё (между сухим прогоном и записью человек мог
 добавить строку на экране), вставляются только строки со статусом `pomechu`,
 и до фиксации на том же соединении проверяется постусловие -- правило
@@ -58,9 +71,16 @@ Wialon (`collector_units`), `wialon_id` -- этот id, `skip = 1`,
 вызывает `db.create_all()` на импорте, и любой скрипт с `from app import app`
 становится писателем схемы. В Wialon не ходит вовсе.
 
-Коды выхода: 0 -- план (или запись) без остатка; 3 -- часть объектов
-оставлена человеку (названы в CSV и в консоли); 1 -- постусловие не сошлось,
-ничего не записано; 2 -- неверный ввод, ничего не записано.
+Коды выхода:
+  0 -- план (или запись) без остатка;
+  3 -- часть объектов оставлена человеку (названы в CSV и в консоли),
+       остальное записано (или будет записано);
+  1 -- постусловие не сошлось, откат, ничего не записано;
+  2 -- неверный ввод, ничего не записано;
+  4 -- база занята другим писателем дольше 30 с, ничего не записано --
+       повторить позже;
+  5 -- строки ЗАПИСАНЫ, но CSV отчёта записать не удалось (строка «written»
+       в консоли -- правда).
 
 Запуск (PowerShell, из C:\\gps-tools, по одной команде на строку):
 
@@ -69,6 +89,9 @@ Wialon (`collector_units`), `wialon_id` -- этот id, `skip = 1`,
   & "C:\\Program Files\\Python314\\python.exe" tools\\gps_mark_not_ours.py --db C:\\transport-report\\instance\\transport.db --dir C:\\transport-report\\instance --ids docs\\gps_ne_nasha_2026-10-14.csv --out C:\\gps-tools\\check\\ne_nasha_apply.csv --apply
 
 Вывод в консоль -- ASCII: имена объектов -- только в CSV (UTF-8 с BOM).
+
+Запускать системным Python из папки `C:\\transport-report` не нужно: токен
+Wialon инструменту не нужен.
 """
 
 import argparse
@@ -100,9 +123,26 @@ NO_NAME = 'net_imeni'         # сборщик имени не знает -- с�
 
 LEFT_TO_PERSON = (HAS_ROW, NAME_TAKEN, NO_NAME)
 CSV_ORDER = (HAS_ROW, NAME_TAKEN, NO_NAME, MARK, ALREADY, NON_FIELD)
-CSV_COLUMNS = ('status', 'wialon_id', 'osnovanie', 'wialon_name', 'v_wialon',
-               'seen_at', 'days_computed', 'ha_total', 'first_day', 'last_day',
-               'mapping_id', 'mapping_name', 'skip', 'equipment_id')
+CSV_COLUMNS = ('status', 'wialon_id', 'osnovanie', 'wialon_name', 'row_name',
+               'v_wialon', 'seen_at', 'days_computed', 'ha_total', 'first_day',
+               'last_day', 'mapping_id', 'mapping_name', 'skip', 'equipment_id',
+               'primechanie')
+
+EXIT_BUSY = 4
+BUSY_TIMEOUT_S = 30
+EXIT_REPORT_FAILED = 5
+
+# Что делать с объектом, оставленным человеку. Текст -- в CSV, не в консоль.
+NEXT_STEP = {
+    HAS_ROW: ('строка с этим id уже есть и объект считается: решать по '
+              'строке на экране сопоставления (машина, категория) -- '
+              'инструмент её не трогает'),
+    NAME_TAKEN: ('имя занято строкой сопоставления (номер -- в mapping_id): '
+                 'пришлите этот CSV сессии; экран сопоставления id объекту '
+                 'не ставит'),
+    NO_NAME: ('сборщик не знает имени объекта, а строке нужно имя: пришлите '
+              'этот CSV сессии'),
+}
 
 
 class BadInput(Exception):
@@ -258,6 +298,9 @@ def plan(con, wanted, names):
     excluded = excluded_units(con)
     history = computed_history(con, [unit for unit, _ in wanted])
     latest_seen = max((seen for _, seen in names.values()), default='')
+    holders = {}
+    for unit, (name, _) in names.items():
+        holders.setdefault(name_key(name), set()).add(unit)
 
     unknown = [unit for unit, _ in wanted
                if unit not in names and unit not in history
@@ -267,10 +310,11 @@ def plan(con, wanted, names):
                        'and the mapping - a typo in the list? %s'
                        % ', '.join(str(unit) for unit in unknown))
 
-    items, claimed = [], {}
+    items = []
     for unit_id, basis in wanted:
         name, seen = names.get(unit_id, ('', ''))
         stored = normalize_name(name)
+        row_name, note = stored, ''
         done = history.get(unit_id, {})
         own = by_id.get(unit_id, [])
         if own:
@@ -287,22 +331,38 @@ def plan(con, wanted, names):
         elif not stored:
             status, others = NO_NAME, []
         else:
-            others = [row for row in by_key.get(name_key(stored), [])]
-            twin = claimed.get(name_key(stored))
-            if others or twin is not None:
-                # [REASON]: имя занято чужой строкой (или другим id этого же
-                # списка). Завести вторую строку значит либо упасть на
-                # UNIQUE, либо, при другом регистре, получить две строки об
-                # одной машине. Чья строка -- решает человек.
+            shared = sorted(holders.get(name_key(stored), set()) - {unit_id})
+            if shared:
+                # [REASON]: имя носит ещё один объект Wialon. Импорт моточасов
+                # и «+ Добавить» на экране ищут строку по имени: строка «не
+                # наша» под общим именем объявила бы чужим и второй объект, а
+                # его добавление на экране легло бы на эту строку с нашим
+                # id. Под именем с номером строка касается только своего id
+                # (так же поступают два объекта одного имени в одном списке).
+                row_name = '%s (wialon %d)' % (stored, unit_id)
+                note = ('имя общее с объектами %s -- строка под именем с '
+                        'номером' % ', '.join(str(unit) for unit in shared))
+            others = list(by_key.get(name_key(row_name), []))
+            if others:
+                # [REASON]: имя занято строкой сопоставления. Завести вторую
+                # значит либо упасть на UNIQUE, либо, при другом регистре,
+                # получить две строки об одной машине. Чья строка -- решает
+                # человек.
                 status = NAME_TAKEN
             else:
                 status = MARK
-                claimed[name_key(stored)] = unit_id
+                by_key[name_key(row_name)] = [{'id': '', 'vialon_name': row_name,
+                                               'skip': True,
+                                               'equipment_id': None}]
+        if status in NEXT_STEP:
+            note = NEXT_STEP[status] if not note else '%s; %s' % (
+                note, NEXT_STEP[status])
         items.append({
             'status': status,
             'wialon_id': unit_id,
             'osnovanie': basis,
             'wialon_name': stored,
+            'row_name': row_name if status == MARK else '',
             # [REASON]: сборщик пишет всем объектам списка одну метку времени
             # за прогон. Объект, чья метка старше последней, в последнем
             # списке Wialon уже не был.
@@ -317,7 +377,8 @@ def plan(con, wanted, names):
             'mapping_name': ' | '.join(row['vialon_name'] for row in others),
             'skip': ' '.join('1' if row['skip'] else '0' for row in others),
             'equipment_id': ' '.join(str(row['equipment_id'] or '')
-                                     for row in others).strip()})
+                                     for row in others).strip(),
+            'primechanie': note})
     return items
 
 
@@ -333,6 +394,24 @@ def write_plan(path, items):
             writer.writerow([item[column] for column in CSV_COLUMNS])
 
 
+def out_writable(path):
+    """'' или почему в файл отчёта писать нельзя. Файл не портит и не оставляет.
+
+    [REASON]: режим 'a' проверяет право записи (файл, открытый в Excel, на
+    Windows отвечает PermissionError), не обрезая прежний отчёт; созданный
+    проверкой пустой файл тут же убирается -- отказ не оставляет следов.
+    """
+    existed = os.path.exists(path)
+    try:
+        with open(path, 'a', encoding='utf-8'):
+            pass
+    except OSError as problem:
+        return problem.__class__.__name__
+    if not existed:
+        os.remove(path)
+    return ''
+
+
 def insert_marks(con, items):
     """Строки «не наша» для плана. Вызывается внутри открытой транзакции.
 
@@ -345,11 +424,16 @@ def insert_marks(con, items):
     for item in items:
         if item['status'] != MARK:
             continue
-        con.execute(
+        cursor = con.execute(
             'INSERT INTO vialon_mappings (vialon_name, wialon_id, '
             'equipment_id, skip, created_by, created_at, updated_at) '
             'VALUES (?, ?, NULL, 1, NULL, ?, ?)',
-            (item['wialon_name'], item['wialon_id'], stamp, stamp))
+            (item['row_name'], item['wialon_id'], stamp, stamp))
+        # Номер новой строки -- в отчёт: по нему владелец найдёт её на
+        # экране, если решение придётся отменить.
+        item['mapping_id'] = str(cursor.lastrowid)
+        item['mapping_name'] = item['row_name']
+        item['skip'] = '1'
         written += 1
     return written
 
@@ -442,19 +526,40 @@ def main(argv=None):
         print('plan: %s' % args.out)
         return 3 if any(counts.get(status) for status in LEFT_TO_PERSON) else 0
 
-    con = sqlite3.connect(args.db, timeout=30, isolation_level=None)
+    # [REASON]: файл отчёта проверяется до базы. Открыт в Excel (частый
+    # случай: та же команда, что у сухого прогона, плюс --apply) -- отказ
+    # с кодом 2, пока в базе ничего не тронуто; иначе строки записались бы,
+    # а владелец увидел бы трассировку и решил, что запись не прошла.
+    why = out_writable(args.out)
+    if why:
+        return _refuse('cannot write --out %s (%s) - nothing was written'
+                       % (args.out, why))
+    return _apply(args, wanted, names)
+
+
+def _apply(args, wanted, names):
+    con = sqlite3.connect(args.db, timeout=BUSY_TIMEOUT_S, isolation_level=None)
     try:
         problem = schema_problem(con)
         if problem:
             return _refuse(problem)
-        con.execute('BEGIN IMMEDIATE')
+        try:
+            con.execute('BEGIN IMMEDIATE')
+        except sqlite3.OperationalError as problem:
+            # Служба или ночной расчёт держат запись дольше таймаута.
+            print('FAILED: database is busy (%s) - nothing was written, '
+                  'run the same command again later' % problem)
+            return EXIT_BUSY
         try:
             items = plan(con, wanted, names)
             written = insert_marks(con, items)
             failed = postcondition(con, items)
             if failed:
                 con.execute('ROLLBACK')
-                write_plan(args.out, items)
+                try:
+                    write_plan(args.out, items)
+                except OSError:
+                    pass
                 report(items)
                 print('')
                 print('FAILED: %s' % failed)
@@ -469,10 +574,15 @@ def main(argv=None):
             raise
     finally:
         con.close()
-    write_plan(args.out, items)
     counts = report(items)
     print('')
     print('written: %d row(s) "not ours", one transaction' % written)
+    try:
+        write_plan(args.out, items)
+    except OSError as problem:
+        print('report CSV could not be written (%s) - the rows ARE written'
+              % problem.__class__.__name__)
+        return EXIT_REPORT_FAILED
     print('report : %s' % args.out)
     return 3 if any(counts.get(status) for status in LEFT_TO_PERSON) else 0
 
