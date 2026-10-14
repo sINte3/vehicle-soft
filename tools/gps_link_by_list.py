@@ -13,6 +13,10 @@
       машина с тем же госномером. Их трек не считается вовсе.
 Экран сопоставления делает связь по одной строке: «+ Добавить», точное имя,
 машина, затем связка GPS-10 ставит id. Этот инструмент делает то же списком.
+Третья группа (14.10, ночь): у машины есть своя строка, но без id и под
+именем, которого в Wialon нет (номер исправлен, кириллица вместо латиницы,
+к имени объекта дописали пометку). GPS-10 `--set` ставит только id, а
+переименовать строку экран не умеет: в форме «Изменить» поля имени нет.
 
 ЧТО ДЕЛАЕТ
 Читает список `--list` (столбцы `wialon_id`, `equipment_id`, `deystvie`,
@@ -24,6 +28,10 @@
       «не наша» и без машины: ставит ей машину и снимает пометку
       (`skip = 0`). Только по явному действию в списке: пометку когда-то
       поставил человек.
+  deystvie = svyazat_stroku -- у объекта строк нет, у машины ровно одна строка
+      без пометки и без id: ставит ей id объекта и имя объекта, как его
+      последним записал сборщик. Машина и `skip` не меняются. Прежнее имя --
+      в отчёте (`bylo`), чем имена различаются -- в `raznitsa`.
 Проверки экрана сопоставления (`wialon_import._validate_mapping_decision`)
 повторены: машина должна быть в справочнике и активна, и у неё не должно
 быть другой строки без пометки -- иначе строка остаётся человеку.
@@ -45,13 +53,16 @@
 ЧЕГО НЕ ДЕЛАЕТ
   Ничего не удаляет и не трогает чужие строки: объект со строкой (кроме
       снятия пометки по списку), имя, занятое строкой, машина, у которой уже
-      есть строка, -- в CSV человеку, колонка `primechanie` говорит, что
-      делать.
+      есть строка (кроме её собственной строки без id по `svyazat_stroku`),
+      -- в CSV человеку, колонка `primechanie` говорит, что делать.
   Не решает, чья машина. Список составляет человек; неизвестный объект или
       машина, повтор в списке -- отказ всего прогона.
-  Не пересчитывает прошлые сутки: ночной расчёт досчитает окно сам
-      (`--catch-up`), для объекта, с которого снята пометка, -- сутки с
-      точками на диске.
+  Не пересчитывает прошлые сутки. Ночной `--catch-up` смотрит только окно
+      последних 30 суток (`CATCH_UP_WINDOW_DAYS` в gps/daily.py): объекту, с
+      которого снята пометка, он досчитает сутки окна, у которых есть точки и
+      нет строки; спецтехнике в окне уберёт гектары. Сутки старше окна
+      остаются как были. Моточасы прошлых дат не дописываются: импорт
+      находит машину только в выгрузках, загруженных после связки.
 
 ОТКАТ
 Строки, изменённые прогоном, -- строки CSV записи с `izmenena = da`; номер
@@ -59,8 +70,15 @@
 в консоль. Созданная строка: значок корзины у неё на экране сопоставления --
 объект снова без строки, как до прогона. Строка со снятой пометкой: значок
 «Нет в системе» у неё на экране сопоставления -- та же строка снова «не
-наша» без машины, с тем же номером и `wialon_id`. Код: схема и работа
-программы не меняются; откатывать нечего.
+наша» без машины, с тем же номером и `wialon_id`. Переименованная строка
+(`pereimenuyu`): прежнее имя -- в `bylo` после `vialon_name=`; экран
+переименовать не умеет, поэтому -- корзина у строки и «+ Добавить» с прежним
+именем (скопировать из CSV, не набирать: кириллица и латиница выглядят
+одинаково) и той же машиной -- строка снова под старым именем и без id, но с
+новым номером (на номер строки ничего не ссылается). Одно `gps_link_mappings.py
+--unset` -- не откат: имя осталось бы именем объекта, и автоплан GPS-10
+поставил бы id снова. Код: схема и работа программы не меняются; откатывать
+нечего.
 
 СУХОЙ ПРОГОН ПО УМОЛЧАНИЮ. Без `--apply` база открывается `mode=ro`. Файл
 отчёта проверяется на запись до базы; --out на месте базы или списка --
@@ -102,6 +120,7 @@ if REPO_ROOT not in sys.path:
 from gps_collector import config                                   # noqa: E402
 from gps.exclusion import (EXCLUDED_NOT_OURS, NON_FIELD_CATEGORIES,  # noqa: E402
                            TRACK_ONLY_CATEGORIES, excluded_units)
+from tools.gps_link_mappings import LOOKALIKES                     # noqa: E402
 from tools.gps_mark_not_ours import (BadInput, collector_units,     # noqa: E402
                                      computed_history, name_key,
                                      normalize_name, out_clash,
@@ -111,10 +130,12 @@ DB_PATH = os.path.join(REPO_ROOT, 'instance', 'transport.db')
 
 LINK = 'svyazat'
 UNMARK = 'snyat_pometku'
-ACTIONS = (LINK, UNMARK)
+ATTACH = 'svyazat_stroku'
+ACTIONS = (LINK, UNMARK, ATTACH)
 
 CREATE = 'sozdam'               # строки нет -- будет создана со связью
 RELEASE = 'snimu_pometku'       # строка «не наша» без машины -- машина, skip=0
+RENAME = 'pereimenuyu'          # строка машины без id -- id и имя объекта
 DONE = 'uzhe_svyazan'           # объект уже ведёт на эту машину без пометки
 HAS_ROW = 'est_stroka'          # строка с этим id есть, действие ей не подходит
 NAME_TAKEN = 'imya_zanyato'     # имя занято строкой сопоставления
@@ -123,15 +144,23 @@ NAME_STALE = 'imya_ne_sovpadaet'  # имя строки «не наша» -- н�
 NO_NAME = 'net_imeni'           # сборщик имени не знает
 MACHINE_HAS_ROW = 'u_mashiny_est_stroka'  # у машины другая строка без пометки
 MACHINE_OFF = 'mashina_otklyuchena'       # машина неактивна -- экран не даст
+NO_ROW = 'u_mashiny_net_stroki'           # svyazat_stroku: строки у машины нет
+MANY_ROWS = 'u_mashiny_neskolko_strok'    # svyazat_stroku: строк несколько
+OLD_NAME_HELD = 'staroe_imya_u_obekta'    # имя строки носит другой объект
 
-WRITES = (CREATE, RELEASE)
+WRITES = (CREATE, RELEASE, RENAME)
 LEFT_TO_PERSON = (HAS_ROW, NAME_TAKEN, NAME_SHARED, NAME_STALE, NO_NAME,
-                  MACHINE_HAS_ROW, MACHINE_OFF)
-CSV_ORDER = LEFT_TO_PERSON + (CREATE, RELEASE, DONE)
+                  MACHINE_HAS_ROW, MACHINE_OFF, NO_ROW, MANY_ROWS,
+                  OLD_NAME_HELD)
+CSV_ORDER = LEFT_TO_PERSON + (CREATE, RELEASE, RENAME, DONE)
 CSV_COLUMNS = ('status', 'wialon_id', 'equipment_id', 'deystvie', 'osnovanie',
                'wialon_name', 'machine', 'plate', 'category', 'v_plan_fakte',
                'days_computed', 'ha_total', 'last_day', 'izmenena',
-               'mapping_id', 'mapping_name', 'bylo', 'primechanie')
+               'mapping_id', 'mapping_name', 'raznitsa', 'bylo', 'primechanie')
+
+# [REASON]: экран не сохраняет имя короче двух знаков (`wialon_import`,
+# сохранение строки); строку, какой экран не создал бы, инструмент не пишет.
+MIN_NAME_LENGTH = 2
 
 EXIT_BUSY = 4
 EXIT_REPORT_FAILED = 5
@@ -149,11 +178,38 @@ NEXT_STEP = {
                  'Wialon: по нему импорт моточасов машину не найдёт; '
                  'пришлите CSV сессии'),
     MACHINE_HAS_ROW: ('у машины уже есть строка без пометки (номер -- в '
-                      'mapping_id); если это она без id -- '
-                      'gps_link_mappings.py --set СТРОКА=ОБЪЕКТ --apply'),
+                      'mapping_id); если у этой строки нет id -- deystvie '
+                      'svyazat_stroku: строка получит id и имя объекта (одно '
+                      'gps_link_mappings.py --set оставит прежнее имя, и '
+                      'импорт моточасов машину не найдёт)'),
     MACHINE_OFF: ('машина в справочнике отключена: экран сопоставления такую '
                   'не связывает -- включить её в карточке или убрать из списка'),
+    NO_ROW: 'у машины нет строки без пометки: для неё -- deystvie svyazat',
+    MANY_ROWS: ('у машины несколько строк без пометки (номера -- в '
+                'mapping_id): какую оставить, решает человек -- пришлите CSV '
+                'сессии'),
+    OLD_NAME_HELD: ('нынешнее имя строки (mapping_name) носит другой объект '
+                    'Wialon: импорт моточасов, возможно, уже находит по нему '
+                    'машину -- пришлите CSV сессии'),
 }
+
+
+def difference(old, new):
+    """Чем имя строки отличается от имени объекта -- словом, для CSV.
+
+    [REASON]: в Excel кириллица «ЕА» и латиница «EA» неразличимы; без этой
+    колонки человек, сверяющий план, не увидит, что строку вообще меняют.
+    """
+    if old == new:
+        return 'net'
+    if normalize_name(old) == normalize_name(new):
+        return 'probely'
+    if normalize_name(old).casefold() == normalize_name(new).casefold():
+        return 'registr'
+    if (normalize_name(old).upper().translate(LOOKALIKES)
+            == normalize_name(new).upper().translate(LOOKALIKES)):
+        return 'kirillitsa_latinitsa'
+    return 'imya'
 
 
 def read_list(path):
@@ -236,6 +292,45 @@ def counted_as(category):
     return 'da'
 
 
+def attach_status(unit_id, equipment_id, name, own, by_machine, by_key,
+                  holders):
+    """svyazat_stroku: (статус, строки для отчёта, номер строки для записи).
+
+    Строка, которую меняют, -- единственная строка машины без пометки. У неё
+    нет id, или id уже этого объекта, а имя прежнее (так бывает после GPS-10
+    `--set`). Всё остальное -- человеку.
+    """
+    rows = by_machine.get(equipment_id, [])
+    if own:
+        if not (len(own) == 1 and own[0] in rows):
+            return HAS_ROW, own, None
+        if name and normalize_name(own[0]['vialon_name']) == name:
+            return DONE, own, None
+    if not rows:
+        return NO_ROW, [], None
+    if len(rows) > 1:
+        # [REASON]: какая из двух строк машины настоящая, по списку не
+        # решить: вторая строка -- это уже «машина с двумя трекерами».
+        return MANY_ROWS, rows, None
+    row = rows[0]
+    if row['wialon_id'] is not None and int(row['wialon_id']) != unit_id:
+        return MACHINE_HAS_ROW, [row], None
+    if len(name) < MIN_NAME_LENGTH:
+        return NO_NAME, [row], None
+    if holders.get(name_key(name), set()) - {unit_id}:
+        return NAME_SHARED, [row], None
+    takers = [other for other in by_key.get(name_key(name), [])
+              if other['id'] != row['id']]
+    if takers:
+        return NAME_TAKEN, takers, None
+    # [REASON]: если прежнее имя строки -- имя другого объекта, импорт уже
+    # сейчас отдаёт машине моточасы того объекта, и, может быть, это и есть
+    # её настоящий трекер. Переименование молча оборвало бы эту связь.
+    if holders.get(name_key(row['vialon_name']), set()) - {unit_id}:
+        return OLD_NAME_HELD, [row], None
+    return RENAME, [row], row['id']
+
+
 def plan(con, wanted, names):
     """Строки плана по каждой строке списка. Ничего не пишет."""
     rows = mapping_rows(con)
@@ -270,11 +365,23 @@ def plan(con, wanted, names):
         name = normalize_name(names.get(unit_id, ('', ''))[0])
         machine = machines[equipment_id]
         own = by_id.get(unit_id, [])
-        others, row_id = [], None
+        others, row_id, old = [], None, None
         machine_rows = [row for row in by_machine.get(equipment_id, [])
                         if row['wialon_id'] != unit_id]
-        if own and all(row['equipment_id'] == equipment_id and not row['skip']
-                       for row in own):
+        if action == ATTACH:
+            if not machine['active']:
+                status = MACHINE_OFF
+            else:
+                status, others, row_id = attach_status(
+                    unit_id, equipment_id, name, own, by_machine, by_key,
+                    holders)
+            if status == RENAME:
+                old = others[0]['vialon_name']
+                by_key.setdefault(name_key(name), []).append(
+                    {'id': row_id, 'vialon_name': name, 'skip': False,
+                     'equipment_id': equipment_id})
+        elif own and all(row['equipment_id'] == equipment_id and not row['skip']
+                         for row in own):
             status, others = DONE, own
         elif not machine['active']:
             status = MACHINE_OFF
@@ -311,7 +418,7 @@ def plan(con, wanted, names):
                 status, others = HAS_ROW, own
         elif own:
             status, others = HAS_ROW, own
-        elif not name:
+        elif len(name) < MIN_NAME_LENGTH:
             status = NO_NAME
         elif holders.get(name_key(name), set()) - {unit_id}:
             # [REASON]: связь живёт в имени: по нему импорт моточасов найдёт
@@ -325,6 +432,19 @@ def plan(con, wanted, names):
             by_key[name_key(name)] = [{'id': '', 'vialon_name': name,
                                        'skip': False, 'equipment_id': equipment_id}]
         done = history.get(unit_id, {})
+        note = NEXT_STEP.get(status, '')
+        if status == OLD_NAME_HELD:
+            note += ' (объект: %s)' % ' '.join(str(other) for other in sorted(
+                holders.get(name_key(others[0]['vialon_name']), set())
+                - {unit_id}))
+        bylo = ' | '.join('skip=%d equipment_id=%s'
+                          % (int(row['skip']), row['equipment_id'] or '')
+                          for row in others)
+        if status == RENAME:
+            # [REASON]: имя -- последним и как есть, без нормализации: всё
+            # после `vialon_name=` -- точное прежнее имя для отката.
+            bylo = 'skip=0 equipment_id=%s wialon_id=%s vialon_name=%s' % (
+                equipment_id, others[0]['wialon_id'] or '', old)
         items.append({
             'status': status, 'wialon_id': unit_id,
             'equipment_id': equipment_id, 'deystvie': action, 'osnovanie': basis,
@@ -336,11 +456,9 @@ def plan(con, wanted, names):
             'last_day': done.get('last', ''), 'izmenena': '',
             'mapping_id': ' '.join(str(row['id']) for row in others),
             'mapping_name': ' | '.join(row['vialon_name'] for row in others),
-            'bylo': ' | '.join('skip=%d equipment_id=%s'
-                               % (int(row['skip']), row['equipment_id'] or '')
-                               for row in others),
-            'primechanie': NEXT_STEP.get(status, ''),
-            '_row_id': row_id})
+            'raznitsa': difference(old, name) if status == RENAME else '',
+            'bylo': bylo, 'primechanie': note,
+            '_row_id': row_id, '_old_name': old})
     return items
 
 
@@ -359,9 +477,10 @@ def write_plan(path, items):
 def write_links(con, items):
     """Записи плана внутри открытой транзакции. [(item, номер строки)].
 
-    [REASON]: UPDATE снятия пометки повторяет условие плана в самом WHERE
-    (`skip = 1 AND equipment_id IS NULL`): если строку тронули между планом
-    и записью, она не изменится, и постусловие откатит всё.
+    [REASON]: UPDATE снятия пометки и переименования повторяет условие плана
+    в самом WHERE (`skip = 1 AND equipment_id IS NULL`; прежнее имя, машина,
+    пустой или этот же id): если строку тронули между планом и записью, она
+    не изменится, и постусловие откатит всё.
     """
     stamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
     changed = []
@@ -383,6 +502,18 @@ def write_links(con, items):
                  item['wialon_id']))
             if cursor.rowcount == 1:
                 changed.append((item, item['_row_id']))
+        elif item['status'] == RENAME:
+            cursor = con.execute(
+                'UPDATE vialon_mappings SET vialon_name = ?, wialon_id = ?, '
+                'updated_at = ? WHERE id = ? '
+                'AND (wialon_id IS NULL OR wialon_id = ?) '
+                'AND equipment_id = ? AND COALESCE(skip, 0) = 0 '
+                'AND vialon_name = ?',
+                (item['wialon_name'], item['wialon_id'], stamp,
+                 item['_row_id'], item['wialon_id'], item['equipment_id'],
+                 item['_old_name']))
+            if cursor.rowcount == 1:
+                changed.append((item, item['_row_id']))
     return changed
 
 
@@ -392,13 +523,29 @@ def postcondition(con, items, changed):
     if len(changed) != len(expected):
         return 'written %d of %d planned change(s)' % (len(changed), len(expected))
     excluded = excluded_units(con)
-    wrong = []
+    wrong, keys = [], None
     for item in expected:
         rows = con.execute('SELECT equipment_id, skip FROM vialon_mappings '
                            'WHERE wialon_id = ?', (item['wialon_id'],)).fetchall()
         if (not rows or any(row[0] != item['equipment_id'] or row[1]
                             for row in rows)
                 or excluded.get(item['wialon_id']) == EXCLUDED_NOT_OURS):
+            wrong.append(item['wialon_id'])
+            continue
+        if item['status'] != RENAME:
+            continue
+        # [REASON]: переименовывают ради импорта моточасов, поэтому и
+        # проверка -- его правилом: точное имя находит ровно эту строку с
+        # этой машиной, и другой строки с тем же именем без учёта регистра
+        # нет (SQLite `lower()` кириллицу не сворачивает -- считается здесь).
+        found = con.execute('SELECT id, equipment_id, COALESCE(skip, 0) '
+                            'FROM vialon_mappings WHERE vialon_name = ?',
+                            (item['wialon_name'],)).fetchall()
+        if keys is None:
+            keys = Counter(name_key(row['vialon_name'])
+                           for row in mapping_rows(con))
+        if (found != [(item['_row_id'], item['equipment_id'], 0)]
+                or keys[name_key(item['wialon_name'])] != 1):
             wrong.append(item['wialon_id'])
     if wrong:
         return ('not linked as planned after the write: %s'
@@ -410,8 +557,9 @@ def record_changed(changed):
     """Номера строк -- в отчёт. Только после COMMIT (см. GPS-16)."""
     for item, row_id in changed:
         item['mapping_id'] = str(row_id)
-        item['mapping_name'] = item['wialon_name'] if item['status'] == CREATE \
-            else item['mapping_name']
+        item['mapping_name'] = (item['wialon_name']
+                                if item['status'] in (CREATE, RENAME)
+                                else item['mapping_name'])
         if item['status'] == CREATE:
             item['bylo'] = 'strok ne bylo'
         item['izmenena'] = 'da'
