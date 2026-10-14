@@ -732,6 +732,23 @@ class Refusals(Base):
         with open(self.ids, encoding='utf-8') as handle:
             self.assertIn('wialon_id', handle.read())
 
+    def test_an_out_on_the_collector_state_file_is_refused(self):
+        # Файл отметок и имён сборщика читается из --dir; отчёт поверх него
+        # стёр бы отметки сбора и имена объектов -- даже в сухом прогоне.
+        self.farmer_world()
+        self.listing('%d,fx_01_10' % FARMER)
+        state = storage.state_path(self.folder)
+        with open(state, 'rb') as handle:
+            before = handle.read()
+        for extra in ((), ('--apply',)):
+            with self.subTest(extra=extra):
+                self.out = state
+                code, output = self.run_tool(*extra)
+                self.assertEqual(code, 2, output)
+                self.assertIn('refusing to overwrite', output)
+                with open(state, 'rb') as handle:
+                    self.assertEqual(handle.read(), before)
+
     def test_another_name_of_the_database_file_is_refused(self):
         # Тот же файл под другим именем: жёсткая ссылка (на NTFS -- без прав
         # администратора), а на сервере -- ещё короткое имя 8.3 или диск
