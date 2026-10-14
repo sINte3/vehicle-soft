@@ -401,7 +401,9 @@ def main(argv=None):
     if args.resource <= 0:
         sys.stderr.write('ERROR: --resource must be a positive id\n')
         return EXIT_BAD_INPUT
-    if os.path.abspath(args.groups_out) == os.path.abspath(args.zones_out):
+    # [REASON]: сравнение строк путей не видит жёсткой ссылки и, на Windows,
+    # другого регистра: CSV зон молча записался бы поверх CSV групп.
+    if out_clash(args.zones_out, (args.groups_out,)) == args.groups_out:
         sys.stderr.write('ERROR: --groups-out and --zones-out are the same '
                          'file\n')
         return EXIT_BAD_INPUT

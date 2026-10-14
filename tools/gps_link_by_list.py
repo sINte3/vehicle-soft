@@ -33,6 +33,9 @@
       строки. После связки моточасы этих машин из выгрузки Wialon пишутся
       так же, как у всех связанных машин; снятая пометка перестаёт класть их
       в «пропущенные». Это ровно то, что сделал бы экран сопоставления.
+      Поэтому имя строки обязано быть нынешним именем объекта и только его:
+      строка с другим или общим именем -- человеку (`imya_ne_sovpadaet`,
+      `imya_obshchee`).
   Сверка заявок agro-work начинает находить работу этих машин.
   Категория машины решает, как её считать: полевая -- с гектарами,
       спецтехника -- след без гектаров, непольевая -- исключена.
@@ -51,11 +54,11 @@
 ОТКАТ
 Строки, изменённые прогоном, -- строки CSV записи с `izmenena = da`; номер
 строки -- в `mapping_id`, прежнее состояние -- в `bylo`; номера печатаются и
-в консоль. Созданная строка: значок корзины на экране сопоставления -- объект
-снова без строки, как до прогона. Строка со снятой пометкой: значок корзины,
-затем `tools/gps_mark_not_ours.py` с этим id -- пометка «не наша» вернётся
-(экран ставит пометку только новой строке). Код: схема и работа программы не
-меняются; откатывать нечего.
+в консоль. Созданная строка: значок корзины у неё на экране сопоставления --
+объект снова без строки, как до прогона. Строка со снятой пометкой: значок
+«Нет в системе» у неё на экране сопоставления -- та же строка снова «не
+наша» без машины, с тем же номером и `wialon_id`. Код: схема и работа
+программы не меняются; откатывать нечего.
 
 СУХОЙ ПРОГОН ПО УМОЛЧАНИЮ. Без `--apply` база открывается `mode=ro`. Файл
 отчёта проверяется на запись до базы; --out на месте базы или списка --
@@ -114,13 +117,14 @@ DONE = 'uzhe_svyazan'           # объект уже ведёт на эту м�
 HAS_ROW = 'est_stroka'          # строка с этим id есть, действие ей не подходит
 NAME_TAKEN = 'imya_zanyato'     # имя занято строкой сопоставления
 NAME_SHARED = 'imya_obshchee'   # имя носит ещё один объект Wialon
+NAME_STALE = 'imya_ne_sovpadaet'  # имя строки «не наша» -- не имя объекта
 NO_NAME = 'net_imeni'           # сборщик имени не знает
 MACHINE_HAS_ROW = 'u_mashiny_est_stroka'  # у машины другая строка без пометки
 MACHINE_OFF = 'mashina_otklyuchena'       # машина неактивна -- экран не даст
 
 WRITES = (CREATE, RELEASE)
-LEFT_TO_PERSON = (HAS_ROW, NAME_TAKEN, NAME_SHARED, NO_NAME, MACHINE_HAS_ROW,
-                  MACHINE_OFF)
+LEFT_TO_PERSON = (HAS_ROW, NAME_TAKEN, NAME_SHARED, NAME_STALE, NO_NAME,
+                  MACHINE_HAS_ROW, MACHINE_OFF)
 CSV_ORDER = LEFT_TO_PERSON + (CREATE, RELEASE, DONE)
 CSV_COLUMNS = ('status', 'wialon_id', 'equipment_id', 'deystvie', 'osnovanie',
                'wialon_name', 'machine', 'plate', 'category', 'v_plan_fakte',
@@ -139,6 +143,9 @@ NEXT_STEP = {
     NAME_SHARED: ('это имя носит ещё один объект Wialon: по имени импорт '
                   'моточасов их не различит -- пришлите CSV сессии'),
     NO_NAME: 'сборщик не знает имени объекта: пришлите CSV сессии',
+    NAME_STALE: ('имя строки (mapping_name) -- не нынешнее имя объекта в '
+                 'Wialon: по нему импорт моточасов машину не найдёт; '
+                 'пришлите CSV сессии'),
     MACHINE_HAS_ROW: ('у машины уже есть строка без пометки (номер -- в '
                       'mapping_id); если это она без id -- '
                       'gps_link_mappings.py --set СТРОКА=ОБЪЕКТ --apply'),
@@ -210,9 +217,11 @@ def machines_of(con, ids):
             'WHERE id IN (%s)' % marks, list(ids)).fetchall()
     except sqlite3.OperationalError:
         raise BadInput('table equipment is missing')
+    # [REASON]: «активна» -- как у экрана: `_validate_mapping_decision`
+    # отказывает машине с пустым is_active (`not getattr(eq, 'is_active',
+    # True)`), а список машин экрана берёт только `is_active == True`.
     return {row[0]: {'name': row[1] or '', 'plate': row[2] or '',
-                     'category': row[3] or '',
-                     'active': row[4] is None or bool(row[4])}
+                     'category': row[3] or '', 'active': bool(row[4])}
             for row in rows}
 
 
@@ -275,8 +284,22 @@ def plan(con, wanted, names):
         elif action == UNMARK:
             if (len(own) == 1 and own[0]['skip']
                     and own[0]['equipment_id'] is None):
-                status, others = RELEASE, own
-                row_id = own[0]['id']
+                kept = own[0]['vialon_name']
+                others = own
+                # [REASON]: строка остаётся со своим именем, а по имени её
+                # находит импорт моточасов. Имя, не совпадающее с нынешним
+                # именем объекта (прежний водитель, номер GPS-16), моточасов
+                # не принесёт, а экран не даст добавить строку с настоящим
+                # именем для той же машины. Имя, которое носит ещё один
+                # объект, отдало бы машине моточасы чужого трекера. Всё это
+                # -- человеку, как и у связки.
+                if not name or name_key(kept) != name_key(name):
+                    status = NAME_STALE
+                elif holders.get(name_key(kept), set()) - {unit_id}:
+                    status = NAME_SHARED
+                else:
+                    status = RELEASE
+                    row_id = own[0]['id']
             else:
                 status, others = HAS_ROW, own
         elif own:

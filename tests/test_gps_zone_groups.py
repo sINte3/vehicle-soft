@@ -65,13 +65,13 @@ FIELD_CONTOURS_DDL = (
 # поле фермера -- ни в одной. U+04B2 «Ҳ» -- буква, что убила прогон 18.08.
 GARAGE, DEPOT, PLANT, FIELD = 101, 102, 103, 104
 ZONES = [
-    {'id': GARAGE, 'n': 'Гараж Ҳамроев', 't': 2},
+    {'id': GARAGE, 'n': 'Гараж 1', 't': 2},
     {'id': DEPOT, 'n': 'Автобаза №2', 't': 2},
-    {'id': PLANT, 'n': 'Завод Бобохон', 't': 3},
-    {'id': FIELD, 'n': '1508 Нурхон Бобохон', 't': 2},
+    {'id': PLANT, 'n': 'Завод 1', 't': 3},
+    {'id': FIELD, 'n': '1508 Поле', 't': 2},
 ]
 GROUPS = {
-    '11': {'id': 11, 'n': 'Гаражлар Ҳамроев', 'd': 'Ташкилот', 'f': 0,
+    '11': {'id': 11, 'n': 'Гаражлар 1', 'd': 'Ташкилот', 'f': 0,
            'zns': [GARAGE, DEPOT]},
     '12': {'id': 12, 'n': 'Автобазалар', 'd': '', 'f': 0,
            'zns': [DEPOT, PLANT]},
@@ -149,8 +149,8 @@ class Base(unittest.TestCase):
             con.executemany(
                 'INSERT INTO field_contours (source, external_id, name) '
                 'VALUES (?, ?, ?)',
-                [('wialon', str(GARAGE), 'Гараж Ҳамроев'),
-                 ('wialon', str(PLANT), 'Завод Бобохон'),
+                [('wialon', str(GARAGE), 'Гараж 1'),
+                 ('wialon', str(PLANT), 'Завод 1'),
                  ('wialon', '999', 'Исчезнувшая зона'),
                  # другой источник с тем же номером -- не зеркало Wialon
                  ('manual', str(FIELD), 'Поле вручную')])
@@ -368,7 +368,7 @@ class Files(Base):
         code, log, err = self.run_tool(ZoneServer())
         self.assertEqual(code, 0, log + err)
         self.assertEqual(self.read_csv(self.groups_out), [
-            {'gruppa_id': '11', 'gruppa': 'Гаражлар Ҳамроев',
+            {'gruppa_id': '11', 'gruppa': 'Гаражлар 1',
              'opisanie': 'Ташкилот', 'zon': '2', 'zon_v_zerkale': '1',
              'net_v_spiske_zon': '', 'zona_ids': '101 102'},
             {'gruppa_id': '12', 'gruppa': 'Автобазалар', 'opisanie': '',
@@ -381,14 +381,14 @@ class Files(Base):
         rows = self.zones_by_id()
         self.assertEqual(sorted(rows), [GARAGE, DEPOT, PLANT, FIELD])
         self.assertEqual(rows[GARAGE], {
-            'zona_id': '101', 'zona': 'Гараж Ҳамроев', 'tip': 'poligon',
-            'tip_kod': '2', 'grupp': '1', 'gruppy': 'Гаражлар Ҳамроев',
+            'zona_id': '101', 'zona': 'Гараж 1', 'tip': 'poligon',
+            'tip_kod': '2', 'grupp': '1', 'gruppy': 'Гаражлар 1',
             'gruppa_ids': '11', 'v_zerkale': 'da'})
         # зона в двух группах -- обе, в порядке id групп
         self.assertEqual(rows[DEPOT], {
             'zona_id': '102', 'zona': 'Автобаза №2', 'tip': 'poligon',
             'tip_kod': '2', 'grupp': '2',
-            'gruppy': 'Гаражлар Ҳамроев | Автобазалар',
+            'gruppy': 'Гаражлар 1 | Автобазалар',
             'gruppa_ids': '11 12', 'v_zerkale': 'net'})
         self.assertEqual(rows[PLANT]['tip'], 'krug')
         self.assertEqual(rows[PLANT]['gruppa_ids'], '12')
@@ -396,7 +396,7 @@ class Files(Base):
         # зона ни в одной группе; контур с тем же номером из другого
         # источника -- не зеркало Wialon
         self.assertEqual(rows[FIELD], {
-            'zona_id': '104', 'zona': '1508 Нурхон Бобохон', 'tip': 'poligon',
+            'zona_id': '104', 'zona': '1508 Поле', 'tip': 'poligon',
             'tip_kod': '2', 'grupp': '0', 'gruppy': '', 'gruppa_ids': '',
             'v_zerkale': 'net'})
 
@@ -479,6 +479,146 @@ class Console(Base):
         self.assertEqual(code, 4)
         (log + err).encode('ascii')
         self.assertNotIn(config.ascii_only('Бухоро агрокластер'), log)
+
+
+class FormatsAndOrder(Base):
+    """Порядок, повторы и запасные ветви разбора ответа Wialon."""
+    # 09: groups in id order whatever order the server sends them in
+    def test_groups_come_in_id_order(self):
+        groups = {'12': GROUPS['12'], '11': GROUPS['11']}
+        code, log, err = self.run_tool(ZoneServer(groups=groups))
+        self.assertEqual(code, 0, log + err)
+        self.assertEqual([r['gruppa_id'] for r in self.read_csv(self.groups_out)],
+                         ['11', '12'])
+        self.assertEqual(self.zones_by_id()[DEPOT]['gruppa_ids'], '11 12')
+
+    # 18: zones of one group stay together, by first group id
+    def test_grouped_zones_are_ordered_by_first_group(self):
+        zones = ZONES + [{'id': 60, 'n': 'Aa punkt', 't': 2}]
+        groups = dict(GROUPS)
+        groups['12'] = dict(GROUPS['12'], zns=[DEPOT, PLANT, 60])
+        code, log, err = self.run_tool(ZoneServer(zones=zones, groups=groups))
+        self.assertEqual(code, 0, log + err)
+        order = [int(r['zona_id']) for r in self.read_csv(self.zones_out)]
+        self.assertEqual(order, [DEPOT, GARAGE, 60, PLANT, FIELD])
+
+    # 10: a member listed twice counts once
+    def test_a_member_listed_twice_counts_once(self):
+        groups = dict(GROUPS)
+        groups['11'] = dict(GROUPS['11'], zns=[DEPOT, GARAGE, GARAGE])
+        code, log, err = self.run_tool(ZoneServer(groups=groups))
+        self.assertEqual(code, 0, log + err)
+        row = [r for r in self.read_csv(self.groups_out) if r['gruppa_id'] == '11'][0]
+        self.assertEqual((row['zon'], row['zona_ids']), ('2', '101 102'))
+        self.assertEqual(self.zones_by_id()[GARAGE]['grupp'], '1')
+
+    # 22: CSV on the -wal / -shm file of the database
+    def test_an_output_on_the_wal_or_shm_file_is_refused(self):
+        for target in (self.db + '-wal', self.db + '-shm'):
+            with self.subTest(target=os.path.basename(target)):
+                server = ZoneServer()
+                code, log, err = self.run_tool(server, '--zones-out', target)
+                self.assertEqual(code, 2, log + err)
+                self.assertIn('refusing to overwrite', err)
+                self.assertEqual(server.calls, [])
+
+    # 29: --db that is not an SQLite file
+    def test_a_file_that_is_not_a_database_is_refused(self):
+        other = os.path.join(self.folder, 'not_a_db.csv')
+        with open(other, 'w') as fh:
+            fh.write('wialon_id;name\n' * 200)
+        server = ZoneServer()
+        code, log, err = self.run_tool(server, db=other)
+        self.assertEqual(code, 2, log + err)
+        self.assertIn('cannot read', err)
+        self.assertEqual(server.calls, [])
+
+    # 46: zones without data are counted in the type summary
+    def test_zones_without_data_appear_in_the_type_summary(self):
+        code, log, err = self.run_tool(ZoneServer(data_ids=[GARAGE, DEPOT, PLANT]))
+        self.assertEqual(code, 0, log + err)
+        self.assertIn('  type (bez dannyh) : 1\n', log)
+
+    # 27: an unknown zone type keeps its code
+    def test_an_unknown_zone_type_keeps_its_code(self):
+        zones = [dict(z) for z in ZONES]
+        zones[3]['t'] = 4
+        code, log, err = self.run_tool(ZoneServer(zones=zones))
+        self.assertEqual(code, 0, log + err)
+        self.assertEqual(self.zones_by_id()[FIELD]['tip'], 'kod 4')
+
+    # 07: a group without 'id' takes its id from its key
+    def test_a_group_without_id_uses_its_key(self):
+        groups = dict(GROUPS)
+        groups['11'] = {k: v for k, v in GROUPS['11'].items() if k != 'id'}
+        code, log, err = self.run_tool(ZoneServer(groups=groups))
+        self.assertEqual(code, 0, log + err)
+        self.assertEqual([r['gruppa_id'] for r in self.read_csv(self.groups_out)],
+                         ['11', '12'])
+
+    # 08: members sent as an object keyed by zone id
+    def test_members_as_an_object(self):
+        groups = dict(GROUPS)
+        groups['11'] = dict(GROUPS['11'], zns={str(GARAGE): 1, str(DEPOT): 1})
+        code, log, err = self.run_tool(ZoneServer(groups=groups))
+        self.assertEqual(code, 0, log + err)
+        self.assertEqual(self.zones_by_id()[GARAGE]['gruppa_ids'], '11')
+
+    # 36 + Z28: a non-object group and a boolean id are skipped, not fatal
+    def test_malformed_groups_are_skipped(self):
+        groups = dict(GROUPS)
+        groups['13'] = 'garbage'
+        groups['14'] = {'id': True, 'n': 'x', 'zns': [GARAGE]}
+        code, log, err = self.run_tool(ZoneServer(groups=groups))
+        self.assertEqual(code, 0, log + err)
+        # a boolean id is not an id: the key gives 14, never 1
+        self.assertEqual([r['gruppa_id'] for r in self.read_csv(self.groups_out)],
+                         ['11', '12', '14'])
+
+    # 16: external_id with stray spaces still counts as mirrored
+    def test_mirror_ids_are_stripped(self):
+        con = sqlite3.connect(self.db)
+        con.execute("UPDATE field_contours SET external_id = ' 101 ' "
+                    "WHERE external_id = '101'")
+        con.commit()
+        con.close()
+        code, log, err = self.run_tool(ZoneServer())
+        self.assertEqual(code, 0, log + err)
+        self.assertEqual(self.zones_by_id()[GARAGE]['v_zerkale'], 'da')
+
+
+class ZlAsList(ZoneServer):
+    def urlopen(self, request, timeout=None):
+        query = urllib.parse.parse_qs(request.data.decode('utf-8'))
+        response = super().urlopen(request, timeout)
+        if query['svc'][0] == 'core/search_items' and self.search_error is None:
+            payload = json.loads(response.read())
+            for item in payload['items']:
+                if isinstance(item.get('zl'), dict):
+                    item['zl'] = list(item['zl'].values())
+            return FakeResponse(payload)
+        return response
+
+
+class ZoneListAsArray(Base):
+    # 05: zone list sent as an array of objects
+    def test_a_zone_list_as_an_array(self):
+        code, log, err = self.run_tool(ZlAsList())
+        self.assertEqual(code, 0, log + err)
+        self.assertEqual(sorted(self.zones_by_id()), [GARAGE, DEPOT, PLANT, FIELD])
+
+
+class SameFileCsv(Base):
+    def test_hardlinked_outputs_are_the_same_file(self):
+        with open(self.groups_out, 'w') as fh:
+            fh.write('x')
+        os.link(self.groups_out, self.zones_out + '.alias')
+        server = ZoneServer()
+        code, log, err = self.run_tool(server, '--zones-out',
+                                       self.zones_out + '.alias')
+        self.assertEqual(code, 2, log + err)
+        self.assertIn('same file', err)
+        self.assertEqual(server.calls, [])
 
 
 if __name__ == '__main__':

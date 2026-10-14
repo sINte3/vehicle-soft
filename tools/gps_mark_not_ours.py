@@ -416,7 +416,25 @@ def out_clash(out, protected):
                 return path
         except OSError:
             continue
+    # [REASON]: защищённый список не перечислит всех баз: файл отметок и имён
+    # сборщика (`gps_collector_state.db`) читается из --dir, а помесячные
+    # файлы точек лежат рядом. Отчёт никогда не пишется поверх файла SQLite --
+    # заголовок его выдаёт, как бы файл ни назывался.
+    if is_sqlite_file(out):
+        return out
     return ''
+
+
+SQLITE_HEADER = b'SQLite format 3\x00'
+
+
+def is_sqlite_file(path):
+    """Начинается ли существующий файл с заголовка базы SQLite."""
+    try:
+        with open(path, 'rb') as handle:
+            return handle.read(len(SQLITE_HEADER)) == SQLITE_HEADER
+    except OSError:
+        return False
 
 
 def out_writable(path):
