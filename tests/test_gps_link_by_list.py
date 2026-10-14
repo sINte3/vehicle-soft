@@ -1196,6 +1196,18 @@ class DoubleSpacedObjectNames(AttachBase):
         self.assertEqual(self.plan_rows()[MARKED]['status'], link.NAME_SPACES)
         self.assertEqual(self.excluded().get(MARKED), EXCLUDED_NOT_OURS)
 
+    def test_unmarking_an_unrelated_row_name_of_a_spaced_object_is_stale(self):
+        # Имя строки -- совсем другое (прежний водитель): двойной пробел в
+        # имени объекта тут ни при чём.
+        self.world()
+        self.names((MARKED, 'МТЗ-80 Х  951 JA', TODAY))
+        self.sql("UPDATE vialon_mappings SET vialon_name = 'MTZ prezhniy voditel' "
+                 'WHERE id = ?', (self.marked_row,))
+        self.listing('%d,%d,snyat_pometku,x' % (MARKED, self.tractor))
+        code, output = self.run_tool()
+        self.assertEqual(code, 3, output)
+        self.assertEqual(self.plan_rows()[MARKED]['status'], link.NAME_STALE)
+
     def test_unmarking_a_row_named_exactly_as_the_export_is_released(self):
         # Имя строки -- точно имя из выгрузки, с двойным пробелом: импорт её
         # находит, снять пометку можно.
