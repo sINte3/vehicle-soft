@@ -220,16 +220,19 @@ class Territory:
         как есть -- тем же объектом, без пересборки: его площадь --
         измерение.
         """
-        if piece is None or piece.is_empty or piece.area <= 0:
+        if piece is None or piece.is_empty:
             return 0.0, []
         # [REASON]: куски альфа-формы -- результат объединения и валидны, но
         # самопересекающийся кусок поднял бы в GEOS исключение, и сутки
         # падали бы каждую ночь заново (как 28.09 на контуре). Мерится и
-        # режется починенная копия; кусок, который не чинится, остаётся как
-        # есть -- как без правила.
+        # режется починенная копия -- и площадь тоже: у «бабочки» площадь
+        # по формуле шнурка бывает нулём. Кусок, который не чинится,
+        # остаётся как есть -- как без правила.
         probe = piece if piece.is_valid else repair_polygon(piece)
         if probe is None:
             return 0.0, [piece]
+        if probe.area <= 0:
+            return 0.0, []
         if not shapely.intersects(self.union, probe):
             return 0.0, [piece]
         on = probe.intersection(self.union).area

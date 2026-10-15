@@ -141,6 +141,11 @@ class Cut(unittest.TestCase):
         self.assertEqual(len(kept), 1)
         self.assertAlmostEqual(ha(kept[0]), 1.8, places=6)
 
+    def test_a_leftover_of_exactly_the_floor_is_kept(self):
+        # как у GPS-19: остаток ровно 0,3 га -- участок (>=), а не проезд
+        _share, kept = self.territory.cut(box(-30, 0, 270, 100))
+        self.assertEqual(sorted(round(ha(part), 6) for part in kept), [0.3, 1.7])
+
     def test_the_floor_is_the_caller_s(self):
         _share, kept = self.territory.cut(box(-20, 20, 400, 80), min_area_ha=0.0)
         self.assertEqual(sorted(round(ha(part), 6) for part in kept), [0.12, 1.8])
@@ -172,10 +177,16 @@ class Cut(unittest.TestCase):
         self.assertAlmostEqual(sum(ha(part) for part in kept), 2.5, places=6)
 
     def test_a_self_intersecting_piece_is_cut_on_its_repair(self):
-        bowtie = shapely.Polygon([(-50, 0), (150, 100), (150, 0), (-50, 100)])
+        # «бабочка», на которой сырое пересечение с двором падает в GEOS
+        # (TopologyException: side location conflict)
+        bowtie = shapely.Polygon([(-80, -80), (150, 90), (150, -80), (-80, 90)])
         self.assertFalse(bowtie.is_valid)
+        from shapely.errors import GEOSException
+        with self.assertRaises(GEOSException):
+            bowtie.difference(self.yard)
         share, kept = self.territory.cut(bowtie)       # не GEOSException
-        self.assertGreaterEqual(share, 0.0)
+        self.assertGreater(share, 0.0)
+        self.assertTrue(all(part.is_valid for part in kept))
 
     def test_an_empty_piece_is_nothing(self):
         self.assertEqual(self.territory.cut(shapely.Polygon()), (0.0, []))
@@ -339,8 +350,15 @@ class ZoneList(unittest.TestCase):
             territory.read_zone_list(path)
 
     def test_a_non_number_is_refused(self):
-        with self.assertRaises(territory.BadZoneList):
-            territory.read_zone_list(self.write(self.HEADER + "x1,16,azs,1.0\n"))
+        for zone in ("x1", "0", "-3", ""):
+            with self.assertRaises(territory.BadZoneList, msg=zone):
+                territory.read_zone_list(
+                    self.write(self.HEADER + "%s,16,azs,1.0\n" % zone))
+
+    def test_a_list_saved_with_a_bom_reads(self):
+        # «CSV UTF-8» из Excel пишет BOM -- ночной расчёт не должен падать
+        path = self.write("\ufeff" + self.HEADER + "1,16,azs,1.5\r\n")
+        self.assertEqual(territory.read_zone_list(path), {1: 1.5})
 
     def test_a_bad_area_is_refused(self):
         for area in ("abc", "0", "-1.5"):
@@ -712,6 +730,84 @@ class NightlyRule(unittest.TestCase):
         finally:
             sys.stderr = saved
         self.assertEqual(code, 2, err.getvalue())
+
+    def test_catch_up_applies_the_rule_to_a_day_finished_by_the_collector(self):
+        # проход «ждали сборщика»: сутки дособраны -- считаются с правилом
+        self.mirror(zone_geojson(read_fixture_zone()))
+        start, finish = daily.day_bounds(DAY)
+        storage.set_watermark(self.folder, UNIT, finish - 3600)
+        self.run_day()
+        self.assertEqual(self.stored()[0][1], daily.REASON_INCOMPLETE)
+        storage.set_watermark(self.folder, UNIT, finish)
+        with mock.patch.object(territory, "TERRITORY_FROM", DAY):
+            code = daily.catch_up(self.folder, self.db, log=QUIET, window=1,
+                                  until=DAY)
+        self.assertEqual(code, 0)
+        aggregate, sites = self.stored()
+        self.assertEqual(aggregate, (METHOD_VERSION + "+" + TERRITORY_RULE_VERSION,
+                                     None))
+        self.assertEqual(sites, [])
+
+    def test_catch_up_applies_the_rule_to_a_day_back_to_hectares(self):
+        # проход «разошлись с категорией»: сутки «спецтехники» у полевой
+        # машины пересчитываются -- с правилом
+        self.mirror(zone_geojson(read_fixture_zone()))
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute("INSERT INTO gps_daily_aggregates (work_date, wialon_id, "
+                        "points_total, reason, method_version, computed_at) "
+                        "VALUES (?, ?, 10, ?, ?, '2026-07-28 01:00:00')",
+                        (DAY, UNIT, daily.REASON_TRACK_ONLY, METHOD_VERSION))
+            con.commit()
+        finally:
+            con.close()
+        with mock.patch.object(territory, "TERRITORY_FROM", DAY):
+            code = daily.catch_up(self.folder, self.db, log=QUIET, window=1,
+                                  until=DAY)
+        self.assertEqual(code, 0)
+        aggregate, sites = self.stored()
+        self.assertEqual(aggregate, (METHOD_VERSION + "+" + TERRITORY_RULE_VERSION,
+                                     None))
+        self.assertEqual(sites, [])
+
+    def test_catch_up_with_no_usable_zone_looks_once_not_per_day(self):
+        # зон с контуром нет: None -- тоже ответ, по суткам его не ищут снова
+        storage.write_points(self.folder, [
+            (UNIT + 1, t, lon, lat, speed, 90, sats)
+            for t, lon, lat, speed, sats in self.track])
+        calls = []
+        real = territory.load_territory
+
+        def counting(*args, **kwargs):
+            calls.append(1)
+            return real(*args, **kwargs)
+        with mock.patch.object(territory, "TERRITORY_FROM", DAY), \
+                mock.patch.object(territory, "load_territory", counting):
+            code = daily.catch_up(self.folder, self.db, log=QUIET, window=1,
+                                  until=DAY)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(calls), 1)
+
+    def test_catch_up_switched_off_never_reads_the_list(self):
+        with mock.patch.object(territory, "TERRITORY_FROM", None), \
+                mock.patch.object(territory, "read_zone_list",
+                                  side_effect=AssertionError("read")):
+            code = daily.catch_up(self.folder, self.db, log=QUIET, window=1,
+                                  until=DAY)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.stored()[0][0], METHOD_VERSION)
+
+    def test_work_sites_hands_its_floor_to_the_cut(self):
+        from gps.area import work_sites
+        floors = []
+
+        class Spy:
+            def cut(self, piece, min_area_ha=None):
+                floors.append(min_area_ha)
+                return 0.0, [piece]
+        work_sites(self.track, min_area_ha=0.01, territory=Spy())
+        self.assertTrue(floors)
+        self.assertEqual(set(floors), {0.01})
 
     def test_catch_up_leaves_the_rule_off_before_the_start(self):
         self.mirror(zone_geojson(read_fixture_zone()))
