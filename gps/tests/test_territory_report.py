@@ -1041,6 +1041,8 @@ class Verdict(unittest.TestCase):
         self.assertEqual(code, 0, output)
         line = self.verdict_line(output)
         self.assertIn(': NOT MET -- 1 site(s) answered rabota with share >= 0.5', line)
+        # «in» -- 1 га, весь на зоне; «работа» в окне -- 1 + 3 га
+        self.assertIn('removes 1.00 of 4.00 ha (25.0 %, limit 5 %)', line)
 
     def test_no_work_site_on_territory_is_met(self):
         self.sql("UPDATE gps_work_polygons SET operator_label = NULL "

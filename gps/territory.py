@@ -23,12 +23,16 @@
 ВКЛЮЧЕНИЕ (§2.14, п. 4 и 6)
 Выключено, пока TERRITORY_FROM -- None. Включает владелец; в выпуске с
 включением сюда записывается дата: правило действует только на сутки с
-датой не раньше неё. Ночной `--catch-up` пересчитывает сутки окна текущим
-движком, и без этой даты правило задело бы прошлые сутки окна.
+датой не раньше неё. Ночной `--catch-up` пересчитывает текущим движком
+сутки окна, ждавшие сборщика, сутки без строки и сутки, разошедшиеся с
+категорией машины, а `gps_recompute_days.py` -- любые; без этой даты
+правило задело бы такие прошлые сутки.
 
-Результат с правилом несёт в `method_version` суффикс
+Сутки, посчитанные с правилом (дошедшие до поиска участков при
+загруженной территории), несут в `method_version` суффикс
 TERRITORY_RULE_VERSION -- как правила края: сутки без правила и с ним
-различимы и через год.
+различимы и через год. Суффикс меняется вместе со списком зон (дата
+суффикса -- дата последнего списка владельца в docs/, это проверяет тест).
 
 Только чтение базы: зоны берутся из `field_contours`, ничего не пишется.
 """
@@ -36,6 +40,7 @@ TERRITORY_RULE_VERSION -- как правила края: сутки без пр
 import csv
 import json
 import os
+import sqlite3
 from datetime import datetime
 
 import shapely
@@ -49,9 +54,11 @@ from gps.area import (MIN_WORK_AREA_HA, TERRITORY_RULE_VERSION,  # noqa: F401
 # [REASON]: §2.14, п. 4 -- правило действует только на сутки с датой не
 # раньше дня выпуска, а дата записывается в код вместе с включением. None --
 # выключено: ни один день не считается с правилом. Включает владелец. Дата --
-# строка YYYY-MM-DD, равная дню выпуска: раньше -- сутки между ней и выпуском
-# опубликуются без правила, а любой проход `--catch-up` потом пересчитает
-# их с правилом и поменяет гектары, которые владелец уже видел.
+# строка YYYY-MM-DD не раньше дня выпуска; позже -- можно (до неё сутки
+# считаются без правила), раньше -- нельзя: сутки между ней и выпуском
+# опубликуются без правила, а потом те из них, что пересчитает `--catch-up`
+# или пересчёт прошлых суток, получат правило -- и гектары, которые
+# владелец уже видел, поменяются. Выпуск сдвинулся за дату -- дату сдвигают.
 TERRITORY_FROM = None
 
 # [REASON]: §2.14, п. 1 -- двор завода или пункта -- это единицы гектаров;
@@ -90,6 +97,20 @@ def _date(value):
     return datetime.strptime(value, '%Y-%m-%d').date()
 
 
+def start_date(start):
+    """Дата включения из строки YYYY-MM-DD -- ровно в этом виде, иначе ValueError.
+
+    [REASON]: это та строка, которую правят, чтобы включить правило. «16.10.2026»
+    или «2026-10-6» не должны тихо значить «выключено» или «с прошлого
+    века» -- только ошибку.
+    """
+    parsed = _date(start)
+    if parsed.isoformat() != start:
+        raise ValueError('territory rule start date must be YYYY-MM-DD, got %r'
+                         % (start,))
+    return parsed
+
+
 def rule_applies(day, start=None):
     """Действует ли правило на сутки `day` (YYYY-MM-DD).
 
@@ -102,7 +123,7 @@ def rule_applies(day, start=None):
     start = TERRITORY_FROM if start is None else start
     if not start:
         return False
-    return _date(day) >= _date(start)
+    return _date(day) >= start_date(start)
 
 
 def read_zone_list(path=None):
@@ -201,15 +222,23 @@ class Territory:
         """
         if piece is None or piece.is_empty or piece.area <= 0:
             return 0.0, []
-        if not shapely.intersects(self.union, piece):
+        # [REASON]: куски альфа-формы -- результат объединения и валидны, но
+        # самопересекающийся кусок поднял бы в GEOS исключение, и сутки
+        # падали бы каждую ночь заново (как 28.09 на контуре). Мерится и
+        # режется починенная копия; кусок, который не чинится, остаётся как
+        # есть -- как без правила.
+        probe = piece if piece.is_valid else repair_polygon(piece)
+        if probe is None:
             return 0.0, [piece]
-        on = piece.intersection(self.union).area
+        if not shapely.intersects(self.union, probe):
+            return 0.0, [piece]
+        on = probe.intersection(self.union).area
         if on <= 0:
             return 0.0, [piece]
-        share = round(on / piece.area, SHARE_DIGITS)
+        share = round(on / probe.area, SHARE_DIGITS)
         if share >= DROP_SHARE:
             return share, []
-        left = piece.difference(self.union)
+        left = probe.difference(self.union)
         kept = [part for part in polygon_parts(left)
                 if part.area / 10000.0 >= min_area_ha]
         return share, kept
@@ -248,11 +277,16 @@ def load_territory(con, zones, log=None):
         return None
     marks = ','.join('?' * len(zone_ids))
     rows = {}
-    for external, geometry in con.execute(
+    try:
+        found = con.execute(
             'SELECT external_id, geometry_geojson FROM field_contours '
             'WHERE source = ? AND (is_active IS NULL OR is_active = 1) '
             'AND external_id IN (%s) ORDER BY id' % marks,
-            [SOURCE] + [str(zone) for zone in zone_ids]):
+            [SOURCE] + [str(zone) for zone in zone_ids]).fetchall()
+    except sqlite3.OperationalError:
+        # как load_contours: справочника ещё нет -- нет и территорий
+        found = []
+    for external, geometry in found:
         rows[str(external)] = geometry
     kept, left_out = {}, {}
     for zone in zone_ids:

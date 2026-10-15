@@ -48,7 +48,9 @@ Run (PowerShell, one command per line; needs the geo venv, see gps/README.md):
 Console output is ASCII.
 
 КОДЫ ВОЗВРАТА. 0 -- посчитано всё, что можно было посчитать; 2 -- отказ на
-разборе аргументов, не сделано ничего; 5 -- часть суток не посчиталась из-за
+разборе аргументов, не сделано ничего (так же -- когда правило территорий
+включено, а его список зон не читается или дата включения неверна:
+gps/territory.py); 5 -- часть суток не посчиталась из-за
 сбоя. При 5 прогон ДОШЁЛ до конца и посчитал всё остальное: сбойные сутки
 перечислены в конце вывода поимённо, строк в базу по ним не записано, и
 следующий `--catch-up` возьмёт их снова.
@@ -305,10 +307,12 @@ def compute_day(points, contours=None, track_only=False, overflow_cap=True,
         aggregate["reason"] = REASON_RARE
         return DayResult(aggregate, [])
 
-    # [REASON]: метка правила территорий -- только у суток, чьи участки оно
-    # резало. Сутки без движения, с редкой записью или без точек считаются
-    # одинаково с правилом и без него, и метка на них говорила бы о том,
-    # чего не было.
+    # [REASON]: метка правила территорий -- у суток, посчитанных с ним: тех,
+    # что дошли до поиска участков при загруженной территории (резало ли
+    # правило что-то в этих сутках -- не важно: участок вдали от дворов тоже
+    # «проверен правилом»). Сутки без движения, с редкой записью или без
+    # точек считаются одинаково с правилом и без него, и метка на них
+    # говорила бы о том, чего не было.
     aggregate["method_version"] = method_version(
         overflow_cap, edge_rule=edge_rule, territory=territory is not None)
     sites, _ = work_sites(points, contours=contours, overflow_cap=overflow_cap,
@@ -651,10 +655,11 @@ def run_day(day, unit_id, folder=None, db_path=None, contours=None, log=print,
         if contours is None:
             contours = load_contours(con)
         # [REASON]: roadmap 2.14, p. 4 -- the rule acts only on days dated on
-        # or after the release that switched it on. --catch-up and the
-        # recompute tool recompute days of the window with the engine in
-        # force; without this gate the rule would reach the past days of the
-        # window and change hectares the owner has already seen.
+        # or after the release that switched it on. --catch-up (days waiting
+        # for the collector, days without a row, days off their category)
+        # and the recompute tool recompute past days with the engine in
+        # force; without this gate the rule would reach them and change
+        # hectares the owner has already seen.
         use = None
         if territory_rule.rule_applies(day):
             if territory is NOT_LOADED:
@@ -838,10 +843,24 @@ def catch_up(folder, db_path, log=print, window=CATCH_UP_WINDOW_DAYS,
         drift, drift_no_points = area_rule_drift(con, folder, days, track_only)
         contours = (load_contours(con, log=log)
                     if (pending or missing or drift) else {})
-        territory = (rule_territory(con, log=log)
-                     if (pending or missing or drift) else None)
+        # [REASON]: список зон читается, только если хоть одни сутки прогона
+        # попадают под правило: сломанный список не должен останавливать
+        # пересчёт суток, которым правило не нужно.
+        territory = None
+        try:
+            if any(territory_rule.rule_applies(day)
+                   for day, _unit in pending + missing + drift):
+                territory = rule_territory(con, log=log)
+        except (territory_rule.BadZoneList, ValueError) as problem:
+            log("ERROR: territory rule: %s -- nothing was computed"
+                % ascii_only(str(problem)))
+            return 2
     finally:
         con.close()
+    if territory is not None:
+        log("territory rule %s (from %s): %d zone(s)"
+            % (territory_rule.TERRITORY_RULE_VERSION,
+               territory_rule.TERRITORY_FROM, len(territory.zones)))
     if not pending and not missing and not drift:
         log("catch-up: nothing is waiting for the collector")
         if drift_no_points:
@@ -990,8 +1009,16 @@ def main(argv=None):
     con = sqlite3.connect(db_path, timeout=30)
     try:
         contours = load_contours(con, log=print)
-        territory = (rule_territory(con, log=print)
-                     if territory_rule.rule_applies(day) else None)
+        try:
+            territory = (rule_territory(con, log=print)
+                         if territory_rule.rule_applies(day) else None)
+        except (territory_rule.BadZoneList, ValueError) as problem:
+            # [REASON]: опечатка в списке зон или в дате включения -- отказ
+            # с понятной строкой и кодом 2, а не трассировка и не тихие
+            # сутки без правила.
+            sys.stderr.write("ERROR: territory rule: %s -- nothing was "
+                             "computed\n" % ascii_only(str(problem)))
+            return 2
         excluded = excluded_units(con)
         track_only = track_only_units(con)
     finally:

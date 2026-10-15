@@ -23,6 +23,7 @@ import io
 import json
 import os
 import random
+import re
 import sqlite3
 import sys
 import tempfile
@@ -57,6 +58,25 @@ _TO_WGS = Transformer.from_crs(UTM_41N, "EPSG:4326", always_xy=True)
 
 def ha(geometry):
     return geometry.area / 10000.0
+
+
+def latest_owner_list():
+    """Последний список владельца: docs/gps_territory_zones_<дата>.csv.
+
+    Дата берётся из имени, а не порядком строк: чужой файл с тем же началом
+    имени («_v3», выгрузка зон GPS-19) не должен считаться последним
+    списком. Два списка на одну дату -- ошибка.
+    """
+    dated = {}
+    for path in glob.glob(os.path.join(REPO_ROOT, "docs",
+                                       "gps_territory_zones_*.csv")):
+        found = re.match(r"^gps_territory_zones_(\d{4}-\d{2}-\d{2})\.csv$",
+                         os.path.basename(path))
+        if found:
+            if found.group(1) in dated:
+                raise AssertionError("two zone lists for %s" % found.group(1))
+            dated[found.group(1)] = path
+    return dated[max(dated)]
 
 
 def square(x, y, side):
@@ -150,6 +170,12 @@ class Cut(unittest.TestCase):
         share, kept = rule.cut(box(0, 0, 400, 100))   # 1,5 га на 4 га
         self.assertAlmostEqual(share, 0.375, places=3)
         self.assertAlmostEqual(sum(ha(part) for part in kept), 2.5, places=6)
+
+    def test_a_self_intersecting_piece_is_cut_on_its_repair(self):
+        bowtie = shapely.Polygon([(-50, 0), (150, 100), (150, 0), (-50, 100)])
+        self.assertFalse(bowtie.is_valid)
+        share, kept = self.territory.cut(bowtie)       # не GEOSException
+        self.assertGreaterEqual(share, 0.0)
 
     def test_an_empty_piece_is_nothing(self):
         self.assertEqual(self.territory.cut(shapely.Polygon()), (0.0, []))
@@ -248,6 +274,38 @@ class LoadTerritory(unittest.TestCase):
         rule = self.load([501], pins={501: 1.0 + territory.PIN_TOLERANCE_HA / 2})
         self.assertEqual(sorted(rule.zones), [501])
 
+    def test_a_self_intersecting_zone_is_repaired_not_fatal(self):
+        # «бабочка», как рисуют мышкой: без починки union_all падает в GEOS
+        x, y = 300000.0, 4430000.0
+        bowtie = shapely.Polygon([(x, y), (x + 100, y + 100), (x + 100, y),
+                                  (x, y + 100)])
+        self.assertFalse(bowtie.is_valid)
+        self.add(1, 501, None)
+        self.con.execute("UPDATE field_contours SET geometry_geojson = ? "
+                         "WHERE id = 1", (geojson_from_utm(bowtie),))
+        repaired = territory.zone_polygon(geojson_from_utm(bowtie))
+        rule = self.load([501], pins={501: ha(repaired)})
+        self.assertEqual(sorted(rule.zones), [501])
+        self.assertTrue(rule.union.is_valid)
+
+    def test_a_zone_of_exactly_50_ha_is_in_the_rule(self):
+        # п. 1: больше 50 га -- вне правила; ровно 50 -- в правиле (как GPS-19)
+        exact = shapely.Polygon([(300000.0, 4430000.0), (300500.0, 4430000.0),
+                                 (300500.0, 4431000.0), (300000.0, 4431000.0)])
+        self.add(1, 501, exact)
+        area = ha(territory.zone_polygon(geojson_from_utm(exact)))
+        with mock.patch.object(territory, "LARGE_ZONE_HA", area):
+            self.assertEqual(sorted(self.load([501], pins={501: area}).zones),
+                             [501])
+        with mock.patch.object(territory, "LARGE_ZONE_HA", area - 1e-6):
+            self.assertIsNone(self.load([501], pins={501: area}))
+
+    def test_the_pin_tolerance_is_0_01_ha(self):
+        self.add(1, 501, self.small)
+        area = ha(territory.zone_polygon(geojson_from_utm(self.small)))
+        self.assertIsNotNone(self.load([501], pins={501: area + 0.009}))
+        self.assertIsNone(self.load([501], pins={501: area + 0.011}))
+
     def test_the_zone_area_is_the_one_gps19_measures(self):
         # движок и замер читают контур одной обработкой: площади совпадают
         from gps.daily import _utm_polygon_from_geojson
@@ -310,8 +368,7 @@ class ZoneList(unittest.TestCase):
         # площадь каждой зоны при замере GPS-19. Разойдись они, правило
         # снимало бы гектары по одному списку, а замер и документы говорили
         # бы о другом.
-        latest = sorted(glob.glob(os.path.join(
-            REPO_ROOT, "docs", "gps_territory_zones_*.csv")))[-1]
+        latest = latest_owner_list()
         with open(latest, encoding="utf-8") as owner:
             owner_rows = list(csv.DictReader(owner))
         with open(territory.ZONES_PATH, encoding="utf-8") as engine:
@@ -325,6 +382,12 @@ class ZoneList(unittest.TestCase):
         zones = territory.read_zone_list()
         measured = [zone for zone, area in zones.items() if area is not None]
         self.assertGreater(len(measured), len(zones) // 2)
+
+    def test_the_label_date_is_the_date_of_the_list(self):
+        # [REASON]: новый список -- новая метка: сутки, порезанные разными
+        # списками, не должны носить одну метку.
+        date = re.search(r"(\d{4}-\d{2}-\d{2})\.csv$", latest_owner_list()).group(1)
+        self.assertEqual(TERRITORY_RULE_VERSION, "territory-" + date)
 
 
 # --- 4. ночной расчёт -------------------------------------------------------------
@@ -435,7 +498,8 @@ class NightlyRule(unittest.TestCase):
         self.assertTrue(territory.rule_applies("2026-08-1", DAY))
 
     def test_a_malformed_start_date_is_an_error_not_off(self):
-        for start in ("27.07.2026", "2026-7-27x", "yesterday"):
+        for start in ("27.07.2026", "2026-7-27x", "yesterday", "2026-7-27",
+                      "2026-07-27 "):
             with self.assertRaises(ValueError, msg=start):
                 territory.rule_applies(DAY, start)
 
@@ -468,6 +532,57 @@ class NightlyRule(unittest.TestCase):
         self.assertTrue(aggregate[0].endswith("+" + TERRITORY_RULE_VERSION))
         self.assertGreater(sum(sites), 0.3)
         self.assertLess(sum(sites), 8.77 - 0.3)
+
+    def test_a_day_far_from_every_yard_still_says_it_was_checked(self):
+        # метка -- «посчитано с правилом», а не «правило что-то сняло»
+        rule = territory.Territory({1: square(0, 0, 100)})
+        result = daily.compute_day(self.track, territory=rule)
+        self.assertEqual(result.aggregate["method_version"],
+                         METHOD_VERSION + "+" + TERRITORY_RULE_VERSION)
+        self.assertAlmostEqual(sum(site["area_ha"] for site in result.sites),
+                               8.772, places=3)
+
+    def site_piece(self):
+        from gps.area import work_sites
+        sites, _ = work_sites(self.track)
+        self.assertEqual(len(sites), 1)
+        return sites[0].polygon
+
+    def expected(self, piece, yard):
+        """Гибрид, посчитанный без Territory.cut: доля, вычитание, порог."""
+        share = round(piece.intersection(yard).area / piece.area, 3)
+        if share >= 0.5:
+            return []
+        rest = piece.difference(yard)
+        parts = list(getattr(rest, "geoms", [rest]))
+        return sorted(round(ha(part), 6) for part in parts
+                      if ha(part) >= MIN_WORK_AREA_HA)
+
+    def test_the_engine_keeps_exactly_the_hybrid(self):
+        from gps.area import work_sites
+        piece = self.site_piece()
+        minx, miny, maxx, maxy = piece.bounds
+        # двор -- западная треть участка
+        yard = box(minx - 1, miny - 1, minx + (maxx - minx) / 3, maxy + 1)
+        sites, _ = work_sites(self.track,
+                              territory=territory.Territory({1: yard}))
+        got = sorted(round(site.area_ha, 6) for site in sites)
+        self.assertEqual(got, self.expected(piece, yard))
+        self.assertTrue(all(site.method_version.endswith(TERRITORY_RULE_VERSION)
+                            for site in sites))
+
+    def test_a_yard_cutting_the_site_in_two_leaves_two_sites(self):
+        from gps.area import work_sites
+        piece = self.site_piece()
+        minx, miny, maxx, maxy = piece.bounds
+        middle = (minx + maxx) / 2
+        yard = box(middle - 15, miny - 1, middle + 15, maxy + 1)   # полоса 30 м
+        expected = self.expected(piece, yard)
+        self.assertEqual(len(expected), 2, expected)
+        sites, _ = work_sites(self.track,
+                              territory=territory.Territory({1: yard}))
+        self.assertEqual(sorted(round(site.area_ha, 6) for site in sites),
+                         expected)
 
     def test_a_zone_that_is_not_listed_takes_nothing(self):
         self.mirror(zone_geojson(read_fixture_zone()), external="4444")
@@ -535,6 +650,69 @@ class NightlyRule(unittest.TestCase):
         self.assertTrue(aggregate[0].endswith("+" + TERRITORY_RULE_VERSION))
         self.assertEqual(sites, [])
 
+    def test_catch_up_loads_the_territory_once_for_the_whole_run(self):
+        self.mirror(zone_geojson(read_fixture_zone()))
+        calls = []
+        real = territory.load_territory
+
+        def counting(*args, **kwargs):
+            calls.append(1)
+            return real(*args, **kwargs)
+        with mock.patch.object(territory, "TERRITORY_FROM", DAY), \
+                mock.patch.object(territory, "load_territory", counting), \
+                mock.patch.object(daily, "run_day",
+                                  wraps=daily.run_day) as run_day:
+            daily.catch_up(self.folder, self.db, log=QUIET, window=1, until=DAY)
+        self.assertEqual(len(calls), 1)
+        self.assertIsInstance(run_day.call_args.kwargs["territory"],
+                              territory.Territory)
+
+    def test_catch_up_before_the_start_does_not_read_the_list(self):
+        self.mirror(zone_geojson(read_fixture_zone()))
+        with mock.patch.object(territory, "TERRITORY_FROM", "2026-07-28"), \
+                mock.patch.object(territory, "read_zone_list",
+                                  side_effect=AssertionError("read")):
+            code = daily.catch_up(self.folder, self.db, log=QUIET, window=1,
+                                  until=DAY)
+        self.assertEqual(code, 0)
+
+    def test_a_broken_list_refuses_catch_up_with_code_2(self):
+        with open(self.zones, "w", encoding="utf-8") as handle:
+            handle.write("zona_id;gruppa_id;tip;ploshchad_ga\n3208;16;ptm;8.97\n")
+        lines = []
+        with mock.patch.object(territory, "TERRITORY_FROM", DAY):
+            code = daily.catch_up(self.folder, self.db, log=lines.append,
+                                  window=1, until=DAY)
+        self.assertEqual(code, 2)
+        self.assertTrue(any("ERROR: territory rule" in line for line in lines))
+        self.assertEqual(self.stored(), (None, []))
+
+    def test_a_broken_list_refuses_the_date_run_with_code_2(self):
+        with open(self.zones, "w", encoding="cp1251") as handle:
+            handle.write("зона\n1\n")
+        err, saved = io.StringIO(), sys.stderr
+        sys.stderr = err
+        try:
+            with mock.patch.object(territory, "TERRITORY_FROM", DAY):
+                code = daily.main(["--date", DAY, "--dir", self.folder,
+                                   "--db", self.db])
+        finally:
+            sys.stderr = saved
+        self.assertEqual(code, 2)
+        self.assertIn("ERROR: territory rule", err.getvalue())
+        self.assertEqual(self.stored(), (None, []))
+
+    def test_a_malformed_start_date_refuses_the_date_run(self):
+        err, saved = io.StringIO(), sys.stderr
+        sys.stderr = err
+        try:
+            with mock.patch.object(territory, "TERRITORY_FROM", "27.07.2026"):
+                code = daily.main(["--date", DAY, "--dir", self.folder,
+                                   "--db", self.db])
+        finally:
+            sys.stderr = saved
+        self.assertEqual(code, 2, err.getvalue())
+
     def test_catch_up_leaves_the_rule_off_before_the_start(self):
         self.mirror(zone_geojson(read_fixture_zone()))
         with mock.patch.object(territory, "TERRITORY_FROM", "2026-07-28"):
@@ -577,13 +755,31 @@ class SameAsTheMeasurement(unittest.TestCase):
     """
 
     def test_random_sites_against_random_yards(self):
+        from shapely import affinity
         from tools import gps_territory_report as report
         rng = random.Random(20261015)
-        for case in range(300):
-            yards = [square(rng.uniform(0, 600), rng.uniform(0, 600),
-                            rng.uniform(40, 250)) for _ in range(rng.randint(1, 3))]
+        seen = {"untouched": 0, "dropped": 0, "subtracted": 0, "parts": 0,
+                "floor": 0, "near_half": 0}
+        for case in range(1500):
+            kind = case % 3
             x0, y0 = rng.uniform(0, 600), rng.uniform(0, 600)
-            site = box(x0, y0, x0 + rng.uniform(60, 400), y0 + rng.uniform(60, 400))
+            w, h = rng.uniform(60, 400), rng.uniform(60, 400)
+            site = affinity.rotate(box(x0, y0, x0 + w, y0 + h),
+                                   rng.uniform(0, 90))
+            if kind == 0:     # дворы где угодно
+                yards = [affinity.rotate(
+                    square(rng.uniform(0, 600), rng.uniform(0, 600),
+                           rng.uniform(40, 250)), rng.uniform(0, 90))
+                    for _ in range(rng.randint(1, 3))]
+            elif kind == 1:   # полоса поперёк участка: два остатка, мелкие
+                cx = site.centroid.x + rng.uniform(-w / 2, w / 2)
+                yards = [box(cx - rng.uniform(5, 40), y0 - 500,
+                             cx + rng.uniform(5, 40), y0 + 900)]
+            else:             # доля у порога 0,5
+                c = site.centroid
+                side = (site.area * rng.uniform(0.48, 0.52)) ** 0.5
+                yards = [box(c.x - side / 2, c.y - side / 2,
+                             c.x + side / 2, c.y + side / 2)]
             if ha(site) < MIN_WORK_AREA_HA:
                 continue
             rule = territory.Territory({i: yard for i, yard in enumerate(yards)})
@@ -592,6 +788,7 @@ class SameAsTheMeasurement(unittest.TestCase):
             measured = report.measure_site(site, yards, tree)
             if measured is None or not measured['overlaps']:
                 self.assertEqual(kept, [site], case)
+                seen["untouched"] += 1
                 continue
             measured_share = round(measured['on_ha'] / measured['geom_ha'],
                                    report.SHARE_DIGITS)
@@ -600,6 +797,20 @@ class SameAsTheMeasurement(unittest.TestCase):
                 else measured['kept_a']
             self.assertAlmostEqual(sum(ha(part) for part in kept), hybrid,
                                    places=6, msg=case)
+            if abs(measured_share - 0.5) <= 0.01:
+                seen["near_half"] += 1
+            if measured_share >= report.DROP_SHARE:
+                seen["dropped"] += 1
+                continue
+            seen["subtracted"] += 1
+            pieces = report.polygon_parts(site.difference(
+                shapely.union_all(yards)))
+            seen["parts"] += len(kept) > 1
+            seen["floor"] += any(ha(piece) < MIN_WORK_AREA_HA for piece in pieces)
+        # [REASON]: проверка, которая не попала ни в один трудный случай,
+        # проверкой не является -- каждый вид должен встретиться.
+        for name, count in seen.items():
+            self.assertGreaterEqual(count, 20, (name, seen))
 
 
 if __name__ == "__main__":

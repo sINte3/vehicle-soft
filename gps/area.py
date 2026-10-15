@@ -211,7 +211,9 @@ EDGE_RULES = (EDGE_RULE_VERSION, EDGE_SCALE_VERSION)
 # yard of a plant, a cotton point or a filling station is not field hectares.
 # A result computed with it carries this label after the base method's (and
 # after an edge rule's), so a day with the rule never passes for one without
-# it, and the hectare stays reproducible after the zone list changes.
+# it. The date in the label is the date of the owner's zone list the rule
+# runs on (docs/gps_territory_zones_<date>.csv, a test ties the two): a new
+# list is a new label, so days cut by different lists stay apart.
 TERRITORY_RULE_VERSION = "territory-2026-10-15"
 
 
