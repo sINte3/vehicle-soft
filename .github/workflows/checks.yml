@@ -89,6 +89,12 @@ jobs:
       - name: Fleet audit self-test (read-only proof, positive and negative controls)
         run: python tools/test_drone_area_anomaly_probe.py
 
+      # FIN-RECON-001: regression tests must run, not merely compile.
+      - name: Drone works import safeguards (synthetic and legacy fixtures)
+        run: |
+          python -m unittest tools.test_import_drone_works_fin_recon_h5 -v
+          python -m unittest tools.test_import_drone_works -v
+
       - name: Field geometry probe self-test (format detection, no guessing)
         run: python tools/test_drone_field_geometry_probe.py
 

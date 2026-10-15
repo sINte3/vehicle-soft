@@ -541,6 +541,51 @@ def is_wage_marker(cells):
     return any(MARK_WAGE in uz_fold(c) for c in cells)
 
 
+# FIN-RECON import safeguards; neither rule alters historical records.
+def is_crossperiod_wage_carryover(row):
+    """Hold older work entered in a later book explicitly for wage settlement."""
+    when = row.get('work_date_from')
+    month = row.get('period_month')
+    if when is None or not month:
+        return False
+    start = datetime.date(int(month[:4]), int(month[5:7]), 1)
+    note = uz_fold(row.get('note'))
+    return when < start and MARK_WAGE in note
+
+
+def source_file_fold(name):
+    """Filename equivalence is for collision detection, not automatic aliasing."""
+    return re.sub(r'[\s_]+', ' ', str(name or '')).strip().casefold()
+
+
+def filename_alias_conflicts(con, rows):
+    """Reject unsafe --apply when names differ but job provenance is the same."""
+    indexed = {}
+    for fname, sheet, number, area in con.execute(
+            'SELECT source_file, source_sheet, source_row, area_ha '
+            'FROM drone_works WHERE source_file IS NOT NULL '
+            'AND source_row IS NOT NULL'):
+        if number is None or area is None:
+            continue
+        try:
+            rownum = int(number)
+        except (ValueError, TypeError):
+            continue
+        key = (source_file_fold(fname), sheet, rownum)
+        indexed.setdefault(key, []).append((fname, float(area)))
+    conflicts = []
+    for row in rows:
+        key = (source_file_fold(row['source_file']), row['source_sheet'],
+               int(row['source_row']))
+        for fname, area in indexed.get(key, ()):
+            if fname == row['source_file']:
+                continue
+            if abs(float(row['area_ha']) - area) < 0.00001:
+                conflicts.append((fname, row['source_file'],
+                                  row['source_sheet'], row['source_row']))
+    return conflicts
+
+
 def payment_marker(cells):
     """'cash' / 'transfer' / 'internal' / None for a block-separator row.
 
@@ -696,16 +741,37 @@ def operator_from_sheet_title(title, file_stem):
 # ─── Trap (d): duplicates ────────────────────────────────────────────────────
 
 def duplicate_key(row):
-    """(customer, area, date_from, amount) -- the identity of a job.
-
-    The whole run shares one set of these keys, because the duplication is
-    across sheets AND across files: one book carries «свод ичи (Беҳзод)» and
-    «свод ичи » with identical content, and two Servis files overlap.
-    """
+    """Coarse numeric candidate fingerprint; not proof of a duplicate."""
     return (customer_key(row['customer_raw']),
             round(float(row['area_ha']), 4),
             row['work_date_from'],
             None if row['amount'] is None else round(float(row['amount']), 4))
+
+
+def proven_duplicate_work(first, later):
+    """Only suppress proven mirrors; keep other operators and same-sheet jobs."""
+    if (first['source_file'] == later['source_file']
+            and first['source_sheet'] == later['source_sheet']):
+        return False
+    if first['period_month'] != later['period_month']:
+        return False
+    if first['payment_type'] != later['payment_type']:
+        return False
+    if first['source_file'] != later['source_file']:
+        for field in ('date_raw', 'note', 'received_amount',
+                      'received_kind', 'other_costs', 'price_per_ha'):
+            if first.get(field) != later.get(field):
+                return False
+    a = name_tokens(first['operator_raw'])
+    b = name_tokens(later['operator_raw'])
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    # A mirrored unlabelled sheet may inherit the filename as an operator.
+    return (first['source_file'] == later['source_file']
+            and ('file' in (first['operator_source'], later['operator_source']))
+            and (a < b or b < a))
 
 
 # ─── The manifest ────────────────────────────────────────────────────────────
@@ -827,7 +893,12 @@ def parse_sheet(ws, file_name, sheet_name, period_month, subdivision,
                     (excel_row, 'area out of range (%.2f)' % area, cells))
             continue
 
-        if in_wage_block or is_wage_marker(cells):
+        # Mentioning wages in a job note must not discard the job.
+        customer_index = mapping.get('customer') if mapping is not None else None
+        wage_customer = (customer_index is not None
+                         and customer_index < len(cells)
+                         and uz_fold(cells[customer_index]) == MARK_WAGE)
+        if in_wage_block or wage_customer:
             report.wage_rows += 1
             continue
 
@@ -1427,6 +1498,9 @@ class RunResult(object):
         self.sheets = []
         self.rows = []
         self.duplicates = []
+        self.suspected_duplicates = []  # candidates retained, not dropped
+        self.quarantined_rows = []  # old wage carryovers for manual review
+        self.filename_alias_conflicts = []  # unsafe provenance aliases
         self.rejections = []
         self.manifest_problems = []
         self.created_customers = []
@@ -1517,15 +1591,22 @@ def collect(directory_path, manifest, dirs_files, dir_obj, default_payment):
                         (file_name, ws.title, excel_row, reason,
                          ' | '.join(_text(c) for c in cells)[:200]))
                 for row in rows:
+                    if is_crossperiod_wage_carryover(row):
+                        result.quarantined_rows.append(row)
+                        continue
                     if row['formula_no_cache']:
                         result.formula_no_cache += 1
                     key = duplicate_key(row)
-                    first = seen_keys.get(key) if key is not None else None
+                    group = seen_keys.setdefault(key, []) if key is not None else []
+                    first = next((candidate for candidate in group
+                                  if proven_duplicate_work(candidate, row)),
+                                 None)
                     if first is not None:
                         result.duplicates.append((first, row))
                         continue
-                    if key is not None:
-                        seen_keys[key] = row
+                    if group:
+                        result.suspected_duplicates.append((group[0], row))
+                    group.append(row)
                     result.rows.append(row)
                     if row['received_kind']:
                         result.received_kinds[row['received_kind']] = (
@@ -1789,6 +1870,9 @@ def print_console(result, stats, args, batch):
     print('operator UNRESOLVED rows      : %d'
           % sum(result.unresolved_operators.values()))
     print('duplicate rows skipped        : %d' % len(result.duplicates))
+    print('same-number pairs retained    : %d' % len(result.suspected_duplicates))
+    print('wage carryovers quarantined   : %d' % len(result.quarantined_rows))
+    print('unsafe filename aliases       : %d' % len(result.filename_alias_conflicts))
     print('rows already in the database  : %d' % result.already_in_db)
     print('rows rejected                 : %d' % len(result.rejections))
     print('wage rows ignored (Ish haki)  : %d' % result.wage_rows)
@@ -1981,7 +2065,8 @@ def write_report(path, result, stats, args, batch, include_prediction=True):
 
     add('')
     add('ДУБЛИ, ПРОПУЩЕННЫЕ В ЭТОМ ПРОГОНЕ: %d' % len(result.duplicates))
-    add('  Совпадение по (заказчик, площадь, дата, сумма). Обе принадлежности')
+    add('  Совпали числа И установлена идентичность оператора;')
+    add('  неоднозначные совпадения сохранены отдельно.')
     add('  показаны: ни одна строка не склеена молча и не посчитана дважды.')
     for first, second in result.duplicates:
         add('  - «%s» %.2f га %s сумма %s'
@@ -1995,6 +2080,27 @@ def write_report(path, result, stats, args, batch, include_prediction=True):
             % (second['source_file'], second['source_sheet'],
                second['source_row']))
 
+    add('')
+    add('ПОХОЖИЕ ПО ЧИСЛАМ ПАРЫ, СОХРАНЕННЫЕ ДЛЯ ПРОВЕРКИ: %d'
+        % len(result.suspected_duplicates))
+    for first, second in result.suspected_duplicates:
+        add('  - отдельные записи: %s / %s / строка %d'
+            % (first['source_file'], first['source_sheet'], first['source_row']))
+        add('    + %s / %s / строка %d'
+            % (second['source_file'], second['source_sheet'], second['source_row']))
+    add('')
+    add('МЕЖМЕСЯЧНЫЕ ПЕРЕНОСЫ ЗАРПЛАТЫ: КАРАНТИН / НЕТ В drone_works: %d'
+        % len(result.quarantined_rows))
+    for row in result.quarantined_rows:
+        add('  %s / %s / row %d / period %s / date %s / area %.4f / amount %s'
+            % (row['source_file'], row['source_sheet'], row['source_row'],
+               row['period_month'], row['date_raw'], row['area_ha'],
+               row['amount'] if row['amount'] is not None else 'NULL'))
+        add('    ПРИМЕЧАНИЕ: %s' % (row.get('note') or ''))
+    add('НЕБЕЗОПАСНЫЕ ВАРИАНТЫ ИМЁН ФАЙЛОВ (APPLY ОСТАНОВЛЕН): %d'
+        % len(result.filename_alias_conflicts))
+    for old, new, sheet, source_row in result.filename_alias_conflicts:
+        add('  %s -> %s / %s / row %d' % (old, new, sheet, source_row))
     add('')
     add('СТРОКИ, ОТКЛОНЁННЫЕ ПРИ РАЗБОРЕ: %d' % len(result.rejections))
     for file_name, sheet_name, excel_row, reason, preview in result.rejections:
@@ -2103,7 +2209,15 @@ def main(argv=None):
                              args.default_payment)
             result.manifest_problems = manifest_problems
             resolve(result, dir_obj)
+            result.filename_alias_conflicts = filename_alias_conflicts(
+                con, result.rows)
             stats = summarize(result)
+            if args.apply and result.filename_alias_conflicts:
+                raise ImportPreconditionError(
+                    "ERROR UNSAFE_FILENAME_PROVENANCE: %d old/new name "
+                    "collisions. Nothing written. Reconcile exact "
+                    "source_file provenance in an approved migration first."
+                    % len(result.filename_alias_conflicts))
 
             if args.apply:
                 created, inserted, skipped = apply_rows(con, result, batch)
