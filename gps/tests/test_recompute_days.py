@@ -507,5 +507,24 @@ class Apply(Window):
         self.assertEqual(self.rows(FIELD, '2026-09-27')[0][1], METHOD_VERSION)
 
 
+
+class CompareWithTheTerritoryRule(unittest.TestCase):
+    """Сутки с правилом территорий -- действующий метод, а не «старый»."""
+
+    def test_a_territory_row_is_on_the_method_in_force(self):
+        from gps.area import TERRITORY_RULE_VERSION
+        rule = METHOD_VERSION + '+' + TERRITORY_RULE_VERSION
+        before = {('2026-10-20', 1): (None, rule, 2.0),
+                  ('2026-10-20', 2): (None, PREVIOUS_METHOD_VERSION, 3.0)}
+        after = {('2026-10-20', 1): (None, rule, 2.0),
+                 ('2026-10-20', 2): (None, PREVIOUS_METHOD_VERSION, 3.0)}
+        lines = []
+        left = recompute.compare(before, after, {}, lines.append)
+        self.assertEqual(left, 1)
+        text = '\n'.join(lines)
+        self.assertIn('already on %s before this run: 1' % METHOD_VERSION, text)
+        self.assertIn('  2026-10-20 unit 2: %s' % PREVIOUS_METHOD_VERSION, text)
+        self.assertNotIn('unit 1:', text)
+
 if __name__ == '__main__':
     unittest.main()

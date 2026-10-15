@@ -1017,6 +1017,185 @@ class ReadOnly(unittest.TestCase):
         self.assertEqual(float(first['dolya_dnya']), 0.0)
 
 
+class Verdict(unittest.TestCase):
+    """Строка вердикта условия включения §2.14, п. 5 -- на мире Extra.
+
+    Помощники берутся у Extra, а не наследуются: наследник прогнал бы ещё
+    раз все тесты Extra.
+    """
+
+    setUp = Extra.setUp
+    sql = Extra.sql
+    add_site = Extra.add_site
+    run_tool = Extra.run_tool
+
+    def verdict_line(self, output):
+        lines = [line for line in output.splitlines()
+                 if line.startswith('inclusion condition')]
+        self.assertEqual(len(lines), 1, output)
+        return lines[0]
+
+    def test_a_work_site_on_the_yard_is_not_met(self):
+        # В мире теста участок «in» с ответом «работа» целиком на зоне 520.
+        code, output = self.run_tool()
+        self.assertEqual(code, 0, output)
+        line = self.verdict_line(output)
+        self.assertIn(': NOT MET -- 1 site(s) answered rabota with share >= 0.5', line)
+        # «in» -- 1 га, весь на зоне; «работа» в окне -- 1 + 3 га
+        self.assertIn('removes 1.00 of 4.00 ha (25.0 %, limit 5 %)', line)
+
+    def test_no_work_site_on_territory_is_met(self):
+        self.sql("UPDATE gps_work_polygons SET operator_label = NULL "
+                 "WHERE work_date = ? AND wialon_id = ? AND site_number = 1",
+                 (D1, U_MTZ))
+        code, output = self.run_tool()
+        line = self.verdict_line(output)
+        self.assertIn(': MET -- 0 site(s) answered rabota', line)
+        self.assertIn('removes 0.00 of 3.00 ha (0.0 %, limit 5 %)', line)
+
+    def test_a_work_site_losing_more_than_5_percent_is_not_met(self):
+        self.sql("UPDATE gps_work_polygons SET operator_label = NULL "
+                 "WHERE work_date = ? AND wialon_id = ? AND site_number = 1",
+                 (D1, U_MTZ))
+        # 3 га, из них 0,5 га на зоне 520: доля 0,167, вычитание снимает 0,5
+        # из 6 га «работы» -- 8,3 %
+        self.add_site(3201, polygon(rect(150, 50, 450, 150)), area=3.0)
+        self.sql("UPDATE gps_work_polygons SET operator_label = ? "
+                 "WHERE wialon_id = 3201", (WORK,))
+        code, output = self.run_tool()
+        line = self.verdict_line(output)
+        self.assertIn(': NOT MET -- 0 site(s) answered rabota with share >= 0.5', line)
+        self.assertIn('removes 0.50 of 6.00 ha (8.3 %', line)
+
+    def test_an_unmeasured_work_site_is_not_evaluated(self):
+        self.sql("UPDATE gps_work_polygons SET operator_label = ? "
+                 "WHERE work_date = ? AND wialon_id = ? AND site_number = 6",
+                 (WORK, D1, U_FREE))
+        code, output = self.run_tool()
+        self.assertIn(': NOT EVALUATED -- 1 site(s) answered rabota were not '
+                      'measured', self.verdict_line(output))
+
+    def test_no_work_answer_at_all_is_not_evaluated(self):
+        self.sql("UPDATE gps_work_polygons SET operator_label = NULL "
+                 "WHERE operator_label = ?", (WORK,))
+        code, output = self.run_tool()
+        self.assertIn(': NOT EVALUATED -- no site answered rabota in the window',
+                      self.verdict_line(output))
+
+    def failing_at(self, x, y):
+        real = terr.measure_site
+
+        def failing(site, territories, tree):
+            if abs(site.centroid.x - (X0 + x)) < 1 and \
+                    abs(site.centroid.y - (Y0 + y)) < 1:
+                raise GEOSException('TopologyException: test')
+            return real(site, territories, tree)
+        return mock.patch.object(terr, 'measure_site', failing)
+
+    def test_a_work_site_the_geometry_failed_on_is_not_evaluated(self):
+        # участок «in» (работа, целиком на зоне 520) не измерился -- условие
+        # не «выполнено», даже если других участков «работа» на территории нет
+        with self.failing_at(100, 100):
+            code, output = self.run_tool('--since', D1, '--until', D1)
+        self.assertEqual(code, 3, output)
+        self.assertIn(': NOT EVALUATED -- 1 site(s) answered rabota were not '
+                      'measured', self.verdict_line(output))
+
+    def test_a_failed_passage_site_does_not_hide_the_verdict(self):
+        # GEOS упал на участке «проезд» -- вердикт по «работе» тот же
+        with self.failing_at(2120, 100):
+            code, output = self.run_tool('--since', D1, '--until', D1)
+        self.assertEqual(code, 3, output)
+        self.assertIn(': NOT MET -- 1 site(s) answered rabota with share >= 0.5',
+                      self.verdict_line(output))
+
+    def test_an_unreadable_passage_site_is_not_an_unmeasured_work_site(self):
+        self.sql("UPDATE gps_work_polygons SET operator_label = ? "
+                 "WHERE work_date = ? AND wialon_id = ? AND site_number = 6",
+                 (PASSAGE, D1, U_FREE))
+        code, output = self.run_tool()
+        self.assertIn(': NOT MET -- 1 site(s)', self.verdict_line(output))
+
+    def test_a_list_with_no_zone_in_the_rule_is_not_evaluated(self):
+        # только зона 64 га и зона, которой нет в зеркале: мерить нечем
+        write_zones_list(self.zones, [17922, NOT_MIRRORED])
+        code, output = self.run_tool()
+        self.assertIn(': NOT EVALUATED -- no listed zone is in the rule',
+                      self.verdict_line(output))
+
+    def test_the_verdict_is_next_to_last_in_the_log(self):
+        code, output = self.run_tool()
+        lines = output.strip().splitlines()
+        self.assertTrue(lines[-2].startswith('inclusion condition'), lines[-3:])
+        self.assertTrue(lines[-1].startswith('nothing was written'), lines[-3:])
+
+
+class VerdictArithmetic(unittest.TestCase):
+    """Пороги условия на числах, без геометрии."""
+
+    def result(self, rows, work_ha, unmeasured=0, work_count=None,
+               in_rule=True):
+        answered = {}
+        if work_ha is not None:
+            answered[terr.WORK_LABEL] = [work_count or len(rows) or 1, work_ha]
+        return {'rows': rows, 'zones': [{'in_rule': in_rule}],
+                'totals': {'answered': answered, 'work_unmeasured': unmeasured}}
+
+    def row(self, removed, share=0.1, label=terr.WORK_LABEL):
+        return {'geom_ha': 10.0, 'ga_posle_vychitaniya': 10.0 - removed,
+                'dolya': share, 'operator_label': label}
+
+    def test_exactly_5_percent_is_met(self):
+        verdict, _ = terr.inclusion_condition(
+            self.result([self.row(5.0)], 100.0))
+        self.assertEqual(verdict, 'MET')
+
+    def test_just_over_5_percent_is_not_met(self):
+        verdict, _ = terr.inclusion_condition(
+            self.result([self.row(5.01)], 100.0))
+        self.assertEqual(verdict, 'NOT MET')
+
+    def test_share_exactly_half_is_not_met(self):
+        verdict, _ = terr.inclusion_condition(
+            self.result([self.row(0.0, share=0.5)], 100.0))
+        self.assertEqual(verdict, 'NOT MET')
+
+    def test_share_just_below_half_is_met(self):
+        verdict, _ = terr.inclusion_condition(
+            self.result([self.row(0.0, share=0.499)], 100.0))
+        self.assertEqual(verdict, 'MET')
+
+    def test_other_answers_do_not_count(self):
+        verdict, _ = terr.inclusion_condition(self.result(
+            [self.row(50.0, share=0.9, label='проезд')], 100.0))
+        self.assertEqual(verdict, 'MET')
+
+    def test_float_noise_at_exactly_5_percent_is_still_met(self):
+        # 10 - 9.95 = 0.05000000000000071: без допуска -- NOT MET
+        verdict, _ = terr.inclusion_condition(
+            self.result([self.row(0.05)], 1.0))
+        self.assertEqual(verdict, 'MET')
+
+    def test_work_answers_holding_zero_hectares_are_not_evaluated(self):
+        verdict, detail = terr.inclusion_condition(
+            self.result([], 0.0, work_count=1))
+        self.assertEqual(verdict, 'NOT EVALUATED')
+        self.assertIn('hold 0 ha', detail)
+
+    def test_no_zone_in_the_rule_is_not_evaluated(self):
+        verdict, detail = terr.inclusion_condition(
+            self.result([], 100.0, in_rule=False))
+        self.assertEqual(verdict, 'NOT EVALUATED')
+        self.assertIn('no listed zone is in the rule', detail)
+
+    def test_the_label_is_the_screen_s(self):
+        # [REASON]: инструмент не импортирует models -- строка ответа
+        # повторена; здесь проверяется, что она та же, что пишет экран.
+        with open(os.path.join(REPO_ROOT, 'models.py'), encoding='utf-8') as handle:
+            source = handle.read()
+        self.assertIn("GPS_LABEL_WORK = '%s'" % terr.WORK_LABEL, source)
+
+
 class NoFlask(unittest.TestCase):
 
     def test_the_tool_imports_neither_flask_nor_models(self):
