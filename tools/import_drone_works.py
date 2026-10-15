@@ -1597,7 +1597,7 @@ def collect(directory_path, manifest, dirs_files, dir_obj, default_payment):
                     if row['formula_no_cache']:
                         result.formula_no_cache += 1
                     key = duplicate_key(row)
-                    group = seen_keys.setdefault(key, [])
+                    group = seen_keys.setdefault(key, []) if key is not None else []
                     first = next((candidate for candidate in group
                                   if proven_duplicate_work(candidate, row)),
                                  None)
