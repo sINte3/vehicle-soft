@@ -60,23 +60,41 @@ def ha(geometry):
     return geometry.area / 10000.0
 
 
-def latest_owner_list():
-    """Последний список владельца: docs/gps_territory_zones_<дата>.csv.
+OWNER_LIST_NAME = re.compile(
+    r"^gps_territory_zones_(\d{4}-\d{2}-\d{2})(?:_v(\d+))?\.csv$")
 
-    Дата берётся из имени, а не порядком строк: чужой файл с тем же началом
-    имени («_v3», выгрузка зон GPS-19) не должен считаться последним
-    списком. Два списка на одну дату -- ошибка.
+
+def owner_lists(folder=None):
+    """Списки владельца: {(дата, номер): путь} по docs/gps_territory_zones_*.csv.
+
+    Дата и номер берутся из имени, а не порядком строк: чужой файл с тем же
+    началом имени (выгрузка зон GPS-19, «_v3x», «-копия») списком не
+    считается. Список без номера -- первый за сутки; следующий за те же
+    сутки -- «_vN» (15.10: v2 по ответу утром, v3 по ответу вечером). Два
+    списка с одним ключом (`_v3` и `_v03`, без номера и `_v0`) -- ошибка.
     """
-    dated = {}
-    for path in glob.glob(os.path.join(REPO_ROOT, "docs",
-                                       "gps_territory_zones_*.csv")):
-        found = re.match(r"^gps_territory_zones_(\d{4}-\d{2}-\d{2})\.csv$",
-                         os.path.basename(path))
-        if found:
-            if found.group(1) in dated:
-                raise AssertionError("two zone lists for %s" % found.group(1))
-            dated[found.group(1)] = path
-    return dated[max(dated)]
+    found = {}
+    folder = folder or os.path.join(REPO_ROOT, "docs")
+    for path in glob.glob(os.path.join(folder, "gps_territory_zones_*.csv")):
+        name = OWNER_LIST_NAME.match(os.path.basename(path))
+        if name:
+            key = (name.group(1), int(name.group(2) or 0))
+            if key in found:
+                raise AssertionError("two zone lists for %s v%d" % key)
+            found[key] = path
+    return found
+
+
+def latest_owner_list(folder=None):
+    lists = owner_lists(folder)
+    return lists[max(lists)]
+
+
+def label_of(path):
+    """Метка, которую требует список: territory-<дата>[_vN] из его имени."""
+    name = OWNER_LIST_NAME.match(os.path.basename(path))
+    return "territory-" + name.group(1) + (
+        "_v%d" % int(name.group(2)) if name.group(2) else "")
 
 
 def square(x, y, side):
@@ -404,8 +422,68 @@ class ZoneList(unittest.TestCase):
     def test_the_label_date_is_the_date_of_the_list(self):
         # [REASON]: новый список -- новая метка: сутки, порезанные разными
         # списками, не должны носить одну метку.
-        date = re.search(r"(\d{4}-\d{2}-\d{2})\.csv$", latest_owner_list()).group(1)
-        self.assertEqual(TERRITORY_RULE_VERSION, "territory-" + date)
+        self.assertEqual(TERRITORY_RULE_VERSION, label_of(latest_owner_list()))
+
+
+class OwnerListNames(unittest.TestCase):
+    """Какой список в docs/ последний и какую метку он требует."""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+
+    def put(self, *names):
+        for name in names:
+            with open(os.path.join(self.folder, name), "w", encoding="utf-8") as f:
+                f.write("zona_id,gruppa_id,tip\n")
+
+    def latest(self):
+        return os.path.basename(latest_owner_list(self.folder))
+
+    def test_the_second_list_of_a_day_is_later_than_the_first(self):
+        self.put("gps_territory_zones_2026-10-14.csv",
+                 "gps_territory_zones_2026-10-15.csv",
+                 "gps_territory_zones_2026-10-15_v3.csv")
+        self.assertEqual(self.latest(), "gps_territory_zones_2026-10-15_v3.csv")
+
+    def test_a_later_day_beats_a_numbered_list(self):
+        self.put("gps_territory_zones_2026-10-15_v3.csv",
+                 "gps_territory_zones_2026-10-16.csv")
+        self.assertEqual(self.latest(), "gps_territory_zones_2026-10-16.csv")
+
+    def test_numbers_compare_as_numbers(self):
+        self.put("gps_territory_zones_2026-10-15_v9.csv",
+                 "gps_territory_zones_2026-10-15_v10.csv")
+        self.assertEqual(self.latest(), "gps_territory_zones_2026-10-15_v10.csv")
+
+    def test_foreign_files_are_not_lists(self):
+        self.put("gps_territory_zones_2026-10-14.csv",
+                 "gps_territory_zones.csv",
+                 "gps_territory_zones_2026-10-15_v3x.csv",
+                 "gps_territory_zones_2026-10-15-kopiya.csv",
+                 "gps_territory_zones_2026-10-15_v.csv",
+                 "gps_territory_zones_2026-10-15.csv.bak")
+        self.assertEqual(self.latest(), "gps_territory_zones_2026-10-14.csv")
+
+    def test_two_lists_with_one_key_are_an_error(self):
+        self.put("gps_territory_zones_2026-10-15_v3.csv",
+                 "gps_territory_zones_2026-10-15_v03.csv")
+        with self.assertRaises(AssertionError):
+            owner_lists(self.folder)
+        other = tempfile.mkdtemp()
+        for name in ("gps_territory_zones_2026-10-15.csv",
+                     "gps_territory_zones_2026-10-15_v0.csv"):
+            with open(os.path.join(other, name), "w", encoding="utf-8") as f:
+                f.write("zona_id,gruppa_id,tip\n")
+        with self.assertRaises(AssertionError):
+            owner_lists(other)
+
+    def test_the_label_follows_the_name(self):
+        self.assertEqual(label_of("docs/gps_territory_zones_2026-10-15.csv"),
+                         "territory-2026-10-15")
+        self.assertEqual(label_of("docs/gps_territory_zones_2026-10-15_v3.csv"),
+                         "territory-2026-10-15_v3")
+        self.assertEqual(label_of("gps_territory_zones_2026-10-15_v03.csv"),
+                         "territory-2026-10-15_v3")
 
 
 # --- 4. ночной расчёт -------------------------------------------------------------

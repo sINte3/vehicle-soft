@@ -212,9 +212,10 @@ EDGE_RULES = (EDGE_RULE_VERSION, EDGE_SCALE_VERSION)
 # A result computed with it carries this label after the base method's (and
 # after an edge rule's), so a day with the rule never passes for one without
 # it. The date in the label is the date of the owner's zone list the rule
-# runs on (docs/gps_territory_zones_<date>.csv, a test ties the two): a new
-# list is a new label, so days cut by different lists stay apart.
-TERRITORY_RULE_VERSION = "territory-2026-10-15"
+# runs on (docs/gps_territory_zones_<date>[_vN].csv, a test ties the two; _vN
+# marks a later list of the same day): a new list is a new label, so days cut
+# by different lists stay apart.
+TERRITORY_RULE_VERSION = "territory-2026-10-15_v3"
 
 
 def edge_rule_version(edge_rule):
