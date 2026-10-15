@@ -1017,6 +1017,123 @@ class ReadOnly(unittest.TestCase):
         self.assertEqual(float(first['dolya_dnya']), 0.0)
 
 
+class Verdict(unittest.TestCase):
+    """Строка вердикта условия включения §2.14, п. 5 -- на мире Extra.
+
+    Помощники берутся у Extra, а не наследуются: наследник прогнал бы ещё
+    раз все тесты Extra.
+    """
+
+    setUp = Extra.setUp
+    sql = Extra.sql
+    add_site = Extra.add_site
+    run_tool = Extra.run_tool
+
+    def verdict_line(self, output):
+        lines = [line for line in output.splitlines()
+                 if line.startswith('inclusion condition')]
+        self.assertEqual(len(lines), 1, output)
+        return lines[0]
+
+    def test_a_work_site_on_the_yard_is_not_met(self):
+        # В мире теста участок «in» с ответом «работа» целиком на зоне 520.
+        code, output = self.run_tool()
+        self.assertEqual(code, 0, output)
+        line = self.verdict_line(output)
+        self.assertIn(': NOT MET -- 1 site(s) answered rabota with share >= 0.5', line)
+
+    def test_no_work_site_on_territory_is_met(self):
+        self.sql("UPDATE gps_work_polygons SET operator_label = NULL "
+                 "WHERE work_date = ? AND wialon_id = ? AND site_number = 1",
+                 (D1, U_MTZ))
+        code, output = self.run_tool()
+        line = self.verdict_line(output)
+        self.assertIn(': MET -- 0 site(s) answered rabota', line)
+        self.assertIn('removes 0.00 of 3.00 ha (0.0 %, limit 5 %)', line)
+
+    def test_a_work_site_losing_more_than_5_percent_is_not_met(self):
+        self.sql("UPDATE gps_work_polygons SET operator_label = NULL "
+                 "WHERE work_date = ? AND wialon_id = ? AND site_number = 1",
+                 (D1, U_MTZ))
+        # 3 га, из них 0,5 га на зоне 520: доля 0,167, вычитание снимает 0,5
+        # из 6 га «работы» -- 8,3 %
+        self.add_site(3201, polygon(rect(150, 50, 450, 150)), area=3.0)
+        self.sql("UPDATE gps_work_polygons SET operator_label = ? "
+                 "WHERE wialon_id = 3201", (WORK,))
+        code, output = self.run_tool()
+        line = self.verdict_line(output)
+        self.assertIn(': NOT MET -- 0 site(s) answered rabota with share >= 0.5', line)
+        self.assertIn('removes 0.50 of 6.00 ha (8.3 %', line)
+
+    def test_an_unmeasured_work_site_is_not_evaluated(self):
+        self.sql("UPDATE gps_work_polygons SET operator_label = ? "
+                 "WHERE work_date = ? AND wialon_id = ? AND site_number = 6",
+                 (WORK, D1, U_FREE))
+        code, output = self.run_tool()
+        self.assertIn(': NOT EVALUATED -- 1 site(s) answered rabota were not '
+                      'measured', self.verdict_line(output))
+
+    def test_no_work_answer_at_all_is_not_evaluated(self):
+        self.sql("UPDATE gps_work_polygons SET operator_label = NULL "
+                 "WHERE operator_label = ?", (WORK,))
+        code, output = self.run_tool()
+        self.assertIn(': NOT EVALUATED -- no site answered rabota in the window',
+                      self.verdict_line(output))
+
+    def test_the_verdict_is_next_to_last_in_the_log(self):
+        code, output = self.run_tool()
+        lines = output.strip().splitlines()
+        self.assertTrue(lines[-2].startswith('inclusion condition'), lines[-3:])
+        self.assertTrue(lines[-1].startswith('nothing was written'), lines[-3:])
+
+
+class VerdictArithmetic(unittest.TestCase):
+    """Пороги условия на числах, без геометрии."""
+
+    def result(self, rows, work_ha, unmeasured=0, work_count=None):
+        answered = {}
+        if work_ha:
+            answered[terr.WORK_LABEL] = [work_count or len(rows) or 1, work_ha]
+        return {'rows': rows, 'totals': {'answered': answered,
+                                         'work_unmeasured': unmeasured}}
+
+    def row(self, removed, share=0.1, label=terr.WORK_LABEL):
+        return {'geom_ha': 10.0, 'ga_posle_vychitaniya': 10.0 - removed,
+                'dolya': share, 'operator_label': label}
+
+    def test_exactly_5_percent_is_met(self):
+        verdict, _ = terr.inclusion_condition(
+            self.result([self.row(5.0)], 100.0))
+        self.assertEqual(verdict, 'MET')
+
+    def test_just_over_5_percent_is_not_met(self):
+        verdict, _ = terr.inclusion_condition(
+            self.result([self.row(5.01)], 100.0))
+        self.assertEqual(verdict, 'NOT MET')
+
+    def test_share_exactly_half_is_not_met(self):
+        verdict, _ = terr.inclusion_condition(
+            self.result([self.row(0.0, share=0.5)], 100.0))
+        self.assertEqual(verdict, 'NOT MET')
+
+    def test_share_just_below_half_is_met(self):
+        verdict, _ = terr.inclusion_condition(
+            self.result([self.row(0.0, share=0.499)], 100.0))
+        self.assertEqual(verdict, 'MET')
+
+    def test_other_answers_do_not_count(self):
+        verdict, _ = terr.inclusion_condition(self.result(
+            [self.row(50.0, share=0.9, label='проезд')], 100.0))
+        self.assertEqual(verdict, 'MET')
+
+    def test_the_label_is_the_screen_s(self):
+        # [REASON]: инструмент не импортирует models -- строка ответа
+        # повторена; здесь проверяется, что она та же, что пишет экран.
+        with open(os.path.join(REPO_ROOT, 'models.py'), encoding='utf-8') as handle:
+            source = handle.read()
+        self.assertIn("GPS_LABEL_WORK = '%s'" % terr.WORK_LABEL, source)
+
+
 class NoFlask(unittest.TestCase):
 
     def test_the_tool_imports_neither_flask_nor_models(self):

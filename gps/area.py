@@ -207,6 +207,13 @@ EDGE_RULE_VERSION = "edge-core-2026-10-09"
 EDGE_SCALE_VERSION = "edge-scale-2026-10-11"
 EDGE_RULES = (EDGE_RULE_VERSION, EDGE_SCALE_VERSION)
 
+# [REASON]: the territory rule (gps/territory.py, roadmap 2.14): work on the
+# yard of a plant, a cotton point or a filling station is not field hectares.
+# A result computed with it carries this label after the base method's (and
+# after an edge rule's), so a day with the rule never passes for one without
+# it, and the hectare stays reproducible after the zone list changes.
+TERRITORY_RULE_VERSION = "territory-2026-10-15"
+
 
 def edge_rule_version(edge_rule):
     """The edge rule a switch value asks for: None (off) or its version.
@@ -225,19 +232,23 @@ def edge_rule_version(edge_rule):
     raise ValueError("unknown edge rule: %r" % (edge_rule,))
 
 
-def method_version(overflow_cap, alpha_m=None, edge_rule=False):
+def method_version(overflow_cap, alpha_m=None, edge_rule=False,
+                   territory=False):
     """The version string of the method a computation with these switches ran.
 
     A pinned alpha is neither adaptive method -- no spacing is measured and the
     cap never runs -- so its result is named by the alpha itself. The edge
-    rule, when on, is named after the base method it trimmed.
+    rule, when on, is named after the base method it trimmed; the territory
+    rule after both.
     """
     if alpha_m is not None:
         base = "fixed-alpha-%gm" % alpha_m
     else:
         base = METHOD_VERSION if overflow_cap else PREVIOUS_METHOD_VERSION
     rule = edge_rule_version(edge_rule)
-    return base + "+" + rule if rule else base
+    if rule:
+        base = base + "+" + rule
+    return base + "+" + TERRITORY_RULE_VERSION if territory else base
 
 # [REASON]: the tracker writes at most every 30 s while moving (parameter
 # 10050) and transmits every 60 s (10055), so 5 minutes between two CONSECUTIVE
@@ -679,7 +690,7 @@ def repair_polygon(polygon):
 
 
 def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None,
-               overflow_cap=True, edge_rule=False):
+               overflow_cap=True, edge_rule=False, territory=None):
     """Every patch of ground worked in this interval -- geozone or not.
 
     This is the primary entry point, and it deliberately does NOT need a
@@ -708,6 +719,12 @@ def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None,
     EDGE_SCALE_VERSION is round 2 (gps/edge_scale.py, roadmap 2.13,
     rejected). Off by default: the method in force is unchanged until the
     owner adopts a rule, and a result with one carries its version.
+
+    `territory` -- a gps.territory.Territory, or None (off): each piece that
+    would be a site is cut by the territory rule (roadmap 2.14) -- a piece
+    lying on the territory by half or more is not hectares at all, from any
+    other the territory is subtracted and what is left is kept if it is not
+    smaller than min_area_ha. The sites then carry TERRITORY_RULE_VERSION.
 
     Returns (sites, quality), sites ordered by area, largest first.
     """
@@ -749,11 +766,25 @@ def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None,
         named = list(contours.keys())
         tree = shapely.STRtree([contours[i] for i in named])
 
-    sites = []
+    version = method_version(overflow_cap, alpha_m, rule,
+                             territory=territory is not None)
+    pieces = []
     for piece in getattr(shape, "geoms", [shape]):
-        area_ha = piece.area / 10000.0
-        if area_ha < min_area_ha:
+        if piece.area / 10000.0 < min_area_ha:
             continue
+        if territory is None:
+            pieces.append(piece)
+        else:
+            # [REASON]: roadmap 2.14, p. 2 -- the share is taken on the piece
+            # BEFORE subtraction, and only a piece that is a site at all is
+            # cut: the rule takes yards out of the hectares, it never turns
+            # a road sliver into a site.
+            _share, kept = territory.cut(piece, min_area_ha)
+            pieces.extend(kept)
+
+    sites = []
+    for piece in pieces:
+        area_ha = piece.area / 10000.0
         contour_id = None
         # [REASON]: пересечение считается по ПОЧИНЕННОЙ копии, а сам `piece`
         # не трогается: его площадь -- измерение, и переcобирать её ради
@@ -769,7 +800,7 @@ def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None,
                 if overlap > best:
                     best, contour_id = overlap, named[int(position)]
         sites.append(WorkArea(contour_id, area_ha, piece, quality, alpha, spacing,
-                              method_version(overflow_cap, alpha_m, rule)))
+                              version))
     sites.sort(key=lambda s: -s.area_ha)
     return sites, quality
 

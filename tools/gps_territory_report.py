@@ -204,6 +204,13 @@ SHARE_BINS = (('(0,0.1)', 0.0), ('[0.1,0.5)', 0.1), ('[0.5,0.9)', 0.5),
               ('[0.9,1]', 0.9))
 NO_MACHINE = '(no machine)'
 NO_ANSWER = '(no answer)'
+# [REASON]: ответ оператора «работа» -- как его пишет экран «Факт по
+# технике» (`models.GPS_LABEL_WORK`). Инструмент не импортирует models
+# (Flask), поэтому строка повторена здесь; совпадение проверяет тест.
+WORK_LABEL = 'работа'
+# [REASON]: §2.14, п. 5 -- вычитание снимает с участков «работа» вместе не
+# больше 5 % площади всех участков «работа» окна.
+CONDITION_LOSS_SHARE = 0.05
 COUNTED = 'counted'
 # Порядок категорий в консоли: эти две -- первыми, их разбивку постановка
 # GPS-19 называет прямо (о МТЗ на территориях говорил владелец 14.10);
@@ -477,7 +484,7 @@ def scan(con, listed, since, until):
     machine_of = machines(con)
     days = published_days(con, since, until)
     totals = {'sites': 0, 'stored_ha': 0.0, 'far': 0, 'near': 0,
-              'unreadable': 0, 'unreadable_ha': 0.0,
+              'unreadable': 0, 'unreadable_ha': 0.0, 'work_unmeasured': 0,
               'answered': defaultdict(lambda: [0, 0.0])}
     rows, failed = [], []
     by_day = {}
@@ -505,6 +512,7 @@ def scan(con, listed, since, until):
         if polygon is None:
             totals['unreadable'] += 1
             totals['unreadable_ha'] += stored
+            totals['work_unmeasured'] += label == WORK_LABEL
             keep_whole(today, stored, None)
             continue
         if tree is None:
@@ -518,6 +526,7 @@ def scan(con, listed, since, until):
             measured = measure_site(polygon, territories, tree)
         except GEOSException as problem:
             failed.append((day, unit, number, str(problem)))
+            totals['work_unmeasured'] += label == WORK_LABEL
             keep_whole(today, stored, None)
             continue
         if measured is None:
@@ -624,6 +633,40 @@ def removed_a(row):
 
 def removed_b(row):
     return row['area_ha'] - row['ga_posle_otbrosa']
+
+
+def inclusion_condition(result):
+    """Условие включения §2.14, п. 5 по числам прогона: (вердикт, пояснение).
+
+    MET -- ни одного участка «работа» с долей на территории >= DROP_SHARE, и
+    вычитание снимает с участков «работа» вместе не больше
+    CONDITION_LOSS_SHARE площади всех участков «работа» окна. NOT MET --
+    иначе. NOT EVALUATED -- в окне нет ни одного участка «работа» или часть
+    из них не измерилась.
+
+    [REASON]: условие записано до замера и применяется без изменений после
+    каждой смены списка зон; строка вердикта избавляет владельца от лишнего
+    круга «прислать -- дождаться разбора», а сессию -- от соблазна читать
+    условие по-новому, глядя на числа. Неизмеренный участок «работа» мог
+    лежать на территории -- выполненным условие тогда не называется.
+    """
+    totals = result['totals']
+    count, area = totals['answered'].get(WORK_LABEL, (0, 0.0))
+    if totals['work_unmeasured']:
+        return ('NOT EVALUATED', '%d site(s) answered %s were not measured'
+                % (totals['work_unmeasured'], console(WORK_LABEL)))
+    if not count or area <= 0:
+        return ('NOT EVALUATED', 'no site answered %s in the window'
+                % console(WORK_LABEL))
+    work = [row for row in result['rows'] if row['operator_label'] == WORK_LABEL]
+    over = sum(1 for row in work if row['dolya'] >= DROP_SHARE)
+    loss = sum(removed_a(row) for row in work)
+    met = over == 0 and loss <= CONDITION_LOSS_SHARE * area + EPS_HA
+    return ('MET' if met else 'NOT MET',
+            '%d site(s) answered %s with share >= %.1f; subtraction removes '
+            '%.2f of %.2f ha (%.1f %%, limit %.0f %%)'
+            % (over, console(WORK_LABEL), DROP_SHARE, loss, area,
+               100.0 * loss / area, 100.0 * CONDITION_LOSS_SHARE))
 
 
 def write_sites(path, rows):
@@ -884,6 +927,11 @@ def main(argv=None):
                                        console(args.zones_out)))
     print('days CSV (%d rows): %s' % (len(result['day_rows']),
                                       console(args.days_out)))
+    # [REASON]: вердикт -- предпоследней строкой: владелец читает хвост
+    # журнала (`Get-Content -Tail`), и решение о шаге выпуска не должно
+    # зависеть от того, сколько строк выше напечатал отчёт.
+    verdict, detail = inclusion_condition(result)
+    print('inclusion condition (2.14, p. 5): %s -- %s' % (verdict, detail))
     print('nothing was written to the database: it was opened mode=ro')
     return 3 if result['failed'] else 0
 
