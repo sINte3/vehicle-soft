@@ -7,8 +7,10 @@
    запрет SQLite, а не обещание скрипта.
 
 2. **Неверный вход -- отказ с кодом 2 до записи.** Отсутствующая база не
-   создаётся; --before и --after -- один файл; `#` в пути; базы без
-   `field_contours`; --out на месте базы или любого файла SQLite; нет папки.
+   создаётся; --before и --after -- один файл, в том числе записанный иначе;
+   `#` и `%` в пути (без проверки SQLite открыл бы другой файл); базы без
+   `field_contours` и файл не базы; --out на месте базы, её -wal или любого
+   файла SQLite; нет папки; --out открыт в Excel.
 
 3. **Виды изменений различаются.** Каждый вид -- своя зона в одной паре баз:
    имя с дописанным районом, имя с лишним пробелом, те же координаты другой
@@ -17,10 +19,16 @@
    пропал, не читается, новая зона, пропавшая зона, `is_active`. Строка DJI
    с тем же `external_id` не сравнивается.
 
-4. **Площадь и сдвиг -- в метрах, а не в градусах:** квадрат 100 x 100 м --
-   1 га, сдвиг на 50 м -- 50 м.
+4. **Площадь и сдвиг -- в метрах, а не в градусах,** и метры не взяты у
+   самого инструмента: квадрат 0,001 x 0,001 градуса у 40 с. ш. -- 0,9472 га,
+   сдвиг на 0,001 градуса к северу -- 111,19 м. Сдвиг -- центра площади:
+   точки, добавленные на одну сторону, контур не двигают.
 
-5. **Консоль -- ASCII и без имён:** имена зон -- часто имена людей.
+5. **Сетка тождества точек -- 1e-7 градуса (~1 см):** 3e-8 -- та же точка,
+   1e-7 -- другая. Корзины площади и сдвига, их строки в консоли, знак
+   разницы, число точек, BOM для Excel.
+
+6. **Консоль -- ASCII и без имён:** имена зон -- часто имена людей.
 
 Запуск:
   python -m unittest tests.test_gps_mirror_diff -v
@@ -36,6 +44,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -190,6 +199,60 @@ class BadInput(Run):
         make_db(odd, 0)
         code, _, stderr = self.run_tool(before=odd)
         self.assert_refused(code, stderr)
+        # без проверки адрес обрезался бы на '#': SQLite открыл бы 'copy' на
+        # запись и создал бы его
+        self.assertIn('#', stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.folder, 'copy')))
+
+    def test_a_percent_in_the_path_does_not_open_another_file(self):
+        # 'a%41.db' в адресе SQLite -- это 'aA.db': без проверки инструмент
+        # сравнил бы файл сам с собой и сказал бы «ничего не изменилось»
+        target = os.path.join(self.folder, 'aA.db')
+        make_db(target, 0)
+        odd = os.path.join(self.folder, 'a%41.db')
+        make_db(odd, 1)
+        code, _, stderr = self.run_tool(before=target, after=odd)
+        self.assert_refused(code, stderr)
+
+    def test_the_same_file_spelled_otherwise_is_refused(self):
+        code, _, stderr = self.run_tool(
+            after=os.path.join(self.folder, '.', os.path.basename(self.before)))
+        self.assert_refused(code, stderr)
+
+    def test_a_file_that_is_not_a_database_is_refused(self):
+        bogus = os.path.join(self.folder, 'notes.db')
+        with open(bogus, 'w') as handle:
+            handle.write('not a database at all, just text ' * 10)
+        code, _, stderr = self.run_tool(before=bogus)
+        self.assert_refused(code, stderr)
+
+    def test_out_on_the_live_wal_is_refused(self):
+        # заголовок WAL -- не 'SQLite format 3': защищает только список путей
+        wal = self.after + '-wal'
+        with open(wal, 'wb') as handle:
+            handle.write(b'\x37\x7f\x06\x82' + b'\0' * 28)
+        before = digest(wal)
+        code, _, stderr = self.run_tool(out=wal)
+        self.assertEqual(code, gd.EXIT_BAD_INPUT, stderr)
+        self.assertEqual(digest(wal), before)
+
+    def test_an_out_file_open_in_excel_is_refused_before_the_report(self):
+        with open(self.out, 'w', encoding='utf-8') as handle:
+            handle.write('previous run')
+        real_open = open
+
+        def locked(path, mode='r', *args, **kwargs):
+            if os.path.abspath(str(path)) == os.path.abspath(self.out) \
+                    and mode[0] in 'aw':
+                raise PermissionError(13, 'Permission denied')
+            return real_open(path, mode, *args, **kwargs)
+
+        with mock.patch('builtins.open', side_effect=locked):
+            code, stdout, stderr = self.run_tool()
+        self.assertEqual(code, gd.EXIT_BAD_INPUT, stderr)
+        self.assertEqual(stdout, '')
+        with open(self.out, encoding='utf-8') as handle:
+            self.assertEqual(handle.read(), 'previous run')
 
     def test_a_database_without_field_contours_is_refused(self):
         empty = os.path.join(self.folder, 'other.db')
@@ -290,6 +353,16 @@ class Kinds(Run):
         self.assertIn('dji       : 1 -> 1', self.stdout)
         self.assertIn('wialon    : 15 -> 15', self.stdout)
 
+    def test_the_difference_sign_and_the_point_counts(self):
+        self.assertAlmostEqual(float(self.found['9']['raznitsa_ga']), 3.0,
+                               delta=0.02)
+        self.assertEqual((self.found['8']['tochek_do'],
+                          self.found['8']['tochek_posle']), ('4', '4'))
+
+    def test_the_csv_carries_a_bom_for_excel(self):
+        with open(self.out, 'rb') as handle:
+            self.assertEqual(handle.read(3), b'\xef\xbb\xbf')
+
     def test_the_console_counts(self):
         expected = [
             'wialon rows before: 15 | after: 15',
@@ -301,7 +374,14 @@ class Kinds(Run):
             '  old name inside the new  : 1',
             '  whitespace only          : 1',
             'geometry changed           : 10',
+            '  same coordinates, other text         : 1',
+            '  same ring, other start or direction  : 2',
+            '  same points, other order             : 1',
             '  other points                         : 3',
+            '    under 0.1%    : 2',
+            '    10% and more  : 1',
+            '    10 - 100 m    : 2',
+            '    100 m and more: 1',
             'nothing was written to either database: both were opened mode=ro',
         ]
         for line in expected:
@@ -316,16 +396,56 @@ class Kinds(Run):
                     self.assertNotIn(config.ascii_only(word), self.stdout, name)
 
 
+# кольцо на сетке 1e-7 градуса: сдвиг меньше шага сетки не уводит точку
+GRID = [[64.4, 40.0], [64.401, 40.0], [64.401, 40.001], [64.4, 40.001],
+        [64.4, 40.0]]
+
+
+def kind(before, after):
+    return gd.compare_geometry(text(before), text(after))[0]
+
+
+def one(before, after):
+    return gd.compare({'k': before}, {'k': after})
+
+
 class Arithmetic(unittest.TestCase):
     def test_float_noise_is_the_same_point(self):
         noisy = [[lon + 1e-12, lat - 1e-12] for lon, lat in BASE]
-        self.assertEqual(gd.compare_geometry(text(BASE), text(noisy))[0],
+        self.assertEqual(kind(BASE, noisy), 'te_zhe_koordinaty')
+
+    def test_three_millimetres_are_the_same_point(self):
+        # 3e-8 градуса -- ~3 мм: та же точка на сетке 1e-7
+        self.assertEqual(kind(GRID, [[x + 3e-8, y] for x, y in GRID]),
                          'te_zhe_koordinaty')
 
-    def test_a_centimetre_is_not_noise(self):
-        moved = [[lon + 1e-6, lat] for lon, lat in BASE]
-        self.assertEqual(gd.compare_geometry(text(BASE), text(moved))[0],
+    def test_one_centimetre_is_another_point(self):
+        # 1e-7 градуса -- ~1 см: шаг сетки, уже другая точка
+        self.assertEqual(kind(GRID, [[x + 1e-7, y] for x, y in GRID]),
                          'drugie_tochki')
+
+    def test_a_repeated_vertex_is_not_the_same_points(self):
+        a, b, c, d = GRID[:4]
+        self.assertEqual(kind([a, b, c, d, c, a], [a, b, c, d, d, a]),
+                         'drugie_tochki')
+
+    def test_metres_do_not_come_from_the_tool_constant(self):
+        # [REASON]: квадраты фикстуры строятся из gd.EARTH_RADIUS_M, и неверный
+        # радиус там сократился бы. Здесь числа записаны независимо:
+        # 0,001 градуса у 40 с. ш. -- 111,195 м на 85,18 м.
+        ring = [tuple(point) for point in GRID[:-1]]
+        self.assertAlmostEqual(gd.area_ha(ring, 40.0005), 0.9472, delta=0.002)
+        north = [[x, y + 0.001] for x, y in GRID]
+        self.assertAlmostEqual(gd.compare_geometry(text(GRID), text(north))[3],
+                               111.19, delta=0.2)
+
+    def test_points_added_on_one_side_do_not_move_the_centre(self):
+        # [REASON]: среднее вершин сдвинулось бы на 125 м, центр площади -- нет
+        sq = square(side_m=300.0)
+        a, b, c, d = sq[:4]
+        east = [[b[0], b[1] + (c[1] - b[1]) * k / 21.0] for k in range(1, 21)]
+        moved = gd.compare_geometry(text(sq), text([a, b] + east + [c, d, a]))[3]
+        self.assertLess(moved, 0.5)
 
     def test_a_ring_with_or_without_the_closing_point(self):
         self.assertEqual(gd.compare_geometry(text(BASE), text(BASE[:-1]))[0],
@@ -335,12 +455,57 @@ class Arithmetic(unittest.TestCase):
         ring = [tuple(point) for point in square()[:-1]]
         self.assertAlmostEqual(gd.area_ha(ring, LAT0), 1.0, delta=0.001)
 
+    def test_no_outline_on_either_side_is_unchanged(self):
+        # 39 линий Wialon лежат в зеркале без геометрии
+        rows, summary, _, _, _ = one(('Круг', None, 1), ('Круг', None, 1))
+        self.assertEqual((rows, summary['bez_izmeneniy']), ([], 1))
+
+    def test_the_name_counters_are_counted_apart(self):
+        _, summary, _, _, _ = one(('X', None, 1), ('X Y', None, 1))
+        self.assertEqual((summary['imya_vnutri_novogo'],
+                          summary['imya_tolko_probely']), (1, 0))
+
+    def test_a_case_only_rename_is_not_whitespace(self):
+        self.assertEqual(gd.compare_names('поле 3', 'Поле 3'),
+                         (True, False, False))
+
     def test_a_cycle_needs_the_same_length(self):
         first = [(1, 1), (2, 2), (3, 3)]
         self.assertTrue(gd.same_cycle(first, [(2, 2), (3, 3), (1, 1)]))
         self.assertTrue(gd.same_cycle(first, [(3, 3), (2, 2), (1, 1)]))
         self.assertFalse(gd.same_cycle(first, [(1, 1), (2, 2), (3, 3), (1, 1)]))
         self.assertFalse(gd.same_cycle(first, [(1, 1), (3, 3), (4, 4)]))
+
+
+
+class Buckets(unittest.TestCase):
+    def area_bucket(self, side_after, side_before=100.0):
+        _, _, _, area, _ = one(('n', text(square(side_m=side_before)), 1),
+                               ('n', text(square(side_m=side_after)), 1))
+        return dict(area)
+
+    def test_area_buckets(self):
+        self.assertEqual(self.area_bucket(100.3), {'0.1% - 1%': 1})
+        # +10,7 % от прежней площади, -9,7 % от новой
+        self.assertEqual(self.area_bucket(105.2), {'10% and more': 1})
+        # контур уменьшился -- изменение тоже большое
+        self.assertEqual(self.area_bucket(50.0), {'10% and more': 1})
+
+    def test_shift_buckets(self):
+        _, _, _, _, shift = one(('n', text(BASE), 1),
+                                ('n', text(square(east_m=5)), 1))
+        self.assertEqual(dict(shift), {'1 - 10 m': 1})
+
+    def test_bucket_limits(self):
+        self.assertEqual(gd._bucket(1.0, gd.SHIFT_BUCKETS), '1 - 10 m')
+        self.assertEqual(gd._bucket(0.001, gd.AREA_BUCKETS), '0.1% - 1%')
+
+    def test_a_flat_old_ring_is_the_largest_change(self):
+        a, b = GRID[0], GRID[1]
+        mid = [(a[0] + b[0]) / 2, a[1]]
+        _, _, _, area, _ = one(('n', text([a, mid, b, a]), 1),
+                               ('n', text(GRID), 1))
+        self.assertEqual(dict(area), {'10% and more': 1})
 
 
 if __name__ == '__main__':

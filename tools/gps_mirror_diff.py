@@ -25,7 +25,8 @@
   - геометрия: тот же текст; те же координаты другой записью; то же кольцо
     с другого начала или в другую сторону; те же точки в другом порядке;
     другие точки; контур появился или пропал;
-  - для другого контура -- площадь до и после и сдвиг центра в метрах.
+  - для другого контура -- площадь до и после и сдвиг центра площади в
+    метрах.
     Площадь приближённая (местная равнопромежуточная проекция по средней
     широте кольца) и годится только для сравнения «до» с «после». Площадь
     расчёта -- в `gps/area.py` (UTM 41N);
@@ -48,7 +49,7 @@ GPS-19: SQLite, открывая базу в режиме WAL на чтение,
        --before и --after -- один файл, в пути к базе есть `#`, `?` или `%`
        (SQLite прочёл бы его как адрес), в базе нет `field_contours`,
        --out указывает на базу, её -wal/-shm или любой файл SQLite, папки
-       для --out нет;
+       для --out нет, файл --out не открывается на запись (открыт в Excel);
   1 -- инструмент упал (необработанное исключение) -- CSV не записан.
 
 Запуск -- обычный Python сервера, геостек не нужен (PowerShell, по одной
@@ -72,7 +73,7 @@ from collections import Counter
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from gps_collector import config                                   # noqa: E402
-from tools.gps_mark_not_ours import out_clash                      # noqa: E402
+from tools.gps_mark_not_ours import out_clash, out_writable        # noqa: E402
 
 SOURCE = 'wialon'
 EXIT_OK, EXIT_CRASH, EXIT_BAD_INPUT = 0, 1, 2
@@ -203,9 +204,27 @@ def area_ha(ring, lat0):
 
 
 def centre(ring, lat0):
+    """Центр площади кольца в проекции у lat0, м.
+
+    [REASON]: среднее вершин уходит туда, где точек гуще: квадрат 300 м,
+    которому на одну сторону добавили двадцать точек, «сдвинулся» бы на 125 м,
+    не сдвинувшись. Нужен центр площади. Он считается от первой вершины:
+    на абсолютных координатах (~5e6 м) вычитание теряет полметра. У
+    вырожденного кольца (площадь около нуля) -- среднее вершин.
+    """
     points = projected(ring, lat0)
-    return (sum(x for x, _ in points) / len(points),
-            sum(y for _, y in points) / len(points))
+    ox, oy = points[0]
+    local = [(x - ox, y - oy) for x, y in points]
+    twice = cx = cy = 0.0
+    for (x1, y1), (x2, y2) in zip(local, local[1:] + local[:1]):
+        cross = x1 * y2 - x2 * y1
+        twice += cross
+        cx += (x1 + x2) * cross
+        cy += (y1 + y2) * cross
+    if abs(twice) < 1e-6:
+        return (sum(x for x, _ in points) / len(points),
+                sum(y for _, y in points) / len(points))
+    return ox + cx / (3.0 * twice), oy + cy / (3.0 * twice)
 
 
 def compare_geometry(before, after):
@@ -398,6 +417,13 @@ def check_paths(args):
     if clash:
         raise BadInput('--out points at %s - refusing to overwrite it'
                        % config.ascii_only(clash))
+    # [REASON]: CSV, открытый в Excel, на Windows не пишется (PermissionError).
+    # Проверка до сравнения: иначе журнал получил бы полный отчёт и трассировку
+    # рядом с прежним CSV.
+    why = out_writable(args.out)
+    if why:
+        raise BadInput('cannot write %s (%s) - close it in Excel; nothing '
+                       'was written' % (config.ascii_only(args.out), why))
 
 
 def main(argv=None):
