@@ -69,9 +69,12 @@ def owner_lists(folder=None):
 
     Дата и номер берутся из имени, а не порядком строк: чужой файл с тем же
     началом имени (выгрузка зон GPS-19, «_v3x», «-копия») списком не
-    считается. Список без номера -- первый за сутки; следующий за те же
-    сутки -- «_vN» (15.10: v2 по ответу утром, v3 по ответу вечером). Два
-    списка с одним ключом (`_v3` и `_v03`, без номера и `_v0`) -- ошибка.
+    считается. N в «_vN» -- сквозной номер версии списка: v1 -- 14.10, v2 --
+    15.10 по ответу утром (без номера: первый за сутки), v3 -- 15.10 по
+    ответу вечером. Списки одной даты упорядочены по N (без номера -- 0),
+    поэтому следующий список той же даты обязан нести N больше всех уже
+    взятых: следующий за 15.10 -- `_v4`. Два списка с одним ключом (`_v3` и
+    `_v03`, без номера и `_v0`) -- ошибка.
     """
     found = {}
     folder = folder or os.path.join(REPO_ROOT, "docs")
@@ -456,12 +459,16 @@ class OwnerListNames(unittest.TestCase):
         self.assertEqual(self.latest(), "gps_territory_zones_2026-10-15_v10.csv")
 
     def test_foreign_files_are_not_lists(self):
+        # [REASON]: все чужие имена проходят маску glob и несут дату позже
+        # 14.10 -- просочись одно через регулярное выражение, оно стало бы
+        # «последним списком», и тест это увидит.
         self.put("gps_territory_zones_2026-10-14.csv",
-                 "gps_territory_zones.csv",
                  "gps_territory_zones_2026-10-15_v3x.csv",
                  "gps_territory_zones_2026-10-15-kopiya.csv",
                  "gps_territory_zones_2026-10-15_v.csv",
-                 "gps_territory_zones_2026-10-15.csv.bak")
+                 "gps_territory_zones_2026-10-15.csv.csv",
+                 "gps_territory_zones_20261016.csv",
+                 "gps_territory_zones_2026-10-15-v4.csv")
         self.assertEqual(self.latest(), "gps_territory_zones_2026-10-14.csv")
 
     def test_two_lists_with_one_key_are_an_error(self):
