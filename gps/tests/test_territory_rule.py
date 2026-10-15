@@ -17,6 +17,7 @@
   python -m unittest discover -s gps/tests -t .
 """
 
+import csv
 import glob
 import io
 import json
@@ -178,8 +179,13 @@ class LoadTerritory(unittest.TestCase):
             (row_id, source, str(external),
              None if polygon is None else geojson_from_utm(polygon), is_active))
 
-    def load(self, ids):
-        return territory.load_territory(self.con, ids, log=self.lines.append)
+    def load(self, ids, pins=None):
+        """Зоны с площадью при замере: по умолчанию -- их нынешние контуры."""
+        areas = {501: 1.0, 502: 64.0, 503: 1.0, 999: 1.0}
+        areas.update(pins or {})
+        return territory.load_territory(
+            self.con, {zone: areas[zone] for zone in ids},
+            log=self.lines.append)
 
     def test_listed_zones_with_an_outline_make_the_territory(self):
         self.add(1, 501, self.small)
@@ -222,6 +228,33 @@ class LoadTerritory(unittest.TestCase):
         self.add(2, 503, square(300000.0 + 2000, 4430000.0, 100))
         self.assertEqual(sorted(self.load([501]).zones), [501])
 
+    def test_a_zone_gps19_did_not_measure_is_left_out(self):
+        # 15.10: зона 18402 была в списке без контура -- условие п. 5 её не
+        # мерило; контур, появившийся позже в зеркале, в правило не входит.
+        self.add(1, 501, self.small)
+        self.add(2, 503, square(300000.0 + 2000, 4430000.0, 100))
+        rule = self.load([501, 503], pins={503: None})
+        self.assertEqual(sorted(rule.zones), [501])
+        self.assertEqual(rule.left_out[503], 'not measured by GPS-19')
+
+    def test_an_outline_redrawn_since_the_measurement_is_left_out(self):
+        # зеркало переписывает геометрию изменившихся зон: 1 га стал 1,21 га
+        self.add(1, 501, square(300000.0, 4430000.0, 110))
+        self.assertIsNone(self.load([501], pins={501: 1.0}))
+        self.assertTrue(any('outline changed' in line for line in self.lines))
+
+    def test_the_same_outline_within_the_tolerance_is_kept(self):
+        self.add(1, 501, self.small)
+        rule = self.load([501], pins={501: 1.0 + territory.PIN_TOLERANCE_HA / 2})
+        self.assertEqual(sorted(rule.zones), [501])
+
+    def test_the_zone_area_is_the_one_gps19_measures(self):
+        # движок и замер читают контур одной обработкой: площади совпадают
+        from gps.daily import _utm_polygon_from_geojson
+        text = geojson_from_utm(square(300000.0, 4430000.0, 137.5))
+        self.assertAlmostEqual(ha(territory.zone_polygon(text)),
+                               ha(_utm_polygon_from_geojson(text)), places=9)
+
 
 # --- 3. список зон ----------------------------------------------------------------
 
@@ -235,46 +268,63 @@ class ZoneList(unittest.TestCase):
         self.addCleanup(os.unlink, handle.name)
         return handle.name
 
+    HEADER = "zona_id,gruppa_id,tip,ploshchad_ga\n"
+
     def test_a_good_list_reads(self):
-        path = self.write("zona_id,gruppa_id,tip\n1,16,azs\n351,3,azs\n")
-        self.assertEqual(territory.read_zone_ids(path), [1, 351])
+        path = self.write(self.HEADER + "1,16,azs,16.7744\n18402,3,azs,\n")
+        self.assertEqual(territory.read_zone_list(path),
+                         {1: 16.7744, 18402: None})
 
     def test_a_repeated_zone_is_refused(self):
-        path = self.write("zona_id,gruppa_id,tip\n1,16,azs\n1,3,azs\n")
+        path = self.write(self.HEADER + "1,16,azs,1.0\n1,3,azs,1.0\n")
         with self.assertRaises(territory.BadZoneList):
-            territory.read_zone_ids(path)
+            territory.read_zone_list(path)
 
     def test_a_non_number_is_refused(self):
-        path = self.write("zona_id,gruppa_id,tip\nx1,16,azs\n")
         with self.assertRaises(territory.BadZoneList):
-            territory.read_zone_ids(path)
+            territory.read_zone_list(self.write(self.HEADER + "x1,16,azs,1.0\n"))
+
+    def test_a_bad_area_is_refused(self):
+        for area in ("abc", "0", "-1.5"):
+            with self.assertRaises(territory.BadZoneList, msg=area):
+                territory.read_zone_list(
+                    self.write(self.HEADER + "1,16,azs,%s\n" % area))
 
     def test_an_empty_list_is_refused(self):
         with self.assertRaises(territory.BadZoneList):
-            territory.read_zone_ids(self.write("zona_id,gruppa_id,tip\n"))
+            territory.read_zone_list(self.write(self.HEADER))
 
-    def test_a_list_without_the_column_is_refused(self):
+    def test_a_list_without_the_columns_is_refused(self):
         with self.assertRaises(territory.BadZoneList):
-            territory.read_zone_ids(self.write("id,group\n1,16\n"))
+            territory.read_zone_list(self.write("id,group\n1,16\n"))
+        # список владельца из docs/ без площадей движку не годится
+        with self.assertRaises(territory.BadZoneList):
+            territory.read_zone_list(self.write("zona_id,gruppa_id,tip\n1,16,azs\n"))
 
     def test_a_missing_file_is_refused(self):
         with self.assertRaises(territory.BadZoneList):
-            territory.read_zone_ids("/nonexistent/territory_zones.csv")
+            territory.read_zone_list("/nonexistent/territory_zones.csv")
 
     def test_the_engine_list_is_the_owner_s_latest_list(self):
-        # [REASON]: список движка -- копия последнего списка владельца в
-        # docs/. Разойдись они, правило снимало бы гектары по одному списку,
-        # а замер GPS-19 и документы говорили бы о другом.
+        # [REASON]: список движка -- последний список владельца в docs/ плюс
+        # площадь каждой зоны при замере GPS-19. Разойдись они, правило
+        # снимало бы гектары по одному списку, а замер и документы говорили
+        # бы о другом.
         latest = sorted(glob.glob(os.path.join(
             REPO_ROOT, "docs", "gps_territory_zones_*.csv")))[-1]
-        with open(territory.ZONES_PATH, encoding="utf-8") as engine, \
-                open(latest, encoding="utf-8") as owner:
-            self.assertEqual(engine.read(), owner.read(),
-                             "gps/data/territory_zones.csv != %s" % latest)
+        with open(latest, encoding="utf-8") as owner:
+            owner_rows = list(csv.DictReader(owner))
+        with open(territory.ZONES_PATH, encoding="utf-8") as engine:
+            engine_rows = list(csv.DictReader(engine))
+        self.assertEqual(
+            [(row["zona_id"], row["gruppa_id"], row["tip"]) for row in engine_rows],
+            [(row["zona_id"], row["gruppa_id"], row["tip"]) for row in owner_rows],
+            "gps/data/territory_zones.csv != %s" % latest)
 
-    def test_the_engine_list_reads(self):
-        ids = territory.read_zone_ids()
-        self.assertGreater(len(ids), 0)
+    def test_the_engine_list_reads_and_most_zones_are_measured(self):
+        zones = territory.read_zone_list()
+        measured = [zone for zone, area in zones.items() if area is not None]
+        self.assertGreater(len(measured), len(zones) // 2)
 
 
 # --- 4. ночной расчёт -------------------------------------------------------------
@@ -298,8 +348,7 @@ class NightlyRule(unittest.TestCase):
             (UNIT, t, lon, lat, speed, 90, sats)
             for t, lon, lat, speed, sats in self.track])
         self.zones = os.path.join(self.folder, "zones.csv")
-        with open(self.zones, "w", encoding="utf-8") as handle:
-            handle.write("zona_id,gruppa_id,tip\n3208,16,ptm\n")
+        self.pin(zone_geojson(read_fixture_zone()))
         self.patches = [mock.patch.object(territory, "ZONES_PATH", self.zones)]
         for patch in self.patches:
             patch.start()
@@ -307,6 +356,13 @@ class NightlyRule(unittest.TestCase):
 
     def tearDown(self):
         gps_mig.DB_PATH, migration_utils.DB_PATH = self._saved
+
+    def pin(self, geometry_geojson):
+        """Список движка: зона 3208 с площадью этого контура, как при замере."""
+        area = ha(territory.zone_polygon(geometry_geojson))
+        with open(self.zones, "w", encoding="utf-8") as handle:
+            handle.write("zona_id,gruppa_id,tip,ploshchad_ga\n3208,16,ptm,%.4f\n"
+                         % area)
 
     def mirror(self, geometry_geojson, external="3208", row_id=77):
         con = sqlite3.connect(self.db)
@@ -339,7 +395,7 @@ class NightlyRule(unittest.TestCase):
     def test_switched_off_nothing_is_read_and_the_day_is_as_before(self):
         self.mirror(zone_geojson(read_fixture_zone()))
         with mock.patch.object(territory, "TERRITORY_FROM", None), \
-                mock.patch.object(territory, "read_zone_ids",
+                mock.patch.object(territory, "read_zone_list",
                                   side_effect=AssertionError("read")):
             result = self.run_day()
         self.assertIsNone(result.reason)
@@ -373,6 +429,30 @@ class NightlyRule(unittest.TestCase):
         self.assertFalse(territory.rule_applies("2026-07-26", DAY))
         self.assertFalse(territory.rule_applies(DAY, ""))
 
+    def test_dates_are_compared_as_dates_not_as_text(self):
+        # «2026-07-5» как строка больше «2026-07-27», а как дата -- раньше
+        self.assertFalse(territory.rule_applies("2026-07-5", DAY))
+        self.assertTrue(territory.rule_applies("2026-08-1", DAY))
+
+    def test_a_malformed_start_date_is_an_error_not_off(self):
+        for start in ("27.07.2026", "2026-7-27x", "yesterday"):
+            with self.assertRaises(ValueError, msg=start):
+                territory.rule_applies(DAY, start)
+
+    def test_the_start_date_in_the_code_is_off_or_a_real_date(self):
+        if territory.TERRITORY_FROM is not None:
+            territory.rule_applies(territory.TERRITORY_FROM)
+            self.assertRegex(territory.TERRITORY_FROM, r"^\d{4}-\d{2}-\d{2}$")
+
+    def test_a_day_without_motion_after_the_start_carries_no_label(self):
+        # метка -- только у суток, чьи участки правило резало
+        standing = [(t, lon, lat, 0.0, sats)
+                    for t, lon, lat, _speed, sats in self.track[:50]]
+        rule = territory.Territory({1: square(0, 0, 100)})
+        result = daily.compute_day(standing, territory=rule)
+        self.assertEqual(result.reason, daily.REASON_NO_MOTION)
+        self.assertEqual(result.aggregate["method_version"], METHOD_VERSION)
+
     def test_part_of_the_site_on_a_yard_is_subtracted(self):
         # двор -- западная треть рамки участка: доля меньше половины
         result = daily.compute_day(self.track)
@@ -381,6 +461,7 @@ class NightlyRule(unittest.TestCase):
         yard = shapely.geometry.box(minx - 0.001, miny - 0.001,
                                     minx + (maxx - minx) / 3, maxy + 0.001)
         self.mirror(json.dumps(shapely.geometry.mapping(yard)))
+        self.pin(json.dumps(shapely.geometry.mapping(yard)))
         with mock.patch.object(territory, "TERRITORY_FROM", DAY):
             self.run_day()
         aggregate, sites = self.stored()
@@ -399,7 +480,8 @@ class NightlyRule(unittest.TestCase):
 
     def test_a_broken_list_stops_the_day_loudly(self):
         with open(self.zones, "w", encoding="utf-8") as handle:
-            handle.write("zona_id,gruppa_id,tip\n3208,16,ptm\n3208,16,ptm\n")
+            handle.write("zona_id,gruppa_id,tip,ploshchad_ga\n"
+                         "3208,16,ptm,8.97\n3208,16,ptm,8.97\n")
         with mock.patch.object(territory, "TERRITORY_FROM", DAY):
             with self.assertRaises(territory.BadZoneList):
                 self.run_day()
@@ -433,7 +515,7 @@ class NightlyRule(unittest.TestCase):
         sys.stdout = out
         try:
             with mock.patch.object(territory, "TERRITORY_FROM", "2026-08-01"), \
-                    mock.patch.object(territory, "read_zone_ids",
+                    mock.patch.object(territory, "read_zone_list",
                                       side_effect=AssertionError("read")):
                 code = daily.main(["--date", DAY, "--dir", self.folder,
                                    "--db", self.db])

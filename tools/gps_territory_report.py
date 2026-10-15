@@ -152,6 +152,10 @@ from shapely.ops import transform as shapely_transform              # noqa: E402
 from gps.area import MIN_WORK_AREA_HA, repair_polygon, to_utm       # noqa: E402
 from gps.daily import _utm_polygon_from_geojson                     # noqa: E402
 from gps.exclusion import excluded_units                            # noqa: E402
+# [REASON]: пороги правила -- одни на замер и на движок: правило должно
+# делать ровно то, что мерили, а два места с одним числом рано или поздно
+# расходятся.
+from gps.territory import DROP_SHARE, LARGE_ZONE_HA, SHARE_DIGITS   # noqa: E402
 from tools.gps_mark_not_ours import (BadInput, out_clash,           # noqa: E402
                                      out_writable)
 from tools.gps_track_only_days import console, open_readonly        # noqa: E402
@@ -184,18 +188,16 @@ REQUIRED = {
     'equipment': ('id', 'name', 'plate', 'category'),
 }
 
-# [REASON]: порог из правила §2.14 (п. 2): участок, половина и больше
-# которого на территории, -- не гектары. Вариант Б меряет его отдельно от
-# вычитания, гибрид правила выводится из обоих столбцов.
-DROP_SHARE = 0.5
-SHARE_DIGITS = 3
+# DROP_SHARE (§2.14, п. 2: участок, половина и больше которого на
+# территории, -- не гектары; вариант Б меряет его отдельно от вычитания,
+# гибрид правила выводится из обоих столбцов), SHARE_DIGITS и LARGE_ZONE_HA
+# -- из gps.territory.
 HA_DIGITS = 4
 ZONES_SHOWN = 5
 LIST_SEPARATOR = ' | '
-# [REASON]: зона в десятки гектаров -- уже не двор завода, а, может быть,
-# поле рядом с ним. Такие зоны печатаются отдельно: правило, снимающее
-# гектары по ним, сняло бы настоящую работу.
-LARGE_ZONE_HA = 50.0
+# Зона больше LARGE_ZONE_HA -- уже не двор завода, а, может быть, поле
+# рядом с ним. Такие зоны печатаются отдельно: правило, снимающее гектары
+# по ним, сняло бы настоящую работу.
 LARGEST_SHOWN = 5
 FAILED_SHOWN = 10
 # Корзины доли: (подпись, нижняя граница включительно). Первая корзина --
@@ -652,12 +654,21 @@ def inclusion_condition(result):
     """
     totals = result['totals']
     count, area = totals['answered'].get(WORK_LABEL, (0, 0.0))
+    # [REASON]: без единой зоны в правиле каждый участок «далеко», и условие
+    # выполнилось бы на пустом месте -- 15.10 проверка нашла это на базе без
+    # контуров. Мерить было нечем -- это не «выполнено».
+    if not any(zone['in_rule'] for zone in result['zones']):
+        return ('NOT EVALUATED', 'no listed zone is in the rule (no outline or '
+                'larger than %.0f ha)' % LARGE_ZONE_HA)
     if totals['work_unmeasured']:
         return ('NOT EVALUATED', '%d site(s) answered %s were not measured'
                 % (totals['work_unmeasured'], console(WORK_LABEL)))
-    if not count or area <= 0:
+    if not count:
         return ('NOT EVALUATED', 'no site answered %s in the window'
                 % console(WORK_LABEL))
+    if area <= 0:
+        return ('NOT EVALUATED', '%d site(s) answered %s hold 0 ha in the window'
+                % (count, console(WORK_LABEL)))
     work = [row for row in result['rows'] if row['operator_label'] == WORK_LABEL]
     over = sum(1 for row in work if row['dolya'] >= DROP_SHARE)
     loss = sum(removed_a(row) for row in work)

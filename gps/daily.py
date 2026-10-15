@@ -257,9 +257,8 @@ def compute_day(points, contours=None, track_only=False, overflow_cap=True,
                  "interval_median_s": None, "sats_median": None,
                  "motion_gaps": 0, "lost_seconds": 0.0, "gps_jumps": 0,
                  "reason": None,
-                 "method_version": method_version(
-                     overflow_cap, edge_rule=edge_rule,
-                     territory=territory is not None)}
+                 "method_version": method_version(overflow_cap,
+                                                  edge_rule=edge_rule)}
     if not points:
         aggregate["reason"] = REASON_NO_POINTS
         return DayResult(aggregate, [])
@@ -306,6 +305,12 @@ def compute_day(points, contours=None, track_only=False, overflow_cap=True,
         aggregate["reason"] = REASON_RARE
         return DayResult(aggregate, [])
 
+    # [REASON]: метка правила территорий -- только у суток, чьи участки оно
+    # резало. Сутки без движения, с редкой записью или без точек считаются
+    # одинаково с правилом и без него, и метка на них говорила бы о том,
+    # чего не было.
+    aggregate["method_version"] = method_version(
+        overflow_cap, edge_rule=edge_rule, territory=territory is not None)
     sites, _ = work_sites(points, contours=contours, overflow_cap=overflow_cap,
                           edge_rule=edge_rule, territory=territory)
     flag = quality_flag(quality)
@@ -611,7 +616,7 @@ def rule_territory(con, log=None):
     if territory_rule.TERRITORY_FROM is None:
         return None
     return territory_rule.load_territory(
-        con, territory_rule.read_zone_ids(), log=log)
+        con, territory_rule.read_zone_list(), log=log)
 
 
 def run_day(day, unit_id, folder=None, db_path=None, contours=None, log=print,

@@ -1080,6 +1080,47 @@ class Verdict(unittest.TestCase):
         self.assertIn(': NOT EVALUATED -- no site answered rabota in the window',
                       self.verdict_line(output))
 
+    def failing_at(self, x, y):
+        real = terr.measure_site
+
+        def failing(site, territories, tree):
+            if abs(site.centroid.x - (X0 + x)) < 1 and \
+                    abs(site.centroid.y - (Y0 + y)) < 1:
+                raise GEOSException('TopologyException: test')
+            return real(site, territories, tree)
+        return mock.patch.object(terr, 'measure_site', failing)
+
+    def test_a_work_site_the_geometry_failed_on_is_not_evaluated(self):
+        # участок «in» (работа, целиком на зоне 520) не измерился -- условие
+        # не «выполнено», даже если других участков «работа» на территории нет
+        with self.failing_at(100, 100):
+            code, output = self.run_tool('--since', D1, '--until', D1)
+        self.assertEqual(code, 3, output)
+        self.assertIn(': NOT EVALUATED -- 1 site(s) answered rabota were not '
+                      'measured', self.verdict_line(output))
+
+    def test_a_failed_passage_site_does_not_hide_the_verdict(self):
+        # GEOS упал на участке «проезд» -- вердикт по «работе» тот же
+        with self.failing_at(2120, 100):
+            code, output = self.run_tool('--since', D1, '--until', D1)
+        self.assertEqual(code, 3, output)
+        self.assertIn(': NOT MET -- 1 site(s) answered rabota with share >= 0.5',
+                      self.verdict_line(output))
+
+    def test_an_unreadable_passage_site_is_not_an_unmeasured_work_site(self):
+        self.sql("UPDATE gps_work_polygons SET operator_label = ? "
+                 "WHERE work_date = ? AND wialon_id = ? AND site_number = 6",
+                 (PASSAGE, D1, U_FREE))
+        code, output = self.run_tool()
+        self.assertIn(': NOT MET -- 1 site(s)', self.verdict_line(output))
+
+    def test_a_list_with_no_zone_in_the_rule_is_not_evaluated(self):
+        # только зона 64 га и зона, которой нет в зеркале: мерить нечем
+        write_zones_list(self.zones, [17922, NOT_MIRRORED])
+        code, output = self.run_tool()
+        self.assertIn(': NOT EVALUATED -- no listed zone is in the rule',
+                      self.verdict_line(output))
+
     def test_the_verdict_is_next_to_last_in_the_log(self):
         code, output = self.run_tool()
         lines = output.strip().splitlines()
@@ -1090,12 +1131,13 @@ class Verdict(unittest.TestCase):
 class VerdictArithmetic(unittest.TestCase):
     """Пороги условия на числах, без геометрии."""
 
-    def result(self, rows, work_ha, unmeasured=0, work_count=None):
+    def result(self, rows, work_ha, unmeasured=0, work_count=None,
+               in_rule=True):
         answered = {}
-        if work_ha:
+        if work_ha is not None:
             answered[terr.WORK_LABEL] = [work_count or len(rows) or 1, work_ha]
-        return {'rows': rows, 'totals': {'answered': answered,
-                                         'work_unmeasured': unmeasured}}
+        return {'rows': rows, 'zones': [{'in_rule': in_rule}],
+                'totals': {'answered': answered, 'work_unmeasured': unmeasured}}
 
     def row(self, removed, share=0.1, label=terr.WORK_LABEL):
         return {'geom_ha': 10.0, 'ga_posle_vychitaniya': 10.0 - removed,
@@ -1125,6 +1167,24 @@ class VerdictArithmetic(unittest.TestCase):
         verdict, _ = terr.inclusion_condition(self.result(
             [self.row(50.0, share=0.9, label='проезд')], 100.0))
         self.assertEqual(verdict, 'MET')
+
+    def test_float_noise_at_exactly_5_percent_is_still_met(self):
+        # 10 - 9.95 = 0.05000000000000071: без допуска -- NOT MET
+        verdict, _ = terr.inclusion_condition(
+            self.result([self.row(0.05)], 1.0))
+        self.assertEqual(verdict, 'MET')
+
+    def test_work_answers_holding_zero_hectares_are_not_evaluated(self):
+        verdict, detail = terr.inclusion_condition(
+            self.result([], 0.0, work_count=1))
+        self.assertEqual(verdict, 'NOT EVALUATED')
+        self.assertIn('hold 0 ha', detail)
+
+    def test_no_zone_in_the_rule_is_not_evaluated(self):
+        verdict, detail = terr.inclusion_condition(
+            self.result([], 100.0, in_rule=False))
+        self.assertEqual(verdict, 'NOT EVALUATED')
+        self.assertIn('no listed zone is in the rule', detail)
 
     def test_the_label_is_the_screen_s(self):
         # [REASON]: инструмент не импортирует models -- строка ответа

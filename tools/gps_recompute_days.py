@@ -71,7 +71,8 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from gps import daily                                               # noqa: E402
-from gps.area import METHOD_VERSION, PREVIOUS_METHOD_VERSION        # noqa: E402
+from gps.area import (METHOD_VERSION, PREVIOUS_METHOD_VERSION,      # noqa: E402
+                      TERRITORY_RULE_VERSION)
 from gps.exclusion import excluded_units                            # noqa: E402
 from gps_collector import config as collector_config               # noqa: E402
 from gps_collector import storage                                    # noqa: E402
@@ -214,6 +215,13 @@ def print_plan(days, rows, excluded, answers, verdicts, out):
         'recompute does not touch them)' % verdicts)
 
 
+# [REASON]: сутки, посчитанные действующим методом с правилом территорий
+# (gps/territory.py, после его включения), -- тоже действующий метод, а не
+# «ещё не пересчитано»: иначе каждый пересчёт окна после включения называл
+# бы их оставшимися на старом методе.
+IN_FORCE = (METHOD_VERSION, METHOD_VERSION + '+' + TERRITORY_RULE_VERSION)
+
+
 def compare(before, after, excluded, out):
     """Сводка «было -> стало» по месяцам; возвращает число непересчитанных."""
     months = defaultdict(lambda: [0.0, 0.0, 0, 0])
@@ -224,7 +232,7 @@ def compare(before, after, excluded, out):
     # методе, и сводка покажет только остаток. Это надо сказать прямо, не
     # угадывая, какая из двух причин.
     earlier = sum(1 for (day, unit), row in before.items()
-                  if unit not in excluded and row[1] == METHOD_VERSION)
+                  if unit not in excluded and row[1] in IN_FORCE)
     for key in sorted(set(before) | set(after)):
         day, unit = key
         if unit in excluded:
@@ -242,7 +250,7 @@ def compare(before, after, excluded, out):
         if (old is not None and new is not None and old[0] is None
                 and new[0] is None and new[2] > old[2] + EPSILON):
             increased.append((key, old[2], new[2]))
-        if new is not None and new[1] != METHOD_VERSION:
+        if new is not None and new[1] not in IN_FORCE:
             left_old.append((key, new[1]))
     out('')
     if earlier:

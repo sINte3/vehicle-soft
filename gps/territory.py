@@ -36,6 +36,7 @@ TERRITORY_RULE_VERSION -- как правила края: сутки без пр
 import csv
 import json
 import os
+from datetime import datetime
 
 import shapely
 from shapely.geometry import shape as shapely_shape
@@ -47,7 +48,10 @@ from gps.area import (MIN_WORK_AREA_HA, TERRITORY_RULE_VERSION,  # noqa: F401
 
 # [REASON]: §2.14, п. 4 -- правило действует только на сутки с датой не
 # раньше дня выпуска, а дата записывается в код вместе с включением. None --
-# выключено: ни один день не считается с правилом. Включает владелец.
+# выключено: ни один день не считается с правилом. Включает владелец. Дата --
+# строка YYYY-MM-DD, равная дню выпуска: раньше -- сутки между ней и выпуском
+# опубликуются без правила, а любой проход `--catch-up` потом пересчитает
+# их с правилом и поменяет гектары, которые владелец уже видел.
 TERRITORY_FROM = None
 
 # [REASON]: §2.14, п. 1 -- двор завода или пункта -- это единицы гектаров;
@@ -64,6 +68,15 @@ DROP_SHARE = 0.5
 # шумом плавающей точки (0,49999999 против 0,5).
 SHARE_DIGITS = 3
 
+# [REASON]: §2.14, п. 5 -- список зон меняется только по ответу владельца, и
+# после этого GPS-19 прогоняется снова. Зеркало же обновляет контуры само
+# (`tools/gps_mirror_contours.py` переписывает геометрию изменившихся зон),
+# поэтому в списке движка у каждой зоны записана площадь контура, по
+# которому её мерил GPS-19. Контур, который с тех пор стал другим (больше
+# допуска), или зона, которую GPS-19 не мерил (без площади), в правило не
+# входят, пока список не пересобран после нового замера.
+PIN_TOLERANCE_HA = 0.01
+
 SOURCE = 'wialon'
 ZONES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data',
                           'territory_zones.csv')
@@ -73,21 +86,32 @@ class BadZoneList(ValueError):
     """Список зон не читается -- правило без списка не применяется."""
 
 
+def _date(value):
+    return datetime.strptime(value, '%Y-%m-%d').date()
+
+
 def rule_applies(day, start=None):
     """Действует ли правило на сутки `day` (YYYY-MM-DD).
 
-    `start` -- дата включения; None -- взять TERRITORY_FROM. Строки дат в
-    одном формате сравниваются как даты.
+    `start` -- дата включения; None -- взять TERRITORY_FROM.
+
+    [REASON]: даты разбираются, а не сравниваются строками: «2026-10-5»
+    против «2026-10-16» как строка больше, и сутки до выпуска получили бы
+    правило. Неверная дата -- ValueError, а не тихое «выключено».
     """
     start = TERRITORY_FROM if start is None else start
-    return bool(start) and day >= start
+    if not start:
+        return False
+    return _date(day) >= _date(start)
 
 
-def read_zone_ids(path=None):
-    """id зон Wialon из списка (`zona_id`, CSV через запятую). Кривое -- ошибка.
+def read_zone_list(path=None):
+    """{id зоны Wialon: площадь контура при замере, га, или None} из списка.
 
-    `path` None -- список движка ZONES_PATH (читается при вызове, а не при
-    импорте: тест и инструмент могут подставить свой).
+    Столбцы `zona_id` и `ploshchad_ga` (CSV через запятую); пустая площадь --
+    зону GPS-19 не мерил (контура не было). `path` None -- список движка
+    ZONES_PATH (читается при вызове, а не при импорте: тест и инструмент
+    могут подставить свой).
 
     [REASON]: список -- решение владельца. Повтор id, нечисло или пустой
     список -- ошибка в списке, и молча её не чинят: правило с неверным
@@ -96,28 +120,37 @@ def read_zone_ids(path=None):
     path = path or ZONES_PATH
     if not os.path.isfile(path):
         raise BadZoneList('territory zone list not found: %s' % path)
-    ids, seen = [], set()
+    zones = {}
     try:
         with open(path, encoding='utf-8-sig', newline='') as handle:
             reader = csv.DictReader(handle)
-            if 'zona_id' not in (reader.fieldnames or []):
-                raise BadZoneList('%s has no zona_id column' % path)
+            for column in ('zona_id', 'ploshchad_ga'):
+                if column not in (reader.fieldnames or []):
+                    raise BadZoneList('%s has no %s column' % (path, column))
             for line, row in enumerate(reader, 2):
                 value = (row.get('zona_id') or '').strip()
                 if not value.isdigit() or int(value) <= 0:
                     raise BadZoneList('%s line %d: zona_id is not a positive '
                                       'number' % (path, line))
-                if int(value) in seen:
+                if int(value) in zones:
                     raise BadZoneList('%s line %d: zona_id %s is listed twice'
                                       % (path, line, value))
-                seen.add(int(value))
-                ids.append(int(value))
+                area = (row.get('ploshchad_ga') or '').strip()
+                try:
+                    pinned = float(area) if area else None
+                except ValueError:
+                    raise BadZoneList('%s line %d: ploshchad_ga is not a number'
+                                      % (path, line))
+                if pinned is not None and not pinned > 0:
+                    raise BadZoneList('%s line %d: ploshchad_ga must be above 0'
+                                      % (path, line))
+                zones[int(value)] = pinned
     except (UnicodeDecodeError, csv.Error) as problem:
         raise BadZoneList('%s is not a readable CSV (%s)'
                           % (path, problem.__class__.__name__))
-    if not ids:
+    if not zones:
         raise BadZoneList('%s lists no zones' % path)
-    return ids
+    return zones
 
 
 def zone_polygon(text):
@@ -194,20 +227,23 @@ def polygon_parts(geometry):
     return parts
 
 
-def load_territory(con, zone_ids, log=None):
+def load_territory(con, zones, log=None):
     """Territory по зонам списка из `field_contours`; None -- ни одной зоны.
 
+    `zones` -- {id зоны: площадь при замере или None}, как read_zone_list.
     Строка зеркала берётся, как у расчёта и у GPS-19: `source = 'wialon'`,
     `external_id` -- id зоны, выключенная строка (`is_active = 0`) -- не
-    контур. Зона без контура и зона больше LARGE_ZONE_HA называются в
-    журнале и в правило не входят.
+    контур. В правило не входят и называются в журнале: зона без контура,
+    зона больше LARGE_ZONE_HA, зона без площади замера и зона, чей контур с
+    замера изменился больше чем на PIN_TOLERANCE_HA.
 
     [REASON]: None, а не пустая территория: правило, включённое при пустом
     зеркале, не сняло бы ничего, а сутки несли бы метку правила. Вызывающий
     тогда считает сутки без правила и честно без метки, а журнал говорит
     почему.
     """
-    zone_ids = [int(zone) for zone in zone_ids]
+    pins = {int(zone): area for zone, area in dict(zones).items()}
+    zone_ids = list(pins)
     if not zone_ids:
         return None
     marks = ','.join('?' * len(zone_ids))
@@ -218,7 +254,7 @@ def load_territory(con, zone_ids, log=None):
             'AND external_id IN (%s) ORDER BY id' % marks,
             [SOURCE] + [str(zone) for zone in zone_ids]):
         rows[str(external)] = geometry
-    zones, left_out = {}, {}
+    kept, left_out = {}, {}
     for zone in zone_ids:
         geometry = rows.get(str(zone))
         polygon = zone_polygon(geometry) if geometry else None
@@ -226,15 +262,20 @@ def load_territory(con, zone_ids, log=None):
             left_out[zone] = 'no outline'
         elif polygon.area / 10000.0 > LARGE_ZONE_HA:
             left_out[zone] = 'larger than %g ha' % LARGE_ZONE_HA
+        elif pins[zone] is None:
+            left_out[zone] = 'not measured by GPS-19'
+        elif abs(polygon.area / 10000.0 - pins[zone]) > PIN_TOLERANCE_HA:
+            left_out[zone] = ('outline changed since GPS-19: %.4f ha, measured '
+                              '%.4f ha' % (polygon.area / 10000.0, pins[zone]))
         else:
-            zones[zone] = polygon
+            kept[zone] = polygon
     if log and left_out:
         log('  territory: %d zone(s) left out of the rule: %s'
             % (len(left_out), ', '.join('%s (%s)' % (zone, why)
                                         for zone, why in sorted(left_out.items()))))
-    if not zones:
+    if not kept:
         if log:
-            log('  territory: no listed zone has an outline -- the rule is '
-                'NOT applied')
+            log('  territory: no listed zone has a usable outline -- the rule '
+                'is NOT applied')
         return None
-    return Territory(zones, left_out)
+    return Territory(kept, left_out)
