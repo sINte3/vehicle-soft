@@ -56,7 +56,8 @@
   0 -- готово (сухой прогон или запись без остатка);
   3 -- записано, но часть участков пропущена: их строку успели пересчитать;
   1 -- постусловие не сошлось или справочник изменился -- откат, ничего не
-       записано; или инструмент упал;
+       записано; справочник с контурами не прочитался -- ничего не
+       посчитано; или инструмент упал;
   2 -- неверный вход, ничего не записано: нет базы (не создаётся), нет
        таблицы или столбца, неверная дата, в пути к базе `#`, `?` или `%`,
        --out на месте базы, её -wal/-shm или любого файла SQLite, папки
@@ -136,6 +137,9 @@ def schema_problem(con):
     return ''
 
 
+USABLE = ("geometry_geojson IS NOT NULL AND geometry_geojson != ''")
+
+
 def directory_fingerprint(con):
     """Чем справочник контуров был, когда считался план.
 
@@ -143,11 +147,15 @@ def directory_fingerprint(con):
     зеркало за это время -- номера строк остались бы, а контуры под ними
     нет, и запись поставила бы участкам поля по справочнику, которого уже
     нет. Число строк, наибольший `updated_at` (зеркало ставит его при
-    каждой правке) и суммарная длина геометрии ловят и правку, и добавление.
+    каждой правке), суммарная длина геометрии и сумма номеров включённых
+    строк ловят правку, добавление и выключение. Считаются только строки с
+    контуром -- те, что читает `load_contours`: земли DJI без контура
+    переписываются сбором дронов, и их отметка времени поле не меняет.
     """
     return tuple(con.execute(
-        'SELECT COUNT(*), MAX(updated_at), TOTAL(LENGTH(geometry_geojson)) '
-        'FROM field_contours').fetchone())
+        'SELECT COUNT(*), MAX(updated_at), TOTAL(LENGTH(geometry_geojson)), '
+        'TOTAL(CASE WHEN is_active IS NULL OR is_active = 1 THEN id ELSE 0 END) '
+        'FROM field_contours WHERE ' + USABLE).fetchone())
 
 
 def best_contour(probe, contours, tree, named):
@@ -171,6 +179,15 @@ def best_contour(probe, contours, tree, named):
 def plan(con, since=None, until=None, log=print):
     """Строки плана по участкам окна и сводка."""
     contours = load_contours(con, log=log)
+    if not contours and con.execute(
+            'SELECT COUNT(*) FROM field_contours WHERE ' + USABLE + ' AND '
+            '(is_active IS NULL OR is_active = 1)').fetchone()[0]:
+        # [REASON]: `load_contours` молча отдаёт пустой справочник, если
+        # чтение упало (база занята, ошибка ввода-вывода). Пустой справочник
+        # здесь значит «у всех участков поля нет» -- и запись сняла бы поле
+        # у каждого посчитанного участка разом.
+        raise RuntimeError('field_contours has outlines but none could be '
+                           'read - nothing was planned, run again later')
     named = list(contours.keys())
     tree = shapely.STRtree([contours[i] for i in named]) if named else None
     names = {row[0]: row[1] for row in con.execute(
@@ -333,7 +350,11 @@ def main(argv=None):
             sys.stderr.write('ERROR: %s\n' % problem)
             return EXIT_BAD_INPUT
         fingerprint = directory_fingerprint(con)
-        items = plan(con, args.since, args.until)
+        try:
+            items = plan(con, args.since, args.until)
+        except RuntimeError as problem:
+            print('FAILED: %s' % problem)
+            return EXIT_FAILED
     finally:
         con.close()
 
