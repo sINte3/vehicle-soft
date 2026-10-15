@@ -1220,13 +1220,16 @@ class Case5SummarySheetsTests(FixCorpusTestBase):
         customers = {r['customer_raw'] for r in result.rows}
         self.assertIn('Свод хужалиги', customers)
         self.assertIn('Свод ФХ хужалиги', customers)
+        # Bypassing the sheet-title guard now retains the numeric lookalike
+        # instead of silently deleting a different-operator job. The negative
+        # control must still fail by exposing the extra summary row.
         self.assertAlmostEqual(
             stats['area'],
-            fx.FIX_EXPECTED['area'] + fx.FIX_EXPECTED['summary_sheet_area'],
+            fx.FIX_EXPECTED['area'] + fx.FIX_EXPECTED['summary_sheet_area']
+            + 33.5,
             places=2)
-        # the shared row is caught by the dedup, and which copy survives
-        # depends on sheet order -- a decision no tool should be making
-        self.assertEqual(len(result.duplicates), 1)
+        self.assertEqual(len(result.duplicates), 0)
+        self.assertGreaterEqual(len(result.suspected_duplicates), 1)
 
 
 class Case6TwoExpenseColumnsTests(FixCorpusTestBase):
