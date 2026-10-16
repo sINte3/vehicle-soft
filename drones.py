@@ -36,8 +36,9 @@ import re
 
 from datetime import datetime, timedelta, timezone
 
-from flask import (Blueprint, abort, current_app, flash, jsonify, redirect,
-                   render_template, request, send_file, url_for, g)
+from flask import (Blueprint, abort, current_app, flash, jsonify,
+                   make_response, redirect, render_template, request,
+                   send_file, url_for, g)
 from flask_login import current_user
 from sqlalchemy import String, and_, case, func, literal, or_
 from sqlalchemy.exc import IntegrityError
@@ -10957,3 +10958,137 @@ def dji_refresh_start():
                    'Обновление данных DJI запущено. Страница покажет '
                    'состояние сама.') + note, 'success')
     return redirect(back)
+
+
+# ─── FIN-RECON-STORAGE-001: финансовая сверка -- снимки, только чтение ──────
+#
+# [REASON]: мартовская сверка операторов хранится неизменяемым снимком в
+# таблицах `fin_recon_*` (миграция FIN_RECON_STORAGE_001). Единственный
+# писатель -- инструмент оператора `tools/fin_recon_storage.py`; экран их
+# только читает, отдельным соединением sqlite3 `mode=ro`, как agro-work и
+# поля DJI, -- модели ORM нет, и db.create_all() этих таблиц не создаёт.
+#
+# [REASON]: только администратор (решение задания FIN-RECON-STORAGE-001: на
+# MVP -- admin, расширение отдельным решением). Права модуля «Дроны» здесь
+# НЕ достаточно: у оператора и наблюдателя с доступом к дронам нет права на
+# ФИО, начисления и выплаты. Ссылка в полосе модуля показывается тем же
+# условием (templates/_module_nav.html).
+#
+# [REASON]: ни загрузки, ни кнопок «утвердить»/«закрыть» нет и не будет в
+# этом макроэтапе. Выгрузка XLSX -- копия экрана с пометкой «не источник
+# истины»; файлы приватного пакета экран не отдаёт.
+
+import functools  # noqa: E402
+
+from fin_recon import store as fin_recon_store  # noqa: E402
+from fin_recon import view as fin_recon_view  # noqa: E402
+
+_FIN_RECON_PERIOD_RE = re.compile(r'^\d{4}-(0[1-9]|1[0-2])$')
+
+
+def _fin_recon_admin_required(f):
+    @functools.wraps(f)
+    @module_required('drones')
+    def decorated(*args, **kwargs):
+        if not current_user.is_admin:
+            abort(403)
+        return f(*args, **kwargs)
+    return decorated
+
+
+def _fin_recon_db():
+    """(соединение mode=ro или None, причина пустоты)."""
+    uri = current_app.config.get('SQLALCHEMY_DATABASE_URI', '') or ''
+    if not uri.startswith('sqlite:///'):
+        return None, 'not_sqlite'
+    path = uri[len('sqlite:///'):]
+    if not os.path.exists(path):
+        return None, 'no_db'
+    con = fin_recon_store.connect_ro(path)
+    if not fin_recon_store.tables_ready(con):
+        con.close()
+        return None, 'not_installed'
+    return con, None
+
+
+def _fin_recon_no_store(response):
+    # [REASON]: страница несёт ФИО и суммы; ни браузер, ни прокси не должны
+    # класть её в кэш, откуда её покажут следующему за этим компьютером.
+    response.headers['Cache-Control'] = 'no-store'
+    response.headers['Pragma'] = 'no-cache'
+    return response
+
+
+def _fin_recon_load(period):
+    """(view, None) или (None, код ответа)."""
+    if not _FIN_RECON_PERIOD_RE.match(period or ''):
+        return None, 404
+    version = request.args.get('version', type=int)
+    con, _reason = _fin_recon_db()
+    if con is None:
+        return None, 404
+    try:
+        meta = fin_recon_store.find_snapshot(con, period, version)
+        if meta is None:
+            return None, 404
+        snapshot = fin_recon_store.load_snapshot(con, meta['id'])
+        seal = fin_recon_store.seal_of(con, meta['id'])
+        versions = fin_recon_store.versions_of(con, period)
+        candidates = fin_recon_store.cross_period_candidates(con, meta['id'])
+    finally:
+        con.close()
+    is_ru = _drone_lang() == 'ru'
+    return fin_recon_view.period_view(snapshot, meta, seal, versions,
+                                      candidates, is_ru), None
+
+
+@drones_bp.route('/fin-recon')
+@_fin_recon_admin_required
+def fin_recon_periods():
+    """Список снимков финансовой сверки: месяц, версия, статус."""
+    con, reason = _fin_recon_db()
+    rows = []
+    if con is not None:
+        try:
+            rows = fin_recon_store.list_snapshots(con)
+        finally:
+            con.close()
+    is_ru = _drone_lang() == 'ru'
+    for r in rows:
+        r['status_view'] = fin_recon_view.status_view(r, is_ru)
+    response = make_response(render_template(
+        'drones/fin_recon_periods.html', rows=rows, reason=reason,
+        lang=_drone_lang()))
+    return _fin_recon_no_store(response)
+
+
+@drones_bp.route('/fin-recon/<period>')
+@_fin_recon_admin_required
+def fin_recon_period(period):
+    """Снимок месяца: итоги, операторы, работы, аномалии, источники."""
+    v, code = _fin_recon_load(period)
+    if v is None:
+        abort(code)
+    response = make_response(render_template(
+        'drones/fin_recon_period.html', v=v, lang=_drone_lang()))
+    return _fin_recon_no_store(response)
+
+
+@drones_bp.route('/fin-recon/<period>/export.xlsx')
+@_fin_recon_admin_required
+def fin_recon_export(period):
+    """Копия экрана в XLSX. НЕ источник истины: источник -- снимок."""
+    v, code = _fin_recon_load(period)
+    if v is None:
+        abort(code)
+    wb = fin_recon_view.workbook(v, _drone_lang() == 'ru')
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    response = send_file(
+        buffer, as_attachment=True,
+        download_name='fin_recon_%s_v%d_not_source_of_truth.xlsx'
+        % (v['meta']['period'], v['meta']['version']),
+        mimetype=('application/vnd.openxmlformats-officedocument'
+                  '.spreadsheetml.sheet'))
+    return _fin_recon_no_store(response)

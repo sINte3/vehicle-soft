@@ -595,6 +595,27 @@ jobs:
           AGRO_WORK_POWERSHELL: pwsh
         run: python -m unittest tests.test_agro_work_release_v127
 
+      # FIN-RECON-STORAGE-001. The immutable financial snapshot of a ledger
+      # month: the snapshot contract (one negative control per rule), the
+      # private package (a single flipped byte in any file is refused), the
+      # migration's four paths and its append-only triggers, the atomic and
+      # idempotent import (a changed v1 is a conflict, v2 supersedes by
+      # hash), the operator tool's exit codes, and the owner's runbook. All
+      # stdlib on synthetic data -- no real name or amount is in the repo.
+      #
+      # FIN_RECON_POWERSHELL runs the eight runbook blocks with REAL git and
+      # python against a synthetic repository, synthetic production and
+      # staging checkouts and a synthetic package; only the host name, the
+      # services, ports, firewall, the clone process, icacls, sc.exe, disks
+      # and the site are stand-ins (tests/fin_recon_runbook_harness.ps1). The
+      # Windows job below runs the same blocks on Windows PowerShell 5.1.
+      # The screen (tests/test_fin_recon_screen.py) needs Flask and runs
+      # locally with the discover command above.
+      - name: fin-recon storage -- contract, package, import, migration, tool, runbook (pwsh 7)
+        env:
+          FIN_RECON_POWERSHELL: pwsh
+        run: python -m unittest tests.test_fin_recon_contract tests.test_fin_recon_package tests.test_fin_recon_import tests.test_fin_recon_migration tests.test_fin_recon_cli tests.test_fin_recon_runbook
+
       # The GPS collector (gps_collector/) is a separate stdlib-only process:
       # the point store, the watermark and, since 09.10.2026, the Wialon
       # object names the /gps/fact screen shows instead of bare numbers. Its
@@ -706,3 +727,16 @@ jobs:
         env:
           AGRO_WORK_POWERSHELL: powershell
         run: python -m unittest tests.test_agro_work_release_v127.ReleaseV127ToolFormats tests.test_agro_work_release_v127.ReleaseV127BlocksInPowerShell
+
+      # FIN-RECON-STORAGE-001 (docs/FIN_RECON_STORAGE_001_RUNBOOK.md): the
+      # eight owner blocks on the interpreter the owner pastes into, with
+      # real git and the runner's python. Block 2 runs the task's stdlib
+      # tests there too, so the package, import and read-only URI code also
+      # runs on Windows paths. FIN_RECON_POWERSHELL_MAJOR makes the suite
+      # prove it really ran on 5.1.
+      - name: fin-recon runbook blocks on Windows PowerShell 5.1
+        shell: powershell
+        env:
+          FIN_RECON_POWERSHELL: powershell
+          FIN_RECON_POWERSHELL_MAJOR: '5'
+        run: python -m unittest tests.test_fin_recon_runbook
