@@ -42,13 +42,14 @@ class TimeFixture(Fixture):
             self.con.execute(engine_mig.CREATE_GPS_DAILY_ENGINE)
             self.con.commit()
 
-    def hours(self, unit, day, on, unknown=0, with_ign=100):
+    def hours(self, unit, day, on, unknown=0, with_ign=100, km=0.0,
+              points=100):
         self.con.execute(
             "INSERT INTO gps_daily_engine (work_date, wialon_id, on_seconds, "
             "off_seconds, unknown_seconds, points_total, points_with_ign, "
-            "method_version, computed_at) VALUES (?, ?, ?, 0, ?, 100, ?, "
-            "'ignition-R300-2026-10-19', 'now')",
-            ('2026-09-%02d' % day, unit, on, unknown, with_ign))
+            "track_km, method_version, computed_at) VALUES (?, ?, ?, 0, ?, ?, "
+            "?, ?, 'ignition-R300-P150-2026-10-19', 'now')",
+            ('2026-09-%02d' % day, unit, on, unknown, points, with_ign, km))
         self.con.commit()
 
     def timed(self, **kwargs):
@@ -131,14 +132,6 @@ class Verdict(Base):
                               date_from=28, date_to=29)
         self.assertEqual((row['verdict'], row['unknown_days']), (rc.V_NONE, 1))
 
-    def test_an_excluded_truck_is_not_judged_by_hours(self):
-        # Грузовой (непольевой) объект исключён план-фактом; признак для
-        # грузовиков с почасовой оплатой владелец не назвал -- не выводится.
-        self.fx.hours(1004, 13, 5 * HOUR)
-        row = self.fx.forward(self.fx.timed(transport='T4', created=13,
-                                            completed=13))
-        self.assertEqual((row['verdict'], row['reason']),
-                         (rc.V_NONE, rc.R_EXCLUDED))
 
     def test_hectare_applications_do_not_change(self):
         self.fx.hours(1001, 10, 5 * HOUR)
@@ -154,6 +147,80 @@ class Verdict(Base):
         _, total = ctx.summary()
         self.assertEqual(total['app_' + rc.V_WORK], 1)
         self.assertEqual(total.get('app_reason_' + rc.R_METHOD_TIME, 0), 0)
+
+
+class Trucks(Base):
+    """Решение владельца 19.10 (agro-work §9.8): у грузовика «работала или
+    нет» -- по пробегу (3 км), объём -- моточасами. Машина 14 (T4, объект
+    1004) -- `yuk_transport`, план-факт исключает её как непольевую."""
+
+    def test_a_truck_is_judged_by_mileage_not_by_ignition(self):
+        self.fx.hours(1004, 13, 5 * HOUR, km=0.4)
+        row = self.fx.forward(self.fx.timed(transport='T4', created=13,
+                                            completed=13))
+        self.assertEqual((row['verdict'], row['gps_km']), (rc.V_NO_WORK, 0.4))
+        self.assertEqual(row['gps_on_s'], 5 * HOUR)
+
+    def test_three_kilometres_is_work_and_the_volume_is_in_engine_hours(self):
+        self.fx.hours(1004, 13, 2 * HOUR, km=1.5)
+        self.fx.hours(1004, 14, 6 * HOUR, km=1.5)
+        row = self.fx.forward(self.fx.timed(transport='T4', created=13,
+                                            completed=14, volume='8'))
+        self.assertEqual(row['verdict'], rc.V_WORK)
+        self.assertEqual(row['work_days'], [D(13), D(14)])
+        self.assertEqual(row['volume_verdict'], tolerance.VERDICT_OK)
+        self.assertEqual(row['volume_deviation'], 0.0)
+
+    def test_two_point_nine_kilometres_is_not_work(self):
+        self.fx.hours(1004, 13, 5 * HOUR, km=2.9)
+        row = self.fx.forward(self.fx.timed(transport='T4', created=13,
+                                            completed=13))
+        self.assertEqual(row['verdict'], rc.V_NO_WORK)
+
+    def test_the_volume_needs_hours_known_not_kilometres_known(self):
+        # 14-го одна точка: пробег неизвестен, но зажигание у неё есть --
+        # часы суток известны, и светофор моточасов ставится.
+        self.fx.hours(1004, 13, 2 * HOUR, km=5.0)
+        self.fx.hours(1004, 14, 0, km=0.0, points=1, with_ign=1)
+        row = self.fx.forward(self.fx.timed(transport='T4', created=13,
+                                            completed=14, volume='2'))
+        self.assertEqual((row['verdict'], row['unknown_days']), (rc.V_WORK, 1))
+        self.assertEqual(row['volume_verdict'], tolerance.VERDICT_OK)
+
+    def test_a_day_with_one_point_is_unknown(self):
+        self.fx.hours(1004, 13, 0, km=0.0, points=1)
+        row = self.fx.forward(self.fx.timed(transport='T4', created=13,
+                                            completed=13))
+        self.assertEqual((row['verdict'], row['reason'], row['unknown_days']),
+                         (rc.V_NONE, rc.R_NO_GPS, 1))
+
+    def test_a_truck_marked_not_ours_stays_excluded(self):
+        self.fx.con.execute('UPDATE vialon_mappings SET skip = 1 WHERE '
+                            'wialon_id = 1004')
+        self.fx.con.commit()
+        self.fx.hours(1004, 13, 5 * HOUR, km=40.0)
+        row = self.fx.forward(self.fx.timed(transport='T4', created=13,
+                                            completed=13))
+        # Строка «не наш» (skip = 1) в связки сверки не входит вовсе -- у
+        # машины нет объекта Wialon, и по пробегу её не судят.
+        self.assertEqual((row['verdict'], row['reason']),
+                         (rc.V_NONE, rc.R_NO_WIALON))
+
+    def test_a_passenger_car_is_not_a_truck(self):
+        self.fx.con.execute("UPDATE equipment SET category = 'passenger' "
+                            "WHERE id = 14")
+        self.fx.con.commit()
+        self.fx.hours(1004, 13, 5 * HOUR, km=40.0)
+        row = self.fx.forward(self.fx.timed(transport='T4', created=13,
+                                            completed=13))
+        self.assertEqual((row['verdict'], row['reason']),
+                         (rc.V_NONE, rc.R_EXCLUDED))
+
+    def test_a_truck_hectare_application_is_still_excluded(self):
+        self.fx.hours(1004, 13, 5 * HOUR, km=40.0)
+        row = self.fx.forward(self.fx.app(transport='T4', created=13,
+                                          completed=13))
+        self.assertEqual(row['reason'], rc.R_EXCLUDED)
 
 
 class HoursVolume(Base):
@@ -277,6 +344,30 @@ class Book(Base):
         self.assertIsNone(cell(ga_app, ('Часы зажигания по GPS в окне',
                                         'Ойнада GPS бўйича ўт олдириш '
                                         'соатлари')))
+        truck_km = ('Пробег грузовика по GPS в окне, км',
+                    'Ойнада GPS бўйича юк машинасининг босиб ўтган йўли, км')
+        self.assertIsNone(cell(time_app, truck_km))
+
+    def test_a_truck_row_carries_its_mileage(self):
+        self.fx.hours(1004, 13, 2 * HOUR, km=12.345)
+        self.fx.timed(transport='T4', created=13, completed=13, volume='2')
+        out_path = os.path.join(os.path.dirname(self.fx.path), 'book.xlsx')
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = tool.main(['--db', self.fx.path, '--from', '2026-09-10',
+                              '--to', '2026-09-20', '--out', out_path])
+        self.assertEqual(code, 0, err.getvalue())
+        with open(out_path, 'rb') as handle:
+            sheet = list(load_workbook(handle)['Заявка-работа'].iter_rows(
+                values_only=True))
+        at = {title: index for index, title in enumerate(sheet[0])}
+        row = [r for r in sheet[1:] if r[0] == 'N-001'][0]
+        self.assertEqual(row[at[tool.bi(('Пробег грузовика по GPS в окне, км',
+                                         'Ойнада GPS бўйича юк машинасининг '
+                                         'босиб ўтган йўли, км'))]], 12.345)
+        self.assertEqual(row[at[tool.bi(('Часы зажигания по GPS в окне',
+                                         'Ойнада GPS бўйича ўт олдириш '
+                                         'соатлари'))]], 2.0)
 
 
 class Labels(unittest.TestCase):

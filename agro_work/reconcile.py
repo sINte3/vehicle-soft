@@ -48,6 +48,12 @@
 заявка «время» остаётся без вердикта с прежней причиной. Объём в часах
 сравнивается по допуску В-2 (`gps.tolerance.verdict_for_hours`).
 
+ГРУЗОВИК в сверке «время» (решение владельца 19.10, agro-work §9.8): работала
+ли машина -- по пробегу окна (правило P трека GPS, порог 3 км; сутки
+известны с двух точек), объём -- моточасами, как у остальных. Грузовой
+объект план-факт исключает как непольевой; для заявки «время» это не
+причина отказа. Исключённый как «не наш» -- по-прежнему причина.
+
 ПОКРЫТИЕ СУТОК (в сторону «работа -> заявка»): сутки с работой машины по GPS
 покрыты, если в их окно попадает закрытая обычная заявка этой машины. Иначе
 -- без вердикта, если сутки может покрыть открытая заявка, заявка с
@@ -105,7 +111,7 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 
 from gps import tolerance
-from gps.exclusion import excluded_units
+from gps.exclusion import EXCLUDED_NON_FIELD, excluded_units
 
 from . import methods, records
 
@@ -226,6 +232,14 @@ UNITS_HOURS = ('MOTOR_HOUR', 'HOUR')
 # (agro-work, §9.4 п. 1: «зажигание не меньше 30 минут»), записан в
 # предрегистрации трека GPS 19.10.2026. Не подгоняется.
 TIME_WORK_SECONDS = 1800
+
+# [REASON]: грузовик в сверке «время» -- решение владельца 19.10 (agro-work,
+# §9.8): «если заявка по часам, то считаем моточасы ... Работала или нет
+# техника, проверяем по пробегу, это не спецтехника». Порог -- 3 км (решение
+# 09.10, §9.4 п. 1); пробег -- правило P трека GPS (предрегистрация 19.10).
+# Только категория `yuk_transport`: легковые владелец не контролирует.
+TRUCK_CATEGORY = 'yuk_transport'
+TRUCK_WORK_KM = 3.0
 
 ENGINE_TABLE = 'gps_daily_engine'
 
@@ -479,12 +493,14 @@ class Reconciliation:
             "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
             (ENGINE_TABLE,)).fetchone() is not None
         if self.engine_ready:
-            for wialon_id, day, on, unknown, with_ign in con.execute(
+            for wialon_id, day, on, unknown, with_ign, km, points in con.execute(
                     'SELECT wialon_id, work_date, on_seconds, unknown_seconds, '
-                    'points_with_ign FROM %s WHERE work_date BETWEEN ? AND ?'
+                    'points_with_ign, track_km, points_total FROM %s WHERE '
+                    'work_date BETWEEN ? AND ?'
                     % ENGINE_TABLE, (first.isoformat(), last.isoformat())):
                 self.engine[(int(wialon_id), parse_day(day))] = (
-                    int(on or 0), int(unknown or 0), int(with_ign or 0))
+                    int(on or 0), int(unknown or 0), int(with_ign or 0),
+                    float(km or 0.0), int(points or 0))
 
     def in_period(self, app):
         start, end = app.listed_span
@@ -531,6 +547,26 @@ class Reconciliation:
             return None
         return found[0], found[1]
 
+    def kilometres(self, wialon_id, day):
+        """Пробег за сутки по правилу P или None -- сутки неизвестны.
+
+        [REASON]: сутки известны с двух точек: из одной пары не сложить, и
+        «0 км» по ней -- не «машина стояла», а «мерить нечем» (так же
+        считает проверка GPS-28 по отчёту Wialon).
+        """
+        if day > self.today:
+            return None
+        found = self.engine.get((wialon_id, day))
+        if found is None or found[4] < 2:
+            return None
+        return found[3]
+
+    def is_truck(self, equipment_id, wialon_id):
+        """Грузовой, исключённый план-фактом только как непольевой."""
+        item = self.equipment.get(equipment_id)
+        return (item is not None and item['category'] == TRUCK_CATEGORY
+                and self.excluded.get(wialon_id) == EXCLUDED_NON_FIELD)
+
     # --- заявка -> работа ---------------------------------------------------------
 
     def forward_row(self, app):
@@ -543,7 +579,7 @@ class Reconciliation:
                'volume_verdict': None, 'volume_reason': None,
                'volume_deviation': None, 'volume_share': None,
                'volume_neighbours': [], 'volume_group': None,
-               'gps_on_s': None, 'gps_unknown_s': None}
+               'gps_on_s': None, 'gps_unknown_s': None, 'gps_km': None}
         if app.window_reason:
             row['reason'] = app.window_reason
             return row
@@ -552,11 +588,13 @@ class Reconciliation:
         if method != methods.METHOD_GA and not timed:
             row['reason'] = METHOD_REASON.get(method, R_METHOD_UNMARKED)
             return row
-        if machine_reason:
+        truck = (timed and machine_reason == R_EXCLUDED
+                 and self.is_truck(equipment_id, wialon_id))
+        if machine_reason and not truck:
             row['reason'] = machine_reason
             return row
         if timed:
-            self.time_verdict(app, row)
+            self.time_verdict(app, row, truck=truck)
             return row
         unknown = 0
         for day in days_between(*app.window):
@@ -576,19 +614,46 @@ class Reconciliation:
             row['reason'] = R_NO_GPS
         return row
 
-    def time_verdict(self, app, row):
-        """Вердикт заявки метода «время» по часам зажигания её окна."""
+    def time_verdict(self, app, row, truck=False):
+        """Вердикт заявки метода «время»: по часам зажигания окна, у
+        грузовика -- по пробегу окна (решение владельца 19.10)."""
         on = unknown = unknown_days = 0
+        km = 0.0
+        km_unknown_days = 0
+        hour_days, km_days = [], []
         for day in days_between(*app.window):
             found = self.hours(row['wialon_id'], day)
             if found is None:
                 unknown_days += 1
-                continue
-            on += found[0]
-            unknown += found[1]
-            if found[0] > 0:
-                row['work_days'].append(day)
+            else:
+                on += found[0]
+                unknown += found[1]
+                if found[0] > 0:
+                    hour_days.append(day)
+            if truck:
+                day_km = self.kilometres(row['wialon_id'], day)
+                if day_km is None:
+                    km_unknown_days += 1
+                else:
+                    km += day_km
+                    if day_km > 0:
+                        km_days.append(day)
         row['gps_on_s'], row['gps_unknown_s'] = on, unknown
+        # Сутки окна, неизвестные по часам: светофор объёма без них не ставится.
+        row['hours_unknown_days'] = unknown_days
+        if truck:
+            row['gps_km'] = round(km, 3)
+            row['work_days'] = km_days
+            row['unknown_days'] = km_unknown_days
+            if km >= TRUCK_WORK_KM:
+                row['verdict'] = V_WORK
+                self.hours_check(app, row)
+            elif km_unknown_days == 0:
+                row['verdict'] = V_NO_WORK
+            else:
+                row['reason'] = R_NO_GPS
+            return
+        row['work_days'] = hour_days
         row['unknown_days'] = unknown_days
         if on >= TIME_WORK_SECONDS:
             row['verdict'] = V_WORK
@@ -610,7 +675,7 @@ class Reconciliation:
         if row['volume'] is None:
             row['volume_reason'] = VR_NO_VOLUME
             return
-        if row['unknown_days']:
+        if row['hours_unknown_days']:
             row['volume_reason'] = VR_DAYS_UNKNOWN
             return
         if self.overlapping(app, row):

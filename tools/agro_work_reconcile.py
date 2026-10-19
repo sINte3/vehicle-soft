@@ -291,7 +291,7 @@ def build_book(ctx, forward, reverse, lags, excluded, preview,
         + VOLUME_HEADER + HOURS_HEADER,
         forward_rows,
         (24, 12, 12, 14, 26, 16, 24, 20, 36, 14, 10, 12, 12, 22, 44, 22, 12, 12, 12,
-         12, 16, 14, 12, 44, 26, 16, 14, 14, 14, 14, 14, 16))
+         12, 16, 14, 12, 44, 26, 16, 14, 14, 14, 14, 14, 16, 16))
 
     reverse_rows = []
     for row in reverse:
@@ -429,16 +429,19 @@ HOURS_HEADER = (
                                          'соат')),
     bi(('Объём в заявке, ч', 'Буюртмадаги ҳажм, соат')),
     bi(('Расхождение GPS − заявка, ч', 'Фарқ GPS − буюртма, соат')),
+    # Грузовик (решение владельца 19.10): «работа была» -- по пробегу окна.
+    bi(('Пробег грузовика по GPS в окне, км',
+        'Ойнада GPS бўйича юк машинасининг босиб ўтган йўли, км')),
 )
 
 
 def _hours_cells(row):
     """Столбцы часов строки «Заявка-работа»: пусто у заявок не «время»."""
     if row['gps_on_s'] is None:
-        return (None, None, None, None)
+        return (None, None, None, None, None)
     return (round(row['gps_on_s'] / 3600.0, 2),
             round(row['gps_unknown_s'] / 3600.0, 2),
-            row['volume'], row['volume_deviation'])
+            row['volume'], row['volume_deviation'], row['gps_km'])
 
 
 def _volume_cells(row):
