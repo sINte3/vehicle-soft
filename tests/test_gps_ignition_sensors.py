@@ -167,6 +167,27 @@ class Survey(Base):
         self.assertIn('last message older than 7 days: 1, never reported: 1',
                       out)
 
+    def test_inputs_are_read_from_the_field_i_not_from_p(self):
+        # Прогон 19.10.2026: 76 объектов с зажиганием на «in» инструмент
+        # назвал объектами без параметра -- он искал цифровой вход в `p`.
+        units = [UNITS[0],
+                 dict(UNITS[1], lmsg={'t': NOW - 600, 'i': 0,
+                                      'p': {'in1': 1}}),
+                 {'id': 1004, 'nm': 'Нексия',
+                  'sens': {'3': {'n': 'Зажигание', 't': 'engine operation',
+                                 'p': 'in'}},
+                  'cfl': 0x10,
+                  'lmsg': {'t': NOW - 600, 'i': 0b101, 'p': {'pwr_ext': 12.9}}}]
+        code, out, _ = self.run_tool(SensorServer(units))
+        self.assertEqual(code, gi.EXIT_OK, out)
+        rows = self.rows()
+        self.assertEqual(rows[1002]['param_v_poslednem'], 'da')
+        self.assertEqual(rows[1002]['znachenie_v_poslednem'], 'in1=0')
+        self.assertEqual(rows[1004]['param_v_poslednem'], 'da')
+        self.assertEqual(rows[1004]['znachenie_v_poslednem'], 'in=2')
+        self.assertIn('ignition parameter in the last message: 3, not in it: 0',
+                      out)
+
     def test_engine_hours_source_from_cfl_bits_and_raw_counter(self):
         _code, out, _ = self.run_tool(SensorServer())
         rows = self.rows()
