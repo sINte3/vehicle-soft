@@ -46,3 +46,29 @@ def verdict_for_ga(base, fact):
     if size <= round(max(TOLERANCE_GA_WARN[0] * abs(base), TOLERANCE_GA_WARN[1]), 6):
         return VERDICT_WARN, deviation, share
     return VERDICT_FAIL, deviation, share
+
+
+# [REASON]: допуск моточасов -- тот же ответ владельца на вопрос В-2
+# (12.08): в допуске -- расхождение не больше max(15 %, 0,5 ч), на грани --
+# не больше 25 %, дальше -- вне допуска. Нужен сверке заявок метода «время»
+# (agro-work, решение владельца 09.10: моточас -- время с включённым
+# зажиганием по трекеру).
+TOLERANCE_HOURS_OK = (0.15, 0.5)   # доля, абсолютная добавка в часах
+TOLERANCE_HOURS_WARN = 0.25        # доля, без абсолютной добавки
+
+
+def verdict_for_hours(base, fact):
+    """Светофор по часам. Возвращает (вердикт, расхождение, доля).
+
+    Округление до сравнения -- по той же причине, что у гектаров: граница
+    «не больше» не должна решаться ошибкой представления.
+    """
+    deviation = fact - base
+    size = round(abs(deviation), 6)
+    share = (deviation / base) if base else None
+    if size <= round(max(TOLERANCE_HOURS_OK[0] * abs(base),
+                         TOLERANCE_HOURS_OK[1]), 6):
+        return VERDICT_OK, deviation, share
+    if size <= round(TOLERANCE_HOURS_WARN * abs(base), 6):
+        return VERDICT_WARN, deviation, share
+    return VERDICT_FAIL, deviation, share

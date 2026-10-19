@@ -570,6 +570,58 @@ class VolumeOnScreen(ScreenCase):
             for _ru, uz in table.values():
                 self.assertNotRegex(uz.replace('GPS', ''), '[A-Za-z]', uz)
 
+class TimeOnScreen(ScreenCase):
+    """Метод «время»: часы зажигания за окно вместо гектаров (GPS-26).
+
+    A7: T2, окно 10..11, единица «час», объём 3,00; по GPS включено 2 ч 10-го
+    и 1 ч 11-го. Таблицу часов создаёт миграция GPS_ENGINE_001, ORM-модели у
+    неё нет -- reset_db её не трогает, поэтому тест убирает её сам.
+    """
+
+    def setUp(self):
+        super().setUp()
+        import migrate_gps_engine_001 as engine_mig
+        _sql([engine_mig.CREATE_GPS_DAILY_ENGINE])
+        self.addCleanup(_sql, ['DROP TABLE IF EXISTS gps_daily_engine'])
+        _sql(["INSERT INTO agro_work_work_types (id, name, unit, method, "
+              "first_seen_at, last_seen_at) VALUES ('W2', 'Хар хил иш', "
+              "'HOUR', 'vremya', 't', 't')"])
+        _sql(["INSERT INTO agro_work_applications (id, application_number, "
+              "transport_id, work_type_id, work_type_name, unit, volume, "
+              "status, created_at, updated_at, created_day, first_seen_run_id, "
+              "last_seen_run_id, history_updated_at, initial_status, "
+              "completed_day, plate_number) VALUES ('A7', 'APP-TEST-007', "
+              "'T2', 'W2', 'Хар хил иш', 'HOUR', '3.00', 'COMPLETED', "
+              "'2026-09-10T08:00:00+05:00', 'u', '2026-09-10', 1, 1, 'u', "
+              "'IN_PROGRESS', '2026-09-11', 'PT2')"])
+        for day, on in ((10, 7200), (11, 3600)):
+            _sql(["INSERT INTO gps_daily_engine (work_date, wialon_id, "
+                  "on_seconds, off_seconds, unknown_seconds, points_total, "
+                  "points_with_ign, method_version, computed_at) VALUES (?, "
+                  "1002, ?, 0, 0, 100, 100, 'ignition-R300-2026-10-19', 'now')"],
+                 ('2026-09-%02d' % day, on))
+
+    def test_the_list_shows_hours_not_hectares(self):
+        html = self.get('/agro-work/applications', lang='ru').get_data(
+            as_text=True)
+        self.assertIn('Га или часы по GPS в окне', html)
+        row = row_of(html, 'APP-TEST-007')
+        self.assertIn('3.00 ч', row)
+        self.assertIn('В допуске', row)
+        self.assertIn('в заявке 3.00 ч · по GPS 3.00 ч', row)
+        self.assertIn('+0.00 ч (0.0%)', row)
+        self.assertNotIn(' га', row)
+        # Гектарная заявка рядом -- по-прежнему в гектарах.
+        self.assertIn('2.5', row_of(html, 'APP-TEST-001'))
+
+    def test_the_uzbek_list_says_hours_in_cyrillic(self):
+        html = self.get('/agro-work/applications', lang='uz').get_data(
+            as_text=True)
+        row = row_of(html, 'APP-TEST-007')
+        self.assertIn('3.00 соат', row)
+        self.assertIn('буюртмада 3.00 соат · GPS бўйича 3.00 соат', row)
+
+
 class Access(ScreenCase):
     def test_without_the_wialon_permission_every_page_is_403(self):
         user_id = self.operator([self.org1_id], wialon=False)

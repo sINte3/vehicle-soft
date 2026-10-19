@@ -34,8 +34,19 @@
 ВЕРДИКТ ЗАЯВКИ (в сторону «заявка -> работа»): работа была, если хотя бы в
 одних сутках окна она есть; работы не было, только если ВСЕ сутки окна
 известны и работы нет ни в одних. Иначе -- без вердикта с названной
-причиной. Сверяются только заявки метода «гектары»: для времени и рейсов
-трек GPS факта пока не публикует, и выдумывать его здесь нельзя.
+причиной. Сверяются заявки методов «гектары» и «время»; для рейсов трек GPS
+факта пока не публикует, и выдумывать его здесь нельзя.
+
+МЕТОД «ВРЕМЯ» (решение владельца 09.10: моточас -- время с включённым
+зажиганием по трекеру). Часы машины за сутки -- из `gps_daily_engine`
+(трек GPS, GPS-26: правило R, предрегистрация 19.10.2026). Сутки без строки
+или без единого значения зажигания -- неизвестны. Вердикт предрегистрирован
+там же: работа была, если зажигание включено не меньше 30 минут за всё окно
+(порог владельца, §9.4); работы не было, только если все сутки окна известны
+и даже вместе с «неизвестно» (дыры в данных) меньше 30 минут; иначе -- без
+вердикта. Пока таблицы часов нет (миграция GPS_ENGINE_001 не применена),
+заявка «время» остаётся без вердикта с прежней причиной. Объём в часах
+сравнивается по допуску В-2 (`gps.tolerance.verdict_for_hours`).
 
 ПОКРЫТИЕ СУТОК (в сторону «работа -> заявка»): сутки с работой машины по GPS
 покрыты, если в их окно попадает закрытая обычная заявка этой машины. Иначе
@@ -160,13 +171,15 @@ VOL_REASON = 'vol_reason_'
 # названа. Пересечение: открытая заявка -- худшее (её надо закрыть), затем
 # неизвестное окно, затем пересечение закрытых окон.
 VR_NOT_HECTARE = 'obem_ne_v_gektarakh'
+VR_NOT_HOURS = 'obem_ne_v_chasakh'
 VR_NO_VOLUME = 'obem_ne_ukazan'
 VR_DAYS_UNKNOWN = 'obem_ne_vse_sutki'
+VR_TIME_UNKNOWN = 'obem_vremya_neizvestno'
 VR_OPEN = 'obem_otkrytaya_zayavka'
 VR_WINDOW_UNKNOWN = 'obem_okno_neizvestno'
 VR_OVERLAP = 'obem_okna_peresekayutsya'
-VOLUME_REASONS = (VR_NOT_HECTARE, VR_NO_VOLUME, VR_DAYS_UNKNOWN, VR_OPEN,
-                  VR_WINDOW_UNKNOWN, VR_OVERLAP)
+VOLUME_REASONS = (VR_NOT_HECTARE, VR_NOT_HOURS, VR_NO_VOLUME, VR_DAYS_UNKNOWN,
+                  VR_TIME_UNKNOWN, VR_OPEN, VR_WINDOW_UNKNOWN, VR_OVERLAP)
 
 # Причины «без вердикта». Слаги ASCII, подписи -- на экране и в отчёте.
 R_OPEN = 'otkryta'
@@ -205,6 +218,16 @@ METHOD_REASON = {None: R_METHOD_UNMARKED, methods.METHOD_NONE: R_METHOD_NONE,
                  methods.METHOD_TRIPS: R_METHOD_TRIPS}
 
 UNIT_HECTARE = 'HECTARE'
+# Часы и моточасы agro-work -- разные единицы (B0), но обе в часах; трек GPS
+# отдаёт одно -- часы с включённым зажиганием.
+UNITS_HOURS = ('MOTOR_HOUR', 'HOUR')
+
+# [REASON]: порог «работа была» метода «время» -- решение владельца 09.10
+# (agro-work, §9.4 п. 1: «зажигание не меньше 30 минут»), записан в
+# предрегистрации трека GPS 19.10.2026. Не подгоняется.
+TIME_WORK_SECONDS = 1800
+
+ENGINE_TABLE = 'gps_daily_engine'
 
 # Окно неизвестно, но заявка могла покрыть сутки (`could_cover`).
 UNKNOWN_WINDOW_REASONS = (R_NO_HISTORY, R_NO_CLOSE_DATE, R_BAD_WINDOW,
@@ -449,6 +472,19 @@ class Reconciliation:
                 {'area_ha': area, 'operator_label': label})
         for key, aggregate in aggregates.items():
             self.gps[key] = day_state(aggregate, sites.get(key, []))
+        # Часы зажигания по суткам (GPS-26). Таблицы может не быть: до
+        # миграции GPS_ENGINE_001 метод «время» остаётся без вердикта.
+        self.engine = {}
+        self.engine_ready = con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (ENGINE_TABLE,)).fetchone() is not None
+        if self.engine_ready:
+            for wialon_id, day, on, unknown, with_ign in con.execute(
+                    'SELECT wialon_id, work_date, on_seconds, unknown_seconds, '
+                    'points_with_ign FROM %s WHERE work_date BETWEEN ? AND ?'
+                    % ENGINE_TABLE, (first.isoformat(), last.isoformat())):
+                self.engine[(int(wialon_id), parse_day(day))] = (
+                    int(on or 0), int(unknown or 0), int(with_ign or 0))
 
     def in_period(self, app):
         start, end = app.listed_span
@@ -482,6 +518,19 @@ class Reconciliation:
             return UNKNOWN, 0.0
         return self.gps.get((wialon_id, day), (UNKNOWN, 0.0))
 
+    def hours(self, wialon_id, day):
+        """(секунд включено, секунд неизвестно) за сутки или None.
+
+        None -- сутки неизвестны: строки нет (трекер молчал или сутки не
+        считали), или ни одна точка не несла зажигания, или сутки в будущем.
+        """
+        if day > self.today:
+            return None
+        found = self.engine.get((wialon_id, day))
+        if found is None or found[2] == 0:
+            return None
+        return found[0], found[1]
+
     # --- заявка -> работа ---------------------------------------------------------
 
     def forward_row(self, app):
@@ -493,16 +542,21 @@ class Reconciliation:
                'volume': parse_volume(app.row.get('volume')),
                'volume_verdict': None, 'volume_reason': None,
                'volume_deviation': None, 'volume_share': None,
-               'volume_neighbours': [], 'volume_group': None}
+               'volume_neighbours': [], 'volume_group': None,
+               'gps_on_s': None, 'gps_unknown_s': None}
         if app.window_reason:
             row['reason'] = app.window_reason
             return row
         method = row['method']
-        if method != methods.METHOD_GA:
+        timed = method == methods.METHOD_TIME and self.engine_ready
+        if method != methods.METHOD_GA and not timed:
             row['reason'] = METHOD_REASON.get(method, R_METHOD_UNMARKED)
             return row
         if machine_reason:
             row['reason'] = machine_reason
+            return row
+        if timed:
+            self.time_verdict(app, row)
             return row
         unknown = 0
         for day in days_between(*app.window):
@@ -521,6 +575,82 @@ class Reconciliation:
         else:
             row['reason'] = R_NO_GPS
         return row
+
+    def time_verdict(self, app, row):
+        """Вердикт заявки метода «время» по часам зажигания её окна."""
+        on = unknown = unknown_days = 0
+        for day in days_between(*app.window):
+            found = self.hours(row['wialon_id'], day)
+            if found is None:
+                unknown_days += 1
+                continue
+            on += found[0]
+            unknown += found[1]
+            if found[0] > 0:
+                row['work_days'].append(day)
+        row['gps_on_s'], row['gps_unknown_s'] = on, unknown
+        row['unknown_days'] = unknown_days
+        if on >= TIME_WORK_SECONDS:
+            row['verdict'] = V_WORK
+            self.hours_check(app, row)
+        elif unknown_days == 0 and on + unknown < TIME_WORK_SECONDS:
+            row['verdict'] = V_NO_WORK
+        else:
+            # [REASON]: неизвестное -- не «работы не было»: неизвестные сутки
+            # или дыры в данных, которых хватило бы до 30 минут, вердикт
+            # «работы не было» не дают (предрегистрация 19.10).
+            row['reason'] = R_NO_GPS
+
+    def hours_check(self, app, row):
+        """Объём заявки в часах против часов зажигания окна. Только «работа
+        была». Ставит либо светофор, либо причину -- ровно одно из двух."""
+        if app.row.get('unit') not in UNITS_HOURS:
+            row['volume_reason'] = VR_NOT_HOURS
+            return
+        if row['volume'] is None:
+            row['volume_reason'] = VR_NO_VOLUME
+            return
+        if row['unknown_days']:
+            row['volume_reason'] = VR_DAYS_UNKNOWN
+            return
+        if self.overlapping(app, row):
+            return
+        on_h = row['gps_on_s'] / 3600.0
+        verdict, deviation, share = tolerance.verdict_for_hours(row['volume'],
+                                                                on_h)
+        # [REASON]: «неизвестно» не идёт ни в часы, ни мимо них. Если вместе с
+        # дырами светофор другой, решают дыры, а не работа -- светофора нет.
+        upper = tolerance.verdict_for_hours(
+            row['volume'], (row['gps_on_s'] + row['gps_unknown_s']) / 3600.0)[0]
+        if upper != verdict:
+            row['volume_reason'] = VR_TIME_UNKNOWN
+            return
+        row['volume_verdict'] = verdict
+        row['volume_deviation'] = round(deviation, 3)
+        row['volume_share'] = share
+
+    def overlapping(self, app, row):
+        """Есть ли живые заявки машины, которые могли покрыть сутки окна.
+
+        Если есть -- ставит причину и номера и возвращает True. Факт таких
+        суток к одной заявке не отнести без правила распределения, а его
+        владелец не давал.
+        """
+        window_days = list(days_between(*app.window))
+        neighbours = [other for other in self.live_apps_of(row['equipment_id'])
+                      if other is not app
+                      and any(self.may_cover(other, day) for day in window_days)]
+        if not neighbours:
+            return False
+        neighbours.sort(key=lambda a: (a.created_day, a.number))
+        row['volume_neighbours'] = neighbours
+        if any(a.status in records.OPEN_STATUSES for a in neighbours):
+            row['volume_reason'] = VR_OPEN
+        elif any(a.window is None for a in neighbours):
+            row['volume_reason'] = VR_WINDOW_UNKNOWN
+        else:
+            row['volume_reason'] = VR_OVERLAP
+        return True
 
     # --- объём против GPS (U2) ------------------------------------------------------
 
@@ -574,23 +704,12 @@ class Reconciliation:
             # ложным обвинением.
             row['volume_reason'] = VR_DAYS_UNKNOWN
             return
-        window_days = list(days_between(*app.window))
-        neighbours = [other for other in self.live_apps_of(row['equipment_id'])
-                      if other is not app
-                      and any(self.may_cover(other, day) for day in window_days)]
-        if neighbours:
+        if self.overlapping(app, row):
             # [REASON]: гектары суток, которые могла покрыть и другая заявка,
             # к одной из них не отнести без правила распределения, а его
             # владелец не давал -- светофора нет, есть номера и, если можно,
             # общие числа цепочки.
-            neighbours.sort(key=lambda a: (a.created_day, a.number))
-            row['volume_neighbours'] = neighbours
-            if any(a.status in records.OPEN_STATUSES for a in neighbours):
-                row['volume_reason'] = VR_OPEN
-            elif any(a.window is None for a in neighbours):
-                row['volume_reason'] = VR_WINDOW_UNKNOWN
-            else:
-                row['volume_reason'] = VR_OVERLAP
+            if row['volume_reason'] == VR_OVERLAP:
                 row['volume_group'] = self.volume_group(app, row)
             return
         verdict, deviation, share = tolerance.verdict_for_ga(row['volume'],
