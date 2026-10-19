@@ -482,6 +482,31 @@ def read_day(folder, unit_id, day):
         con.close()
 
 
+def day_unit_counts(folder, day):
+    """{unit_id: (points, points with ign)} of one local day, read only.
+
+    One query for the whole day. A month never collected answers {} -- and
+    that is what keeps the hours of a day whose points retention deleted:
+    nothing on disk, nothing to recompute (the lesson of `sbor_nepolnyy`).
+    """
+    start = int(datetime.strptime(day, "%Y-%m-%d")
+                .replace(tzinfo=config.TZ).timestamp())
+    path = points_path(folder, datetime.fromtimestamp(start, config.TZ)
+                       .strftime("%Y%m"))
+    if not os.path.exists(path):
+        return {}
+    con = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=30)
+    try:
+        columns = {row[1] for row in con.execute("PRAGMA table_info(points)")}
+        with_ign = ("COUNT(%s)" % IGNITION_COLUMN
+                    if IGNITION_COLUMN in columns else "0")
+        return {int(unit): (int(n), int(n_ign)) for unit, n, n_ign in con.execute(
+            "SELECT unit_id, COUNT(*), %s FROM points WHERE t >= ? AND t < ? "
+            "GROUP BY unit_id" % with_ign, (start, start + 86400))}
+    finally:
+        con.close()
+
+
 def units_with_points(folder, day):
     """Objects that have at least one point on that local day."""
     start = int(datetime.strptime(day, "%Y-%m-%d")
