@@ -25,6 +25,14 @@ b.t <= t2); U -- «неизвестно».
   любой; NOT EVALUATED -- выборки мало.
   Справочно, не критерий: медиана (O − W) / W и доля окон с O <= W <= O + U.
 
+ОКНО, ТОЧКИ КОТОРОГО ЕЩЁ НЕ СОБРАНЫ (`tochki_ne_sobrany`)
+Снимок берётся в начале прогона, и t2 -- время последнего сообщения объекта
+к этому моменту, а сборщик забирает точки только до «сейчас минус 30 минут».
+Хвост последнего окна объекта приезжает следующим прогоном. Окно, у которого
+t2 позже отметки сборщика (`collector_watermarks`), ещё не окно проверки: его
+данных нет, и счёт по ним занизил бы O. Это не критерий и не исключение
+предрегистрации -- окно войдёт в счёт, когда точки будут собраны.
+
 ЧЕГО НЕ ДЕЛАЕТ
   НИЧЕГО НЕ ПИШЕТ: файл отметок и файлы месяцев открываются `mode=ro`.
   В Wialon не ходит: снимки уже лежат в файле отметок.
@@ -90,6 +98,21 @@ def local(stamp):
         '%Y-%m-%d %H:%M:%S')
 
 
+def read_watermarks(path):
+    """{unit_id: last_t} -- how far the collector has stored points."""
+    con = sqlite3.connect('file:%s?mode=ro' % path, uri=True)
+    try:
+        present = con.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'collector_watermarks'").fetchone()
+        if not present:
+            return {}
+        return {int(u): int(t) for u, t in con.execute(
+            'SELECT unit_id, last_t FROM collector_watermarks')}
+    finally:
+        con.close()
+
+
 def read_snapshots(path, since=None):
     """{unit_id: [(last_t, cneh, cfl)]} by time; None if there is no table."""
     con = sqlite3.connect('file:%s?mode=ro' % path, uri=True)
@@ -115,7 +138,7 @@ def read_snapshots(path, since=None):
     return found
 
 
-def windows(folder, snapshots):
+def windows(folder, snapshots, watermarks):
     """One dict per window between two neighbouring snapshots of an object."""
     out = []
     for unit_id in sorted(snapshots):
@@ -130,6 +153,8 @@ def windows(folder, snapshots):
                 row['class'] = 'bez_bitov'
             elif row['wialon'] < 0 or row['wialon'] > row['length'] + EDITED_SLACK_S:
                 row['class'] = 'schetchik_pravili'
+            elif t2 > watermarks.get(unit_id, 0):
+                row['class'] = 'tochki_ne_sobrany'
             else:
                 parts = ignition.split(
                     storage.read_ignition(folder, unit_id, t1, t2), t1, t2)
@@ -195,9 +220,10 @@ def share(hit, total):
 def report(rows, result, log=print):
     classes = Counter(r['class'] for r in rows)
     log('windows: %d | in the count: %d | no cfl bits: %d | counter edited: %d '
-        '| no ignition values: %d'
+        '| no ignition values: %d | points not collected yet: %d'
         % (len(rows), classes[IN_COUNT], classes['bez_bitov'],
-           classes['schetchik_pravili'], classes['net_zazhiganiya']))
+           classes['schetchik_pravili'], classes['net_zazhiganiya'],
+           classes['tochki_ne_sobrany']))
     log('K1  windows with W >= %d s: %d (need %d), within max(%d %%, %d s): '
         '%d = %s (need %d %%)'
         % (WORK_S, result['work'], K1_MIN, int(K1_TOLERANCE * 100), WORK_S,
@@ -254,7 +280,7 @@ def main(argv=None):
                          % config.ascii_only(args.out))
         return EXIT_BAD_INPUT
     with handle:
-        rows = windows(args.dir, snapshots)
+        rows = windows(args.dir, snapshots, read_watermarks(state))
         writer = csv.DictWriter(handle, fieldnames=COLUMNS, delimiter=';')
         writer.writeheader()
         writer.writerows(csv_rows(rows))

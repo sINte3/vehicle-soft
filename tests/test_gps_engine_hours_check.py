@@ -74,6 +74,10 @@ class Fleet:
             con.close()
         if self.points:
             storage.write_points(self.folder, self.points)
+        # Сборщик собрал точки до последнего снимка каждого объекта.
+        for unit_id in {row[0] for row in self.snapshots}:
+            storage.set_watermark(self.folder, unit_id, max(
+                row[1] for row in self.snapshots if row[0] == unit_id))
         return self.folder
 
 
@@ -189,7 +193,21 @@ class Classes(unittest.TestCase):
                                    '4': 'schetchik_pravili', '5': 'v_schete',
                                    '6': 'net_zazhiganiya'})
         self.assertIn('windows: 6 | in the count: 2 | no cfl bits: 1 | '
-                      'counter edited: 2 | no ignition values: 1', out)
+                      'counter edited: 2 | no ignition values: 1 | points not '
+                      'collected yet: 0', out)
+
+    def test_a_window_past_the_collector_watermark_waits(self):
+        # Снимок берётся в начале прогона, точки -- до «сейчас минус 30
+        # минут»: хвост последнего окна приедет следующей ночью.
+        fleet = Fleet()
+        t2 = fleet.window(1, START, 3600, 3600)
+        fleet.window(2, START, 3600, 3600)
+        folder = fleet.write()
+        storage.set_watermark(folder, 1, t2 - 1800)
+        _, out, _, path = run(folder)
+        classes = {r['wialon_id']: r['klass'] for r in rows_of(path)}
+        self.assertEqual(classes, {'1': 'tochki_ne_sobrany', '2': 'v_schete'})
+        self.assertIn('points not collected yet: 1', out)
 
     def test_windows_come_from_neighbouring_snapshots_only(self):
         fleet = Fleet()
