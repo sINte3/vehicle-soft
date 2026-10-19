@@ -33,8 +33,17 @@ FLAG_NAME_AND_LAST_POSITION = 1025
 # параметры -- io_239 (543), in (76), spn183 (1). Лишнего запроса нет: датчики
 # приезжают тем же запросом списка, что имена и последние позиции.
 FLAG_SENSORS = 0x1000
-FLAG_UNIT_LIST = FLAG_NAME_AND_LAST_POSITION | FLAG_SENSORS
 IGNITION_TYPE = "engine operation"
+
+# [REASON]: GPS-25, приёмка метода «время». 0x2000 -- счётчики объекта:
+# `cneh` (моточасы, которые Wialon считает сам по тому же датчику зажигания;
+# в часах с точностью до секунды -- значения GPS-23, например 1,39972 =
+# 5039 с) и `cfl` (как он их считает). Разность двух снимков -- моточасы
+# Wialon за окно, против них проверяется наш расчёт (предрегистрация в треке
+# GPS, 19.10.2026). Итоговые флаги 0x3401 -- ровно те, с которыми прошёл
+# прогон GPS-23 на production 19.10.
+FLAG_COUNTERS = 0x2000
+FLAG_UNIT_LIST = FLAG_NAME_AND_LAST_POSITION | FLAG_SENSORS | FLAG_COUNTERS
 
 # [REASON]: measured 18.08.2026 -- 298 objects of 481 had reported within three
 # days, 70 had been silent longer than a month, 30 longer than half a year and

@@ -361,7 +361,9 @@ class CollectorStoresIgnition(unittest.TestCase):
         lists = [params for svc, params in self.server.calls
                  if svc == "core/search_items"]
         self.assertEqual(len(lists), 1)
-        self.assertEqual(lists[0]["flags"], 0x1401)
+        # GPS-25 добавил счётчики (0x2000): 0x3401 -- флаги прогона GPS-23.
+        self.assertEqual(lists[0]["flags"], 0x3401)
+        self.assertEqual(lists[0]["flags"] & 0x1000, 0x1000, "sensors")
         self.assertEqual(config.FLAG_UNIT_LIST & 0x0401, 0x0401,
                          "name and last position are still asked for")
 
@@ -387,6 +389,78 @@ class CollectorStoresIgnition(unittest.TestCase):
         self.assertEqual([(a, b) for a, b in zip(again, stored)
                           if a[:6] != b[:6]][:3], [])
         self.assertNotIn(None, {r[6] for r in again})
+
+
+class CounterSnapshots(unittest.TestCase):
+    """GPS-25: счётчик моточасов Wialon -- снимком каждым прогоном."""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+
+    def snapshots(self):
+        con = storage.open_counters(self.folder)
+        try:
+            return con.execute(
+                "SELECT unit_id, last_t, cneh, cfl FROM collector_counters "
+                "ORDER BY unit_id, last_t").fetchall()
+        finally:
+            con.close()
+
+    def test_every_run_notes_the_counter_with_the_last_message_time(self):
+        fleet = [{"id": 101, "last_t": NOW - 3600, "sens": SENS_IO,
+                  "cneh": 8560.25, "cfl": 0x713},
+                 {"id": 102, "last_t": NOW - 40 * 86400, "cneh": 12.5,
+                  "cfl": 0x710},
+                 {"id": 103, "last_t": NOW - 3600},
+                 {"id": 104, "last_t": None, "cneh": 3.0, "cfl": 0x713}]
+        summary = run_collect(FakeServer(fleet=fleet), self.folder)
+        # silent 102 is noted too: one list answers for the whole fleet
+        self.assertEqual(self.snapshots(),
+                         [(101, NOW - 3600, 8560.25, 0x713),
+                          (102, NOW - 40 * 86400, 12.5, 0x710)])
+        self.assertEqual(summary.counters_written, 2)
+        self.assertIn("engine-hour counters noted: 2", summary.ignition_line())
+
+    def test_a_moment_already_noted_is_not_noted_again(self):
+        fleet = [{"id": 101, "last_t": NOW - 3600, "cneh": 10.0, "cfl": 0x713}]
+        run_collect(FakeServer(fleet=fleet), self.folder)
+        again = run_collect(FakeServer(fleet=[dict(fleet[0], cneh=99.0)]),
+                            self.folder, now=NOW + 60)
+        self.assertEqual(again.counters_written, 0)
+        self.assertEqual(self.snapshots(), [(101, NOW - 3600, 10.0, 0x713)])
+        later = [dict(fleet[0], last_t=NOW + 3000, cneh=11.5)]
+        run_collect(FakeServer(fleet=later), self.folder, now=NOW + 7200)
+        self.assertEqual([r[2] for r in self.snapshots()], [10.0, 11.5])
+
+    def test_the_unit_list_reads_counters_as_numbers_only(self):
+        server = FakeServer(fleet=[{"id": 101, "last_t": NOW, "cneh": 1.5,
+                                    "cfl": 1811},
+                                   {"id": 102, "last_t": NOW}])
+        with Installed(server):
+            client = Client(pause=0.0, log=QUIET)
+            client.login("test-token-not-a-real-one")
+            units = client.list_units()
+        self.assertEqual([(u["cneh"], u["cfl"]) for u in units],
+                         [(1.5, 1811), (None, None)])
+
+    def test_read_ignition_spans_months_and_never_writes(self):
+        old_month_file(self.folder, "202609",
+                       [point(101, epoch("2026-09-30 23:00"))])
+        storage.write_points(self.folder,
+                             [point(101, epoch("2026-10-01 01:00"), 1),
+                              point(101, epoch("2026-10-01 02:00"), 0),
+                              point(102, epoch("2026-10-01 01:00"), 1)])
+        self.assertEqual(
+            storage.read_ignition(self.folder, 101, epoch("2026-09-30 00:00"),
+                                  epoch("2026-10-01 01:00")),
+            [(epoch("2026-09-30 23:00"), None), (epoch("2026-10-01 01:00"), 1.0)])
+        self.assertNotIn("ign", columns_of(self.folder, "202609"),
+                         "reading must not alter an old file")
+        self.assertEqual(storage.read_ignition(
+            self.folder, 101, epoch("2026-08-01 00:00"),
+            epoch("2026-08-31 00:00")), [])
+        self.assertFalse(os.path.exists(storage.points_path(self.folder,
+                                                            "202608")))
 
 
 class Refill(unittest.TestCase):

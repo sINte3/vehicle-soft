@@ -36,8 +36,8 @@
 ## Что он делает за один прогон
 
 1. **Один** запрос отдаёт весь парк вместе со временем последнего сообщения
-   каждого объекта и его датчиками (`core/search_items`, флаг `0x1401` — имя,
-   последняя позиция, датчики; до GPS-24 был 1025 — без датчиков).
+   каждого объекта, его датчиками и счётчиками (`core/search_items`, флаг
+   `0x3401` — имя, последняя позиция, датчики, счётчики; до GPS-24 был 1025).
    Объекты, молчащие дольше `SILENT_DAYS = 30`, не спрашиваются вовсе: на
    18.08.2026 это 183 объекта из 481.
 2. По каждому оставшемуся объекту: интервал от его watermark до «сейчас минус
@@ -56,7 +56,17 @@ instance/gps_points_202608.db     точки августа: points(unit_id, t, 
 instance/gps_points_202607.db     точки июля
 instance/gps_collector_state.db   collector_watermarks(unit_id, last_t, updated_at)
                                   collector_units(unit_id, name, seen_at)
+                                  collector_counters(unit_id, last_t, cneh, cfl, taken_at)
 ```
+
+`collector_counters` — снимок счётчика моточасов Wialon каждым прогоном
+(GPS-25, с 19.10.2026): `cneh` в часах на момент последнего сообщения
+объекта `last_t`, `cfl` — как Wialon его считает. Приходит тем же запросом
+списка (флаг `0x3401` — ровно флаги прогона GPS-23). Разность двух соседних
+снимков — моточасы, которые Wialon насчитал сам по тому же датчику
+зажигания; против них `tools/gps_engine_hours_check.py` проверяет правило
+часов метода «время» (предрегистрация — трек GPS, §0.6). Строки только
+добавляются; повтор того же `(unit_id, last_t)` не пишется.
 
 `collector_units` — имя каждого объекта из списка парка Wialon (с 09.10.2026).
 Список с именами коллектор получает первым запросом прогона и раньше только
@@ -98,7 +108,7 @@ instance/gps_collector_state.db   collector_watermarks(unit_id, last_t, updated_
 
 Строка прогона в журнале: `ignition: N of M points with a position carry it |
 asked objects without an ignition sensor: K | filled into points stored
-before: F`. В `gps_sync_log` эти числа не пишутся — схема журнала не менялась.
+before: F | engine-hour counters noted: C`. В `gps_sync_log` эти числа не пишутся — схема журнала не менялась.
 
 ### Дозаполнение прошлых недель — `gps_collector.refill`
 
@@ -208,7 +218,7 @@ cd C:\transport-report
 & "C:\Program Files\Python314\python.exe" -m unittest discover -s gps_collector/tests -t .
 ```
 
-Ожидается `Ran 81 tests` и `OK`. Сети не требуется: сервер заменён
+Ожидается `Ran 85 tests` и `OK`. Сети не требуется: сервер заменён
 консервами, код коллектора при этом выполняется целиком. Журнал приёма
 (GPS-7) проверяется в общем наборе — `python -m unittest tests.test_gps_sync_log`.
 
@@ -239,7 +249,8 @@ cd C:\transport-report
 
 ### GPS-24 — зажигание (19.10.2026)
 
-`gps_collector/tests/test_ignition.py`, 38 тестов:
+`gps_collector/tests/test_ignition.py`, 42 теста (с GPS-25 — снимки
+счётчика, `CounterSnapshots`):
 
 | Что держится | Чем проверено |
 |---|---|

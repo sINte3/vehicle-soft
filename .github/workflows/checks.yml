@@ -614,6 +614,13 @@ jobs:
       - name: GPS collector self-tests (stdlib)
         run: python -m unittest discover -s gps_collector/tests -t .
 
+      # GPS-25, the «time» method: rule R of engine hours (gps/ignition.py,
+      # preregistered in the GPS track on 19.10.2026) and the read-only check
+      # of it against Wialon's own engine-hour counter, which the collector
+      # notes every run. Stdlib only, like the collector.
+      - name: GPS engine hours -- rule R and the check against Wialon (stdlib)
+        run: python -m unittest gps.tests.test_ignition_rule tests.test_gps_engine_hours_check
+
   # DRONE-USEFUL-AREA-PILOT-001. The operator console on the server is
   # WINDOWS POWERSHELL 5.1, not pwsh 7, and the two differ exactly where this
   # kit writes files: 5.1 has no `utf8NoBOM`, and its native `>` redirection

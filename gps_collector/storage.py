@@ -77,6 +77,25 @@ CREATE_UNITS = """
 """
 
 
+# [REASON]: GPS-25, приёмка метода «время». Снимок счётчика моточасов Wialon
+# каждым прогоном: `cneh` (часы) на момент последнего сообщения объекта
+# `last_t`. Разность двух снимков -- моточасы, которые Wialon насчитал сам по
+# тому же датчику зажигания, против них проверяется наш расчёт. Лежит в
+# файле отметок, а не в файле месяца: ретенция удаляет месяц, а проверка
+# окна на стыке месяцев читает оба снимка. Строки только добавляются; ключ
+# (unit_id, last_t) -- объект без новых сообщений нового снимка не даёт.
+CREATE_COUNTERS = """
+    CREATE TABLE IF NOT EXISTS collector_counters (
+        unit_id  INTEGER NOT NULL,
+        last_t   INTEGER NOT NULL,
+        cneh     REAL    NOT NULL,
+        cfl      INTEGER,
+        taken_at TEXT    NOT NULL,
+        PRIMARY KEY (unit_id, last_t)
+    ) WITHOUT ROWID
+"""
+
+
 def month_key(stamp):
     """'YYYYMM' of an epoch second, in local time (UTC+5).
 
@@ -169,6 +188,70 @@ def write_unit_names(folder, units):
     finally:
         con.close()
     return len(rows)
+
+
+def open_counters(folder):
+    """Connection to the counter snapshots -- the same file as the watermarks."""
+    return _connect(state_path(folder), CREATE_COUNTERS)
+
+
+def write_counters(folder, units):
+    """Remember Wialon's engine-hours counter of every object of the list.
+
+    `units` is what Client.list_units() returns. Returns how many new
+    snapshots were stored.
+
+    [REASON]: an object without a counter or without a last message gives no
+    snapshot -- a counter without the time it belongs to cannot bound a
+    window. A repeated (object, last_t) is ignored, not replaced: the first
+    snapshot of that moment stays the one the windows were built on.
+    """
+    taken_at = datetime.now(config.TZ).strftime("%Y-%m-%d %H:%M:%S")
+    rows = []
+    for unit in units:
+        cneh, last_t = unit.get("cneh"), unit.get("last_t")
+        if unit.get("id") and cneh is not None and last_t is not None:
+            cfl = unit.get("cfl")
+            rows.append((int(unit["id"]), int(last_t), float(cneh),
+                         None if cfl is None else int(cfl), taken_at))
+    if not rows:
+        return 0
+    con = open_counters(folder)
+    try:
+        changes = con.total_changes
+        con.executemany(
+            "INSERT OR IGNORE INTO collector_counters "
+            "(unit_id, last_t, cneh, cfl, taken_at) VALUES (?, ?, ?, ?, ?)",
+            rows)
+        con.commit()
+        return con.total_changes - changes
+    finally:
+        con.close()
+
+
+def read_ignition(folder, unit_id, t_from, t_to):
+    """[(t, ign)] of one object's points with t_from <= t <= t_to, in order.
+
+    Read only: a month never collected is not created, and a file from before
+    GPS-24 (no `ign` column) answers with None for every point.
+    """
+    out = []
+    for month in _months_between(t_from, t_to + 1):
+        path = points_path(folder, month)
+        if not os.path.exists(path):
+            continue
+        con = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=30)
+        try:
+            columns = {row[1] for row in con.execute("PRAGMA table_info(points)")}
+            ign = IGNITION_COLUMN if IGNITION_COLUMN in columns else "NULL"
+            out.extend((int(t), None if value is None else float(value))
+                       for t, value in con.execute(
+                           "SELECT t, %s FROM points WHERE unit_id = ? AND "
+                           "t >= ? AND t <= ? ORDER BY t" % ign,
+                           (int(unit_id), int(t_from), int(t_to))))
+        finally:
+            con.close()
+    return out
 
 
 # [REASON]: обе цифры возвращаются, а не одна. Журнал приёма (GPS-7) держит

@@ -61,6 +61,7 @@ class Summary:
         self.units_no_ignition = 0
         self.points_with_ignition = 0
         self.ignition_filled = 0
+        self.counters_written = 0
 
     def line(self):
         return ("objects: %d | asked: %d | silent, skipped: %d | up to date: %d "
@@ -76,9 +77,10 @@ class Summary:
         with_position = self.points_seen - self.points_no_position
         return ("ignition: %d of %d points with a position carry it | asked "
                 "objects without an ignition sensor: %d | filled into points "
-                "stored before: %d"
+                "stored before: %d | engine-hour counters noted: %d"
                 % (self.points_with_ignition, with_position,
-                   self.units_no_ignition, self.ignition_filled))
+                   self.units_no_ignition, self.ignition_filled,
+                   self.counters_written))
 
     def balances(self):
         """Тождество журнала приёма, по образцу инварианта drone_sync_logs.
@@ -110,6 +112,8 @@ def collect(client, folder, now=None, backfill_days=config.BACKFILL_DAYS,
     # --only: это один короткий запрос в файл отметок, а прогон, умерший на
     # середине, иначе оставил бы экран с номерами вместо машин ещё на сутки.
     storage.write_unit_names(folder, units)
+    # GPS-25: снимок счётчика моточасов Wialon -- тем же ответом списка.
+    summary.counters_written = storage.write_counters(folder, units)
     wanted = None if not only else {int(u) for u in only}
 
     for number, unit in enumerate(units, 1):

@@ -237,7 +237,9 @@ class Client:
         same shape tools/wialon_last_seen.py uses. `last_t` is None for an
         object that has never reported: never-reported and long-silent are
         different facts and are kept apart here as they are there.
-        `ignition` is None for an object without an ignition sensor.
+        `ignition` is None for an object without an ignition sensor;
+        `cneh` (Wialon's own engine-hours counter, hours) and `cfl` (how it
+        is counted) are None when the server sent none.
         """
         answer = self.call("core/search_items", {
             "spec": {"itemsType": "avl_unit", "propName": "sys_name",
@@ -254,7 +256,9 @@ class Client:
             position = item.get("pos") or {}
             units.append({"id": int(item["id"]), "name": item.get("nm") or "",
                           "last_t": position.get("t"),
-                          "ignition": ignition_param(item)})
+                          "ignition": ignition_param(item),
+                          "cneh": _number(item.get("cneh")),
+                          "cfl": _number(item.get("cfl"))})
         return units
 
     def zone_ids(self, resource_id):
@@ -323,6 +327,11 @@ class Client:
             self.call("messages/unload", {})
         except Exception:                                          # noqa: BLE001
             pass
+
+
+def _number(value):
+    return (None if isinstance(value, bool) or not isinstance(value, (int, float))
+            else value)
 
 
 # Параметр цифрового входа Wialon: «in» -- все входы, «in5» -- пятый.
