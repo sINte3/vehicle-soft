@@ -6,7 +6,8 @@
 каждому объекту и местным суткам -- одна строка таблицы `gps_daily_engine`
 (миграция GPS_ENGINE_001): секунды «включено», «выключено» и «неизвестно» по
 правилу R (`gps/ignition.py`, предрегистрация в треке GPS 19.10.2026), число
-точек суток и сколько из них несли зажигание.
+точек суток и сколько из них несли зажигание, пробег по правилу P
+(`gps/mileage.py`, GPS-29: по нему решается, работал ли грузовик).
 
 ЧТО ПЕРЕСЧИТЫВАЕТСЯ
 Сутки окна -- по умолчанию 30 последних, до вчерашних включительно; или
@@ -55,17 +56,18 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from gps import ignition                                           # noqa: E402
+from gps import ignition, mileage                                  # noqa: E402
 from gps_collector import storage                                  # noqa: E402
 from gps_collector.config import TZ, points_dir                    # noqa: E402
 
 DB_PATH = os.path.join(ROOT, 'instance', 'transport.db')
 TABLE = 'gps_daily_engine'
 
-# [REASON]: версия -- имя правила, его порог и дата предрегистрации. Другая
+# [REASON]: версия -- имена правил, их пороги и дата предрегистрации. Другая
 # версия в строке -- повод пересчитать сутки: смена правила (новой
 # предрегистрацией) обязана дойти до всех суток окна, а не только до новых.
-METHOD_VERSION = 'ignition-R%d-2026-10-19' % ignition.MAX_GAP_S
+METHOD_VERSION = 'ignition-R%d-P%d-2026-10-19' % (ignition.MAX_GAP_S,
+                                                  mileage.MAX_SPEED_KMH)
 WINDOW_DAYS = 30
 
 EXIT_OK = 0
@@ -101,24 +103,31 @@ def stale_units(on_disk, stored):
 
 
 def compute(folder, unit_id, day):
+    """(Split по правилу R, км по правилу P) одних объекто-суток."""
     lo, hi = day_bounds(day)
-    return ignition.split(storage.read_ignition(folder, unit_id, lo, hi), lo, hi)
+    track = storage.read_track(folder, unit_id, lo, hi)
+    parts = ignition.split([(t, ign) for t, _lon, _lat, _s, ign in track], lo, hi)
+    km = mileage.mileage([(t, lon, lat, speed) for t, lon, lat, speed, _i
+                          in track], lo, hi).km
+    return parts, km
 
 
-def write(con, day, unit_id, parts, computed_at):
+def write(con, day, unit_id, parts, km, computed_at):
     con.execute(
         'INSERT INTO %s (work_date, wialon_id, on_seconds, off_seconds, '
-        'unknown_seconds, points_total, points_with_ign, method_version, '
-        'computed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) '
+        'unknown_seconds, points_total, points_with_ign, track_km, '
+        'method_version, computed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
         'ON CONFLICT(work_date, wialon_id) DO UPDATE SET '
         'on_seconds = excluded.on_seconds, off_seconds = excluded.off_seconds, '
         'unknown_seconds = excluded.unknown_seconds, '
         'points_total = excluded.points_total, '
         'points_with_ign = excluded.points_with_ign, '
+        'track_km = excluded.track_km, '
         'method_version = excluded.method_version, '
         'computed_at = excluded.computed_at' % TABLE,
         (day, int(unit_id), parts.on_s, parts.off_s, parts.unknown_s,
-         parts.points, parts.with_ign, METHOD_VERSION, computed_at))
+         parts.points, parts.with_ign, round(km, 3), METHOD_VERSION,
+         computed_at))
 
 
 def days_between(first, last):
@@ -148,8 +157,8 @@ def run_days(folder, db_path, days, log=print):
             done = 0
             for unit_id in stale:
                 try:
-                    parts = compute(folder, unit_id, day)
-                    write(con, day, unit_id, parts, computed_at)
+                    parts, km = compute(folder, unit_id, day)
+                    write(con, day, unit_id, parts, km, computed_at)
                 except Exception as problem:                       # noqa: BLE001
                     # [REASON]: один сломанный объект-сутки не уносит прогон --
                     # тот же охранник, что у ночного расчёта площади (GPS-13).

@@ -72,8 +72,9 @@
             {% endif %}
           </td>
           {# Метод «время» (GPS-26): часы с включённым зажиганием за окно;
-             «неизвестно» -- дыры в данных, не часы и не простой. #}
-          <td class="right">{% if row.gps_on_s is not none %}{{ ('%.2f ч' if is_ru else '%.2f соат')|format(row.gps_on_s / 3600) }}{% if row.gps_unknown_s %}<div class="vs-soft">{{ ('неизвестно %.2f ч' if is_ru else 'номаълум %.2f соат')|format(row.gps_unknown_s / 3600) }}</div>{% endif %}{% elif row.work_days %}{{ row.gps_ha }}{% else %}—{% endif %}</td>
+             «неизвестно» -- дыры в данных, не часы и не простой. У грузовика
+             ещё и пробег: по нему решается «работа была» (владелец, 19.10). #}
+          <td class="right">{% if row.gps_on_s is not none %}{{ ('%.2f ч' if is_ru else '%.2f соат')|format(row.gps_on_s / 3600) }}{% if row.gps_unknown_s %}<div class="vs-soft">{{ ('неизвестно %.2f ч' if is_ru else 'номаълум %.2f соат')|format(row.gps_unknown_s / 3600) }}</div>{% endif %}{% if row.gps_km is not none %}<div class="vs-soft">{{ ('пробег %.1f км' if is_ru else 'босиб ўтилган йўл %.1f км')|format(row.gps_km) }}</div>{% endif %}{% elif row.work_days %}{{ row.gps_ha }}{% else %}—{% endif %}</td>
           <td>
             {% if row.volume_verdict %}
               {% if row.volume_verdict == 'ok' %}<span class="vs-badge vs-badge-success">{% elif row.volume_verdict == 'warn' %}<span class="vs-badge vs-badge-warning">{% else %}<span class="vs-badge vs-badge-danger">{% endif %}{{ volume_label(row.volume_verdict) }}</span>

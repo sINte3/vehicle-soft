@@ -229,6 +229,30 @@ def write_counters(folder, units):
         con.close()
 
 
+def read_track(folder, unit_id, t_from, t_to):
+    """[(t, lon, lat, speed, ign)] of one object's points with t_from <= t <=
+    t_to, in order. Read only, as read_ignition: a month never collected is
+    not created, a file from before GPS-24 answers with ign None."""
+    out = []
+    for month in _months_between(t_from, t_to + 1):
+        path = points_path(folder, month)
+        if not os.path.exists(path):
+            continue
+        con = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=30)
+        try:
+            columns = {row[1] for row in con.execute("PRAGMA table_info(points)")}
+            ign = IGNITION_COLUMN if IGNITION_COLUMN in columns else "NULL"
+            out.extend((int(t), float(lon), float(lat), float(speed),
+                        None if value is None else float(value))
+                       for t, lon, lat, speed, value in con.execute(
+                           "SELECT t, lon, lat, speed, %s FROM points WHERE "
+                           "unit_id = ? AND t >= ? AND t <= ? ORDER BY t" % ign,
+                           (int(unit_id), int(t_from), int(t_to))))
+        finally:
+            con.close()
+    return out
+
+
 def read_ignition(folder, unit_id, t_from, t_to):
     """[(t, ign)] of one object's points with t_from <= t <= t_to, in order.
 

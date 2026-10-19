@@ -154,6 +154,43 @@ class DailyRows(Base):
         self.assertEqual(summary.failed, 1)
 
 
+class Mileage(Base):
+    """GPS-29: пробег суток по правилу P -- по нему решается, работал ли
+    грузовик (решение владельца 19.10)."""
+
+    def km(self, unit, day=DAY):
+        con = sqlite3.connect(self.db)
+        try:
+            return con.execute('SELECT track_km FROM gps_daily_engine WHERE '
+                               'work_date = ? AND wialon_id = ?',
+                               (day, unit)).fetchone()[0]
+        finally:
+            con.close()
+
+    def test_a_moving_machine_gets_its_kilometres(self):
+        from gps import mileage
+        start = epoch(DAY + ' 08:00')
+        rows = [(101, start + 60 * i, LON + 0.001 * i, LAT, 30.0, 90, 14, 1.0)
+                for i in range(61)]
+        storage.write_points(self.folder, rows)
+        self.run_days()
+        expected = 60 * mileage.distance_km(LON, LAT, LON + 0.001, LAT)
+        self.assertAlmostEqual(self.km(101), round(expected, 3), places=3)
+        self.assertGreater(self.km(101), 3.0)
+
+    def test_a_standing_machine_has_none(self):
+        start = epoch(DAY + ' 08:00')
+        rows = [(102, start + 60 * i, LON + (0.0001 if i % 2 else 0), LAT, 0.0,
+                 90, 14, 1.0) for i in range(600)]
+        storage.write_points(self.folder, rows)
+        self.run_days()
+        self.assertEqual(self.km(102), 0.0)
+
+    def test_the_version_names_both_rules(self):
+        self.assertEqual(engine_hours.METHOD_VERSION,
+                         'ignition-R300-P150-2026-10-19')
+
+
 class DayBoundary(Base):
     def test_a_pair_across_midnight_belongs_to_no_day(self):
         midnight = epoch('2026-10-16 00:00')

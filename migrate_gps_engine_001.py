@@ -20,6 +20,12 @@ operators' answers that hang on the aggregate rows. And no ORM model: the
 reconciliation reads it with plain SQL, as it reads the agro_work_* tables,
 so models.py (a file shared by all tracks) is not touched.
 
+[REASON]: track_km (GPS-29) was added on 19.10.2026 BEFORE the migration was
+first applied anywhere: the migration reaches production with release v1.29
+and no database ever had the table without the column. Owner's decision of 19.10: whether a truck worked is judged by its
+mileage (rule P, gps/mileage.py), and the hours table is where the
+reconciliation reads a day of a machine.
+
 [REASON]: a row with points_with_ign = 0 is a fact, not a gap: "we looked and
 the tracker sent no ignition" differs from "we did not look" (no row), as on
 gps_daily_aggregates.
@@ -75,7 +81,8 @@ MIGRATION_ID = 'GPS_ENGINE_001'
 DESCRIPTION = ('GPS-26: create gps_daily_engine, one row per GPS object and '
                'local day -- seconds with the ignition on, off and unknown by '
                'rule R, points of the day and how many carried ignition, the '
-               'method version. Additive only, one new table.')
+               'mileage by rule P, the method version. Additive only, one new '
+               'table.')
 
 CREATE_GPS_DAILY_ENGINE = """
     CREATE TABLE IF NOT EXISTS gps_daily_engine (
@@ -87,6 +94,7 @@ CREATE_GPS_DAILY_ENGINE = """
         unknown_seconds  INTEGER NOT NULL DEFAULT 0,
         points_total     INTEGER NOT NULL DEFAULT 0,
         points_with_ign  INTEGER NOT NULL DEFAULT 0,
+        track_km         REAL NOT NULL DEFAULT 0,
         method_version   VARCHAR(60) NOT NULL,
         computed_at      DATETIME NOT NULL,
         CONSTRAINT uq_gps_daily_engine_day_unit UNIQUE (work_date, wialon_id)
@@ -101,8 +109,8 @@ INDEXES = (
 
 EXPECTED_COLUMNS = (
     'id', 'work_date', 'wialon_id', 'on_seconds', 'off_seconds',
-    'unknown_seconds', 'points_total', 'points_with_ign', 'method_version',
-    'computed_at')
+    'unknown_seconds', 'points_total', 'points_with_ign', 'track_km',
+    'method_version', 'computed_at')
 
 
 def _table_exists(cur, name):
