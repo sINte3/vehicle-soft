@@ -534,7 +534,7 @@ jobs:
         env:
           AGRO_WORK_POWERSHELL: pwsh
         run: |
-          python -m unittest tests.test_agro_work_client tests.test_agro_work_migration tests.test_agro_work_import tests.test_agro_work_links tests.test_agro_work_methods tests.test_agro_work_reconcile tests.test_agro_work_reconcile_tool tests.test_agro_work_copy_db tests.test_agro_work_runbook
+          python -m unittest tests.test_agro_work_client tests.test_agro_work_migration tests.test_agro_work_import tests.test_agro_work_links tests.test_agro_work_methods tests.test_agro_work_reconcile tests.test_agro_work_reconcile_tool tests.test_agro_work_time_method tests.test_agro_work_copy_db tests.test_agro_work_runbook
 
       # Release v1.21 (docs/GPS_RELEASE_RUNBOOK.md): the blocks of release
       # v1.20 without the migration, against the same stand-ins

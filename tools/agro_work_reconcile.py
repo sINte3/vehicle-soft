@@ -269,10 +269,11 @@ def build_book(ctx, forward, reverse, lags, excluded, preview,
             labels.pick(labels.REASONS, row['reason'], True)
             if row['reason'] else '',
             ', '.join(d.strftime('%d.%m') for d in row['work_days']),
-            row['gps_ha'] if row['work_days'] else None,
+            row['gps_ha'] if row['work_days'] and row['gps_on_s'] is None
+            else None,
             row['unknown_days'] or None,
             'да' if app.row.get('gone_at') else '')
-            + _volume_cells(row))
+            + _volume_cells(row) + _hours_cells(row))
     sheet_with(
         'Заявка-работа',
         (bi(('Номер заявки', 'Буюртма рақами')), bi(('Создана', 'Яратилган')),
@@ -287,10 +288,10 @@ def build_book(ctx, forward, reverse, lags, excluded, preview,
          bi(('Га по GPS в окне', 'Ойнада GPS бўйича га')),
          bi(('Неизвестных суток', 'Номаълум кунлар')),
          bi(('Удалена в agro-work', 'agro-work да ўчирилган')))
-        + VOLUME_HEADER,
+        + VOLUME_HEADER + HOURS_HEADER,
         forward_rows,
         (24, 12, 12, 14, 26, 16, 24, 20, 36, 14, 10, 12, 12, 22, 44, 22, 12, 12, 12,
-         12, 16, 14, 12, 44, 26, 16, 14, 14))
+         12, 16, 14, 12, 44, 26, 16, 14, 14, 14, 14, 14, 16))
 
     reverse_rows = []
     for row in reverse:
@@ -419,15 +420,40 @@ VOLUME_HEADER = (
 )
 
 
+# [REASON]: часы метода «время» -- своими столбцами в конце листа, а не в
+# столбцах «…, га». Устав: смысл существующих столбцов выгрузки не меняется
+# -- в столбце «га» не может оказаться число часов.
+HOURS_HEADER = (
+    bi(('Часы зажигания по GPS в окне', 'Ойнада GPS бўйича ўт олдириш соатлари')),
+    bi(('Неизвестно (дыры в данных), ч', 'Номаълум (маълумотлардаги узилишлар), '
+                                         'соат')),
+    bi(('Объём в заявке, ч', 'Буюртмадаги ҳажм, соат')),
+    bi(('Расхождение GPS − заявка, ч', 'Фарқ GPS − буюртма, соат')),
+)
+
+
+def _hours_cells(row):
+    """Столбцы часов строки «Заявка-работа»: пусто у заявок не «время»."""
+    if row['gps_on_s'] is None:
+        return (None, None, None, None)
+    return (round(row['gps_on_s'] / 3600.0, 2),
+            round(row['gps_unknown_s'] / 3600.0, 2),
+            row['volume'], row['volume_deviation'])
+
+
 def _volume_cells(row):
-    """Столбцы U2 строки «Заявка-работа»: пусто, где объём не сравнивается."""
+    """Столбцы U2 строки «Заявка-работа»: пусто, где объём не сравнивается.
+
+    У заявки метода «время» гектарные числа пусты -- её часы в HOURS_HEADER.
+    """
     key = rc.volume_key(row)
     group = row['volume_group']
     share = row['volume_share']
+    timed = row['gps_on_s'] is not None
     return (
-        row['volume'],
+        None if timed else row['volume'],
         labels.pick(labels.VOLUME, key, True) if key else '',
-        row['volume_deviation'],
+        None if timed else row['volume_deviation'],
         round(share * 100, 1) if share is not None else None,
         labels.pick(labels.VOLUME_REASONS, row['volume_reason'], True)
         if row['volume_reason'] else '',
