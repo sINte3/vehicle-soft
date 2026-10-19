@@ -28,6 +28,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from datetime import timedelta
 from unittest import mock
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
@@ -52,6 +53,9 @@ from gps_collector import storage                                  # noqa: E402
 
 DAY = "2026-07-27"
 UNIT = 3464
+# День выпуска v1.28 -- дата включения правила (TERRITORY_FROM). Меняется
+# только новым выпуском, вместе с кодом (§0.5 трека GPS).
+RELEASE_DAY = "2026-10-19"
 QUIET = lambda *a: None                                            # noqa: E731
 _TO_WGS = Transformer.from_crs(UTM_41N, "EPSG:4326", always_xy=True)
 
@@ -570,8 +574,16 @@ class NightlyRule(unittest.TestCase):
         self.assertEqual(len(sites), 1)
         self.assertAlmostEqual(sites[0], 8.77, places=2)
 
-    def test_the_default_is_off(self):
-        self.assertIsNone(territory.TERRITORY_FROM)
+    def test_the_rule_starts_on_the_release_day(self):
+        # [REASON]: выпуск v1.28 включил правило с дня выпуска (§0.5 трека):
+        # None -- «выключено», другая дата -- другой выпуск, и то и другое --
+        # не этот код. Дата сравнивается ровно, а не «похожа на дату», и
+        # день до неё считается без правила.
+        self.assertEqual(territory.TERRITORY_FROM, RELEASE_DAY)
+        self.assertTrue(territory.rule_applies(RELEASE_DAY))
+        day_before = (territory._date(RELEASE_DAY)
+                      - timedelta(days=1)).isoformat()
+        self.assertFalse(territory.rule_applies(day_before))
 
     def test_on_a_day_on_the_yard_has_no_hectares_and_says_why(self):
         self.mirror(zone_geojson(read_fixture_zone()))
