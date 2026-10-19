@@ -828,7 +828,9 @@ def catch_up(folder, db_path, log=print, window=CATCH_UP_WINDOW_DAYS,
     The nightly job runs this right after the day's computation, so a backlog
     that took several runs to fetch is published the night it completes, not
     never. Days whose watermark still stands short are left exactly as they
-    are (or marked, if they had no row) and counted.
+    are (or marked, if they had no row) and counted. So are the waiting days
+    whose points are no longer on disk: recomputed from an empty file they
+    would lose their sites and the operators' answers.
 
     A third pass brings the window in line with the category rule (special
     machinery: track, no hectares) -- see area_rule_drift().
@@ -868,11 +870,22 @@ def catch_up(folder, db_path, log=print, window=CATCH_UP_WINDOW_DAYS,
                 "points are no longer on disk" % drift_no_points)
         return 0
     failures = []
-    recomputed = waiting = 0
+    recomputed = waiting = gone = 0
+    with_points = {}
     for day, unit_id in pending:
         complete, _ = collection_state(folder, unit_id, day)
         if not complete:
             waiting += 1
+            continue
+        if day not in with_points:
+            with_points[day] = set(storage.units_with_points(folder, day))
+        if unit_id not in with_points[day]:
+            # [REASON]: найдено 14.10. Отметка сборщика прошла сутки давно, а
+            # точки удалены хранением (gps_retention --apply, старше 90 дней):
+            # пересчёт из пустого файла дал бы net_tochek, и write_day удалил
+            # бы участки суток вместе с ответами операторов. Строка остаётся
+            # как была, сутки называются числом -- как у прохода по категории.
+            gone += 1
             continue
         result = _guarded_day(day, unit_id, folder, db_path, contours, log,
                               failures, track_only=unit_id in track_only,
@@ -888,6 +901,9 @@ def catch_up(folder, db_path, log=print, window=CATCH_UP_WINDOW_DAYS,
                    sum(s["area_ha"] for s in result.sites)))
     log("catch-up: recomputed %d | still waiting for the collector: %d"
         % (recomputed, waiting))
+    if gone:
+        log("catch-up: %d day(s) %s left alone -- their points are no longer "
+            "on disk" % (gone, REASON_INCOMPLETE))
 
     filled = marked = 0
     for day, unit_id in missing:
