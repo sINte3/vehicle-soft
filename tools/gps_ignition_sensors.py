@@ -93,8 +93,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from gps import exclusion                                          # noqa: E402
 from gps_collector import config                                   # noqa: E402
-from gps_collector.wialon import (Client, WialonError, err_code,   # noqa: E402
-                                  err_reason, login_failure)
+from gps_collector.wialon import (INPUT_PARAM, Client,            # noqa: E402
+                                  WialonError, err_code, err_reason,
+                                  ignition_value, login_failure)
 from tools.gps_mark_not_ours import out_clash                      # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -192,6 +193,20 @@ def param_names(expression):
             if not name.isdigit()]
 
 
+def last_value(last, name):
+    """Значение параметра в последнем сообщении, или None.
+
+    [REASON]: «in» и «inN» -- не ключи `p`, а цифровые входы Wialon в поле
+    сообщения `i` (gps_collector.wialon.ignition_value). Прогон 19.10.2026
+    искал их в `p` и назвал все 76 объектов с зажиганием на «in» объектами
+    без параметра в последнем сообщении.
+    """
+    if INPUT_PARAM.match(name):
+        value = ignition_value(last, name)
+        return None if value is None else '%g' % value
+    return (last.get('p') or {}).get(name)
+
+
 def eh_source(cfl):
     """Источник моточасов по битам `cfl`; '' -- бит не стоит; None -- нет cfl."""
     if cfl is None:
@@ -236,7 +251,6 @@ def build(items, known, excluded, now):
             auto = 'da' if int(cfl) & EH_AUTO else 'net'
             summary['eh_auto'] += auto == 'da'
         last = item.get('lmsg') or {}
-        params = last.get('p') or {}
         last_t = last.get('t') or (item.get('pos') or {}).get('t')
         if not last_t:
             summary['never'] += 1
@@ -245,7 +259,8 @@ def build(items, known, excluded, now):
         names = []
         for _n, expression in ignition:
             names.extend(param_names(expression))
-        present = [name for name in names if name in params]
+        present = [(name, value) for name in names
+                   for value in (last_value(last, name),) if value is not None]
         if ignition:
             summary['with_ignition'] += 1
             if present:
@@ -277,7 +292,7 @@ def build(items, known, excluded, now):
             'poslednee_soobshchenie': local_time(last_t),
             'param_v_poslednem': ('da' if present else 'net') if ignition else '',
             'znachenie_v_poslednem': ' | '.join(
-                '%s=%s' % (name, params[name]) for name in present)})
+                '%s=%s' % (name, value) for name, value in present)})
     rows.sort(key=lambda r: (r['datchik_zazhiganiya'] != 'net',
                              r['kategoriya'], r['wialon_id']))
     return rows, summary

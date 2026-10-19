@@ -55,12 +55,17 @@ class FakeServer:
     the answer the way the real loadCount limit does.
     """
 
-    def __init__(self, fleet=None, step_s=30, cap=None, speed=8.0):
+    def __init__(self, fleet=None, step_s=30, cap=None, speed=8.0,
+                 extras=None):
         self.fleet = fleet if fleet is not None else [
             {"id": 101, "last_t": None}, {"id": 102, "last_t": None}]
         self.step_s = step_s
         self.cap = cap
         self.speed = speed
+        # GPS-24: {unit_id: f(index, stamp) -> dict} -- what a message of the
+        # object carries besides its position (`p`, `i`). A fleet entry may
+        # carry "sens", the sensors the unit list answers with.
+        self.extras = extras or {}
         self.calls = []                 # (svc, params) in order
         self.loads = []                 # (unit_id, t_from, t_to)
 
@@ -75,9 +80,12 @@ class FakeServer:
         stamp = t_from - (t_from % self.step_s) + self.step_s
         index = 0
         while stamp < t_to:
-            out.append({"t": stamp,
-                        "pos": {"x": LON + index * 1e-5, "y": LAT + index * 1e-5,
-                                "s": self.speed, "c": 90, "sc": 14}})
+            message = {"t": stamp,
+                       "pos": {"x": LON + index * 1e-5, "y": LAT + index * 1e-5,
+                               "s": self.speed, "c": 90, "sc": 14}}
+            if unit_id in self.extras:
+                message.update(self.extras[unit_id](index, stamp))
+            out.append(message)
             stamp += self.step_s
             index += 1
             if self.cap is not None and len(out) >= self.cap:
@@ -100,6 +108,8 @@ class FakeServer:
                         "nm": FLEET_NAMES.get(unit["id"], "unit %s" % unit["id"])}
                 if unit.get("last_t") is not None:
                     item["pos"] = {"t": unit["last_t"]}
+                if unit.get("sens") is not None:
+                    item["sens"] = unit["sens"]
                 items.append(item)
             return FakeResponse({"items": items})
         if svc == "messages/load_interval":

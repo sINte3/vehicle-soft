@@ -21,7 +21,7 @@ the beginning for every object.
 import collections
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from . import config
 
@@ -37,9 +37,21 @@ CREATE_POINTS = """
         speed   REAL    NOT NULL,
         course  INTEGER,
         sats    INTEGER,
+        ign     REAL,
         PRIMARY KEY (unit_id, t)
     ) WITHOUT ROWID
 """
+
+# [REASON]: GPS-24, метод «время». `ign` -- сырое значение параметра датчика
+# зажигания в сообщении (wialon.ignition_value); NULL -- у объекта нет датчика
+# зажигания, сообщение параметра не несло, или точка легла до GPS-24. Файлы
+# месяцев, созданные раньше, колонки не имеют, а CREATE TABLE IF NOT EXISTS
+# колонку никогда не добавит -- поэтому open_points проверяет её через PRAGMA
+# и добавляет ALTER: в SQLite нет ADD COLUMN IF NOT EXISTS. Колонка
+# допускает NULL, и ALTER не переписывает файл: месяц на тридцать миллионов
+# точек получает её мгновенно. Откат кода её не убирает и не должен: старый
+# код пишет точки по именам колонок, `ign` остаётся NULL.
+IGNITION_COLUMN = "ign"
 
 CREATE_STATE = """
     CREATE TABLE IF NOT EXISTS collector_watermarks (
@@ -97,7 +109,24 @@ def _connect(path, create_sql):
 
 def open_points(folder, month):
     """Connection to the month's point file, schema in place."""
-    return _connect(points_path(folder, month), CREATE_POINTS)
+    con = _connect(points_path(folder, month), CREATE_POINTS)
+    _ensure_ignition_column(con)
+    return con
+
+
+def _ensure_ignition_column(con):
+    columns = {row[1] for row in con.execute("PRAGMA table_info(points)")}
+    if IGNITION_COLUMN in columns:
+        return
+    try:
+        con.execute("ALTER TABLE points ADD COLUMN %s REAL" % IGNITION_COLUMN)
+        con.commit()
+    except sqlite3.OperationalError as problem:
+        # [REASON]: сборщик и дозаполнение могут открыть один старый файл
+        # одновременно; оба увидят, что колонки нет, и второй ALTER получит
+        # «duplicate column name». Колонка уже есть -- это успех, не ошибка.
+        if "duplicate column" not in str(problem):
+            raise
 
 
 def open_state(folder):
@@ -145,46 +174,170 @@ def write_unit_names(folder, units):
 # [REASON]: обе цифры возвращаются, а не одна. Журнал приёма (GPS-7) держит
 # тождество seen = written + duplicate + no_position по образцу инварианта
 # drone_sync_logs, и вывести `duplicate` задним числом неоткуда: повторы
-# проглатывает сам ключ, молча и без следа.
-WriteResult = collections.namedtuple("WriteResult", "inserted duplicate")
+# проглатывает сам ключ, молча и без следа. Третья цифра -- сколько из
+# дублей принесли зажигание точке, лёгшей без него (GPS-24); в тождество она
+# не входит: точка от этого не стала ни новой, ни потерянной.
+WriteResult = collections.namedtuple("WriteResult",
+                                     "inserted duplicate ignition_filled")
+
+
+def _ignition(row):
+    return None if len(row) < 8 or row[7] is None else float(row[7])
 
 
 def write_points(folder, rows):
-    """Store (unit_id, t, lon, lat, speed, course, sats) rows.
+    """Store (unit_id, t, lon, lat, speed, course, sats[, ign]) rows.
 
-    Returns WriteResult(inserted, duplicate): сколько строк легло и сколько
-    ключ отбросил как уже известные.
+    Returns WriteResult(inserted, duplicate, ignition_filled): сколько строк
+    легло, сколько ключ отбросил как уже известные, и скольким из уже
+    известных повтор принёс зажигание, которого у них не было.
 
     Rows are split by the month of their own timestamp, so an interval that
     crosses midnight of the first lands partly in each file and loses nothing.
 
-    [REASON]: INSERT OR IGNORE against the (unit_id, t) primary key is what
-    makes a re-run free. The watermark can only ever move backwards by accident
-    -- a crash, a manual reset, a re-collection ordered by hand -- and every one
-    of those replays an interval that is already stored. Without the key the
-    replay would double every hectare computed from it.
+    [REASON]: the (unit_id, t) primary key is what makes a re-run free. The
+    watermark can only ever move backwards by accident -- a crash, a manual
+    reset, a re-collection ordered by hand -- and every one of those replays
+    an interval that is already stored. Without the key the replay would
+    double every hectare computed from it.
+
+    [REASON]: a replay changes nothing of a stored point but a missing `ign`.
+    Coordinates, speed and satellites stay as first written -- the hectares
+    already computed from them must not move -- and a known `ign` is never
+    replaced, so the first value that arrived wins, as the coordinates do.
     """
     by_month = {}
     for row in rows:
         by_month.setdefault(month_key(row[1]), []).append(row)
-    inserted = 0
+    inserted = changed = 0
     for month in sorted(by_month):
         con = open_points(folder, month)
         try:
             cur = con.execute("SELECT COUNT(*) FROM points")
             before = cur.fetchone()[0]
+            changes = con.total_changes
             con.executemany(
-                "INSERT OR IGNORE INTO points "
-                "(unit_id, t, lon, lat, speed, course, sats) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO points "
+                "(unit_id, t, lon, lat, speed, course, sats, ign) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(unit_id, t) DO UPDATE SET ign = excluded.ign "
+                "WHERE points.ign IS NULL AND excluded.ign IS NOT NULL",
                 [(int(r[0]), int(r[1]), float(r[2]), float(r[3]), float(r[4]),
                   None if r[5] is None else int(r[5]),
-                  None if r[6] is None else int(r[6])) for r in by_month[month]])
+                  None if r[6] is None else int(r[6]),
+                  _ignition(r)) for r in by_month[month]])
             con.commit()
-            inserted += con.execute("SELECT COUNT(*) FROM points").fetchone()[0] - before
+            added = con.execute("SELECT COUNT(*) FROM points").fetchone()[0] - before
+            inserted += added
+            changed += con.total_changes - changes - added
         finally:
             con.close()
-    return WriteResult(inserted=inserted, duplicate=len(rows) - inserted)
+    return WriteResult(inserted=inserted, duplicate=len(rows) - inserted,
+                       ignition_filled=changed)
+
+
+FillResult = collections.namedtuple("FillResult", "filled offered")
+
+
+def fill_ignition(folder, rows):
+    """Give stored points the ignition they were written without.
+
+    `rows` are (unit_id, t, ign). Returns FillResult(filled, offered): how many
+    points got an `ign`, of how many rows with a value were offered.
+
+    [REASON]: UPDATE only, never INSERT -- this is the whole difference from
+    write_points. The refill re-reads past weeks from Wialon, and among those
+    messages are ones the nightly run never stored (delivered after the
+    watermark had passed them). Inserting them would change the points of
+    days already computed, and a recalculation would then move hectares the
+    operators have already answered for. The refill brings ignition and
+    nothing else.
+    """
+    by_month = {}
+    offered = 0
+    for unit_id, stamp, value in rows:
+        if value is None:
+            continue
+        offered += 1
+        by_month.setdefault(month_key(stamp), []).append(
+            (float(value), int(unit_id), int(stamp)))
+    filled = 0
+    for month in sorted(by_month):
+        if not os.path.exists(points_path(folder, month)):
+            continue
+        con = open_points(folder, month)
+        try:
+            changes = con.total_changes
+            con.executemany(
+                "UPDATE points SET ign = ? "
+                "WHERE unit_id = ? AND t = ? AND ign IS NULL", by_month[month])
+            con.commit()
+            filled += con.total_changes - changes
+        finally:
+            con.close()
+    return FillResult(filled=filled, offered=offered)
+
+
+def ignition_gaps(folder, unit_id, t_from, t_to):
+    """(count, first_t, last_t) of the object's points in [t_from, t_to)
+    that have no `ign`; (0, None, None) when there are none.
+
+    Read without opening for writing: a month never collected is not created.
+    """
+    count, first, last = 0, None, None
+    for month in _months_between(t_from, t_to):
+        path = points_path(folder, month)
+        if not os.path.exists(path):
+            continue
+        con = sqlite3.connect(path, timeout=30)
+        try:
+            columns = {row[1] for row in con.execute("PRAGMA table_info(points)")}
+            where = ("unit_id = ? AND t >= ? AND t < ?"
+                     + (" AND ign IS NULL" if IGNITION_COLUMN in columns else ""))
+            n, lo, hi = con.execute(
+                "SELECT COUNT(*), MIN(t), MAX(t) FROM points WHERE " + where,
+                (int(unit_id), int(t_from), int(t_to))).fetchone()
+        finally:
+            con.close()
+        if n:
+            count += n
+            first = lo if first is None else min(first, lo)
+            last = hi if last is None else max(last, hi)
+    return count, first, last
+
+
+def ignition_coverage(folder, month):
+    """(points, points with ign) in one monthly file; (0, 0) if there is none."""
+    path = points_path(folder, month)
+    if not os.path.exists(path):
+        return 0, 0
+    con = sqlite3.connect(path, timeout=30)
+    try:
+        columns = {row[1] for row in con.execute("PRAGMA table_info(points)")}
+        total = con.execute("SELECT COUNT(*) FROM points").fetchone()[0]
+        if IGNITION_COLUMN not in columns:
+            return total, 0
+        with_ign = con.execute(
+            "SELECT COUNT(*) FROM points WHERE ign IS NOT NULL").fetchone()[0]
+        return total, with_ign
+    finally:
+        con.close()
+
+
+def _months_between(t_from, t_to):
+    """'YYYYMM' of every local month touched by [t_from, t_to)."""
+    if t_to <= t_from:
+        return []
+    months = []
+    current = datetime.fromtimestamp(int(t_from), config.TZ).replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0)
+    last = month_key(int(t_to) - 1)
+    while True:
+        key = current.strftime("%Y%m")
+        months.append(key)
+        if key >= last:
+            return months
+        current = (current.replace(day=28) + timedelta(days=4)).replace(day=1)
 
 
 def read_watermark(folder, unit_id):
