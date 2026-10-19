@@ -110,6 +110,9 @@ class FakeServer:
                     item["pos"] = {"t": unit["last_t"]}
                 if unit.get("sens") is not None:
                     item["sens"] = unit["sens"]
+                for key in ("cneh", "cfl"):
+                    if unit.get(key) is not None:
+                        item[key] = unit[key]
                 items.append(item)
             return FakeResponse({"items": items})
         if svc == "messages/load_interval":
