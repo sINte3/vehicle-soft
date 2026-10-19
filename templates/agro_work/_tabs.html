@@ -1,0 +1,8 @@
+{# Вкладки пункта «Сверка» (просьба владельца 19.10: «Заявка → работа» и
+   «Работа → заявка» -- в одном пункте). Ссылки несут период и общие
+   фильтры: link() из agro_work_routes._screen. Ждёт view. #}
+<nav class="vs-segmented vs-mb" aria-label="{{ 'Разделы сверки' if is_ru else 'Солиштирув бўлимлари' }}">
+  <a href="{{ link('agro_work.dashboard') }}"{% if view == 'summary' %} class="is-active" aria-current="page"{% endif %}>{{ 'Свод' if is_ru else 'Йиғма' }}</a>
+  <a href="{{ link('agro_work.applications') }}"{% if view == 'applications' %} class="is-active" aria-current="page"{% endif %}>{{ 'Заявка → работа' if is_ru else 'Буюртма → иш' }}</a>
+  <a href="{{ link('agro_work.work_days') }}"{% if view == 'work_days' %} class="is-active" aria-current="page"{% endif %}>{{ 'Работа → заявка' if is_ru else 'Иш → буюртма' }}</a>
+</nav>

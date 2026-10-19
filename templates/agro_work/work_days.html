@@ -3,6 +3,7 @@
 {% block title %}{{ 'Работа → заявка — GPS' if is_ru else 'Иш → буюртма — GPS' }}{% endblock %}
 {% block content %}
 {% include 'agro_work/_nav.html' %}
+{% include 'agro_work/_tabs.html' %}
 
 <div class="vs-hero vs-mb">
   <div>
@@ -17,11 +18,8 @@
 {% include 'agro_work/_notices.html' %}
 
 {% if not empty %}
-{% if org_name or unmatched or category %}
-<div class="vs-help vs-mb">
-  {{ 'Показаны: ' if is_ru else 'Кўрсатилган: ' }}{% if org_name %}{{ org_name }}{% endif %}{% if category %} · {{ category_label(category) }}{% endif %}
-  <a class="vs-btn vs-btn-sm vs-btn-ghost" href="{{ url_for('agro_work.work_days', **{'from': date_from.isoformat(), 'to': date_to.isoformat()}) }}">{{ 'Показать все организации' if is_ru else 'Барча ташкилотларни кўрсатиш' }}</a>
-</div>
+{% if filters.by_application %}
+<div class="vs-help vs-mb">{{ 'Статус и тип оплаты — свойства заявки: показаны сутки, среди заявок которых есть заявка с таким статусом или оплатой. Сутки без заявки при этих фильтрах не показываются.' if is_ru else 'Ҳолат ва тўлов тури — буюртма хусусиятлари: буюртмалари орасида шундай ҳолат ёки тўловли буюртма бор кунлар кўрсатилган. Буюртмасиз кунлар бу филтрларда кўрсатилмайди.' }}</div>
 {% endif %}
 
 {% if not rows %}

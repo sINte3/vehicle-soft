@@ -604,9 +604,10 @@ class Access(ScreenCase):
         self.assertEqual(strip_hrefs, GPS_MODULE_PAGES)
 
 
-# Раздел модуля «GPS план-факт» после сведения сверок (владелец, 08.10).
-GPS_MODULE_PAGES = sorted(['/gps/fact', '/agro-work/', '/agro-work/applications',
-                           '/agro-work/work-days', '/agro-work/import',
+# Раздел модуля «GPS план-факт» после сведения сверок (владелец, 08.10);
+# «Заявка -> работа» и «Работа -> заявка» с 19.10 -- вкладки «Сверки», а не
+# свои пункты (просьба владельца «объединить в один пункт»).
+GPS_MODULE_PAGES = sorted(['/gps/fact', '/agro-work/', '/agro-work/import',
                            '/gps/sync'])
 
 
@@ -667,12 +668,11 @@ class OneReconciliationSection(ScreenCase):
 
     def test_both_languages(self):
         for lang, labels, title in (
-                ('ru', ['Факт по технике', 'Сверка', 'Заявка → работа',
-                        'Работа → заявка', 'Импорт заявок', 'Приём данных'],
+                ('ru', ['Факт по технике', 'Сверка', 'Импорт заявок',
+                        'Приём данных'],
                  'Сверка — GPS'),
-                ('uz', ['Техника бўйича факт', 'Солиштирув', 'Буюртма → иш',
-                        'Иш → буюртма', 'Буюртмалар импорти',
-                        'Маълумот қабули'],
+                ('uz', ['Техника бўйича факт', 'Солиштирув',
+                        'Буюртмалар импорти', 'Маълумот қабули'],
                  'Солиштирув — GPS')):
             html = self.get('/agro-work/', lang=lang).get_data(as_text=True)
             pills = [x.strip() for x in re.findall(r'>([^<>]+)</a>',
@@ -684,6 +684,195 @@ class OneReconciliationSection(ScreenCase):
                     # узбекский -- только кириллицей
                     self.assertFalse(any(re.search('[A-Za-z]', x)
                                          for x in labels))
+
+
+class OneScreen(ScreenCase):
+    """Просьба владельца 19.10: «Заявка → работа» и «Работа → заявка» -- в
+    одном пункте, сверху фильтры по организации, статусу и типу оплаты,
+    выгрузка в Excel.
+
+    Держится: вкладки на трёх страницах «Сверки» и ссылки с фильтрами; одно
+    определение фильтра на свод, оба списка и книгу; книга -- та же, что у
+    консольного отчёта, с подмножеством строк и строкой фильтров; охват
+    организаций и в книге; экран и книга ничего не пишут.
+    """
+
+    def setUp(self):
+        super().setUp()
+        # Оплата: A1 и A4 -- наличные, A2 -- перечисление, A3 и A5 -- нет.
+        # A2 -- в процессе: открытая заявка.
+        for app_id, pay in (('A1', 'CASH'), ('A2', 'TRANSFER'), ('A4', 'CASH')):
+            _sql(["UPDATE agro_work_applications SET payment_type = ? "
+                  "WHERE id = ?"], (pay, app_id))
+        _sql(["UPDATE agro_work_applications SET status = 'IN_PROGRESS', "
+              "completed_day = NULL WHERE id = 'A2'"])
+
+    def numbers(self, url, **params):
+        response = self.get(url, **params)
+        self.assertEqual(response.status_code, 200)
+        return sorted(set(re.findall(r'APP-TEST-\d{3}',
+                                     response.get_data(as_text=True))))
+
+    def book(self, user_id=None, **params):
+        from openpyxl import load_workbook
+        import io
+        response = self.get('/agro-work/export', user_id=user_id, **params)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('spreadsheetml', response.headers['Content-Type'])
+        self.assertIn('attachment', response.headers['Content-Disposition'])
+        return load_workbook(io.BytesIO(response.data))
+
+    @staticmethod
+    def column(sheet, index=0):
+        return sorted({row[index] for row in sheet.iter_rows(min_row=2,
+                                                             values_only=True)
+                       if row and row[index]})
+
+    def test_three_tabs_on_every_reconciliation_page(self):
+        for url, active in (('/agro-work/', '/agro-work/'),
+                            ('/agro-work/applications', '/agro-work/applications'),
+                            ('/agro-work/work-days', '/agro-work/work-days')):
+            html = self.get(url, lang='ru', pay='CASH').get_data(as_text=True)
+            tabs = re.search(r'<nav class="vs-segmented vs-mb"[^>]*>(.*?)</nav>',
+                             html, re.S)
+            with self.subTest(url=url):
+                self.assertIsNotNone(tabs)
+                links = re.findall(r'<a href="([^"]+)"', tabs.group(1))
+                self.assertEqual([link.split('?')[0] for link in links],
+                                 ['/agro-work/', '/agro-work/applications',
+                                  '/agro-work/work-days'])
+                for link in links:            # вкладка не теряет фильтр
+                    self.assertIn('pay=CASH', link)
+                    self.assertIn('from=2026-09-10', link)
+                current = re.findall(r'<a href="([^"?]+)[^"]*" class="is-active"'
+                                     r' aria-current="page"', tabs.group(1))
+                self.assertEqual(current, [active])
+                labels_shown = re.findall(r'>([^<>]+)</a>', tabs.group(1))
+                self.assertEqual(labels_shown, ['Свод', 'Заявка → работа',
+                                                'Работа → заявка'])
+
+    def test_the_common_filters_are_on_top_of_every_tab(self):
+        for url in ('/agro-work/', '/agro-work/applications',
+                    '/agro-work/work-days'):
+            html = self.get(url, lang='ru').get_data(as_text=True)
+            with self.subTest(url=url):
+                for name in ('org', 'cat', 'status', 'pay'):
+                    self.assertIn('<select name="%s"' % name, html)
+                self.assertIn('Скачать Excel', html)
+                self.assertIn('href="/agro-work/export?', html)
+
+    def test_payment_filter_on_the_applications_tab(self):
+        self.assertEqual(self.numbers('/agro-work/applications', pay='CASH'),
+                         ['APP-TEST-001', 'APP-TEST-004'])
+        self.assertEqual(self.numbers('/agro-work/applications', pay='TRANSFER'),
+                         ['APP-TEST-002'])
+        # отрицательный контроль: без фильтра -- все пять
+        self.assertEqual(len(self.numbers('/agro-work/applications')), 5)
+        # чужое значение -- не фильтр, а «все»
+        self.assertEqual(len(self.numbers('/agro-work/applications',
+                                          pay='BOGUS')), 5)
+
+    def test_status_filter_on_the_applications_tab(self):
+        self.assertEqual(self.numbers('/agro-work/applications',
+                                      status='IN_PROGRESS'), ['APP-TEST-002'])
+        self.assertEqual(self.numbers('/agro-work/applications',
+                                      status='CANCELLED'), [])
+
+    def test_organization_filter_is_a_list_and_keeps_the_scope(self):
+        html = self.get('/agro-work/applications', lang='ru').get_data(as_text=True)
+        options = re.search(r'<select name="org".*?</select>', html, re.S).group(0)
+        self.assertIn('Buxoro agroklaster', options)
+        self.assertIn('Jizzax filial', options)
+        self.assertIn('value="none"', options)
+        self.assertEqual(self.numbers('/agro-work/applications',
+                                      org=str(self.org2_id)), ['APP-TEST-004'])
+        self.assertEqual(self.numbers('/agro-work/applications', org='none'),
+                         ['APP-TEST-003'])
+        # оператор своей организации: в списке только она, несвязанных нет
+        op = self.operator([self.org1_id])
+        html = self.get('/agro-work/applications', user_id=op,
+                        lang='ru').get_data(as_text=True)
+        options = re.search(r'<select name="org".*?</select>', html, re.S).group(0)
+        self.assertIn('Buxoro agroklaster', options)
+        self.assertNotIn('Jizzax filial', options)
+        self.assertNotIn('value="none"', options)
+
+    def test_work_days_follow_the_application_filters(self):
+        html = self.get('/agro-work/work-days', lang='ru',
+                        pay='CASH').get_data(as_text=True)
+        self.assertIn('10.09.2026', html)            # покрыта A1, наличные
+        self.assertIn('15.09.2026', html)            # покрыта A4, наличные
+        self.assertNotIn('13.09.2026', html)         # без заявки -- скрыта
+        self.assertIn('Сутки без заявки при этих фильтрах не показываются', html)
+        plain = self.get('/agro-work/work-days', lang='ru').get_data(as_text=True)
+        self.assertIn('13.09.2026', plain)           # отрицательный контроль
+        self.assertNotIn('Сутки без заявки при этих фильтрах', plain)
+
+    def test_summary_counts_and_links_follow_the_filters(self):
+        html = self.get('/agro-work/', lang='ru', pay='CASH').get_data(as_text=True)
+        first = re.search(r'Заявок в периоде</div>\s*<div class="vs-stat-value">'
+                          r'(\d+)</div>', html)
+        self.assertEqual(first.group(1), '2')
+        for link in re.findall(r'href="(/agro-work/(?:applications|work-days)'
+                               r'\?[^"]+)"', html):
+            self.assertIn('pay=CASH', link.replace('&amp;', '&'))
+        plain = self.get('/agro-work/', lang='ru').get_data(as_text=True)
+        first = re.search(r'Заявок в периоде</div>\s*<div class="vs-stat-value">'
+                          r'(\d+)</div>', plain)
+        self.assertEqual(first.group(1), '5')
+
+    def test_the_book_is_the_console_book_with_the_filtered_rows(self):
+        book = self.book()
+        self.assertEqual(book.sheetnames, ['Свод', 'Заявка-работа',
+                                           'Работа-заявка', 'Открытые заявки',
+                                           'Причины', 'Замер N'])
+        self.assertEqual(self.column(book['Заявка-работа']),
+                         ['APP-TEST-001', 'APP-TEST-002', 'APP-TEST-003',
+                          'APP-TEST-004', 'APP-TEST-005'])
+        notes = [row[0] for row in book['Свод'].iter_rows(values_only=True)
+                 if row and isinstance(row[0], str)]
+        self.assertFalse([n for n in notes if 'Фильтры экрана' in n])
+        cash = self.book(pay='CASH')
+        self.assertEqual(self.column(cash['Заявка-работа']),
+                         ['APP-TEST-001', 'APP-TEST-004'])
+        days = [row[0] for row in cash['Работа-заявка'].iter_rows(
+            min_row=2, values_only=True) if row and row[0]]
+        self.assertEqual(sorted(d.isoformat()[:10] for d in days),
+                         ['2026-09-10', '2026-09-15'])
+        notes = [row[0] for row in cash['Свод'].iter_rows(values_only=True)
+                 if row and isinstance(row[0], str)]
+        self.assertTrue([n for n in notes
+                         if 'Фильтры экрана: тип оплаты: Наличные' in n], notes)
+        # Открытые заявки -- тем же фильтром: A2 открыта, но оплата другая.
+        self.assertEqual(self.column(cash['Открытые заявки'], 2), [])
+        self.assertEqual(self.column(self.book(pay='TRANSFER')['Открытые заявки'],
+                                     2), ['APP-TEST-002'])
+
+    def test_the_book_keeps_the_organization_scope(self):
+        op = self.operator([self.org1_id])
+        book = self.book(user_id=op)
+        numbers = self.column(book['Заявка-работа'])
+        self.assertNotIn('APP-TEST-004', numbers)    # организация 2
+        self.assertNotIn('APP-TEST-003', numbers)    # машина не связана
+        self.assertIn('APP-TEST-001', numbers)
+
+    def test_the_export_writes_nothing(self):
+        before = sha()
+        self.book(pay='CASH')
+        self.book()
+        self.assertEqual(sha(), before)
+
+    def test_uzbek_filter_labels_are_cyrillic(self):
+        html = self.get('/agro-work/applications', lang='uz').get_data(as_text=True)
+        pay = re.search(r'<select name="pay".*?</select>', html, re.S).group(0)
+        status = re.search(r'<select name="status".*?</select>', html, re.S).group(0)
+        texts = re.findall(r'>([^<>]+)</option>', pay + status)
+        self.assertIn('Нақд пул', texts)
+        self.assertIn('Бажарилди', texts)
+        for text in texts:
+            self.assertNotRegex(text, '[A-Za-z]', text)
+        self.assertIn('Excel юклаб олиш', html)
+        self.assertIn('Тўлов тури', html)
 
 
 class Copies(unittest.TestCase):
