@@ -614,13 +614,15 @@ jobs:
       - name: GPS collector self-tests (stdlib)
         run: python -m unittest discover -s gps_collector/tests -t .
 
-      # GPS-25..27, the «time» method: rule R of engine hours (gps/ignition.py,
+      # GPS-25..28, the «time» method: rule R of engine hours (gps/ignition.py,
       # preregistered in the GPS track on 19.10.2026), the read-only check of
       # it against Wialon's own engine-hour counter, the daily hours table
-      # (migration GPS_ENGINE_001, gps/engine_hours.py) and the read-only
-      # probe of Wialon's engine-hours report. Stdlib only, like the collector.
+      # (migration GPS_ENGINE_001, gps/engine_hours.py), the read-only probe
+      # of Wialon's engine-hours report, rule P of mileage (gps/mileage.py)
+      # and the read-only check of R and P against that report. Stdlib only,
+      # like the collector.
       - name: GPS engine hours -- rule R, daily table, checks against Wialon (stdlib)
-        run: python -m unittest gps.tests.test_ignition_rule tests.test_gps_engine_hours_check gps.tests.test_engine_hours tests.test_gps_engine_migration tests.test_gps_engine_report_probe
+        run: python -m unittest gps.tests.test_ignition_rule tests.test_gps_engine_hours_check gps.tests.test_engine_hours tests.test_gps_engine_migration tests.test_gps_engine_report_probe gps.tests.test_mileage_rule tests.test_gps_engine_report_check
 
   # DRONE-USEFUL-AREA-PILOT-001. The operator console on the server is
   # WINDOWS POWERSHELL 5.1, not pwsh 7, and the two differ exactly where this
