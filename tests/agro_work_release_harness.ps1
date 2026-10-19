@@ -9,9 +9,10 @@
 # programs of the same name inside this script and the block it runs.
 #
 # The outputs the stand-ins replay were produced by the REAL tools
-# (check_migration_drift.py, check_db_lock.py, backup_transport_db.py,
-# migrate_agro_work_001.py) on temporary databases; the test passes them in
-# the scenario file.
+# (check_migration_drift.py, check_db_lock.py, backup_transport_db.py, and
+# the release's migration -- migrate_agro_work_001.py in v1.20,
+# migrate_gps_engine_001.py in v1.29) on temporary databases; the test passes
+# them in the scenario file.
 #
 # ASCII only, Windows PowerShell 5.1 and PowerShell 7 alike: the server runs
 # 5.1, CI runs the same scenarios on both.
@@ -167,7 +168,7 @@ function Invoke-FakePython {
     if ($global:state.Migrated) { return (Send-Output $o.drift_migrated) }
     return (Send-Output $o.drift_merged)
   }
-  if ($a[0] -eq 'migrate_agro_work_001.py') {
+  if ($a[0] -like 'migrate_*.py') {
     $global:state.MigrateRuns = $global:state.MigrateRuns + 1
     if ($global:state.MigrateRuns -eq 1) { $kind = [string]$global:scenario.MigrateFirst } else { $kind = [string]$global:scenario.MigrateSecond }
     if ($kind -eq 'done') { $global:state.Migrated = $true }

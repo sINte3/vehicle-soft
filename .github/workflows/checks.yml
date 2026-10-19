@@ -607,6 +607,19 @@ jobs:
           GPS_RELEASE_POWERSHELL: pwsh
         run: python -m unittest tests.test_gps_release_v128
 
+      # Release v1.29 (docs/GPS_RELEASE_V129_RUNBOOK.md): the «time» method --
+      # the collector keeps ignition and the engine-hour counter, migration
+      # GPS_ENGINE_001 (the hours table), the night's third line, the ignition
+      # refill and the hours of the period. Step 3 is the v1.20 block (it
+      # passed on the server WITH a migration), steps 2 and the rollback are
+      # those of v1.28, all with new constants, against the same stand-ins;
+      # the third-line block runs against a temporary gps_daily.bat. On pwsh 7
+      # here and on Windows PowerShell 5.1 below. Stdlib only.
+      - name: GPS release v1.29 runbook and blocks (pwsh 7)
+        env:
+          GPS_RELEASE_POWERSHELL: pwsh
+        run: python -m unittest tests.test_gps_release_v129
+
       # The GPS collector (gps_collector/) is a separate stdlib-only process:
       # the point store, the watermark and, since 09.10.2026, the Wialon
       # object names the /gps/fact screen shows instead of bare numbers. Its
@@ -736,3 +749,12 @@ jobs:
         env:
           GPS_RELEASE_POWERSHELL: powershell
         run: python -m unittest tests.test_gps_release_v128.ReleaseV128ToolFormats tests.test_gps_release_v128.ReleaseV128BlocksInPowerShell
+
+      # GPS release v1.29 (docs/GPS_RELEASE_V129_RUNBOOK.md): the same stop
+      # paths, the migration's and the third line's on the interpreter the
+      # owner pastes into.
+      - name: GPS release v1.29 blocks on Windows PowerShell 5.1
+        shell: powershell
+        env:
+          GPS_RELEASE_POWERSHELL: powershell
+        run: python -m unittest tests.test_gps_release_v129.ReleaseV129ToolFormats tests.test_gps_release_v129.ReleaseV129BlocksInPowerShell tests.test_gps_release_v129.ThirdLineInPowerShell
