@@ -621,6 +621,67 @@ class CollectionCompleteness(unittest.TestCase):
         self.assertEqual(row["reason"], "sbor_nepolnyy")
         self.assertEqual(row["computed_at"], stamp)
 
+    def pending_day_with_an_answer(self, unit_id):
+        """Сутки посчитаны, оператор ответил, потом сутки помечены «ждут
+        сборщика», и отметка их прошла: --catch-up должен их взять."""
+        storage.set_watermark(self.folder, unit_id, self.finish)
+        daily.run_day(self.DAY, unit_id, folder=self.folder, db_path=self.db,
+                      contours={})
+        self.answer("проезд")
+        storage.set_watermark(self.folder, unit_id, self.finish - 3600)
+        daily.run_day(self.DAY, unit_id, folder=self.folder, db_path=self.db,
+                      contours={})
+        storage.set_watermark(self.folder, unit_id, self.finish + 1800)
+
+    def test_catch_up_leaves_a_pending_day_whose_points_are_gone(self):
+        # Найдено 14.10: хранение (gps_retention --apply) удалило помесячный
+        # файл, а сутки ждали сборщика. Пересчёт из пустого файла дал бы
+        # net_tochek и удалил бы участки вместе с ответом оператора.
+        self.pending_day_with_an_answer(self.UNIT)
+        polygons = self.rows("gps_work_polygons")
+        self.assertGreater(len(polygons), 0)
+        stamp = self.rows("gps_daily_aggregates")[0]["computed_at"]
+        os.remove(storage.points_path(self.folder,
+                                      self.DAY[:7].replace("-", "")))
+        code, log = self.run_main("--catch-up")
+        self.assertEqual(code, 0, log)
+        self.assertIn("recomputed 0 | still waiting for the collector: 0", log)
+        self.assertIn("catch-up: 1 day(s) sbor_nepolnyy left alone -- their "
+                      "points are no longer on disk", log)
+        self.assertTrue(log.isascii(), log)
+        row = self.rows("gps_daily_aggregates")[0]
+        self.assertEqual(row["reason"], "sbor_nepolnyy")
+        self.assertEqual(row["computed_at"], stamp)
+        self.assertEqual(self.rows("gps_work_polygons"), polygons)
+
+    def test_the_points_are_looked_up_per_object_not_per_day(self):
+        # Точки другого объекта в тот же день не делают сутки этого объекта
+        # пересчитываемыми -- и наоборот, сутки объекта с точками
+        # пересчитываются, хотя у соседа точек нет.
+        gone = self.UNIT + 100000
+        storage.write_points(self.folder, [
+            (gone, t, lon, lat, speed, 90, sats)
+            for t, lon, lat, speed, sats in self.track])
+        for unit_id in (self.UNIT, gone):
+            storage.set_watermark(self.folder, unit_id, self.finish - 3600)
+            daily.run_day(self.DAY, unit_id, folder=self.folder,
+                          db_path=self.db, contours={})
+            storage.set_watermark(self.folder, unit_id, self.finish + 1800)
+        con = sqlite3.connect(storage.points_path(
+            self.folder, self.DAY[:7].replace("-", "")))
+        try:
+            con.execute("DELETE FROM points WHERE unit_id = ?", (gone,))
+            con.commit()
+        finally:
+            con.close()
+        code, log = self.run_main("--catch-up")
+        self.assertEqual(code, 0, log)
+        self.assertIn("recomputed 1 | still waiting for the collector: 0", log)
+        self.assertIn("catch-up: 1 day(s) sbor_nepolnyy left alone", log)
+        reasons = {r["wialon_id"]: r["reason"]
+                   for r in self.rows("gps_daily_aggregates")}
+        self.assertEqual(reasons, {self.UNIT: None, gone: "sbor_nepolnyy"})
+
     def test_catch_up_with_nothing_pending_says_so(self):
         code, log = self.run_main("--catch-up")
         self.assertEqual(code, 0, log)
