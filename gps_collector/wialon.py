@@ -21,6 +21,7 @@ delete anywhere, by construction: there is no method here that could.
 """
 
 import json
+import re
 import threading
 import time
 import urllib.parse
@@ -229,17 +230,19 @@ class Client:
         self.sid = None
 
     def list_units(self):
-        """Every object with its name and the time of its last message.
+        """Every object with its name, the time of its last message and the
+        parameter of its ignition sensor.
 
         One request for the whole fleet, and no messages loaded at all -- the
         same shape tools/wialon_last_seen.py uses. `last_t` is None for an
         object that has never reported: never-reported and long-silent are
         different facts and are kept apart here as they are there.
+        `ignition` is None for an object without an ignition sensor.
         """
         answer = self.call("core/search_items", {
             "spec": {"itemsType": "avl_unit", "propName": "sys_name",
                      "propValueMask": "*", "sortType": "sys_name"},
-            "force": 1, "flags": config.FLAG_NAME_AND_LAST_POSITION,
+            "force": 1, "flags": config.FLAG_UNIT_LIST,
             "from": 0, "to": 0})
         code = err_code(answer)
         if code is not None:
@@ -250,7 +253,8 @@ class Client:
                 continue
             position = item.get("pos") or {}
             units.append({"id": int(item["id"]), "name": item.get("nm") or "",
-                          "last_t": position.get("t")})
+                          "last_t": position.get("t"),
+                          "ignition": ignition_param(item)})
         return units
 
     def zone_ids(self, resource_id):
@@ -321,8 +325,75 @@ class Client:
             pass
 
 
-def positions(messages):
-    """(t, lon, lat, speed, course, sats) of the messages that have a fix.
+# Параметр цифрового входа Wialon: «in» -- все входы, «in5» -- пятый.
+INPUT_PARAM = re.compile(r"^in([0-9]+)?$")
+
+
+def ignition_param(item):
+    """Parameter of the object's ignition sensor, or None.
+
+    `item` is one object of a core/search_items answer made with
+    FLAG_SENSORS: `sens` maps sensor ids to {"n": name, "t": type, "p":
+    parameter}. GPS-23 found exactly one ignition sensor per object on all
+    620 objects that have one; were there two, the one with the smallest id
+    is taken -- the same order tools/gps_ignition_sensors.py lists them in.
+    """
+    found = item.get("sens") or {}
+    if isinstance(found, list):
+        found = {str(i): value for i, value in enumerate(found)}
+    for key in sorted(found, key=lambda k: (len(str(k)), str(k))):
+        sensor = found[key] or {}
+        if str(sensor.get("t") or "") == config.IGNITION_TYPE:
+            param = str(sensor.get("p") or "").strip()
+            return param or None
+    return None
+
+
+def ignition_value(message, param):
+    """The raw value of the ignition sensor's parameter in one message.
+
+    Returns a float, or None when the message does not carry the parameter.
+
+    [REASON]: the value is stored raw, not as on/off. Wialon reads a digital
+    sensor as off at zero and on at anything else, but an ignition sensor can
+    also sit on a voltage with a calculation table, and the collector does
+    not decide what counts as work (README, «Чего коллектор не делает»). The
+    hours are counted by the daily calculation, which can apply a rule; a
+    value thrown away here could never be recovered.
+
+    [REASON]: «in» and «inN» are not keys of `p`. They are Wialon's names for
+    the digital inputs, which travel in the message's own field `i` as a bit
+    mask: «inN» is bit N counted from 1 on the right, «in» is the sum of all
+    inputs. GPS-23 looked only in `p` and reported all 76 objects whose
+    ignition sits on «in» as «parameter not in the last message».
+
+    An expression («io_239*const1») is not evaluated: it is not a key of `p`,
+    so the answer is None -- no value is better than a guessed one.
+    """
+    if not param:
+        return None
+    match = INPUT_PARAM.match(param)
+    if match:
+        inputs = message.get("i")
+        if isinstance(inputs, bool) or not isinstance(inputs, int):
+            return None
+        if match.group(1) is None:
+            return float(bin(inputs & 0xFFFFFFFF).count("1"))
+        bit = int(match.group(1))
+        if not 1 <= bit <= 32:
+            return None
+        return float((inputs >> (bit - 1)) & 1)
+    value = (message.get("p") or {}).get(param)
+    if isinstance(value, (bool, int, float)):
+        return float(value)
+    return None
+
+
+def positions(messages, ignition=None):
+    """(t, lon, lat, speed, course, sats, ign) of the messages that have a fix.
+
+    `ignition` is the parameter of the object's ignition sensor (see
+    list_units); without it `ign` is None.
 
     [REASON]: Wialon calls longitude `x` and latitude `y`. Swapping them
     produces a file that looks perfectly well-formed while putting every field
@@ -342,5 +413,6 @@ def positions(messages):
         out.append((int(stamp), float(lon), float(lat),
                     float(position.get("s") or 0),
                     None if position.get("c") is None else int(position["c"]),
-                    None if position.get("sc") is None else int(position["sc"])))
+                    None if position.get("sc") is None else int(position["sc"]),
+                    ignition_value(message, ignition)))
     return out

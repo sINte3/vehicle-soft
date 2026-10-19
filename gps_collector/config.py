@@ -26,6 +26,16 @@ TZ = timezone(timedelta(hours=5))
 # whole fleet, and no messages are loaded at all.
 FLAG_NAME_AND_LAST_POSITION = 1025
 
+# [REASON]: GPS-24, метод «время». 0x1000 -- датчики объекта: из них список
+# парка берёт параметр датчика зажигания, и сборщик кладёт его значение рядом
+# с каждой точкой. Флаг и тип датчика подтверждены прогоном GPS-23 на
+# production 19.10.2026: 621 объект, у 620 датчик типа «engine operation»,
+# параметры -- io_239 (543), in (76), spn183 (1). Лишнего запроса нет: датчики
+# приезжают тем же запросом списка, что имена и последние позиции.
+FLAG_SENSORS = 0x1000
+FLAG_UNIT_LIST = FLAG_NAME_AND_LAST_POSITION | FLAG_SENSORS
+IGNITION_TYPE = "engine operation"
+
 # [REASON]: measured 18.08.2026 -- 298 objects of 481 had reported within three
 # days, 70 had been silent longer than a month, 30 longer than half a year and
 # one had never reported at all. Asking the server nightly about a tracker that

@@ -57,6 +57,10 @@ class Summary:
         self.truncated = 0
         self.watermark_from = None
         self.watermark_to = None
+        # GPS-24: зажигание. В тождество журнала приёма не входит.
+        self.units_no_ignition = 0
+        self.points_with_ignition = 0
+        self.ignition_filled = 0
 
     def line(self):
         return ("objects: %d | asked: %d | silent, skipped: %d | up to date: %d "
@@ -66,6 +70,15 @@ class Summary:
                    self.units_uptodate, self.units_empty, self.units_failed,
                    self.points_written, self.points_seen,
                    self.points_duplicate, self.points_no_position))
+
+    def ignition_line(self):
+        """Сколько точек принесли зажигание -- по нему считается «время»."""
+        with_position = self.points_seen - self.points_no_position
+        return ("ignition: %d of %d points with a position carry it | asked "
+                "objects without an ignition sensor: %d | filled into points "
+                "stored before: %d"
+                % (self.points_with_ignition, with_position,
+                   self.units_no_ignition, self.ignition_filled))
 
     def balances(self):
         """Тождество журнала приёма, по образцу инварианта drone_sync_logs.
@@ -130,8 +143,13 @@ def collect(client, folder, now=None, backfill_days=config.BACKFILL_DAYS,
         summary.units_asked += 1
         summary.points_seen += len(messages)
 
-        rows = [(unit_id, t, lon, lat, speed, course, sats)
-                for t, lon, lat, speed, course, sats in positions(messages)]
+        ignition = unit.get("ignition")
+        if not ignition:
+            summary.units_no_ignition += 1
+        rows = [(unit_id, t, lon, lat, speed, course, sats, ign)
+                for t, lon, lat, speed, course, sats, ign
+                in positions(messages, ignition)]
+        summary.points_with_ignition += sum(1 for r in rows if r[7] is not None)
         # [REASON]: сообщение без координат -- это не потеря и не дубль, это
         # третья корзина. Без неё тождество журнала приёма не сходится, а
         # сходящееся тождество -- единственный способ заметить, что счётчики
@@ -141,6 +159,7 @@ def collect(client, folder, now=None, backfill_days=config.BACKFILL_DAYS,
         written = storage.write_points(folder, rows)
         summary.points_written += written.inserted
         summary.points_duplicate += written.duplicate
+        summary.ignition_filled += written.ignition_filled
         summary.watermark_from = (t_from if summary.watermark_from is None
                                   else min(summary.watermark_from, t_from))
         summary.watermark_to = (t_to if summary.watermark_to is None
@@ -242,6 +261,7 @@ def main(argv=None):
         client.logout()
 
     print("\n" + summary.line())
+    print(summary.ignition_line())
     print("requests: %d | logins: %d | abandoned: %d"
           % (client.requests, client.logins, client.abandoned))
     if summary.truncated:
