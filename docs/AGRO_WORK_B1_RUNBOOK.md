@@ -79,10 +79,10 @@ cd C:\VehicleSoft_AgroWork
 ```
 
 ```powershell
-& "C:\Program Files\Python314\python.exe" -m unittest tests.test_agro_work_client tests.test_agro_work_migration tests.test_agro_work_import tests.test_agro_work_links tests.test_agro_work_methods tests.test_agro_work_reconcile tests.test_agro_work_reconcile_tool tests.test_agro_work_copy_db
+& "C:\Program Files\Python314\python.exe" -m unittest tests.test_agro_work_client tests.test_agro_work_migration tests.test_agro_work_import tests.test_agro_work_links tests.test_agro_work_methods tests.test_agro_work_reconcile tests.test_agro_work_reconcile_tool tests.test_agro_work_time_method tests.test_agro_work_copy_db
 ```
 
-**Ожидается:** в конце `Ran 176 tests` и `OK`.
+**Ожидается:** в конце `Ran 199 tests` и `OK`.
 **Прислать:** две последние строки; если не `OK` — весь вывод. Дальше не
 идти.
 
