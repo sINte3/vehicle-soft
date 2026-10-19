@@ -454,8 +454,13 @@ class ReleaseV129Runbook(unittest.TestCase):
         self.assertNotIn('/pull/', text(RELEASE))
         self.assertIn('вливать на GitHub ничего не нужно', step('Шаг 1'))
         # Без squash: каждый PR дельты -- со строкой «Merge pull request».
+        # Сверху -- свои коммиты ветки ранбука (закреплённый -- среди них),
+        # ниже последнего мержа чужих коммитов без мержа нет.
         subjects = git('log', '--first-parent', '--format=%s',
                        '%s..%s' % (BASELINE, commit)).splitlines()
+        while subjects and not subjects[0].startswith('Merge pull request #'):
+            subjects.pop(0)
+        self.assertTrue(subjects)
         self.assertTrue(all(s.startswith('Merge pull request #') for s in subjects),
                         subjects)
 
