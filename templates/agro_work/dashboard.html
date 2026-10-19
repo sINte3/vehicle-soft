@@ -3,6 +3,7 @@
 {% block title %}{{ 'Сверка — GPS' if is_ru else 'Солиштирув — GPS' }}{% endblock %}
 {% block content %}
 {% include 'agro_work/_nav.html' %}
+{% include 'agro_work/_tabs.html' %}
 
 <div class="vs-hero vs-mb">
   <div>
@@ -22,14 +23,14 @@
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Работы по GPS не было' if is_ru else 'GPS бўйича иш бўлмаган' }}</div>
-    <div class="vs-stat-value"><a href="{{ url_for('agro_work.applications', **{'from': date_from.isoformat(), 'to': date_to.isoformat(), 'verdict': 'rabota_net'}) }}">{{ total.get('app_rabota_net', 0) }}</a></div>
+    <div class="vs-stat-value"><a href="{{ link('agro_work.applications', verdict='rabota_net') }}">{{ total.get('app_rabota_net', 0) }}</a></div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Работа была: объём против GPS' if is_ru else 'Иш бўлган: ҳажм GPS га қарши' }}</div>
-    <div class="vs-stat-value"><a href="{{ url_for('agro_work.applications', **{'from': date_from.isoformat(), 'to': date_to.isoformat(), 'verdict': 'rabota_est'}) }}">{{ total.get('app_rabota_est', 0) }}</a></div>
+    <div class="vs-stat-value"><a href="{{ link('agro_work.applications', verdict='rabota_est') }}">{{ total.get('app_rabota_est', 0) }}</a></div>
     {% if total.get('app_rabota_est', 0) %}
     {% for key, counter in volume_keys %}
-    <div class="vs-soft"><a href="{{ url_for('agro_work.applications', **{'from': date_from.isoformat(), 'to': date_to.isoformat(), 'verdict': 'rabota_est', 'volume': key}) }}">{{ volume_label(key) }}: {{ total.get(counter, 0) }}</a></div>
+    <div class="vs-soft"><a href="{{ link('agro_work.applications', verdict='rabota_est', volume=key) }}">{{ volume_label(key) }}: {{ total.get(counter, 0) }}</a></div>
     {% endfor %}
     {% endif %}
   </div>
@@ -39,7 +40,7 @@
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Из них без заявки' if is_ru else 'Шулардан буюртмасиз' }}</div>
-    <div class="vs-stat-value"><a href="{{ url_for('agro_work.work_days', **{'from': date_from.isoformat(), 'to': date_to.isoformat(), 'coverage': 'bez_zayavki'}) }}">{{ total.get('day_bez_zayavki', 0) }}</a></div>
+    <div class="vs-stat-value"><a href="{{ link('agro_work.work_days', coverage='bez_zayavki') }}">{{ total.get('day_bez_zayavki', 0) }}</a></div>
     {% if total.get('day_bez_zayavki', 0) %}
     {% set after_text = {
       'zadnim_chislom_pozzhe': ('из них с заявкой, заведённой задним числом позже: %d', 'шулардан кейин орқа сана билан киритилган буюртмаси борлари: %d'),
@@ -47,7 +48,7 @@
       'pozzhe_poryadok_neizvesten': ('с заявкой позже, порядок ввода неизвестен: %d', 'кейин киритилган буюртмаси бор, киритиш тартиби номаълум: %d'),
       'ne_zavedena': ('заявка не заведена совсем: %d', 'буюртма умуман киритилмаганлари: %d')} %}
     {% for kind, key in after_keys if kind != 'pozzhe_poryadok_neizvesten' or total.get(key) %}
-    <div class="vs-soft"><a href="{{ url_for('agro_work.work_days', **{'from': date_from.isoformat(), 'to': date_to.isoformat(), 'coverage': 'bez_zayavki', 'after': kind}) }}">{{ (after_text[kind][0] if is_ru else after_text[kind][1])|format(total.get(key, 0)) }}</a></div>
+    <div class="vs-soft"><a href="{{ link('agro_work.work_days', coverage='bez_zayavki', after=kind) }}">{{ (after_text[kind][0] if is_ru else after_text[kind][1])|format(total.get(key, 0)) }}</a></div>
     {% endfor %}
     {% endif %}
   </div>
@@ -91,19 +92,19 @@
       </thead>
       <tbody>
         {% for row in rows %}
-        {% set group = {'from': date_from.isoformat(), 'to': date_to.isoformat(), 'org': row.org_id if row.org_id else 'none', 'cat': row.category or ''} %}
+        {% set group = {'org': row.org_id if row.org_id else 'none', 'cat': row.category or ''} %}
         <tr>
           <td>{% if row.org_id %}{{ row.org_name }}{% else %}{{ 'Машина agro-work не связана с нашей техникой' if is_ru else 'agro-work машинаси бизнинг техника билан боғланмаган' }}{% endif %}</td>
           <td>{{ category_label(row.category) if row.category else '—' }}</td>
           <td class="right">{{ row.c.get('machines', 0) }}</td>
           <td class="right">{{ row.c.get('applications', 0) }}</td>
           <td class="right">{{ row.c.get('app_rabota_est', 0) }}</td>
-          <td class="right">{% if row.c.get('app_rabota_net') %}<a href="{{ url_for('agro_work.applications', verdict='rabota_net', **group) }}"><span class="vs-badge vs-badge-danger">{{ row.c.get('app_rabota_net') }}</span></a>{% else %}0{% endif %}</td>
-          <td class="right">{% if row.c.get('app_bez_verdikta') %}<a href="{{ url_for('agro_work.applications', verdict='bez_verdikta', **group) }}">{{ row.c.get('app_bez_verdikta') }}</a>{% else %}0{% endif %}</td>
+          <td class="right">{% if row.c.get('app_rabota_net') %}<a href="{{ link('agro_work.applications', verdict='rabota_net', **group) }}"><span class="vs-badge vs-badge-danger">{{ row.c.get('app_rabota_net') }}</span></a>{% else %}0{% endif %}</td>
+          <td class="right">{% if row.c.get('app_bez_verdikta') %}<a href="{{ link('agro_work.applications', verdict='bez_verdikta', **group) }}">{{ row.c.get('app_bez_verdikta') }}</a>{% else %}0{% endif %}</td>
           <td class="right">{{ row.c.get('work_days', 0) }}</td>
           <td class="right">{{ row.c.get('day_pokryta', 0) }}</td>
-          <td class="right">{% if row.c.get('day_bez_zayavki') %}<a href="{{ url_for('agro_work.work_days', coverage='bez_zayavki', **group) }}"><span class="vs-badge vs-badge-danger">{{ row.c.get('day_bez_zayavki') }}</span></a>{% else %}0{% endif %}</td>
-          <td class="right">{% if row.c.get('day_bez_verdikta') %}<a href="{{ url_for('agro_work.work_days', coverage='bez_verdikta', **group) }}">{{ row.c.get('day_bez_verdikta') }}</a>{% else %}0{% endif %}</td>
+          <td class="right">{% if row.c.get('day_bez_zayavki') %}<a href="{{ link('agro_work.work_days', coverage='bez_zayavki', **group) }}"><span class="vs-badge vs-badge-danger">{{ row.c.get('day_bez_zayavki') }}</span></a>{% else %}0{% endif %}</td>
+          <td class="right">{% if row.c.get('day_bez_verdikta') %}<a href="{{ link('agro_work.work_days', coverage='bez_verdikta', **group) }}">{{ row.c.get('day_bez_verdikta') }}</a>{% else %}0{% endif %}</td>
         </tr>
         {% endfor %}
         <tr>
@@ -144,7 +145,7 @@
         {% for group in open_groups %}
         <tr>
           <td>{% if group.org_id %}{{ group.org_name }}{% else %}{{ 'Машина agro-work не связана с нашей техникой' if is_ru else 'agro-work машинаси бизнинг техника билан боғланмаган' }}{% endif %}</td>
-          <td class="right"><a href="{{ url_for('agro_work.applications', reason='otkryta', org=group.org_id if group.org_id else 'none', **{'from': date_from.isoformat(), 'to': date_to.isoformat()}) }}"><span class="vs-badge vs-badge-danger">{{ group.count }}</span></a></td>
+          <td class="right"><a href="{{ link('agro_work.applications', reason='otkryta', org=group.org_id if group.org_id else 'none') }}"><span class="vs-badge vs-badge-danger">{{ group.count }}</span></a></td>
           <td class="right">{{ group.oldest }}</td>
         </tr>
         {% endfor %}

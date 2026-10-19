@@ -1,6 +1,7 @@
-{# Период и фильтры страницы. Ждёт в контексте date_from, date_to и,
-   необязательно, keep — словарь параметров, которые форма должна сохранить
-   (организация, категория), и choices — выпадающий список фильтра. #}
+{# Период и фильтры страницы сверки. Ждёт в контексте date_from, date_to,
+   common_choices -- общая строка (организация, вид техники, статус заявки,
+   тип оплаты; одна на свод, оба списка и книгу xlsx), choices -- фильтры
+   этой вкладки, и export_url -- книга xlsx с общими фильтрами. #}
 <form method="get" class="vs-toolbar vs-mb">
   <label class="vs-field">
     <span class="vs-label">{{ 'С' if is_ru else 'Дан' }}</span>
@@ -10,10 +11,7 @@
     <span class="vs-label">{{ 'По' if is_ru else 'Гача' }}</span>
     <input type="date" name="to" value="{{ date_to.isoformat() }}" class="vs-input">
   </label>
-  {% for name, value in (keep or {}).items() if value %}
-  <input type="hidden" name="{{ name }}" value="{{ value }}">
-  {% endfor %}
-  {% for choice in (choices or []) %}
+  {% for choice in (common_choices or []) + (choices or []) %}
   <label class="vs-field">
     <span class="vs-label">{{ choice.title }}</span>
     <select name="{{ choice.name }}" class="vs-select">
@@ -25,4 +23,7 @@
   </label>
   {% endfor %}
   <button type="submit" class="vs-btn vs-btn-primary">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+  {% if export_url and not empty %}
+  <a class="vs-btn" href="{{ export_url }}" title="{{ 'Книга сверки за период с фильтрами организации, вида техники, статуса и типа оплаты' if is_ru else 'Давр бўйича солиштирув китоби: ташкилот, техника тури, ҳолат ва тўлов тури филтрлари билан' }}">{{ 'Скачать Excel' if is_ru else 'Excel юклаб олиш' }}</a>
+  {% endif %}
 </form>

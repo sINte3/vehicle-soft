@@ -134,12 +134,23 @@ VOLUME_COLUMNS = (
 )
 
 
-def _oldest(ctx):
-    rows = ctx.open_applications()
-    return rows[0]['days_open'] if rows else '—'
+def _oldest(rows):
+    return max(row['days_open'] for row in rows) if rows else '—'
 
 
-def build_book(ctx, forward, reverse, lags, excluded, preview):
+def build_book(ctx, forward, reverse, lags, excluded, preview,
+               open_rows=None, filters=()):
+    """Книга сверки за период.
+
+    `open_rows` -- открытые заявки для листа «Открытые заявки» и строки
+    свода; None -- все открытые заявки периода (так строит книгу консоль).
+    `filters` -- пары (ru, uz) применённых фильтров экрана для строки над
+    сводом; пусто -- книга без фильтров, как у консоли.
+
+    [REASON]: экран сверки выгружает эту же книгу, а не свою: деловое
+    содержание листов и столбцов одно, отличается только набор строк, и
+    строка свода говорит, какими фильтрами он отобран.
+    """
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font
     from openpyxl.utils import get_column_letter
@@ -160,6 +171,7 @@ def build_book(ctx, forward, reverse, lags, excluded, preview):
         return sheet
 
     book.remove(book.active)
+    opened = ctx.open_applications() if open_rows is None else list(open_rows)
     groups, total = ctx.summary(forward, reverse)
     summary_rows = []
     for (org_id, category), counter in sorted(
@@ -204,14 +216,17 @@ def build_book(ctx, forward, reverse, lags, excluded, preview):
             'Давр: %s — %s' % (ctx.date_from.strftime('%d.%m.%Y'),
                                ctx.date_to.strftime('%d.%m.%Y')))),
         bi(('Открытых заявок: %d; самая старая открыта %s сут. (лист «Открытые '
-            'заявки»)' % (len(ctx.open_applications()), _oldest(ctx)),
+            'заявки»)' % (len(opened), _oldest(opened)),
             'Очиқ буюртмалар: %d; энг эскиси %s кундан бери очиқ («Открытые '
-            'заявки» варағи)' % (len(ctx.open_applications()), _oldest(ctx)))),
+            'заявки» варағи)' % (len(opened), _oldest(opened)))),
         bi(('Работа по GPS у объектов без машины в справочнике, объекто-суток: %d'
             % ctx.orphan_work_days(),
             'Маълумотномада машинаси йўқ объектларнинг GPS бўйича иши, '
             'объект-кунлар: %d' % ctx.orphan_work_days())),
     ]
+    if filters:
+        notes.insert(1, bi(('Фильтры экрана: ' + '; '.join(ru for ru, _ in filters),
+                            'Экран филтрлари: ' + '; '.join(uz for _, uz in filters))))
     approved = rc.BACKDATED_LOOKBACK_DAYS
     if preview is not None and approved is None:
         notes.insert(0, bi(('ПРЕДПРОСМОТР: N = %d не утверждён владельцем'
@@ -315,7 +330,7 @@ def build_book(ctx, forward, reverse, lags, excluded, preview):
 
     # B4, пункт 5: открытые заявки по организациям, от самой старой.
     open_rows = []
-    for row in sorted(ctx.open_applications(),
+    for row in sorted(opened,
                       key=lambda r: (_org(ctx, r['equipment_id']) == '',
                                      _org(ctx, r['equipment_id']),
                                      -r['days_open'], r['app'].number)):

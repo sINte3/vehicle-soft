@@ -3,6 +3,7 @@
 {% block title %}{{ 'Заявка → работа — GPS' if is_ru else 'Буюртма → иш — GPS' }}{% endblock %}
 {% block content %}
 {% include 'agro_work/_nav.html' %}
+{% include 'agro_work/_tabs.html' %}
 
 <div class="vs-hero vs-mb">
   <div>
@@ -16,15 +17,6 @@
 {% include 'agro_work/_notices.html' %}
 
 {% if not empty %}
-{% if org_name or unmatched or category %}
-<div class="vs-help vs-mb">
-  {{ 'Показаны: ' if is_ru else 'Кўрсатилган: ' }}
-  {% if unmatched %}{{ 'машины agro-work, не связанные с нашей техникой' if is_ru else 'бизнинг техника билан боғланмаган agro-work машиналари' }}{% endif %}
-  {% if org_name %}{{ org_name }}{% endif %}{% if category %} · {{ category_label(category) }}{% endif %}
-  <a class="vs-btn vs-btn-sm vs-btn-ghost" href="{{ url_for('agro_work.applications', **{'from': date_from.isoformat(), 'to': date_to.isoformat()}) }}">{{ 'Показать все организации' if is_ru else 'Барча ташкилотларни кўрсатиш' }}</a>
-</div>
-{% endif %}
-
 {% if not rows %}
   <div class="vs-empty">
     <div class="vs-empty-title">{{ 'Заявок с такими условиями нет' if is_ru else 'Бундай шартли буюртмалар йўқ' }}</div>

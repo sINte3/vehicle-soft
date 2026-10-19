@@ -412,7 +412,9 @@ class Reconciliation:
                    'work_type_id', 'work_type_name', 'unit', 'volume',
                    'company_name', 'plate_number', 'created_day',
                    'completed_day', 'history_updated_at', 'initial_status',
-                   'cancelled_at', 'gone_at', 'is_active', 'created_at')
+                   'cancelled_at', 'gone_at', 'is_active', 'created_at',
+                   # только для фильтра экрана; на вердикты не влияет
+                   'payment_type')
         self.applications = []
         self.apps_by_transport = defaultdict(list)
         for values in con.execute('SELECT %s FROM agro_work_applications'

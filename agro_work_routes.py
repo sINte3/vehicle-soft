@@ -5,8 +5,13 @@
   GET /agro-work/                 свод: организация x категория, обе стороны
   GET /agro-work/applications     заявка -> работа: вердикт и причина
   GET /agro-work/work-days        работа -> заявка: машино-сутки и покрытие
+  GET /agro-work/export           книга сверки xlsx с фильтрами экрана
   GET /agro-work/machine/<id>     сутки одной машины: GPS и заявки рядом
   GET /agro-work/import           прогоны импорта, связки машин, разметка
+
+Свод и оба списка -- один пункт меню «Сверка» с вкладками и общей строкой
+фильтров (просьба владельца 19.10): период, организация, вид техники,
+статус заявки, тип оплаты. Те же фильтры уходят в книгу xlsx.
 
 ТОЛЬКО ЧТЕНИЕ. Правила сверки -- в `agro_work/reconcile.py`, общем с отчётом
 `tools/agro_work_reconcile.py`; экран их не повторяет, а показывает.
@@ -25,11 +30,13 @@
 нашей техникой, организации у нас не имеют и видны только администратору.
 """
 
+import io
 import os
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 
-from flask import Blueprint, abort, current_app, g, render_template, request
+from flask import (Blueprint, abort, current_app, g, render_template, request,
+                   send_file, url_for)
 from flask_login import current_user, login_required
 
 from agro_work import config as agro_config
@@ -175,9 +182,118 @@ def _group_filter():
     return org, category, unmatched
 
 
-def _keep(org, category, unmatched):
-    """Параметры группы, которые форма периода должна сохранить."""
-    return {'org': 'none' if unmatched else org, 'cat': category}
+def _known(name, table):
+    """Значение параметра, если оно из таблицы подписей; иначе None."""
+    value = (request.args.get(name) or '').strip()
+    return value if value in table else None
+
+
+class Filters:
+    """Общая строка фильтров сверки: организация, вид техники, статус, оплата.
+
+    [REASON]: одно определение для свода, обоих списков и книги xlsx -- иначе
+    число на своде и строки списка, к которому оно ведёт, разошлись бы.
+    Статус и тип оплаты -- свойства заявки: у суток работы по GPS фильтр
+    смотрит на заявки этих суток (`row['apps']`), и сутки без заявки при
+    таком фильтре не показываются -- у них нет ни статуса, ни оплаты.
+    """
+
+    def __init__(self):
+        self.org, self.category, self.unmatched = _group_filter()
+        self.status = _known('status', labels.STATUSES)
+        self.payment = _known('pay', labels.PAYMENT_TYPES)
+
+    @property
+    def by_application(self):
+        return bool(self.status or self.payment)
+
+    def params(self):
+        """Параметры адреса для ссылок и формы: только заданные."""
+        values = {'org': 'none' if self.unmatched else self.org,
+                  'cat': self.category, 'status': self.status,
+                  'pay': self.payment}
+        return {key: value for key, value in values.items() if value}
+
+    def app_ok(self, app):
+        if self.status and app.status != self.status:
+            return False
+        if self.payment and (app.row.get('payment_type') or '') != self.payment:
+            return False
+        return True
+
+    def group_ok(self, ctx, equipment_id):
+        return _in_group(ctx, equipment_id, self.org, self.category,
+                         self.unmatched)
+
+    def forward(self, ctx, rows):
+        return [row for row in rows
+                if self.group_ok(ctx, row['equipment_id'])
+                and self.app_ok(row['app'])]
+
+    def reverse(self, ctx, rows):
+        return [row for row in rows
+                if self.group_ok(ctx, row['equipment_id'])
+                and (not self.by_application
+                     or any(self.app_ok(app) for app in row['apps']))]
+
+    def opened(self, ctx):
+        return [row for row in ctx.open_applications()
+                if self.group_ok(ctx, row['equipment_id'])
+                and self.app_ok(row['app'])]
+
+    def choices(self, ctx):
+        """Выпадающие списки общей строки, в порядке на экране."""
+        is_ru = _is_ru()
+        orgs = sorted({ctx.group_of(eq)[0] for eq in ctx.equipment
+                       if ctx.equipment_in_scope(eq)} - {None},
+                      key=lambda org_id: ctx.orgs.get(org_id, ''))
+        org_keys = [str(org_id) for org_id in orgs]
+        names = {str(org_id): ctx.orgs.get(org_id, '') for org_id in orgs}
+        if ctx.org_ids is None:
+            # Машины agro-work без нашей техники видит только тот, кому видны
+            # все организации (как в списках, `_scope`).
+            org_keys.append('none')
+            names['none'] = _aw_t('Бизнинг техника билан боғланмаган',
+                                  'Не связаны с нашей техникой')
+        present = {ctx.group_of(eq)[1] for eq in ctx.equipment
+                   if ctx.equipment_in_scope(eq)}
+        categories = [key for key in CATEGORIES if key in present]
+        current_org = 'none' if self.unmatched else (
+            str(self.org) if self.org else None)
+        return [
+            _choice('org', _aw_t('Ташкилот', 'Организация'), org_keys,
+                    lambda key: names.get(key, key), current_org),
+            _choice('cat', _aw_t('Техника тури', 'Вид техники'), categories,
+                    lambda key: CATEGORIES.get(key, key), self.category),
+            _choice('status', _aw_t('Буюртма ҳолати', 'Статус заявки'),
+                    list(labels.STATUSES),
+                    lambda key: labels.pick(labels.STATUSES, key, is_ru),
+                    self.status),
+            _choice('pay', _aw_t('Тўлов тури', 'Тип оплаты'),
+                    list(labels.PAYMENT_TYPES),
+                    lambda key: labels.pick(labels.PAYMENT_TYPES, key, is_ru),
+                    self.payment)]
+
+    def describe(self, ctx):
+        """[(ru, uz)] заданных фильтров -- строка над сводом книги xlsx."""
+        out = []
+        if self.unmatched:
+            out.append(('организация: машины, не связанные с нашей техникой',
+                        'ташкилот: бизнинг техника билан боғланмаган машиналар'))
+        elif self.org:
+            name = ctx.orgs.get(self.org, str(self.org))
+            out.append(('организация: ' + name, 'ташкилот: ' + name))
+        if self.category:
+            label = CATEGORIES.get(self.category, self.category)
+            out.append(('вид техники: ' + label, 'техника тури: ' + label))
+        if self.status:
+            pair = labels.STATUSES[self.status]
+            out.append(('статус заявки: ' + pair[0],
+                        'буюртма ҳолати: ' + pair[1]))
+        if self.payment:
+            pair = labels.PAYMENT_TYPES[self.payment]
+            out.append(('тип оплаты: ' + pair[0], 'тўлов тури: ' + pair[1]))
+        return out
 
 
 def _choice(name, title, keys, label, current):
@@ -196,6 +312,27 @@ def _in_group(ctx, equipment_id, org, category, unmatched):
     return True
 
 
+def _screen(date_from, date_to, flt, view, ctx=None, **extra):
+    """Контекст страниц сверки: вкладки, ссылки с фильтрами, кнопка xlsx."""
+    base = {'from': date_from.isoformat(), 'to': date_to.isoformat()}
+    base.update(flt.params())
+
+    def link(endpoint, **overrides):
+        # [REASON]: ссылка со свода или вкладки несёт заданные фильтры:
+        # число «12» на своде с фильтром «Наличные» обязано открыть те же
+        # 12 строк, а не все.
+        values = dict(base)
+        values.update(overrides)
+        return url_for(endpoint, **{k: v for k, v in values.items()
+                                    if v not in (None, '')})
+
+    values = _common(date_from, date_to, view=view, link=link,
+                     filters=flt, export_url=link('agro_work.export'))
+    values['common_choices'] = flt.choices(ctx) if ctx is not None else []
+    values.update(extra)
+    return values
+
+
 # --- свод --------------------------------------------------------------------
 
 @agro_work_bp.route('/')
@@ -203,12 +340,14 @@ def _in_group(ctx, equipment_id, org, category, unmatched):
 @login_required
 def dashboard():
     date_from, date_to = _period()
+    flt = Filters()
     ctx, empty = _context(date_from, date_to)
     if ctx is None:
         return render_template('agro_work/dashboard.html',
-                               **_common(date_from, date_to, empty=empty))
-    forward = ctx.forward_rows()
-    reverse = ctx.reverse_rows()
+                               **_screen(date_from, date_to, flt, 'summary',
+                                         empty=empty))
+    forward = flt.forward(ctx, ctx.forward_rows())
+    reverse = flt.reverse(ctx, ctx.reverse_rows())
     groups, total = ctx.summary(forward, reverse)
     rows = []
     for (org_id, category), counter in groups.items():
@@ -221,7 +360,7 @@ def dashboard():
                              if r['category'] in order else len(order)))
     # B4, пункт 5: открытые заявки по организациям, самая старая -- первой.
     opened = {}
-    for item in ctx.open_applications():
+    for item in flt.opened(ctx):
         org_id = ctx.group_of(item['equipment_id'])[0]
         group = opened.setdefault(org_id, {
             'org_id': org_id, 'count': 0, 'oldest': 0,
@@ -232,7 +371,8 @@ def dashboard():
                          key=lambda g: (-g['oldest'], g['org_name'] or ''))
     return render_template(
         'agro_work/dashboard.html',
-        **_common(date_from, date_to, empty=None, rows=rows, total=total,
+        **_screen(date_from, date_to, flt, 'summary', ctx, empty=None,
+                  rows=rows, total=total,
                   orphan_days=ctx.orphan_work_days(),
                   open_groups=open_groups,
                   after_keys=[(kind, rc.DAY_AFTER + kind)
@@ -248,18 +388,17 @@ def dashboard():
 @login_required
 def applications():
     date_from, date_to = _period()
+    flt = Filters()
     ctx, empty = _context(date_from, date_to)
     if ctx is None:
         return render_template('agro_work/applications.html',
-                               **_common(date_from, date_to, empty=empty))
-    org, category, unmatched = _group_filter()
+                               **_screen(date_from, date_to, flt,
+                                         'applications', empty=empty))
     verdict = (request.args.get('verdict') or '').strip() or None
     reason = (request.args.get('reason') or '').strip() or None
     volume = (request.args.get('volume') or '').strip() or None
     rows = []
-    for row in ctx.forward_rows():
-        if not _in_group(ctx, row['equipment_id'], org, category, unmatched):
-            continue
+    for row in flt.forward(ctx, ctx.forward_rows()):
         if verdict and row['verdict'] != verdict:
             continue
         if reason and row['reason'] != reason:
@@ -295,10 +434,8 @@ def applications():
                 lambda key: labels.pick(labels.VOLUME, key, is_ru), volume)]
     return render_template(
         'agro_work/applications.html',
-        **_common(date_from, date_to, empty=None, rows=shown,
-                  total=len(rows), org=org, category=category,
-                  unmatched=unmatched, org_name=ctx.orgs.get(org) if org else None,
-                  keep=_keep(org, category, unmatched), choices=choices))
+        **_screen(date_from, date_to, flt, 'applications', ctx, empty=None,
+                  rows=shown, total=len(rows), choices=choices))
 
 
 # --- работа -> заявка ------------------------------------------------------------
@@ -308,18 +445,17 @@ def applications():
 @login_required
 def work_days():
     date_from, date_to = _period()
+    flt = Filters()
     ctx, empty = _context(date_from, date_to)
     if ctx is None:
         return render_template('agro_work/work_days.html',
-                               **_common(date_from, date_to, empty=empty))
-    org, category, unmatched = _group_filter()
+                               **_screen(date_from, date_to, flt, 'work_days',
+                                         empty=empty))
     coverage = (request.args.get('coverage') or '').strip() or None
     reason = (request.args.get('reason') or '').strip() or None
     after = (request.args.get('after') or '').strip() or None
     rows = []
-    for row in ctx.reverse_rows():
-        if not _in_group(ctx, row['equipment_id'], org, category, unmatched):
-            continue
+    for row in flt.reverse(ctx, ctx.reverse_rows()):
         if coverage and row['coverage'] != coverage:
             continue
         if reason and row['reason'] != reason:
@@ -346,10 +482,51 @@ def work_days():
                 lambda key: labels.pick(labels.AFTER, key, is_ru), after)]
     return render_template(
         'agro_work/work_days.html',
-        **_common(date_from, date_to, empty=None, rows=rows[:LIST_LIMIT],
-                  total=len(rows), org=org, category=category,
-                  unmatched=unmatched, org_name=ctx.orgs.get(org) if org else None,
-                  keep=_keep(org, category, unmatched), choices=choices))
+        **_screen(date_from, date_to, flt, 'work_days', ctx, empty=None,
+                  rows=rows[:LIST_LIMIT], total=len(rows), choices=choices))
+
+
+# --- книга xlsx ------------------------------------------------------------------
+
+XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+
+@agro_work_bp.route('/export')
+@module_required('wialon')
+@login_required
+def export():
+    """Книга сверки за период с общими фильтрами экрана.
+
+    [REASON]: та же книга, что строит `tools/agro_work_reconcile.py` (листы
+    и столбцы одни), а не новая: выгрузки уходят людям, и две книги сверки
+    с разным содержанием разошлись бы. Фильтры вкладок (вердикт, покрытие)
+    в книгу не идут: в ней обе стороны сверки, и фильтр одной стороны
+    сделал бы свод несогласованным; общие фильтры названы строкой над
+    сводом.
+    """
+    from tools.agro_work_reconcile import build_book
+    date_from, date_to = _period()
+    flt = Filters()
+    con = _open_ro()
+    if con is None or store.missing_tables(con):
+        if con is not None:
+            con.close()
+        abort(404)
+    try:
+        ctx = rc.Reconciliation(con, date_from, date_to, org_ids=_scope())
+        forward = flt.forward(ctx, ctx.forward_rows())
+        reverse = flt.reverse(ctx, ctx.reverse_rows())
+        lags, excluded = rc.measure_lags(con, today=ctx.today)
+    finally:
+        con.close()
+    book = build_book(ctx, forward, reverse, lags, excluded, None,
+                      open_rows=flt.opened(ctx), filters=flt.describe(ctx))
+    out = io.BytesIO()
+    book.save(out)
+    out.seek(0)
+    return send_file(out, mimetype=XLSX, as_attachment=True,
+                     download_name='sverka_%s_%s.xlsx'
+                     % (date_from.isoformat(), date_to.isoformat()))
 
 
 # --- одна машина -------------------------------------------------------------------
