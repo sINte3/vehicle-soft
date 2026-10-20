@@ -108,6 +108,15 @@ LIMIT_BACKOFF_S = 30.0
 # of an address that exceeded the failed-login limit (roadmap 4.1.1), so the
 # single repeat lands after the block and not inside it. See Client.login.
 LOGIN_LIMIT_PAUSE_S = 65.0
+# [REASON]: 20.10.2026 one repeat was not enough -- the nightly collection
+# lost both attempts (01:00 and 65 s later) to "LIMIT invalid_logins" and the
+# night with them, and the same day by day the first attempt was refused
+# again: someone on the cluster's address fails logins in bursts all day.
+# Six attempts are five pauses, 5 min 25 s -- a collection takes about 45
+# minutes, so it still ends long before the nightly computation at 02:30 --
+# and at one attempt a minute the collector stays far under the ten failed
+# logins a minute whose block it is waiting out.
+LOGIN_ATTEMPTS = 6
 
 # [REASON]: documented ceiling is 15 mln messages per user per two minutes;
 # half of it is used here, so a second tool running against the same account

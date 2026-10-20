@@ -192,7 +192,7 @@ class Client:
     # --- services -----------------------------------------------------------
 
     def login(self, token):
-        """Log in; on a "wait" answer, pause and try exactly once more.
+        """Log in; on a "wait" answer, pause and try again, LOGIN_ATTEMPTS in all.
 
         [REASON]: 28.09.2026 the inventory's VALID login was refused with
         error 1003, reason "LIMIT invalid_logins" -- the per-address limit of
@@ -200,12 +200,14 @@ class Client:
         is blocked for a minute), hit by someone else on the cluster's address:
         the same token had logged in minutes before and did again minutes
         after. The nightly collector logs in once, and without a repeat such a
-        minute would cost the whole night's collection. One repeat, after a
-        pause longer than the documented block; never on any other code --
-        error 8 (token refused) does not heal by waiting, and hammering it
-        would itself be a failed login counted against the same address.
+        minute would cost the whole night's collection -- 20.10.2026 it did
+        even with one repeat; how many now, see config.LOGIN_ATTEMPTS.
+        Repeats come after a pause longer than the documented block, a
+        bounded number of them; never on any other code -- error 8 (token
+        refused) does not heal by waiting, and hammering it would itself be a
+        failed login counted against the same address.
         """
-        for attempt in (1, 2):
+        for attempt in range(1, config.LOGIN_ATTEMPTS + 1):
             answer = self.call("token/login", {"token": token}, with_sid=False)
             code = err_code(answer)
             if code is None:
@@ -213,11 +215,12 @@ class Client:
                 self.logins += 1
                 return self.sid
             problem = WialonError(code, err_reason(answer))
-            if code not in config.LIMIT_ERRORS or attempt == 2:
+            if code not in config.LIMIT_ERRORS or attempt == config.LOGIN_ATTEMPTS:
                 raise problem
-            self.log("    vhod otklonen (%s), povtor cherez %d s"
+            self.log("    vhod otklonen (%s), povtor cherez %d s (popytka %d iz %d)"
                      % (config.ascii_only(str(problem)),
-                        int(config.LOGIN_LIMIT_PAUSE_S)))
+                        int(config.LOGIN_LIMIT_PAUSE_S), attempt + 1,
+                        config.LOGIN_ATTEMPTS))
             time.sleep(config.LOGIN_LIMIT_PAUSE_S)
 
     def logout(self):

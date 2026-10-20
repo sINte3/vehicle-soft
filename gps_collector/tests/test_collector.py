@@ -406,13 +406,16 @@ class RefusedLogins(FakeServer):
 
 
 class LoginRepeat(unittest.TestCase):
-    """Отказ входа по лимиту -- пауза и ОДИН повтор; остальные отказы -- сразу.
+    """Отказ входа по лимиту -- пауза и повтор, всего не больше LOGIN_ATTEMPTS
+    попыток; остальные отказы -- сразу.
 
     [REASON]: 28.09.2026 верный вход инвентаря отклонён кодом 1003 с причиной
     «LIMIT invalid_logins»: лимит неудачных входов с одного адреса выбрал
     кто-то другой в сети кластера. Коллектор входит раз за ночь; без повтора
-    такая минута стоила бы ночи сбора. Паузы здесь не ждутся по-настоящему --
-    подменяется time.sleep, и записывается, сколько просили ждать.
+    такая минута стоила бы ночи сбора. 20.10.2026 ночь пропала и с одним
+    повтором: отказали обе попытки (GPS-31). Паузы здесь не ждутся
+    по-настоящему -- подменяется time.sleep, и записывается, сколько просили
+    ждать.
     """
 
     def setUp(self):
@@ -439,21 +442,45 @@ class LoginRepeat(unittest.TestCase):
         self.assertEqual(server.count("token/login"), 2)
         # пауза длиннее документированной минутной блокировки адреса
         self.assertEqual(self.slept, [65.0])
-        self.assertTrue(any("povtor cherez 65 s" in line and
+        self.assertTrue(any("povtor cherez 65 s (popytka 2 iz 6)" in line and
                             "LIMIT invalid_logins" in line for line in self.said),
                         self.said)
         for line in self.said:
             line.encode("ascii")
 
-    def test_two_refusals_give_up_after_exactly_one_repeat(self):
+    def test_the_night_of_20_10_now_logs_in(self):
+        # 20.10 отказали две попытки подряд; теперь вход проходит и на
+        # последней разрешённой.
         server = RefusedLogins(refusals=5)
+        client, sid, problem = self.login(server)
+        self.assertIsNone(problem)
+        self.assertEqual(sid, "SESSION")
+        self.assertEqual(client.logins, 1)
+        self.assertEqual(server.count("token/login"), 6)
+        self.assertEqual(self.slept, [65.0] * 5)
+        self.assertEqual([line.split("(popytka ")[1] for line in self.said],
+                         ["2 iz 6)", "3 iz 6)", "4 iz 6)", "5 iz 6)", "6 iz 6)"])
+
+    def test_refusals_give_up_after_the_last_attempt(self):
+        server = RefusedLogins(refusals=50)
         client, sid, problem = self.login(server)
         self.assertIsNone(sid)
         self.assertEqual(problem.code, 1003)
         self.assertEqual(problem.reason, "LIMIT invalid_logins")
-        self.assertEqual(server.count("token/login"), 2)
-        self.assertEqual(self.slept, [65.0])
+        self.assertEqual(server.count("token/login"), 6)
+        self.assertEqual(self.slept, [65.0] * 5)
         self.assertEqual(client.logins, 0)
+
+    def test_the_wait_fits_before_the_nightly_computation(self):
+        # Сбор в 01:00 идёт около 45 минут, ночной расчёт -- в 02:30:
+        # ожидание входа не должно съесть этот запас (не больше 10 минут).
+        # Пауза не короче минутной блокировки адреса, поэтому попыток не
+        # больше одной в минуту -- вдесятеро меньше лимита, который
+        # пережидается.
+        self.assertEqual(config.LOGIN_ATTEMPTS, 6)
+        self.assertLessEqual((config.LOGIN_ATTEMPTS - 1)
+                             * config.LOGIN_LIMIT_PAUSE_S, 10 * 60)
+        self.assertGreaterEqual(config.LOGIN_LIMIT_PAUSE_S, 60)
 
     def test_a_refused_token_is_not_repeated(self):
         # Код 8 ожиданием не лечится, а повтор сам стал бы неудачным входом,
