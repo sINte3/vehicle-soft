@@ -26,6 +26,7 @@ import hashlib
 import re
 import sqlite3
 import unittest
+from unittest import mock
 from datetime import date
 
 from tests.harness import (app, db, reset_db, create_admin, create_org, login,
@@ -580,6 +581,12 @@ class TimeOnScreen(ScreenCase):
 
     def setUp(self):
         super().setUp()
+        # Вердикты «время» не публикуются (проверка 20.10 не прошла); экран
+        # с ними проверяется включённым, выключенный -- последним тестом.
+        from agro_work import reconcile
+        patcher = mock.patch.object(reconcile, 'TIME_VERDICTS_PUBLISHED', True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         import migrate_gps_engine_001 as engine_mig
         _sql([engine_mig.CREATE_GPS_DAILY_ENGINE])
         self.addCleanup(_sql, ['DROP TABLE IF EXISTS gps_daily_engine'])
@@ -620,6 +627,17 @@ class TimeOnScreen(ScreenCase):
         row = row_of(html, 'APP-TEST-007')
         self.assertIn('3.00 соат', row)
         self.assertIn('буюртмада 3.00 соат · GPS бўйича 3.00 соат', row)
+
+    def test_while_unpublished_the_list_keeps_the_old_reason(self):
+        from agro_work import reconcile
+        with mock.patch.object(reconcile, 'TIME_VERDICTS_PUBLISHED', False):
+            html = self.get('/agro-work/applications', lang='ru').get_data(
+                as_text=True)
+        row = row_of(html, 'APP-TEST-007')
+        self.assertIn('Метод «время»: трек GPS время работы пока не публикует',
+                      row)
+        self.assertNotIn('по GPS 3.00 ч', row)
+        self.assertNotIn('В допуске', row)
 
 
 class Access(ScreenCase):

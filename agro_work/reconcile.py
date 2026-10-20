@@ -47,6 +47,9 @@
 вердикта. Пока таблицы часов нет (миграция GPS_ENGINE_001 не применена),
 заявка «время» остаётся без вердикта с прежней причиной. Объём в часах
 сравнивается по допуску В-2 (`gps.tolerance.verdict_for_hours`).
+Публикация выключена (`TIME_VERDICTS_PUBLISHED`): проверка правил по отчёту
+Wialon 20.10.2026 не прошла, и до новой проверки заявка «время» остаётся с
+прежней причиной и при готовой таблице часов.
 
 ГРУЗОВИК в сверке «время» (решение владельца 19.10, agro-work §9.8): работала
 ли машина -- по пробегу окна (правило P трека GPS, порог 3 км; сутки
@@ -242,6 +245,14 @@ TRUCK_CATEGORY = 'yuk_transport'
 TRUCK_WORK_KM = 3.0
 
 ENGINE_TABLE = 'gps_daily_engine'
+
+# [REASON]: вердикты «время» публикуются, только когда правила R (часы) и P
+# (пробег) прошли предрегистрированную проверку (трек GPS, §0.6). Проверка
+# по отчёту Wialon 20.10.2026 -- NOT MET по часам и по пробегу («Исход»
+# там же): у семи машин наш датчик «включён» круглые сутки, когда Wialon
+# часов не видит. Готовая таблица часов -- не повод публиковать; включает
+# вердикты исход новой проверки, отдельным изменением.
+TIME_VERDICTS_PUBLISHED = False
 
 # Окно неизвестно, но заявка могла покрыть сутки (`could_cover`).
 UNKNOWN_WINDOW_REASONS = (R_NO_HISTORY, R_NO_CLOSE_DATE, R_BAD_WINDOW,
@@ -584,7 +595,8 @@ class Reconciliation:
             row['reason'] = app.window_reason
             return row
         method = row['method']
-        timed = method == methods.METHOD_TIME and self.engine_ready
+        timed = (method == methods.METHOD_TIME and self.engine_ready
+                 and TIME_VERDICTS_PUBLISHED)
         if method != methods.METHOD_GA and not timed:
             row['reason'] = METHOD_REASON.get(method, R_METHOD_UNMARKED)
             return row

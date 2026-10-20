@@ -26,6 +26,14 @@
 ли объект из план-факта (`gps.exclusion`, то же правило, что у расчёта).
 
 Пишет CSV (UTF-8 с BOM, разделитель `;`) -- строка на объект: COLUMNS.
+
+С `--sensors-json ПУТЬ` (20.10.2026, после GPS-28) -- ещё JSON: датчики
+объектов целиком, как их прислал сервер (выражение, таблица пересчёта,
+валидатор, границы, настройки `c`), `cfl`, `cneh` и параметры последнего
+сообщения. Объекты -- из `--unit` (можно повторять), без него -- все. Имени
+объекта в JSON нет. Зачем: проверка GPS-28 показала семь машин, у которых
+параметр зажигания «включён» круглые сутки, а Wialon моточасов не
+насчитал, -- значит, у датчика есть настройка, которой правило R не знает.
 В консоль -- только числа ASCII: сколько объектов, сколько с датчиком
 зажигания (по категориям техники), какие типы датчиков встречаются,
 откуда считаются моточасы, у скольких параметр зажигания есть в последнем
@@ -80,6 +88,7 @@ IGNITION_TYPE. Единица счётчика моточасов `cneh` в до
 
 import argparse
 import csv
+import json
 import os
 import re
 import sqlite3
@@ -298,6 +307,22 @@ def build(items, known, excluded, now):
     return rows, summary
 
 
+def sensor_dump(items, wanted):
+    """{wialon_id: датчики целиком, счётчики, последнее сообщение} -- без имени
+    объекта; wanted -- множество id или None (все)."""
+    out = {}
+    for item in items:
+        unit_id = int(item['id'])
+        if wanted is not None and unit_id not in wanted:
+            continue
+        last = item.get('lmsg') or {}
+        out[str(unit_id)] = {
+            'sens': item.get('sens') or {}, 'cfl': item.get('cfl'),
+            'cneh': item.get('cneh'), 'lmsg_t': last.get('t'),
+            'lmsg_p': last.get('p') or {}, 'lmsg_i': last.get('i')}
+    return out
+
+
 def no_sensor_data(items):
     """Ни у одного объекта нет ни `sens`, ни `cfl` -- флаги или ключи неверны."""
     return not any(('sens' in item) or ('cfl' in item) for item in items)
@@ -348,19 +373,27 @@ def main(argv=None):
     parser.add_argument('--db', default=DB_PATH)
     parser.add_argument('--pause', type=float, default=config.PAUSE_S)
     parser.add_argument('--out', default='gps_ignition_sensors.csv')
+    parser.add_argument('--sensors-json', default=None,
+                        help='also write the sensors of --unit objects in full')
+    parser.add_argument('--unit', type=int, action='append', default=[],
+                        help='wialon id for --sensors-json; may repeat')
     args = parser.parse_args(argv)
+    if args.unit and not args.sensors_json:
+        sys.stderr.write('ERROR: --unit is for --sensors-json\n')
+        return EXIT_BAD_INPUT
 
-    if not os.path.isdir(os.path.dirname(os.path.abspath(args.out))):
-        sys.stderr.write('ERROR: folder for %s does not exist\n'
-                         % config.ascii_only(args.out))
-        return EXIT_BAD_INPUT
-    # [REASON]: CSV пишется режимом 'w'; путь базы на месте CSV заменил бы
-    # боевую базу таблицей -- правило то же, что у GPS-16 и GPS-18.
-    clash = out_clash(args.out, (args.db, args.db + '-wal', args.db + '-shm'))
-    if clash:
-        sys.stderr.write('ERROR: --out points at %s - refusing to overwrite '
-                         'it\n' % config.ascii_only(clash))
-        return EXIT_BAD_INPUT
+    # [REASON]: CSV и JSON пишутся режимом 'w'; путь базы на месте любого из
+    # них заменил бы боевую базу -- правило то же, что у GPS-16 и GPS-18.
+    for out in [args.out] + ([args.sensors_json] if args.sensors_json else []):
+        if not os.path.isdir(os.path.dirname(os.path.abspath(out))):
+            sys.stderr.write('ERROR: folder for %s does not exist\n'
+                             % config.ascii_only(out))
+            return EXIT_BAD_INPUT
+        clash = out_clash(out, (args.db, args.db + '-wal', args.db + '-shm'))
+        if clash:
+            sys.stderr.write('ERROR: --out points at %s - refusing to overwrite '
+                             'it\n' % config.ascii_only(clash))
+            return EXIT_BAD_INPUT
     if not os.path.isfile(args.db):
         sys.stderr.write('ERROR: database not found at %s - refusing to run\n'
                          % config.ascii_only(args.db))
@@ -414,9 +447,20 @@ def main(argv=None):
     rows, summary = build(items, known, excluded, int(time.time()))
     write_csv(args.out, rows)
     report(summary)
+    if args.sensors_json:
+        dump = sensor_dump(items, set(args.unit) or None)
+        with open(args.sensors_json, 'w', encoding='utf-8') as handle:
+            json.dump({'units': dump}, handle, ensure_ascii=False, indent=1,
+                      sort_keys=True)
+        missing = sorted(set(args.unit) - {int(k) for k in dump})
+        print('sensors in full: %d object(s)%s' % (
+            len(dump), ' | not in the answer: %s'
+            % ', '.join(str(u) for u in missing) if missing else ''))
     print('')
     print('READ ONLY: nothing was written to the database or to Wialon')
     print('csv: %s' % config.ascii_only(args.out))
+    if args.sensors_json:
+        print('json: %s' % config.ascii_only(args.sensors_json))
     return EXIT_OK
 
 
