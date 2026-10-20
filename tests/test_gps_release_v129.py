@@ -688,24 +688,25 @@ class ReleaseV129Runbook(unittest.TestCase):
         self.assertIn('schtasks /create /tn "GpsDaily" /tr '
                       '"C:\\transport-report\\gps_daily.bat" /sc daily /st 02:30', rollout)
 
-    def test_the_time_rule_the_runbook_describes_is_the_rule_in_code(self):
+    def test_time_verdicts_stay_off_as_the_runbook_says(self):
+        # [REASON]: проверка GPS-28 20.10 -- NOT MET (трек GPS, §0.6): выпуск
+        # не публикует вердикты «время». Ранбук обещает владельцу прежнюю
+        # причину на экране -- в коде выключатель выключен, а причина та,
+        # что на экране.
         flat = ' '.join(text(RELEASE).split())
         reconcile = read('agro_work', 'reconcile.py')
-        tolerance = read('gps', 'tolerance.py')
         labels = read('agro_work', 'labels.py')
-        self.assertIn('зажигание включено 30 минут и больше', flat)
-        self.assertIn('пробег за окно от 3 км', flat)
-        self.assertIn('TRUCK_WORK_KM = 3.0', reconcile)
-        self.assertIn("TRUCK_CATEGORY = 'yuk_transport'", reconcile)
-        self.assertIn('до 15 % (не меньше 0,5 ч) — в допуске, до 25 % — на грани', flat)
-        self.assertRegex(tolerance, r'0\.15')
-        self.assertRegex(tolerance, r'0\.25')
-        # Причины -- те, что на экране.
-        for label in ('Метод «время»: трек GPS время работы пока не публикует',
-                      'Нет данных GPS за часть суток окна'):
-            with self.subTest(label=label):
-                self.assertIn(label, labels)
-                self.assertIn(label, flat)
+        self.assertIn('\nTIME_VERDICTS_PUBLISHED = False\n', reconcile)
+        self.assertIn('and TIME_VERDICTS_PUBLISHED)', reconcile)
+        self.assertIn('вердикты «время» в «Сверке» не включаются', flat)
+        self.assertIn('Сверка «время» в этом выпуске не включается', flat)
+        label = 'Метод «время»: трек GPS время работы пока не публикует'
+        self.assertIn(label, labels)
+        self.assertIn(label, ' '.join(step('Шаг 4').split()))
+        for gone in ('Вердикты появятся', 'больше нет',
+                     'зажигание включено 30 минут и больше'):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, flat)
         self.assertIn('853', flat)
         self.assertIn('853', read('docs', 'tracks', 'gps-plan-fakt.md'))
 
@@ -810,16 +811,19 @@ class ReleaseV129Runbook(unittest.TestCase):
         self.assertIn("'%.2f ч'", read('templates', 'agro_work', 'applications.html'))
         self.assertIn("'пробег %.1f км'", read('templates', 'agro_work', 'applications.html'))
 
-    def test_the_owner_gate_before_step_one_is_the_check_s_verdicts(self):
+    def test_step_one_names_the_check_outcome(self):
+        # Шаг 1 говорит владельцу, чем кончилась GPS-28, теми строками, что
+        # печатает проверка, и что выпуск от неё больше не зависит.
         check = read('tools', 'gps_engine_report_check.py')
-        flat = ' '.join(text(RELEASE).split())
-        for line in ('VERDICT HOURS: MET', 'VERDICT MILEAGE: MET'):
+        one = step('Шаг 1')
+        for line in ('VERDICT HOURS: NOT MET', 'VERDICT MILEAGE: NOT MET'):
             with self.subTest(line=line):
-                self.assertIn('`%s`' % line, flat)
+                self.assertIn('`%s`' % line, one)
         self.assertIn("'VERDICT HOURS: %s'", check)
         self.assertIn("'VERDICT MILEAGE: %s'", check)
-        self.assertLess(flat.index('VERDICT HOURS: MET'), flat.index('## Шаг 2.'))
-        self.assertIn('VERDICT HOURS: MET', step('Шаг 1'))
+        self.assertIn("'NOT MET'", check)
+        self.assertIn('Проверка GPS-28 выпуск больше не держит', one)
+        self.assertNotIn('VERDICT HOURS: MET', one)
 
     def test_no_secret_and_no_person_names(self):
         body = text(RELEASE)

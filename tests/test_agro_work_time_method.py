@@ -8,6 +8,10 @@
 вердикта. Объём в часах -- допуск В-2. Пока таблицы часов нет, заявка
 остаётся с прежней причиной.
 
+Публикация выключена (`rc.TIME_VERDICTS_PUBLISHED`): проверка правил 20.10
+не прошла. Вердикт проверяется здесь включённым -- это код, который
+заработает после новой проверки; выключенный -- `NotPublished`.
+
 Запуск: python -m unittest tests.test_agro_work_time_method -v
 """
 
@@ -17,6 +21,7 @@ import sqlite3
 import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -33,6 +38,8 @@ from tools import agro_work_reconcile as tool                  # noqa: E402
 
 MIN = 60
 HOUR = 3600
+# Значение в коде, до подмен в setUp.
+PUBLISHED_IN_CODE = rc.TIME_VERDICTS_PUBLISHED
 
 
 class TimeFixture(Fixture):
@@ -60,8 +67,12 @@ class TimeFixture(Fixture):
 
 class Base(unittest.TestCase):
     engine = True
+    published = True
 
     def setUp(self):
+        patcher = mock.patch.object(rc, 'TIME_VERDICTS_PUBLISHED', self.published)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.fx = TimeFixture(engine=self.engine)
         self.addCleanup(self.fx.close)
 
@@ -75,6 +86,33 @@ class WithoutTheTable(Base):
         self.assertEqual((row['verdict'], row['reason']),
                          (rc.V_NONE, rc.R_METHOD_TIME))
         self.assertIsNone(row['gps_on_s'])
+
+
+class NotPublished(Base):
+    """Таблица часов есть и часы в ней есть, но вердикты не публикуются."""
+
+    published = False
+
+    def test_publication_is_off_until_a_check_passes(self):
+        # [REASON]: проверка GPS-28 20.10.2026 -- NOT MET (трек GPS, §0.6).
+        self.assertIs(PUBLISHED_IN_CODE, False)
+        with open(os.path.join(REPO_ROOT, 'docs', 'tracks', 'gps-plan-fakt.md'),
+                  encoding='utf-8') as fh:
+            track = ' '.join(fh.read().split())
+        self.assertIn('`VERDICT HOURS: NOT MET`', track)
+
+    def test_a_time_application_keeps_its_old_reason_with_the_table(self):
+        self.fx.hours(1001, 10, 2 * HOUR)
+        app = self.fx.timed(created=10, completed=11)
+        row = self.fx.forward(app)
+        self.assertEqual((row['verdict'], row['reason']),
+                         (rc.V_NONE, rc.R_METHOD_TIME))
+        self.assertIsNone(row['gps_on_s'])
+        self.assertIsNone(row['gps_km'])
+
+    def test_hectare_applications_do_not_change(self):
+        row = self.fx.forward(self.fx.app(created=10, completed=11))
+        self.assertNotEqual(row['reason'], rc.R_METHOD_TIME)
 
 
 class Verdict(Base):
