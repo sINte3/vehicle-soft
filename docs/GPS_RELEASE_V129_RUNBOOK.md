@@ -50,8 +50,9 @@
      пересчитываются, если их точек на диске уже нет (GPS-30): участки и
      ответы операторов на них сохраняются. Гектары не меняются.
    - Ручные инструменты GPS, только чтение: обзор датчиков зажигания
-     (GPS-23), проверка часов против счётчика Wialon (GPS-25), зонд и
-     проверка по отчёту Wialon «Моточасы» (GPS-27, GPS-28).
+     (GPS-23; теперь умеет выгрузить настройки датчиков целиком), проверка
+     часов против счётчика Wialon (GPS-25), зонд и проверка по отчёту
+     Wialon «Моточасы» (GPS-27, GPS-28).
 2. Миграция одна — GPS_ENGINE_001, новая пустая таблица `gps_daily_engine`.
    Шаг 3 применяет её при остановленной программе, после резервной копии, и
    запускает второй раз: второй запуск обязан ответить «уже сделано».
@@ -153,7 +154,7 @@ $py        = 'C:\Program Files\Python314\python.exe'
 $backupBat = 'C:\transport-report\backup_production_db.bat'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $baseline  = '784d18b722dbcc761081e67dcc03ca824355244f'
-$reviewed  = 'afff509aef9048a5d641b4598f25a2fe05c34467'
+$reviewed  = '276a16c5164b21fe3c57ee1d1fc1a32d66956375'
 $migration = 'migrate_gps_engine_001.py'
 $work      = 'C:\VehicleSoft_Release'
 $log       = 'C:\VehicleSoft_Release\release_v129_step2.log'
@@ -276,7 +277,7 @@ $errLog    = 'C:\transport-report\logs\error.log'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '784d18b722dbcc761081e67dcc03ca824355244f'
-$reviewed  = 'afff509aef9048a5d641b4598f25a2fe05c34467'
+$reviewed  = '276a16c5164b21fe3c57ee1d1fc1a32d66956375'
 $migration = 'migrate_gps_engine_001.py'
 $pendingId = 'GPS_ENGINE_001 (migrate_gps_engine_001.py)'
 $doneLine  = 'Done. Table gps_daily_engine with 11 columns and 1 index is in place.'
@@ -715,7 +716,7 @@ $prod      = 'C:\transport-report'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '784d18b722dbcc761081e67dcc03ca824355244f'
-$reviewed  = 'afff509aef9048a5d641b4598f25a2fe05c34467'
+$reviewed  = '276a16c5164b21fe3c57ee1d1fc1a32d66956375'
 $work      = 'C:\VehicleSoft_Release'
 $log       = 'C:\VehicleSoft_Release\release_v129_rollback.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
