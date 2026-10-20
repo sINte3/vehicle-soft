@@ -46,8 +46,9 @@ Wialon. Зонд GPS-27 показал формат отчёта и что су�
   1  часть объектов не прочитана (перечислены); остальные в CSV -- можно
      продолжить с --resume;
   2  плохой ввод: нет базы, нет папки для CSV, даты, --resume без CSV;
-  3  Wialon: вход отклонён, или отчёт на первом объекте не дал таблицы
-     моточасов -- шаблон в запросе не принят; CSV без строк.
+  3  Wialon: вход отклонён, или отчёт на пробных сутках (объект 923,
+     15.10.2026) не дал таблицы с моточасами -- шаблон в запросе не принят;
+     ничего не проверено, CSV не создан.
 
 ТОЛЬКО STDLIB, системный Python.
 
@@ -103,25 +104,54 @@ COLUMNS = ('wialon_id', 'den_utc', 'tochek', 'nashe_vkl_s', 'nashe_neizv_s',
 # [REASON]: шаблон в самом запросе -- по образцу шаблона 3 ресурса 285, который
 # зонд GPS-27 прочитал 19.10 (таблица `unit_engine_hours`, группировка по
 # суткам, флаги таблицы 4369), плюс столбец пробега. Сохранённые шаблоны
-# принадлежат людям и меняются без нас; свой -- нет.
+# принадлежат людям и меняются без нас; свой -- нет. Столбцы, их подписи и
+# параметры -- JSON-списки в строке, как в шаблонах самого сервера: 20.10
+# столбцы, переданные строкой через запятую, сервер не разобрал и ответил
+# отчётом без единой таблицы.
 REPORT_COLUMNS = ('duration', 'mileage')
+
+
+def _json(value):
+    return json.dumps(value, separators=(',', ':'))
+
+
 REPORT_TEMPLATE = {
     'id': 0, 'n': 'gps-28 check', 'ct': 'avl_unit',
-    'p': json.dumps({'bind': {'avl_unit': []}, 'descr': ''}),
+    'p': _json({'bind': {'avl_unit': []}, 'descr': ''}),
     'tbl': [{'n': 'unit_engine_hours', 'l': 'Engine hours',
-             'c': ','.join(REPORT_COLUMNS), 'cl': 'Engine hours,Mileage',
+             'c': _json(list(REPORT_COLUMNS)),
+             'cl': _json(['Engine hours', 'Mileage']),
+             'cp': _json([{} for _ in REPORT_COLUMNS]),
              's': '', 'sl': '',
-             'p': json.dumps({'grouping': json.dumps({'type': 'day'})}),
+             'filter_order': ['base_eh_sensor', 'duration', 'mileage',
+                              'engine_hours', 'speed', 'trips', 'stops',
+                              'parkings', 'sensors', 'sensor_name', 'driver',
+                              'trailer', 'fillings', 'thefts', 'geozones_ex'],
+             'p': _json({'grouping': _json({'type': 'day'})}),
              'sch': {'f1': 0, 'f2': 0, 't1': 0, 't2': 0, 'm': 0, 'y': 0,
                      'w': 0, 'fl': 0},
              'f': 4369}]}
+
+# [REASON]: отчёт без таблицы не отличает «шаблон не принят» от «у объекта
+# не было моточасов», а 20.10 на этом различии прогон и встал. Поэтому до
+# долгого прогона шаблон пробуется на сутках с известным ответом: объект 923,
+# местные сутки 15.10.2026 -- собственный шаблон 2 сервера дал на них 4:55:44
+# и 104,05 км (зонд GPS-27, 19.10). Wialon хранит сообщения три месяца:
+# сутки доступны до середины января 2027.
+PROBE_UNIT = 923
+PROBE_FROM, PROBE_TO = 1792004400, 1792090799
+PROBE_KNOWN = '4:55:44, 104.05 km'
 
 DURATION = re.compile(r'(?:(\d+)\s*\D+?\s+)?(\d+):(\d{2}):(\d{2})\s*$')
 NUMBER = re.compile(r'-?\d+(?:[.,]\d+)?')
 
 
 class ReportRefused(Exception):
-    """The report gave no engine-hours table: the template was not accepted."""
+    """The report request failed: an error code or rows that did not come."""
+
+
+class NoTable(ReportRefused):
+    """The report came back without an engine-hours table."""
 
 
 def day_of(stamp):
@@ -169,7 +199,7 @@ def report_days(client, unit_id, t_from, t_to):
         index = next((i for i, t in enumerate(tables)
                       if t.get('name') == 'unit_engine_hours'), None)
         if index is None:
-            raise ReportRefused('no unit_engine_hours table in the answer')
+            raise NoTable('no unit_engine_hours table in the answer')
         count = int(tables[index].get('rows') or 0)
         found = {}
         if count == 0:
@@ -198,6 +228,20 @@ def report_days(client, unit_id, t_from, t_to):
             client.call('report/cleanup_result', {})
         except Exception:                                          # noqa: BLE001
             pass
+
+
+def template_works(client):
+    """(seconds, km) of the probe day, or ReportRefused: the template must give
+    a table with engine hours on a day that had them."""
+    found = report_days(client, PROBE_UNIT, PROBE_FROM, PROBE_TO)
+    seconds = sum(value[0] for value in found.values())
+    if seconds <= 0:
+        raise ReportRefused('the table has no engine hours')
+    return seconds, sum(value[1] for value in found.values())
+
+
+def clock(seconds):
+    return '%d:%02d:%02d' % (seconds // 3600, seconds % 3600 // 60, seconds % 60)
 
 
 def load_points(client, unit_id, ignition_param, t_from, t_to, log):
@@ -381,10 +425,20 @@ def main(argv=None, client_factory=Client):
         sys.stderr.write('\nERROR: ne udalos voyti na %s (%s)\n'
                          % (config.BASE_URL, login_failure(problem)))
         return EXIT_WIALON
-    failed = []
-    refused = None
+    failed, no_table = [], []
     rows_all = list(done_rows)
     try:
+        try:
+            probe = template_works(client)
+        except ReportRefused as problem:
+            print('FAILED: the engine-hours report gave no table with engine '
+                  'hours on the check object %d, 2026-10-15 (%s) - the template '
+                  'in the request was not accepted; nothing was checked'
+                  % (PROBE_UNIT, config.ascii_only(str(problem))))
+            return EXIT_WIALON
+        print('template check on object %d, 2026-10-15: engine hours %s, '
+              'mileage %.2f km (the server\'s own template: %s)'
+              % (PROBE_UNIT, clock(probe[0]), probe[1], PROBE_KNOWN))
         units = client.list_units()
         con = open_readonly(args.db)
         try:
@@ -410,10 +464,14 @@ def main(argv=None, client_factory=Client):
                     continue
                 try:
                     report = report_days(client, unit_id, t_from, t_to)
-                except ReportRefused as problem:
-                    if number == 1 and not done:
-                        refused = problem
-                        break
+                except NoTable:
+                    # [REASON]: шаблон проверен на сутках с известным
+                    # ответом, значит, отчёт без таблицы -- сутки без
+                    # моточасов: по предрегистрации нет строки -- W = 0.
+                    # Число таких объектов печатается.
+                    report = {}
+                    no_table.append(unit_id)
+                except ReportRefused:
                     failed.append(unit_id)
                     continue
                 rows = unit_rows(unit_id, bool(param), counted, points, report,
@@ -425,12 +483,10 @@ def main(argv=None, client_factory=Client):
                                                 len(rows)))
     finally:
         client.logout()
-    if refused is not None:
-        print('FAILED: the engine-hours report gave no table on the first '
-              'object (%s) - the template in the request was not accepted'
-              % config.ascii_only(refused))
-        return EXIT_WIALON
     print('READ ONLY: nothing was written to Wialon or to the database')
+    if no_table:
+        print('objects whose report had no table, W = 0 on their days: %d'
+              % len(no_table))
     if failed:
         print('objects not read (run again with --resume): %s'
               % ', '.join(str(u) for u in failed))
