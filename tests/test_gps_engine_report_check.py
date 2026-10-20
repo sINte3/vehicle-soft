@@ -65,13 +65,42 @@ def make_db(path):
     con.close()
 
 
-class ReportServer(FakeServer):
-    """Wialon with an engine-hours report: {unit: {UTC day: cells}}."""
+# Шаблон 3 ресурса 285, как его отдал сервер зонду GPS-27 (19.10): столбцы,
+# их параметры и группировка -- JSON в строке.
+SERVER_TEMPLATE_3 = {
+    'n': 'unit_engine_hours',
+    'c': '["duration","absolute_eh_begin","absolute_eh_end","duration_move",'
+         '"duration_stay"]',
+    'cp': '[{},{},{},{},{}]', 's': '',
+    'p': '{"grouping":"{\\"type\\":\\"day\\"}"}', 'f': 4369}
+NOTHING = {'reportResult': {'msgsRendered': 0, 'stats': [], 'tables': [],
+                            'attachments': []}}
 
-    def __init__(self, report, refuse=(), **kwargs):
+
+def columns_of(template):
+    """Столбцы таблицы так, как их разбирает сервер: только JSON-список."""
+    try:
+        value = json.loads(template['tbl'][0]['c'])
+    except ValueError:
+        return []
+    return value if isinstance(value, list) else []
+
+
+class ReportServer(FakeServer):
+    """Wialon with an engine-hours report: {unit: {UTC day: cells}}.
+
+    Как сервер 20.10: столбцы шаблона он берёт только JSON-списком, иначе --
+    отчёт без единой таблицы (NOTHING). Объект из `empty` -- без таблицы
+    при принятом шаблоне.
+    """
+
+    def __init__(self, report, refuse=(), empty=(), **kwargs):
         super().__init__(**kwargs)
-        self.report = report
+        self.report = dict(report)
+        self.report.setdefault(check.PROBE_UNIT,
+                               {'2026-10-15': ('4:55:44', '104.05 km')})
         self.refuse = set(refuse)
+        self.empty = set(empty)
         self.execs = []
         self.rows = []
 
@@ -85,6 +114,9 @@ class ReportServer(FakeServer):
             unit = params['reportObjectId']
             if unit in self.refuse:
                 return FakeResponse({'error': 4})
+            if not columns_of(params['reportTemplate']) or unit in self.empty:
+                self.rows = []
+                return FakeResponse(NOTHING)
             days = self.report.get(unit, {})
             self.rows = [{'n': i, 't1': check.day_start(day) + 3600,
                           't2': check.day_start(day) + 7200,
@@ -106,7 +138,7 @@ def ignition_on(index, stamp):
     return {'p': {'io_239': 1}}
 
 
-def fleet_server(refuse=(), report=None):
+def fleet_server(refuse=(), report=None, empty=()):
     # 101 -- трактор, считается, датчик есть; 102 -- грузовой, считается
     # только пробег; 103 -- «не наш», вне выборки; 104 -- без машины и без
     # датчика зажигания, вне выборки.
@@ -117,7 +149,8 @@ def fleet_server(refuse=(), report=None):
     if report is None:
         report = {101: {'2026-09-01': ('23:56:00', '0.62 km')},
                   102: {'2026-09-02': ('1:00:00', '12.5 km')}}
-    return ReportServer(report, refuse=refuse, fleet=fleet, step_s=240,
+    return ReportServer(report, refuse=refuse, empty=empty, fleet=fleet,
+                        step_s=240,
                         extras={101: ignition_on, 102: ignition_on,
                                 103: ignition_on, 104: ignition_on})
 
@@ -178,27 +211,86 @@ class EndToEnd(Base):
 
     def test_only_reading_services_and_the_template_in_the_request(self):
         server = fleet_server()
-        self.run_check(server)
+        code, out, _ = self.run_check(server)
+        self.assertEqual(code, check.EXIT_OK)
         self.assertLessEqual({svc for svc, _ in server.calls}, READ_ONLY)
-        exec_params = server.execs[0]
+        # Первый отчёт -- пробные сутки, дальше -- объекты выборки.
+        self.assertEqual([e['reportObjectId'] for e in server.execs],
+                         [923, 101, 102])
+        self.assertEqual(server.execs[0]['interval'],
+                         {'from': utc('2026-10-14 19:00'),
+                          'to': utc('2026-10-15 19:00') - 1, 'flags': 0})
+        self.assertIn('template check on object 923, 2026-10-15: engine hours '
+                      '4:55:44, mileage 104.05 km', out)
+        exec_params = server.execs[1]
         self.assertEqual(exec_params['reportTemplateId'], 0)
         self.assertEqual(exec_params['reportResourceId'], 285)
         table = exec_params['reportTemplate']['tbl'][0]
-        self.assertEqual((table['n'], table['c']),
-                         ('unit_engine_hours', 'duration,mileage'))
+        self.assertEqual(table['n'], 'unit_engine_hours')
+        self.assertEqual(json.loads(table['c']), ['duration', 'mileage'])
+        self.assertEqual(len(json.loads(table['cl'])), 2)
+        self.assertEqual(json.loads(table['cp']), [{}, {}])
         self.assertEqual(json.loads(json.loads(table['p'])['grouping']),
                          {'type': 'day'})
+        # Тот же вид, что у шаблона 3 сервера, кроме столбцов: строки JSON
+        # без пробелов, буква в букву.
+        self.assertEqual(table['p'], SERVER_TEMPLATE_3['p'])
+        self.assertEqual(table['f'], SERVER_TEMPLATE_3['f'])
+        self.assertEqual(type(json.loads(table['cp'])),
+                         type(json.loads(SERVER_TEMPLATE_3['cp'])))
+        self.assertIn('duration', json.loads(SERVER_TEMPLATE_3['c']))
         self.assertEqual(exec_params['interval']['from'], utc('2026-09-01 00:00'))
         self.assertEqual(exec_params['interval']['to'],
                          utc('2026-09-02 00:00') + 86399)
         self.assertEqual(sum(1 for svc, _ in server.calls
                              if svc == 'report/cleanup_result'), len(server.execs))
 
-    def test_a_refused_first_report_is_code_3(self):
-        code, out, _ = self.run_check(fleet_server(refuse={101}))
+    def test_a_comma_separated_column_list_is_the_failure_of_20_10(self):
+        """Отрицательный контроль: шаблон 20.10 подставной сервер не берёт."""
+        old = json.loads(json.dumps(check.REPORT_TEMPLATE))
+        old['tbl'][0]['c'] = 'duration,mileage'
+        self.assertEqual(columns_of(old), [])
+        self.assertEqual(columns_of(check.REPORT_TEMPLATE), ['duration', 'mileage'])
+        with mock.patch.object(check, 'REPORT_TEMPLATE', old):
+            code, out, _ = self.run_check(fleet_server())
         self.assertEqual(code, check.EXIT_WIALON)
         self.assertIn('the template in the request was not accepted', out)
-        self.assertEqual(self.rows(), [])
+
+    def test_a_template_check_without_engine_hours_is_code_3(self):
+        # Нет таблицы, отказ кодом, таблица без часов -- шаблону не верим,
+        # и долгий прогон не начинается: CSV не создан, сообщений не спрошено.
+        for server in (fleet_server(empty={923}), fleet_server(refuse={923}),
+                       fleet_server(report={923: {'2026-10-15': ('0:00:00',
+                                                                 '0 km')}})):
+            with self.subTest(server=server):
+                code, out, _ = self.run_check(server)
+                self.assertEqual(code, check.EXIT_WIALON)
+                self.assertIn('FAILED: the engine-hours report gave no table '
+                              'with engine hours on the check object 923', out)
+                self.assertIn('nothing was checked', out)
+                self.assertFalse(os.path.exists(self.out))
+                self.assertEqual([e['reportObjectId'] for e in server.execs],
+                                 [923])
+                self.assertNotIn('messages/load_interval',
+                                 {svc for svc, _ in server.calls})
+                self.assertNotIn('VERDICT', out)
+
+    def test_an_object_without_a_table_is_w_zero(self):
+        # Шаблон проверен -- значит, отчёт без таблицы -- объект без моточасов
+        # (по предрегистрации нет строки -- W = 0), а не отказ.
+        code, out, _ = self.run_check(fleet_server(empty={101}))
+        self.assertEqual(code, check.EXIT_OK)
+        self.assertIn('objects whose report had no table, W = 0 on their days: 1',
+                      out)
+        first = [r for r in self.rows() if r['wialon_id'] == '101']
+        self.assertTrue(first)
+        self.assertEqual({r['wialon_motochasy_s'] for r in first}, {'0'})
+        self.assertEqual({r['wialon_km'] for r in first}, {'0.0'})
+
+    def test_a_refused_report_is_code_1_whatever_the_object(self):
+        code, out, _ = self.run_check(fleet_server(refuse={101}))
+        self.assertEqual(code, check.EXIT_PARTIAL)
+        self.assertIn('objects not read (run again with --resume): 101', out)
 
     def test_a_later_refusal_is_code_1_and_resume_finishes_the_job(self):
         code, out, _ = self.run_check(fleet_server(refuse={102}))
@@ -208,7 +300,7 @@ class EndToEnd(Base):
         server = fleet_server()
         code, out, _ = self.run_check(server, '--resume')
         self.assertEqual(code, check.EXIT_OK)
-        self.assertEqual([e['reportObjectId'] for e in server.execs], [102])
+        self.assertEqual([e['reportObjectId'] for e in server.execs], [923, 102])
         self.assertEqual(sorted({r['wialon_id'] for r in self.rows()}),
                          ['101', '102'])
         self.assertIn('already in the csv 1', out)
