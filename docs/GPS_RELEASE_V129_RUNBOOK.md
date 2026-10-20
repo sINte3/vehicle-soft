@@ -123,7 +123,8 @@ agro-work (в 04:00).
 
 1. **Проверка GPS-28 прошла.** Выпуск публикует вердикты по правилам часов
    и пробега, а GPS-28 сверяет эти правила с отчётом Wialon «Моточасы» за
-   сентябрь (её вы запускаете 19.10). Обе последние строки её журнала
+   сентябрь (первый запуск 20.10 остановился на шаблоне отчёта —
+   исправлено, повтор — по моему сообщению). Обе последние строки её журнала
    должны быть `VERDICT HOURS: MET` и `VERDICT MILEAGE: MET`. Если хоть одна
    другая — выпуск в этом виде не делается: я пришлю другой.
 2. **После проверенной версии в `main` не влито кода.** Если влит — я
@@ -157,7 +158,7 @@ $py        = 'C:\Program Files\Python314\python.exe'
 $backupBat = 'C:\transport-report\backup_production_db.bat'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $baseline  = '784d18b722dbcc761081e67dcc03ca824355244f'
-$reviewed  = 'f28b7a96e46c5e3674495d6a991c082419dc2cd6'
+$reviewed  = 'b253fb281f75ce0bd2633f047559cbbbe1dc76ea'
 $migration = 'migrate_gps_engine_001.py'
 $work      = 'C:\VehicleSoft_Release'
 $log       = 'C:\VehicleSoft_Release\release_v129_step2.log'
@@ -227,9 +228,9 @@ try { Stop-Transcript | Out-Null } catch { }
 **Что должно получиться:** последняя строка перед `LOG FILE` —
 `RESULT: CHECK PASSED - go on to step 3`. Выше — три строки
 `SERVICE ... : Running`, строка `RELEASE: 784d18b... -> ...` и список
-влитых изменений: `#204`–`#215` — код и документы треков GPS и agro-work
-с 19.10 (в том числе записи выпуска v1.28 и первая редакция этого ранбука)
-и `#216` — этот ранбук. Если в
+влитых изменений: `#204`–`#216` — код и документы треков GPS и agro-work
+с 19.10 (в том числе записи выпуска v1.28 и прежние редакции этого
+ранбука) и `#217` — этот ранбук. Если в
 списке есть ещё PR — значит, они только с документами: чужой код после
 проверенной версии блок не пропускает.
 
@@ -280,7 +281,7 @@ $errLog    = 'C:\transport-report\logs\error.log'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '784d18b722dbcc761081e67dcc03ca824355244f'
-$reviewed  = 'f28b7a96e46c5e3674495d6a991c082419dc2cd6'
+$reviewed  = 'b253fb281f75ce0bd2633f047559cbbbe1dc76ea'
 $migration = 'migrate_gps_engine_001.py'
 $pendingId = 'GPS_ENGINE_001 (migrate_gps_engine_001.py)'
 $doneLine  = 'Done. Table gps_daily_engine with 11 columns and 1 index is in place.'
@@ -721,7 +722,7 @@ $prod      = 'C:\transport-report'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '784d18b722dbcc761081e67dcc03ca824355244f'
-$reviewed  = 'f28b7a96e46c5e3674495d6a991c082419dc2cd6'
+$reviewed  = 'b253fb281f75ce0bd2633f047559cbbbe1dc76ea'
 $work      = 'C:\VehicleSoft_Release'
 $log       = 'C:\VehicleSoft_Release\release_v129_rollback.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
