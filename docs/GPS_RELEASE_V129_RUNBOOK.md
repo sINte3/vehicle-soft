@@ -24,7 +24,10 @@ agro-work, §9.6–9.8.
      значение датчика зажигания и каждую ночь записывает показание счётчика
      моточасов Wialon — для проверки нашего счёта против счёта Wialon. В
      Wialon ничего не пишется. Файлы точек получают один новый столбец,
-     файл при этом не переписывается.
+     файл при этом не переписывается. Если Wialon отклоняет вход из-за
+     чужих неудачных входов с нашего адреса, сборщик пробует до шести раз
+     с паузой 65 секунд, а не два (GPS-31): 20.10 ночной сбор пропал, когда
+     отказали обе попытки.
    - **Таблица часов** `gps_daily_engine` (миграция GPS_ENGINE_001, шаг 3):
      по каждой машине и суткам — часы с включённым зажиганием, «неизвестно»
      (дыры в данных) и пробег. Считает её `gps.engine_hours`: в день выпуска
@@ -154,7 +157,7 @@ $py        = 'C:\Program Files\Python314\python.exe'
 $backupBat = 'C:\transport-report\backup_production_db.bat'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $baseline  = '784d18b722dbcc761081e67dcc03ca824355244f'
-$reviewed  = 'cfd360876187495a75569586568124c23a42d406'
+$reviewed  = 'f28b7a96e46c5e3674495d6a991c082419dc2cd6'
 $migration = 'migrate_gps_engine_001.py'
 $work      = 'C:\VehicleSoft_Release'
 $log       = 'C:\VehicleSoft_Release\release_v129_step2.log'
@@ -224,8 +227,9 @@ try { Stop-Transcript | Out-Null } catch { }
 **Что должно получиться:** последняя строка перед `LOG FILE` —
 `RESULT: CHECK PASSED - go on to step 3`. Выше — три строки
 `SERVICE ... : Running`, строка `RELEASE: 784d18b... -> ...` и список
-влитых изменений: `#204`–`#213` — код и документы треков GPS и agro-work
-с 19.10 (в том числе записи выпуска v1.28) и `#214` — этот ранбук. Если в
+влитых изменений: `#204`–`#215` — код и документы треков GPS и agro-work
+с 19.10 (в том числе записи выпуска v1.28 и первая редакция этого ранбука)
+и `#216` — этот ранбук. Если в
 списке есть ещё PR — значит, они только с документами: чужой код после
 проверенной версии блок не пропускает.
 
@@ -276,7 +280,7 @@ $errLog    = 'C:\transport-report\logs\error.log'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '784d18b722dbcc761081e67dcc03ca824355244f'
-$reviewed  = 'cfd360876187495a75569586568124c23a42d406'
+$reviewed  = 'f28b7a96e46c5e3674495d6a991c082419dc2cd6'
 $migration = 'migrate_gps_engine_001.py'
 $pendingId = 'GPS_ENGINE_001 (migrate_gps_engine_001.py)'
 $doneLine  = 'Done. Table gps_daily_engine with 11 columns and 1 index is in place.'
@@ -644,19 +648,32 @@ applied`: таблицы нет, значит шаг 3 не дошёл до ми
 Ночью сборщик в 01:00 впервые сохранит зажигание у новых точек и запишет
 счётчики моточасов, а расчёт в 02:30 — посчитает часы третьей строкой.
 
+Журналы читаются байтами, а не `Select-String`: начало `gps_collect.log`
+записано в другой кодировке, и `Select-String` с `Get-Content` читают его
+неверно. 20.10 они показали иероглифы и не нашли строк, которые в журнале
+были.
+
 ```powershell
-Select-String -Path C:\transport-report\gps_collect.log -Pattern '^ignition:' | Select-Object -Last 1
-Select-String -Path C:\transport-report\gps_daily.log -Pattern '^engine hours', '^object-days with points' | Select-Object -Last 2
+& { $t = [Text.Encoding]::Default.GetString([IO.File]::ReadAllBytes('C:\transport-report\gps_collect.log')) -replace "`0", ''; $t -split "`r?`n" | Where-Object { $_ -match '^login OK|^ignition:|ERROR' } | Select-Object -Last 2 }
+& { $t = [Text.Encoding]::Default.GetString([IO.File]::ReadAllBytes('C:\transport-report\gps_daily.log')) -replace "`0", ''; $t -split "`r?`n" | Where-Object { $_ -match '^engine hours|^object-days with points' } | Select-Object -Last 2 }
 ```
 
-Ожидаемо три строки:
+Ожидаемо четыре строки:
 
+- `login OK | tochki: C:\transport-report\instance`;
 - `ignition: ... of ... points with a position carry it | asked objects without an ignition sensor: ... | filled into points stored before: ... | engine-hour counters noted: ...`
   — первое число — большая часть второго, счётчиков — несколько сотен;
 - `engine hours ... -> ... (30 days), rule ignition-R300-P150-2026-10-19`;
 - `object-days with points: ... | failed: 0`.
 
-**Прислать:** эти три строки.
+Если строки не те — последние 60 строк обоих журналов:
+
+```powershell
+& { $t = [Text.Encoding]::Default.GetString([IO.File]::ReadAllBytes('C:\transport-report\gps_collect.log')) -replace "`0", ''; $t -split "`r?`n" | Select-Object -Last 60 }
+& { $t = [Text.Encoding]::Default.GetString([IO.File]::ReadAllBytes('C:\transport-report\gps_daily.log')) -replace "`0", ''; $t -split "`r?`n" | Select-Object -Last 60 }
+```
+
+**Прислать:** четыре строки; если они не те — и вывод второго блока.
 
 ## Если что-то пошло не так
 
@@ -682,8 +699,9 @@ Select-String -Path C:\transport-report\gps_daily.log -Pattern '^engine hours', 
 | в 4.3 `exit 2`, `ERROR: no table gps_daily_engine` | миграция не применена | прислать журналы шагов 3 и 4 |
 | в 4.3 `exit 5` | часть объектов-суток не посчиталась (строки `FAILED`) | прислать журнал; остальное записано |
 | в 4.4 у заявок «время» по-прежнему «Метод «время»: трек GPS время работы пока не публикует» | браузер показал страницу из своей памяти, или 4.3 не прошёл | обновить страницу с Ctrl+F5; если не помогло — прислать журнал 4.3 |
-| в шаге 5 нет строки `ignition:` или `engine-hour counters noted: 0` | ночной сбор не прошёл или прошёл прежней версией | прислать последние 60 строк `C:\transport-report\gps_collect.log` |
-| в шаге 5 нет строки `engine hours` | третья строка не добавлена или расчёт не прошёл | прислать `release_v129_step4_bat.log` и последние 60 строк `C:\transport-report\gps_daily.log` |
+| в шаге 5 последняя строка сборщика `ERROR: ne udalos voyti` | Wialon не принял вход ни с одной из шести попыток: с нашего адреса кто-то входит с неверными данными | прислать строку и последние 60 строк (второй блок шага 5); ничего не запускать |
+| в шаге 5 нет строки `ignition:` или `engine-hour counters noted: 0` | ночной сбор не прошёл или прошёл прежней версией | прислать последние 60 строк `C:\transport-report\gps_collect.log` (второй блок шага 5) |
+| в шаге 5 нет строки `engine hours` | третья строка не добавлена или расчёт не прошёл | прислать `release_v129_step4_bat.log` и последние 60 строк `C:\transport-report\gps_daily.log` (второй блок шага 5) |
 
 ## Откат — только если после шага 3 программа не открывается
 
@@ -703,7 +721,7 @@ $prod      = 'C:\transport-report'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '784d18b722dbcc761081e67dcc03ca824355244f'
-$reviewed  = 'cfd360876187495a75569586568124c23a42d406'
+$reviewed  = 'f28b7a96e46c5e3674495d6a991c082419dc2cd6'
 $work      = 'C:\VehicleSoft_Release'
 $log       = 'C:\VehicleSoft_Release\release_v129_rollback.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
