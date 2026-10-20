@@ -5,8 +5,9 @@
 моточасов (GPS-24, GPS-25), таблица часов `gps_daily_engine` (миграция
 GPS_ENGINE_001, GPS-26, пробег -- GPS-29), сверка заявок «время» и одна
 «Сверка» в меню (agro-work §9.6-9.8), проход `sbor_nepolnyy` без точек на
-диске (GPS-30). Блоки ранбука владелец вставляет в Windows PowerShell 5.1 на
-боевом сервере, и шаг 3 останавливает три службы и применяет миграцию.
+диске (GPS-30), вход сборщика до шести попыток (GPS-31). Блоки ранбука
+владелец вставляет в Windows PowerShell 5.1 на боевом сервере, и шаг 3
+останавливает три службы и применяет миграцию.
 
 Блок шага 3 -- блок выпуска v1.20 (он прошёл на этом сервере с миграцией),
 шаг 2 и откат -- блоки v1.28; меняются только постоянные, имя миграции и
@@ -26,9 +27,10 @@ GPS_ENGINE_001, GPS-26, пробег -- GPS-29), сверка заявок «в�
     прежние -- те, что в ранбуке развёртывания;
   * то, что ранбук называет новым, в production действительно новое;
   * блоки исполняются против подставных git, служб, питона и сайта
-    (tests/agro_work_release_harness.ps1) во всех путях «стоп», а блок
-    третьей строки -- против временного файла: на PowerShell 7 и -- в CI --
-    на Windows PowerShell 5.1.
+    (tests/agro_work_release_harness.ps1) во всех путях «стоп», блок
+    третьей строки -- против временного файла, а чтения журналов шага 5 --
+    против журнала, начатого в UTF-16, как на сервере: на PowerShell 7 и --
+    в CI -- на Windows PowerShell 5.1.
 
 Запуск: python -m unittest tests.test_gps_release_v129 -v
 Блоки в PowerShell: GPS_RELEASE_POWERSHELL=pwsh (или powershell) в окружении.
@@ -122,6 +124,26 @@ def bat_block():
              if '$bat  = ' in p]
     assert len(parts) == 1, len(parts)
     return parts[0]
+
+
+# Чтение журнала шага 5: файл целиком байтами, нулевые байты (половинки
+# UTF-16) выброшены, строки -- по переводу строки.
+LOG_READ = re.compile(
+    r"^& \{ \$t = \[Text\.Encoding\]::Default\.GetString\(\[IO\.File\]::"
+    r"ReadAllBytes\('C:\\transport-report\\(gps_collect\.log|gps_daily\.log)'\)\) "
+    r"-replace \"`0\", ''; \$t -split \"`r\?`n\" \| "
+    r"(?:Where-Object \{ \$_ -match ('[^']+') \} \| )?"
+    r"Select-Object -Last (\d+) \}$")
+
+
+def step_five_reads():
+    """{(журнал, фильтр или None, сколько строк)} -- команды шага 5."""
+    found = set()
+    for line in commands(raw_step('Шаг 5')):
+        match = LOG_READ.match(line)
+        assert match, line
+        found.add((match.group(1), match.group(2), int(match.group(3))))
+    return found
 
 
 def method_version():
@@ -415,6 +437,7 @@ class ReleaseV129Runbook(unittest.TestCase):
             'gps_collector/README.md', 'gps_collector/config.py',
             'gps_collector/main.py', 'gps_collector/refill.py',
             'gps_collector/storage.py', 'gps_collector/tests/support.py',
+            'gps_collector/tests/test_collector.py',
             'gps_collector/tests/test_ignition.py',
             'gps_collector/tests/test_storage.py', 'gps_collector/wialon.py',
             MIGRATION,
@@ -578,8 +601,26 @@ class ReleaseV129Runbook(unittest.TestCase):
         self.assertIn('`engine hours ... -> ... (30 days), rule %s`' % method_version(),
                       five)
         self.assertIn('`object-days with points: ... | failed: 0`', five)
-        self.assertIn("-Pattern '^ignition:'", five)
-        self.assertIn("-Pattern '^engine hours', '^object-days with points'", five)
+        # [REASON]: журналы читаются байтами (журнал трека 20.10):
+        # Select-String и Get-Content верят метке UTF-16 в начале
+        # gps_collect.log и не находят строк, которые в журнале есть.
+        # Каждая команда шага 5 -- такое чтение (step_five_reads); что они
+        # находят нужное, проверяет StepFiveReadsInPowerShell.
+        self.assertEqual([line for line in commands(path=RELEASE)
+                          if 'Select-String' in line], [])
+        self.assertEqual(step_five_reads(), {
+            ('gps_collect.log', "'^login OK|^ignition:|ERROR'", 2),
+            ('gps_daily.log', "'^engine hours|^object-days with points'", 2),
+            ('gps_collect.log', None, 60), ('gps_daily.log', None, 60)})
+        self.assertIn('print("login OK | tochki: %s" % folder)', collector)
+        self.assertIn('`login OK | tochki: C:\\transport-report\\instance`', five)
+        # «до шести раз с паузой 65 секунд» -- постоянные сборщика (GPS-31).
+        self.assertEqual(in_code('gps_collector/config.py',
+                                 r'^LOGIN_ATTEMPTS = (\d+)$'), '6')
+        self.assertEqual(in_code('gps_collector/config.py',
+                                 r'^LOGIN_LIMIT_PAUSE_S = ([0-9.]+)$'), '65.0')
+        self.assertIn('пробует до шести раз с паузой 65 секунд, а не два (GPS-31)',
+                      step('Что произойдёт'))
 
     def test_step_four_flags_exist_and_the_order_is_safe(self):
         refill = read('gps_collector', 'refill.py')
@@ -1355,6 +1396,89 @@ class ThirdLineInPowerShell(unittest.TestCase):
                 with open(self.bat, 'rb') as fh:
                     self.assertEqual(fh.read(), before)
                 self.assertFalse(os.path.exists(self.copy))
+
+
+@unittest.skipUnless(POWERSHELL, 'GPS_RELEASE_POWERSHELL is not set')
+class StepFiveReadsInPowerShell(unittest.TestCase):
+    """Команды шага 5 против журналов в той кодировке, что на сервере.
+
+    [REASON]: начало gps_collect.log записано `*>` Windows PowerShell 5.1 --
+    UTF-16LE с меткой FF FE (`docs/GPS_ROLLOUT_RUNBOOK.md`, первые сборы), а
+    ночной `>>` из gps_collect.bat дописывает ASCII. 20.10 Select-String по
+    такому файлу не нашёл строк, которые в нём были. Здесь тот же файл:
+    команды ранбука обязаны найти строки последней ночи, а Select-String
+    (отрицательный контроль) -- не найти, иначе файл не воспроизводит дефект
+    и проверка ничего не доказывает.
+    """
+
+    HEAD = ['login OK | tochki: C:\\transport-report\\instance',
+            'objects: 621 | asked: 494 | silent, skipped: 127 | up to date: 0 '
+            '| no messages: 64 | failed: 0 | points written: 1124213 of 1219988 '
+            'seen (duplicate 52114, no position 43661)']
+    NIGHT = ['login OK | tochki: C:\\transport-report\\instance',
+             '  [1/621] 01:01:07 (Bitrek) x 10-26 00:31 -> 10-27 00:31',
+             'objects: 621 | asked: 492 | silent, skipped: 129 | up to date: 0 '
+             '| no messages: 53 | failed: 0 | points written: 1134791 of 1281075 '
+             'seen (duplicate 83771, no position 62513)',
+             'ignition: 1015000 of 1218562 points with a position carry it | '
+             'asked objects without an ignition sensor: 41 | filled into points '
+             'stored before: 0 | engine-hour counters noted: 388',
+             'requests: 987 | logins: 1 | abandoned: 0']
+    HOURS = ['engine hours 2026-09-27 -> 2026-10-26 (30 days), rule '
+             'ignition-R300-P150-2026-10-19',
+             'object-days with points: 7310 | recomputed: 412 | unchanged: 6898 '
+             '| recomputed with ignition data: 395 | failed: 0']
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        collect = (b'\xff\xfe' + '\r\n'.join(self.HEAD + ['']).encode('utf-16-le')
+                   + '\r\n'.join(self.NIGHT + ['']).encode('ascii'))
+        with open(os.path.join(self.folder, 'gps_collect.log'), 'wb') as fh:
+            fh.write(collect)
+        with open(os.path.join(self.folder, 'gps_daily.log'), 'wb') as fh:
+            fh.write('\r\n'.join(['published: 177 | not computed: 49 | sites: 304']
+                                 + self.HOURS + ['']).encode('ascii'))
+
+    def run_lines(self, lines):
+        here = self.folder + os.sep
+        body = '\n'.join(line.replace('C:\\transport-report\\', here)
+                         for line in lines) + '\n'
+        script = os.path.join(self.folder, 'step5.ps1')
+        with open(script, 'w', encoding='ascii') as fh:
+            fh.write(body)
+        proc = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive',
+                               '-ExecutionPolicy', 'Bypass', '-File', script],
+                              capture_output=True, text=True, timeout=120)
+        self.assertEqual(proc.stderr.strip(), '')
+        return [line.rstrip() for line in proc.stdout.splitlines() if line.strip()]
+
+    def test_the_filtered_reads_find_the_last_night(self):
+        lines = [line for line in commands(raw_step('Шаг 5'))
+                 if 'Where-Object' in line]
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(self.run_lines(lines),
+                         [self.NIGHT[0], self.NIGHT[3]] + self.HOURS)
+
+    def test_the_last_sixty_lines_are_readable_text(self):
+        lines = [line for line in commands(raw_step('Шаг 5'))
+                 if 'Where-Object' not in line]
+        self.assertEqual(len(lines), 2)
+        out = self.run_lines(lines)
+        # Начало UTF-16 читается тоже: нулевые байты выброшены, метка FF FE
+        # остаётся двумя знаками перед первой строкой.
+        self.assertTrue(out[0].endswith(self.HEAD[0]), out[0])
+        self.assertEqual(out[1:], self.HEAD[1:] + self.NIGHT
+                         + ['published: 177 | not computed: 49 | sites: 304']
+                         + self.HOURS)
+        self.assertNotIn('\x00', ''.join(out))
+
+    def test_select_string_does_not_find_the_last_night(self):
+        """Отрицательный контроль: файл воспроизводит дефект 20.10."""
+        out = self.run_lines([
+            "Select-String -Path C:\\transport-report\\gps_collect.log "
+            "-Pattern '^ignition:' | Select-Object -Last 1"])
+        self.assertEqual(out, [])
 
 
 if __name__ == '__main__':
