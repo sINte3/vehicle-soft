@@ -235,6 +235,67 @@ class Survey(Base):
             self.assertIn(kind, out)
 
 
+class SensorsInFull(Base):
+    """--sensors-json: датчики целиком, без имени объекта (после GPS-28)."""
+
+    def setUp(self):
+        super().setUp()
+        self.json = os.path.join(self.folder, 'sensors.json')
+        # Датчик с настройками, которых правило R не знает: валидатор,
+        # таблица пересчёта, границы -- сервер присылает их в самом датчике.
+        self.units = [dict(u) for u in UNITS]
+        self.units[0]['sens'] = dict(self.units[0]['sens'])
+        self.units[0]['sens']['1'] = dict(
+            self.units[0]['sens']['1'], vt=1, vs=2, f=0,
+            c='{"act":1,"lower_bound":0.5,"upper_bound":1}',
+            tbl=[{'x': 0, 'a': 0, 'b': 1}])
+
+    def dump(self):
+        with open(self.json, encoding='utf-8') as handle:
+            return json.load(handle)['units']
+
+    def test_the_listed_objects_come_in_full_without_names(self):
+        code, out, _ = self.run_tool(SensorServer(self.units), '--sensors-json',
+                                     self.json, '--unit', '1001', '--unit', '9999')
+        self.assertEqual(code, gi.EXIT_OK, out)
+        units = self.dump()
+        self.assertEqual(sorted(units), ['1001'])
+        first = units['1001']
+        self.assertEqual(first['sens'], self.units[0]['sens'])
+        self.assertEqual((first['cfl'], first['cneh']), (0x10 | 0x200, 1234.5))
+        self.assertEqual(first['lmsg_p'], {'io_239': 1, 'can_fuel': 40})
+        with open(self.json, encoding='utf-8') as handle:
+            text = handle.read()
+        for name in NAMES[:3]:
+            self.assertNotIn(name, text)
+        self.assertNotIn('"nm"', text)
+        self.assertIn('sensors in full: 1 object(s) | not in the answer: 9999', out)
+        self.assertTrue(out.isascii())
+        # CSV пишется как прежде.
+        self.assertEqual(sorted(self.rows()), [1001, 1002, 1003])
+
+    def test_without_unit_every_object_is_written(self):
+        code, _, _ = self.run_tool(SensorServer(self.units), '--sensors-json',
+                                   self.json)
+        self.assertEqual(code, gi.EXIT_OK)
+        self.assertEqual(sorted(self.dump()), ['1001', '1002', '1003'])
+
+    def test_still_read_only(self):
+        server = SensorServer(self.units)
+        self.run_tool(server, '--sensors-json', self.json, '--unit', '1001')
+        self.assertLessEqual(set(server.calls), READ_ONLY_SERVICES)
+
+    def test_unit_without_the_json_and_the_json_on_the_database_are_refused(self):
+        code, _, err = self.run_tool(SensorServer(self.units), '--unit', '1001')
+        self.assertEqual(code, gi.EXIT_BAD_INPUT)
+        self.assertIn('--unit is for --sensors-json', err)
+        before = digest(self.db)
+        code, _, _ = self.run_tool(SensorServer(self.units), '--sensors-json',
+                                   self.db)
+        self.assertEqual(code, gi.EXIT_BAD_INPUT)
+        self.assertEqual(digest(self.db), before)
+
+
 class Refusals(Base):
     def test_no_sensors_and_no_counters_is_a_refusal_not_an_empty_survey(self):
         bare = [{'id': u['id'], 'nm': u['nm']} for u in UNITS]
