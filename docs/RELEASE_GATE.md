@@ -58,7 +58,7 @@ production попутно с релизом трека АЗС `c548c71`, мин�
 
 | Что | Значение |
 |---|---|
-| Production baseline | `998bc20bfdb81e6d90ab413b63ab59da665aac65` — `C:\transport-report`, ветка `main`, выпуск v1.31 22.10.2026 (`docs/DEPLOYED.md`), тег `v1.31-production-2026-10-22` — команда дана 22.10, ставит владелец |
+| Production baseline | `998bc20bfdb81e6d90ab413b63ab59da665aac65` — `C:\transport-report`, ветка `main`, выпуск v1.31 22.10.2026 (`docs/DEPLOYED.md`), тег `v1.31-production-2026-10-22` поставлен 22.10 |
 | Статус выпуска | **v1.31 выпущен 22.10.2026** — граница организаций на экранах GPS (шаги 2 и 3 — `CHECK PASSED`, `RELEASE PASSED`, реестр 61 → 61; шаг 4 — «всё сходится» словами владельца; разбор — `docs/DEPLOYED.md`). Вердикты «время» по-прежнему выключены (`TIME_VERDICTS_PUBLISHED = False`). Следующий выпуск не подготовлен |
 
 Миграций Дронов без строки в реестре production по-прежнему две —
