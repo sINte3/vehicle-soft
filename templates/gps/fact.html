@@ -136,6 +136,8 @@
     <span class="vs-badge vs-badge-warning">{{ 'нет в справочнике техники' if is_ru else 'техника маълумотномасида йўқ' }}</span>
   {% endif %}
   <span class="vs-soft">{{ 'объект Wialon' if is_ru else 'Wialon объекти' }} {{ unit_id }}</span>
+  {# A3: та же машина за две недели по эти сутки. #}
+  <a href="{{ url_for('gps.machine', unit=unit_id, to=day.isoformat(), **{'from': (day - period_back).isoformat()}) }}">{{ 'За период' if is_ru else 'Давр бўйича' }}</a>
   <span class="gps-fact-head-nav">
     {% if neighbour_urls.prev %}<a class="vs-btn vs-btn-sm vs-btn-ghost" href="{{ neighbour_urls.prev }}" rel="prev">← {{ 'Предыдущая' if is_ru else 'Олдинги' }}</a>{% endif %}
     {% if neighbour_urls.next %}<a class="vs-btn vs-btn-sm vs-btn-ghost" href="{{ neighbour_urls.next }}" rel="next">{{ 'Следующая' if is_ru else 'Кейинги' }} →</a>{% endif %}

@@ -1,0 +1,286 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Машина за период — GPS' if is_ru else 'Машина давр бўйича — GPS' }}{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ static_v('css/vs-combobox.css') }}">
+<link rel="stylesheet" href="{{ static_v('css/gps-fact.css') }}">
+{% if map_data %}
+<link rel="stylesheet" href="{{ static_v('vendor/leaflet/leaflet.css') }}">
+<link rel="stylesheet" href="{{ static_v('css/vs-map.css') }}">
+{% endif %}
+{% endblock %}
+{% block content %}
+{% include 'gps/_gps_nav.html' %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Машина за период' if is_ru else 'Машина давр бўйича' }}</div>
+    <div class="vs-hero-sub">{{ 'Что одна машина сделала за выбранные сутки: пробег и время в движении по её треку, гектары опубликованных суток, сутки подряд и всё это на карте. Каждые сутки открываются на «Факте по технике» — там участки размечаются ответом «работа» или «проезд».' if is_ru else 'Битта машина танланган кунларда нима қилгани: трекидан масофа ва ҳаракат вақти, эълон қилинган кунлар гектари, кунлар кетма-кет ва буларнинг ҳаммаси харитада. Ҳар бир кун «Техника бўйича факт»да очилади — у ерда участкалар «иш» ёки «ўтиш» жавоби билан белгиланади.' }}</div>
+  </div>
+</div>
+
+{# ── Период и машина ───────────────────────────────────────────────────────
+   Быстрые кнопки -- ссылки без скрипта, как у отчётов АЗС
+   (templates/fuel/_period_picker.html): машина и фильтры в них остаются,
+   набранный текст -- нет. Поле «Машина» -- тот же компонент, что на
+   /gps/fact (static/js/vs-combobox.js); без скрипта набранный текст ищет
+   сервер тем же ключом (gps_routes.search_key). #}
+{% set presets_labels = {
+  'yesterday': 'Вчера' if is_ru else 'Кеча',
+  'week': 'Последние 7 суток' if is_ru else 'Охирги 7 кун',
+  'this_month': 'Текущий месяц' if is_ru else 'Жорий ой',
+  'last_month': 'Прошлый месяц' if is_ru else 'Ўтган ой',
+} %}
+<nav class="vs-pills vs-mb-sm" aria-label="{{ 'Быстрый выбор периода' if is_ru else 'Даврни тез танлаш' }}">
+  {% for code in presets %}
+  <a class="vs-pill{% if preset == code %} is-active{% endif %}"
+     href="{{ url_for('gps.machine', preset=code, unit=unit_id, **filter_params) }}#{{ anchor }}">{{ presets_labels[code] }}</a>
+  {% endfor %}
+</nav>
+<form method="get" action="{{ url_for('gps.machine') }}" class="vs-toolbar gps-fact-toolbar vs-mb" data-gps-fact-filters>
+  <label class="vs-field">
+    <span class="vs-label">{{ 'С' if is_ru else 'Дан' }}</span>
+    <input type="date" name="from" value="{{ date_from.isoformat() }}" class="vs-input">
+  </label>
+  <label class="vs-field">
+    <span class="vs-label">{{ 'По' if is_ru else 'Гача' }}</span>
+    <input type="date" name="to" value="{{ date_to.isoformat() }}" class="vs-input">
+  </label>
+  <label class="vs-field">
+    <span class="vs-label">{{ 'Организация' if is_ru else 'Ташкилот' }}</span>
+    <select name="org" class="vs-select" data-gps-fact-filter>
+      <option value="">{{ 'Все организации' if is_ru else 'Барча ташкилотлар' }}</option>
+      {% for org_id, org_name in org_options %}
+      <option value="{{ org_id }}" {% if filters.org == org_id %}selected{% endif %}>{{ org_name }}</option>
+      {% endfor %}
+      {% if has_unlinked or filters.org == not_linked %}
+      <option value="{{ not_linked }}" {% if filters.org == not_linked %}selected{% endif %}>{{ 'Нет в справочнике техники' if is_ru else 'Техника маълумотномасида йўқ' }}</option>
+      {% endif %}
+    </select>
+  </label>
+  <label class="vs-field">
+    <span class="vs-label">{{ 'Вид техники' if is_ru else 'Техника тури' }}</span>
+    <select name="cat" class="vs-select" data-gps-fact-filter>
+      <option value="">{{ 'Все виды' if is_ru else 'Барча турлар' }}</option>
+      {% for slug, category_name in category_options %}
+      <option value="{{ slug }}" {% if filters.cat == slug %}selected{% endif %}>{{ t(category_name) }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {# tojson -- в атрибуте с ОДИНАРНЫМИ кавычками (CLAUDE.md). #}
+  <div class="vs-field vs-combobox gps-fact-machine" data-vs-combobox data-vs-combobox-submit
+       data-vs-combobox-hidden='{{ hidden_keys|tojson }}' data-vs-combobox-more="gps-machine-more">
+    <label class="vs-label" for="gps-machine-pick">{{ 'Машина — наберите номер или модель' if is_ru else 'Машина — рақам ёки моделни ёзинг' }}</label>
+    <input type="text" id="gps-machine-pick" name="q" class="vs-input"
+           value="{{ machine.label if machine else '' }}"
+           placeholder="{{ 'например, 613 или 80 613 EA' if is_ru else 'масалан, 613 ёки 80 613 EA' }}"
+           role="combobox" aria-autocomplete="list" aria-expanded="false"
+           aria-controls="gps-machine-pick-list" autocomplete="off" spellcheck="false">
+    <input type="hidden" name="unit" value="{{ unit_id if unit_id is not none else '' }}" data-vs-combobox-value>
+    <ul class="vs-combobox-list" id="gps-machine-pick-list" role="listbox"
+        aria-label="{{ 'Машины периода' if is_ru else 'Давр машиналари' }}" hidden>
+      {% for option in machine_options %}
+      <li role="option" id="gps-machine-pick-{{ option.id }}" data-value="{{ option.id }}"
+          aria-selected="{{ 'true' if option.id == unit_id else 'false' }}">
+        <span class="vs-combobox-main">{{ option.label }}</span>
+        <span class="vs-combobox-note">{{ option.note }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    <div class="vs-combobox-empty" hidden>{{ 'Такой машины среди показанных нет — проверьте номер или фильтры' if is_ru else 'Кўрсатилганлар орасида бундай машина йўқ — рақам ёки фильтрларни текширинг' }}</div>
+  </div>
+  <button type="submit" class="vs-btn vs-btn-primary">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+</form>
+
+{% if capped %}
+<div class="vs-alert is-warning vs-mb">{{ ('Период сокращён до %d суток — до даты «по» включительно.' if is_ru else 'Давр %d кунгача қисқартирилди — «гача» санаси билан бирга.')|format(max_days) }}</div>
+{% endif %}
+
+{% if total_count %}
+<div class="gps-fact-found vs-mb" aria-live="polite">
+  <span class="vs-soft">{{ 'Машин в списке:' if is_ru else 'Рўйхатдаги машиналар:' }} {{ listed_count }}{% if listed_count != total_count %} ({{ 'всего за период' if is_ru else 'давр бўйича жами' }} {{ total_count }}){% endif %}</span>
+  {% if search and search.found == 0 %}
+  <span class="vs-hint is-warning">{{ ('По «%s» машин не найдено — проверьте номер или фильтры.' if is_ru else '«%s» бўйича машина топилмади — рақам ёки фильтрларни текширинг.')|format(search.text) }}</span>
+  {% elif search and search.found > 1 %}
+  <span class="vs-hint">{{ ('По «%s» найдено машин: %d — показана первая. Уточните номер или выберите из подсказок.' if is_ru else '«%s» бўйича %d та машина топилди — биринчиси кўрсатилди. Рақамни аниқлаштиринг ёки таклифлардан танланг.')|format(search.text, search.found) }}</span>
+  {% endif %}
+  {% set more_template = 'По «{q}» скрыто фильтрами машин: {n}.' if is_ru else '«{q}» бўйича фильтрлар яширган машиналар: {n}.' %}
+  <span class="vs-hint" id="gps-machine-more" data-vs-more-template="{{ more_template }}"
+        data-vs-more-base="{{ url_for('gps.machine', **{'from': date_from.isoformat(), 'to': date_to.isoformat()}) }}" data-vs-more-hash="#{{ anchor }}"
+        {% if not (search and search.hidden) %}hidden{% endif %}>
+    <span data-vs-more-text>{% if search and search.hidden %}{{ more_template|replace('{n}', search.hidden|string)|replace('{q}', search.text) }}{% endif %}</span>
+    <a data-vs-more-link href="{{ url_for('gps.machine', q=search.text if search else none, **{'from': date_from.isoformat(), 'to': date_to.isoformat()}) }}#{{ anchor }}">{{ 'Показать без фильтров' if is_ru else 'Фильтрларсиз кўрсатиш' }}</a>
+  </span>
+</div>
+{% endif %}
+
+{% if not total_count %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ 'За этот период расчёта нет ни по одной машине' if is_ru else 'Бу давр учун бирорта машина бўйича ҳисоб йўқ' }}</div>
+    <div class="vs-empty-sub">{{ 'Строки появляются после суточного расчёта — ночью после суток. Выберите период раньше.' if is_ru else 'Қаторлар кунлик ҳисобдан кейин — кундан кейинги тунда пайдо бўлади. Олдинроқ даврни танланг.' }}</div>
+  </div>
+{% elif machine is none %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ 'По выбранным фильтрам машин нет' if is_ru else 'Танланган фильтрлар бўйича машина йўқ' }}</div>
+    <div class="vs-empty-sub">{{ 'За период посчитано машин:' if is_ru else 'Давр учун ҳисобланган машиналар:' }} {{ total_count }}. <a href="{{ url_for('gps.machine', **{'from': date_from.isoformat(), 'to': date_to.isoformat()}) }}">{{ 'Показать все машины периода' if is_ru else 'Даврнинг барча машиналарини кўрсатиш' }}</a></div>
+  </div>
+{% else %}
+
+<section class="gps-fact-work vs-mb" id="{{ anchor }}">
+<div class="gps-fact-head">
+  <span class="gps-fact-head-name">{{ machine.label }}</span>
+  {% if machine.linked %}
+    {% if machine.org_name %}<span>{{ machine.org_name }}</span>{% endif %}
+    {% if machine.category %}<span class="vs-badge">{{ t(categories[machine.category]) if machine.category in categories else machine.category }}</span>{% endif %}
+  {% else %}
+    <span class="vs-badge vs-badge-warning">{{ 'нет в справочнике техники' if is_ru else 'техника маълумотномасида йўқ' }}</span>
+  {% endif %}
+  <span class="vs-soft">{{ 'объект Wialon' if is_ru else 'Wialon объекти' }} {{ unit_id }}</span>
+  <span class="vs-soft">{{ date_from.strftime('%d.%m.%Y') }} — {{ date_to.strftime('%d.%m.%Y') }}</span>
+</div>
+
+{% if summary.track_only %}
+<div class="vs-alert is-warning vs-mb">{{ 'Спецтехника — гектары не считаются (решение владельца от 28.09.2026). Пробег, время и трек измерены и верны.' if is_ru else 'Махсус техника — гектар ҳисобланмайди (эгасининг 28.09.2026 даги қарори). Масофа, вақт ва трек ўлчанган ва тўғри.' }}</div>
+{% endif %}
+
+{# ── Сводка периода ─────────────────────────────────────────────────────────
+   Гектары -- только опубликованных суток, «проезд» вычтен, участки без
+   ответа входят, и рядом сказано, на сколько цифра ещё может уменьшиться:
+   то же правило, что у сверки нарядов (gps_routes.fact_from_sites). #}
+{% set moving_min = (summary.moving_s / 60)|round|int %}
+<div class="vs-stat-grid vs-mb">
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Обработано, га' if is_ru else 'Ишланган, га' }}</div>
+    <div class="vs-stat-value">{% if summary.track_only or not summary.published %}—{% else %}{{ '%.2f'|format(summary.ha) }}{% endif %}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Суток с работой' if is_ru else 'Ишли кунлар' }}</div>
+    <div class="vs-stat-value">{% if summary.track_only or not summary.published %}—{% else %}{{ summary.work_days }}{% endif %}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Участков, из них без ответа' if is_ru else 'Участкалар, шундан жавобсиз' }}</div>
+    <div class="vs-stat-value">{{ summary.sites }} / {{ summary.unanswered }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Пробег по треку, км' if is_ru else 'Трек бўйича масофа, км' }}</div>
+    <div class="vs-stat-value">{{ '%.1f'|format(summary.km) }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'В движении' if is_ru else 'Ҳаракатда' }}</div>
+    <div class="vs-stat-value">{{ moving_min // 60 }} {{ 'ч' if is_ru else 'соат' }} {{ '%02d'|format(moving_min % 60) }} {{ 'мин' if is_ru else 'дақ' }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Суток с расчётом, из них с площадью' if is_ru else 'Ҳисобли кунлар, шундан майдонли' }}</div>
+    <div class="vs-stat-value">{{ summary.computed }} / {{ summary.published }}</div>
+  </div>
+</div>
+
+{# Оговорки к цифрам -- словами, а не мелким шрифтом в подсказке: каждая из
+   них меняет то, как цифру можно использовать. #}
+{% if summary.unanswered or summary.incomplete or summary.moving_unknown or (summary.computed < summary.days) or (summary.computed and not summary.published and not summary.track_only) %}
+<ul class="vs-help vs-mb">
+  {% if summary.unanswered %}
+  <li>{{ ('Без ответа «работа/проезд» — участков: %d, %.2f га. Они в гектарах: на столько цифра может уменьшиться, если их назовут проездом.' if is_ru else '«Иш/ўтиш» жавобисиз участкалар: %d та, %.2f га. Улар гектарда: агар ўтиш деб аталса, рақам шунчага камайиши мумкин.')|format(summary.unanswered, summary.unanswered_ha) }}</li>
+  {% endif %}
+  {% if summary.computed and not summary.published and not summary.track_only %}
+  <li>{{ 'Площадь не публиковалась ни в одни сутки периода — причины в таблице ниже. Это не ноль работы.' if is_ru else 'Даврнинг бирорта кунида майдон эълон қилинмаган — сабаблари қуйидаги жадвалда. Бу иш ноль дегани эмас.' }}</li>
+  {% endif %}
+  {% if summary.incomplete %}
+  <li>{{ ('Сбор точек не завершён у суток: %d. Их пробег и время посчитаны по неполному треку; расчёт повторится сам, когда точки доедут.' if is_ru else 'Нуқталар йиғиш тугалланмаган кунлар: %d. Уларнинг масофаси ва вақти тўлиқ бўлмаган трек бўйича; нуқталар келганда ҳисоб ўзи қайтарилади.')|format(summary.incomplete) }}</li>
+  {% endif %}
+  {% if summary.moving_unknown %}
+  <li>{{ ('Время в движении не посчитано у суток: %d — их точек на диске нет. В сумме они не учтены.' if is_ru else 'Ҳаракат вақти ҳисобланмаган кунлар: %d — уларнинг нуқталари дискда йўқ. Йиғиндида улар ҳисобга олинмаган.')|format(summary.moving_unknown) }}</li>
+  {% endif %}
+  {% if summary.computed < summary.days %}
+  <li>{{ ('Суток без расчёта: %d из %d. Их в сводке нет: «расчёта нет» — не то же самое, что «работы нет».' if is_ru else 'Ҳисобсиз кунлар: %d / %d. Улар жамламада йўқ: «ҳисоб йўқ» — «иш йўқ» билан бир хил эмас.')|format(summary.days - summary.computed, summary.days) }}</li>
+  {% endif %}
+</ul>
+{% endif %}
+
+{% if map_data %}
+<div class="vs-card gps-fact-map-card vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Трек и участки за период' if is_ru else 'Давр треки ва участкалари' }}</span>
+    <span class="vs-soft">{{ 'наведите на трек или участок — сутки и подробности; слои включаются в переключателе карты' if is_ru else 'трек ёки участкага курсорни олиб боринг — кун ва тафсилотлар; қатламлар харита переключателида ёқилади' }}</span>
+  </div>
+  <div class="vs-card-body">
+    <div class="vs-map" data-vs-map="gps-machine-map" role="region"
+         aria-label="{{ 'Карта периода: трек и участки' if is_ru else 'Давр харитаси: трек ва участкалар' }}">
+      <div class="vs-map-legend">
+        {% if has_track %}<span class="vs-map-legend-item"><span class="vs-map-swatch is-track"></span>{{ 'трек по суткам, разрывы дольше 5 минут не соединяются' if is_ru else 'кунлар бўйича трек, 5 дақиқадан узун узилишлар туташтирилмайди' }}</span>{% endif %}
+        {% if has_sites %}
+        <span class="vs-map-legend-item"><span class="vs-map-swatch is-primary"></span>{{ 'участок без ответа' if is_ru else 'жавобсиз участка' }}</span>
+        <span class="vs-map-legend-item"><span class="vs-map-swatch is-success"></span>{{ 'ответ «работа»' if is_ru else '«иш» жавоби' }}</span>
+        <span class="vs-map-legend-item"><span class="vs-map-swatch is-danger"></span>{{ 'ответ «проезд»' if is_ru else '«ўтиш» жавоби' }}</span>
+        {% endif %}
+        {% if has_contours %}<span class="vs-map-legend-item"><span class="vs-map-swatch is-outline"></span>{{ 'контур поля из справочника' if is_ru else 'маълумотномадаги дала контури' }}</span>{% endif %}
+      </div>
+    </div>
+    {% if fresh_on %}<div class="vs-soft vs-mt-sm" data-vs-map-note="fresh" hidden></div>{% endif %}
+    {% if not satellite %}
+    <div class="vs-soft vs-mt-sm">{{ 'Спутниковая подложка не подключена — показана карта OpenStreetMap.' if is_ru else 'Спутник қатлами уланмаган — OpenStreetMap харитаси кўрсатилган.' }}</div>
+    {% endif %}
+  </div>
+</div>
+<script type="application/json" id="gps-machine-map">{{ map_data|tojson }}</script>
+{% endif %}
+
+{# ── Сутки подряд ──────────────────────────────────────────────────────────
+   Каждые сутки периода, и посчитанные, и нет. Ссылка ведёт на «Факт по
+   технике» той же машины за те же сутки -- там карта суток и ответы. #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Сутки периода' if is_ru else 'Давр кунлари' }}</span>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table vs-num">
+      <thead>
+        <tr>
+          <th>{{ 'Сутки' if is_ru else 'Кун' }}</th>
+          <th>{{ 'Расчёт' if is_ru else 'Ҳисоб' }}</th>
+          <th class="text-right">{{ 'Обработано, га' if is_ru else 'Ишланган, га' }}</th>
+          <th class="text-right">{{ 'Участков, без ответа' if is_ru else 'Участкалар, жавобсиз' }}</th>
+          <th class="text-right">{{ 'Пробег, км' if is_ru else 'Масофа, км' }}</th>
+          <th class="text-right">{{ 'В движении' if is_ru else 'Ҳаракатда' }}</th>
+          <th>{{ 'Первое и последнее движение' if is_ru else 'Биринчи ва охирги ҳаракат' }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        {% set a = row.aggregate %}
+        <tr>
+          <td>{{ row.day.strftime('%d.%m.%Y') }}</td>
+          <td>
+            {% if a is none %}<span class="vs-soft">{{ 'расчёта нет' if is_ru else 'ҳисоб йўқ' }}</span>
+            {% elif a.reason is none %}<span class="vs-badge vs-badge-success">{{ 'площадь опубликована' if is_ru else 'майдон эълон қилинган' }}</span>
+            {% else %}<span class="vs-badge{% if a.reason == 'sbor_nepolnyy' or a.reason == 'redkaya_zapis' %} vs-badge-warning{% endif %}">{{ (reason_labels[a.reason][0] if is_ru else reason_labels[a.reason][1]) if a.reason in reason_labels else a.reason }}</span>{% endif %}
+          </td>
+          <td class="text-right">{% if row.ha is none %}—{% else %}{{ '%.2f'|format(row.ha) }}{% endif %}</td>
+          <td class="text-right">{% if a is none or a.reason %}—{% else %}{{ row.sites|length }} / {{ row.unanswered }}{% endif %}</td>
+          <td class="text-right">{% if a is none %}—{% else %}{{ '%.1f'|format(a.track_km or 0) }}{% endif %}</td>
+          <td class="text-right">{% if row.moving_s is none %}—{% else %}{% set m = (row.moving_s / 60)|round|int %}{{ m // 60 }}:{{ '%02d'|format(m % 60) }}{% endif %}</td>
+          <td>{% if row.first_move %}{{ row.first_move.strftime('%H:%M') }}–{{ row.last_move.strftime('%H:%M') }}{% else %}—{% endif %}</td>
+          <td>{% if a is not none %}<a href="{{ url_for('gps.fact', date=row.day.isoformat(), unit=unit_id) }}">{{ 'открыть сутки' if is_ru else 'кунни очиш' }}</a>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+</section>
+
+<div class="vs-help vs-mb">
+  {{ 'Пробег — сумма пробега по треку посчитанных суток. Время в движении — сумма промежутков между соседними сообщениями, где машина ехала от 1 км/ч, без разрывов дольше 5 минут: то же число, что «Факт по технике» показывает за каждые сутки. Часы зажигания здесь не показываются, пока их не проверили по счётчику Wialon.' if is_ru else 'Масофа — ҳисобланган кунлар трек масофаси йиғиндиси. Ҳаракат вақти — машина 1 км/соатдан тез юрган қўшни хабарлар орасидаги оралиқлар йиғиндиси, 5 дақиқадан узун узилишларсиз: «Техника бўйича факт» ҳар бир кун учун кўрсатадиган рақамнинг ўзи. Ўт олдириш соатлари Wialon ҳисоблагичи бўйича текширилмагунча бу ерда кўрсатилмайди.' }}
+</div>
+
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script src="{{ static_v('js/vs-combobox.js') }}" defer></script>
+<script src="{{ static_v('js/gps-fact.js') }}" defer></script>
+{% if map_data %}
+<script src="{{ static_v('vendor/leaflet/leaflet.js') }}" defer></script>
+<script src="{{ static_v('js/vs-map.js') }}" defer></script>
+{% endif %}
+{% endblock %}
