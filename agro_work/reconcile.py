@@ -208,6 +208,7 @@ R_NO_WIALON = 'net_svyazi_s_wialon'
 R_MANY_OBJECTS = 'neskolko_obektov'
 R_EXCLUDED = 'obekt_isklyuchen'
 R_NO_GPS = 'net_dannyh_gps'
+R_IGNITION_STUCK = 'zazhiganie_ne_vyklyuchaetsya'
 R_OPEN_COVERS = 'otkrytaya_zayavka'
 R_MAYBE_BACKDATED = 'vozmozhno_zadnim_chislom'
 R_WINDOW_UNKNOWN = 'okno_zayavki_neizvestno'
@@ -218,7 +219,7 @@ FORWARD_REASONS = (R_OPEN, R_CANCELLED, R_GONE, R_BACKDATED, R_NO_HISTORY,
                    R_NO_CLOSE_DATE, R_BAD_WINDOW, R_UNKNOWN_STATUS,
                    R_METHOD_UNMARKED, R_METHOD_NONE, R_METHOD_TIME,
                    R_METHOD_TRIPS, R_NOT_MATCHED, R_NO_WIALON, R_MANY_OBJECTS,
-                   R_EXCLUDED, R_NO_GPS)
+                   R_EXCLUDED, R_NO_GPS, R_IGNITION_STUCK)
 REVERSE_REASONS = (R_OPEN_COVERS, R_WINDOW_UNKNOWN, R_MAYBE_BACKDATED,
                    R_NOT_IN_AGRO, R_MANY_AGRO, R_MANY_OBJECTS)
 
@@ -504,14 +505,15 @@ class Reconciliation:
             "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
             (ENGINE_TABLE,)).fetchone() is not None
         if self.engine_ready:
-            for wialon_id, day, on, unknown, with_ign, km, points in con.execute(
+            for (wialon_id, day, on, unknown, with_ign, km, points,
+                 off) in con.execute(
                     'SELECT wialon_id, work_date, on_seconds, unknown_seconds, '
-                    'points_with_ign, track_km, points_total FROM %s WHERE '
-                    'work_date BETWEEN ? AND ?'
+                    'points_with_ign, track_km, points_total, off_seconds '
+                    'FROM %s WHERE work_date BETWEEN ? AND ?'
                     % ENGINE_TABLE, (first.isoformat(), last.isoformat())):
                 self.engine[(int(wialon_id), parse_day(day))] = (
                     int(on or 0), int(unknown or 0), int(with_ign or 0),
-                    float(km or 0.0), int(points or 0))
+                    float(km or 0.0), int(points or 0), int(off or 0))
 
     def in_period(self, app):
         start, end = app.listed_span
@@ -554,9 +556,21 @@ class Reconciliation:
         if day > self.today:
             return None
         found = self.engine.get((wialon_id, day))
-        if found is None or found[2] == 0:
+        if found is None or found[2] == 0 or self.ignition_stuck(wialon_id, day):
             return None
         return found[0], found[1]
+
+    def ignition_stuck(self, wialon_id, day):
+        """Сутки, в которые зажигание «включено» и ни разу не выключилось.
+
+        [REASON]: правило Z (трек GPS, §0.6, дополнение 22.10; решение
+        владельца 22.10 «считать неисправностью, без вердикта»): у шести
+        машин трекер шлёт «включено» неделями, в том числе при напряжении
+        покоя, и Wialon считает им те же круглые сутки. Часы таких суток --
+        неизвестные, а не работа.
+        """
+        found = self.engine.get((wialon_id, day))
+        return found is not None and found[0] > 0 and found[5] == 0
 
     def kilometres(self, wialon_id, day):
         """Пробег за сутки по правилу P или None -- сутки неизвестны.
@@ -629,7 +643,7 @@ class Reconciliation:
     def time_verdict(self, app, row, truck=False):
         """Вердикт заявки метода «время»: по часам зажигания окна, у
         грузовика -- по пробегу окна (решение владельца 19.10)."""
-        on = unknown = unknown_days = 0
+        on = unknown = unknown_days = stuck_days = 0
         km = 0.0
         km_unknown_days = 0
         hour_days, km_days = [], []
@@ -637,6 +651,8 @@ class Reconciliation:
             found = self.hours(row['wialon_id'], day)
             if found is None:
                 unknown_days += 1
+                if day <= self.today and self.ignition_stuck(row['wialon_id'], day):
+                    stuck_days += 1
             else:
                 on += found[0]
                 unknown += found[1]
@@ -675,8 +691,10 @@ class Reconciliation:
         else:
             # [REASON]: неизвестное -- не «работы не было»: неизвестные сутки
             # или дыры в данных, которых хватило бы до 30 минут, вердикт
-            # «работы не было» не дают (предрегистрация 19.10).
-            row['reason'] = R_NO_GPS
+            # «работы не было» не дают (предрегистрация 19.10). Если среди
+            # неизвестных есть сутки с неисправным датчиком (правило Z),
+            # причина называет датчик.
+            row['reason'] = R_IGNITION_STUCK if stuck_days else R_NO_GPS
 
     def hours_check(self, app, row):
         """Объём заявки в часах против часов зажигания окна. Только «работа

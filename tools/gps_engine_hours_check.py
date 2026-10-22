@@ -17,7 +17,9 @@ b.t <= t2); U -- «неизвестно».
   Вне счёта, каждое своим числом: у объекта нет битов 0x10 и 0x200
   (`bez_bitov`); W < 0 или W больше длины окна на минуту и более
   (`schetchik_pravili`); у точек окна нет ни одного значения `ign`
-  (`net_zazhiganiya`).
+  (`net_zazhiganiya`); правило Z (дополнение 22.10): по точкам окна есть
+  «включено» и нет ни одной секунды «выключено» -- датчик зажигания не
+  выключается (`zazhiganie_ne_vyklyuchaetsya`).
   K1 -- из окон с W >= 1800 с не меньше 90 % с |O − W| <= max(0,15 × W, 1800 с);
   K3 -- из окон с W < 60 с не меньше 95 % с O < 1800 с;
   выборка: K1 -- не меньше 200 окон, K3 -- не меньше 50.
@@ -91,6 +93,7 @@ COLUMNS = ('wialon_id', 'okno_s', 'okno_po', 'dlina_s', 'wialon_s',
            'raznica_dolya', 'v_dopuske', 'klass')
 
 IN_COUNT = 'v_schete'
+STUCK = 'zazhiganie_ne_vyklyuchaetsya'
 
 
 def local(stamp):
@@ -160,7 +163,15 @@ def windows(folder, snapshots, watermarks):
                     storage.read_ignition(folder, unit_id, t1, t2), t1, t2)
                 row.update(on=parts.on_s, unknown=parts.unknown_s,
                            off=parts.off_s)
-                row['class'] = IN_COUNT if parts.with_ign else 'net_zazhiganiya'
+                if not parts.with_ign:
+                    row['class'] = 'net_zazhiganiya'
+                elif parts.on_s > 0 and parts.off_s == 0:
+                    # [REASON]: правило Z (трек GPS, §0.6, дополнение 22.10):
+                    # залипшее зажигание Wialon считает по тому же датчику,
+                    # и такое окно «сошлось» бы, ничего не проверив.
+                    row['class'] = STUCK
+                else:
+                    row['class'] = IN_COUNT
             out.append(row)
     return out
 
@@ -220,10 +231,11 @@ def share(hit, total):
 def report(rows, result, log=print):
     classes = Counter(r['class'] for r in rows)
     log('windows: %d | in the count: %d | no cfl bits: %d | counter edited: %d '
-        '| no ignition values: %d | points not collected yet: %d'
+        '| no ignition values: %d | ignition never off: %d | points not '
+        'collected yet: %d'
         % (len(rows), classes[IN_COUNT], classes['bez_bitov'],
            classes['schetchik_pravili'], classes['net_zazhiganiya'],
-           classes['tochki_ne_sobrany']))
+           classes[STUCK], classes['tochki_ne_sobrany']))
     log('K1  windows with W >= %d s: %d (need %d), within max(%d %%, %d s): '
         '%d = %s (need %d %%)'
         % (WORK_S, result['work'], K1_MIN, int(K1_TOLERANCE * 100), WORK_S,
