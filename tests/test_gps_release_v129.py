@@ -525,10 +525,16 @@ class ReleaseV129Runbook(unittest.TestCase):
         self.assertIn('`%s`' % done_line(), step('Шаг 3'))
         self.assertIn('`Already applied. Nothing to do.`', step('Шаг 3'))
         self.assertEqual(engine_mig.MIGRATION_ID, 'GPS_ENGINE_001')
-        # Реестр на production -- 60 (docs/DEPLOYED.md), миграция -- одна.
-        self.assertIn('| production | `%s` |' % BASELINE[:7], read('docs', 'DEPLOYED.md'))
-        self.assertRegex(read('docs', 'DEPLOYED.md'),
-                         r'\| production \| `%s` \| [^|]+ \| [^|]+ \| 60 \|' % BASELINE[:7])
+        # Реестр на production до выпуска -- 60, миграция -- одна. До выпуска
+        # это строка production в docs/DEPLOYED.md; после -- строка v1.29 в
+        # журнале релизов («реестр 60 → 61»), а v1.28 остаётся на BASELINE.
+        deployed = read('docs', 'DEPLOYED.md')
+        before = re.search(r'\| production \| `%s` \| [^|]+ \| [^|]+ \| 60 \|'
+                           % BASELINE[:7], deployed)
+        after = re.search(r'\| v1\.29 \| `[0-9a-f]{7}` \| [^|]+ \| [^|]*реестр 60 → 61',
+                          deployed)
+        self.assertTrue(before or after)
+        self.assertIn('| v1.28 | `%s` |' % BASELINE[:7], deployed)
         self.assertIn('`MIGRATIONS REGISTERED: 60 -> 61`', step('Шаг 3'))
 
     def test_step_four_waits_for_what_the_tools_print(self):
