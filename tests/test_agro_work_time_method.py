@@ -50,13 +50,17 @@ class TimeFixture(Fixture):
             self.con.commit()
 
     def hours(self, unit, day, on, unknown=0, with_ign=100, km=0.0,
-              points=100):
+              points=100, off=None):
+        # Выключено -- остаток суток, если не сказано иначе: сутки, где
+        # зажигание ни разу не выключилось, -- отдельный случай (правило Z).
+        if off is None:
+            off = max(0, 86400 - on - unknown)
         self.con.execute(
             "INSERT INTO gps_daily_engine (work_date, wialon_id, on_seconds, "
             "off_seconds, unknown_seconds, points_total, points_with_ign, "
-            "track_km, method_version, computed_at) VALUES (?, ?, ?, 0, ?, ?, "
+            "track_km, method_version, computed_at) VALUES (?, ?, ?, ?, ?, ?, "
             "?, ?, 'ignition-R300-P150-2026-10-19', 'now')",
-            ('2026-09-%02d' % day, unit, on, unknown, points, with_ign, km))
+            ('2026-09-%02d' % day, unit, on, off, unknown, points, with_ign, km))
         self.con.commit()
 
     def timed(self, **kwargs):
@@ -185,6 +189,53 @@ class Verdict(Base):
         _, total = ctx.summary()
         self.assertEqual(total['app_' + rc.V_WORK], 1)
         self.assertEqual(total.get('app_reason_' + rc.R_METHOD_TIME, 0), 0)
+
+
+class IgnitionNeverOff(Base):
+    """Правило Z (трек GPS, §0.6, дополнение 22.10; решение владельца 22.10):
+    сутки, где зажигание «включено» и ни разу не выключилось, -- неизвестные."""
+
+    def test_a_window_of_stuck_days_has_no_verdict_and_names_the_sensor(self):
+        self.fx.hours(1001, 10, 24 * HOUR, off=0)
+        self.fx.hours(1001, 11, 23 * HOUR, unknown=HOUR, off=0)
+        row = self.fx.forward(self.fx.timed(created=10, completed=11))
+        self.assertEqual((row['verdict'], row['reason']),
+                         (rc.V_NONE, rc.R_IGNITION_STUCK))
+        self.assertEqual(row['gps_on_s'], 0)
+        self.assertEqual(row['unknown_days'], 2)
+
+    def test_a_day_with_some_off_time_is_counted_as_before(self):
+        # Отрицательный контроль: десять минут «выключено» -- обычные сутки.
+        self.fx.hours(1001, 10, 23 * HOUR, off=10 * MIN)
+        self.fx.hours(1001, 11, 0)
+        row = self.fx.forward(self.fx.timed(created=10, completed=11))
+        self.assertEqual(row['verdict'], rc.V_WORK)
+        self.assertEqual(row['gps_on_s'], 23 * HOUR)
+
+    def test_work_on_a_known_day_still_counts_and_the_volume_waits(self):
+        self.fx.hours(1001, 10, 24 * HOUR, off=0)
+        self.fx.hours(1001, 11, 2 * HOUR)
+        row = self.fx.forward(self.fx.timed(created=10, completed=11,
+                                            volume='2.00'))
+        self.assertEqual(row['verdict'], rc.V_WORK)
+        self.assertEqual(row['gps_on_s'], 2 * HOUR)
+        self.assertEqual(row['hours_unknown_days'], 1)
+        self.assertEqual(row['volume_reason'], rc.VR_DAYS_UNKNOWN)
+        self.assertIsNone(row['volume_verdict'])
+
+    def test_a_silent_day_keeps_the_plain_reason(self):
+        # Ни включено, ни выключено (точки без зажигания) -- не правило Z.
+        self.fx.hours(1001, 10, 0, unknown=HOUR, with_ign=0, off=0)
+        self.fx.hours(1001, 11, 0, off=0)
+        row = self.fx.forward(self.fx.timed(created=10, completed=11))
+        self.assertEqual(row['reason'], rc.R_NO_GPS)
+
+    def test_the_reason_has_both_languages(self):
+        from agro_work import labels
+        ru, uz = labels.REASONS[rc.R_IGNITION_STUCK]
+        self.assertIn('Датчик зажигания не выключается', ru)
+        self.assertNotRegex(uz, '[A-Za-z]')
+        self.assertIn(rc.R_IGNITION_STUCK, rc.FORWARD_REASONS)
 
 
 class Trucks(Base):

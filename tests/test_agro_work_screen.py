@@ -605,8 +605,8 @@ class TimeOnScreen(ScreenCase):
             _sql(["INSERT INTO gps_daily_engine (work_date, wialon_id, "
                   "on_seconds, off_seconds, unknown_seconds, points_total, "
                   "points_with_ign, method_version, computed_at) VALUES (?, "
-                  "1002, ?, 0, 0, 100, 100, 'ignition-R300-2026-10-19', 'now')"],
-                 ('2026-09-%02d' % day, on))
+                  "1002, ?, ?, 0, 100, 100, 'ignition-R300-2026-10-19', 'now')"],
+                 ('2026-09-%02d' % day, on, 86400 - on))
 
     def test_the_list_shows_hours_not_hectares(self):
         html = self.get('/agro-work/applications', lang='ru').get_data(

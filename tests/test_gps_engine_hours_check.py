@@ -56,11 +56,12 @@ class Fleet:
         self.points = []
 
     def window(self, unit_id, t1, wialon_s, ours_on_s, cfl=CFL, cneh1=1000.0,
-               ign_from=None, length=DAY):
+               ign_from=None, length=DAY, step=60):
         t2 = t1 + length
         self.snapshots += [(unit_id, t1, cneh1, cfl),
                            (unit_id, t2, cneh1 + wialon_s / 3600.0, cfl)]
-        self.points += track(unit_id, t1 + 600, ours_on_s, ign_from=ign_from)
+        self.points += track(unit_id, t1 + 600, ours_on_s, step=step,
+                             ign_from=ign_from)
         return t2
 
     def write(self):
@@ -185,16 +186,36 @@ class Classes(unittest.TestCase):
         fleet.window(4, START, DAY + 61, 3600)                  # больше окна
         fleet.window(5, START, DAY + 59, 3600, length=DAY)      # ещё можно
         fleet.window(6, START, 3600, 3600, ign_from=lambda t: None)
+        # Правило Z (дополнение 22.10): «включено» и ни секунды «выключено».
+        fleet.window(7, START, DAY, DAY, ign_from=lambda t: 1.0)
+        # Зажигание есть, но пары длиннее 300 с: ни «включено», ни
+        # «выключено» -- не правило Z, окно в счёте.
+        fleet.window(8, START, 0, 3600, ign_from=lambda t: 1.0, step=600)
         code, out, _, path = run(fleet.write())
         self.assertEqual(code, check.EXIT_OK)
         classes = {r['wialon_id']: r['klass'] for r in rows_of(path)}
         self.assertEqual(classes, {'1': 'v_schete', '2': 'bez_bitov',
                                    '3': 'schetchik_pravili',
                                    '4': 'schetchik_pravili', '5': 'v_schete',
-                                   '6': 'net_zazhiganiya'})
-        self.assertIn('windows: 6 | in the count: 2 | no cfl bits: 1 | '
-                      'counter edited: 2 | no ignition values: 1 | points not '
-                      'collected yet: 0', out)
+                                   '6': 'net_zazhiganiya',
+                                   '7': 'zazhiganie_ne_vyklyuchaetsya',
+                                   '8': 'v_schete'})
+        self.assertIn('windows: 8 | in the count: 3 | no cfl bits: 1 | '
+                      'counter edited: 2 | no ignition values: 1 | ignition '
+                      'never off: 1 | points not collected yet: 0', out)
+
+    def test_a_stuck_window_would_agree_and_prove_nothing(self):
+        # [REASON]: залипшее зажигание Wialon считает по тому же датчику --
+        # окно сошлось бы. Без правила Z 210 таких окон дали бы MET.
+        fleet = Fleet()
+        for n in range(210):
+            fleet.window(1000 + n, START, DAY, DAY, ign_from=lambda t: 1.0)
+        for n in range(60):
+            fleet.window(2000 + n, START, 0, 0)
+        code, out, _, path = run(fleet.write())
+        self.assertEqual(code, check.EXIT_OK)
+        self.assertIn('ignition never off: 210', out)
+        self.assertEqual(out.strip().splitlines()[-1], 'VERDICT: NOT EVALUATED')
 
     def test_a_window_past_the_collector_watermark_waits(self):
         # Снимок берётся в начале прогона, точки -- до «сейчас минус 30
