@@ -6,6 +6,9 @@
                              найденные участки работы, их полигоны и ответы
                              оператора «работа/проезд».
   POST /gps/fact/answer   -- ответ оператора по одному участку.
+  GET  /gps/machine       -- A3, одна машина за период: сводка (км, время в
+                             движении, гектары), сутки подряд, трек и
+                             участки периода на карте. Только чтение.
 
 ЧТО ЭТОТ ЭКРАН ЧИТАЕТ И ЧТО ПИШЕТ
 Читает две таблицы, которые заполняет gps/daily.py (GPS-2). Пишет ровно две
@@ -49,6 +52,7 @@ from datetime import date as date_cls, datetime, timedelta
 from flask import (Blueprint, abort, current_app, flash, g, redirect,
                    render_template, request, url_for)
 from flask_login import current_user, login_required
+from sqlalchemy import case, func
 
 import vs_map
 from gps.exclusion import REASON_TRACK_ONLY
@@ -1085,6 +1089,7 @@ def fact():
         machine_options=machine_options, listed_count=len(listed),
         hidden_keys=hidden_keys,
         search=search, neighbour_urls=neighbour_urls, anchor=FACT_ANCHOR,
+        period_back=timedelta(days=MACHINE_DEFAULT_DAYS - 1),
     )
 
 
@@ -1126,3 +1131,340 @@ def fact_answer():
         params['view'] = view
     return redirect(url_for('gps.fact', date=site.work_date.isoformat(),
                             unit=site.wialon_id, **params) + '#' + FACT_ANCHOR)
+
+
+# ── A3: карточка машины за период ────────────────────────────────────────────
+
+# [REASON]: те же границы, что у карточки машины в сверке agro-work
+# (agro_work_routes.DEFAULT_PERIOD_DAYS, MAX_PERIOD_DAYS): владелец просил
+# карточку «как у agro-work», и два экрана об одной машине с разными
+# умолчаниями показывали бы разные цифры по одному щелчку.
+MACHINE_DEFAULT_DAYS = 14
+MACHINE_MAX_DAYS = 92
+MACHINE_PRESETS = ('yesterday', 'week', 'this_month', 'last_month')
+PRESET_CUSTOM = 'custom'
+MACHINE_ANCHOR = 'gps-machine-card'
+# [REASON]: трек периода рисуется по суткам, каждым суткам -- доля общего
+# потолка TRACK_MAX_VERTICES, но не меньше этого числа. За 92 дня доля была
+# бы 86 вершин, и проходы по полю слиплись бы в несколько отрезков; 150 на
+# сутки -- до 14 тысяч вершин, около 300 КБ страницы.
+MACHINE_DAY_MIN_VERTICES = 150
+# [REASON]: полигоны участков лежат в базе с полной точностью float, а
+# карта периода несёт их десятками. Шесть знаков -- около 0,1 м, на экране
+# неразличимо, а страница вдвое легче. В базе ничего не округляется.
+MAP_COORD_DIGITS = 6
+
+
+def machine_period(args, today):
+    """(с, по, быстрая кнопка, сокращён ли период) для карточки машины.
+
+    [REASON]: «по» по умолчанию -- вчера, как в сверке agro-work: факт GPS
+    за сутки считается ночью после них, и сегодняшние сутки были бы
+    сплошным «расчёта нет». Быстрая кнопка важнее полей дат: щелчок по ней
+    -- ссылка без дат.
+    """
+    yesterday = today - timedelta(days=1)
+    preset = (args.get('preset') or '').strip()
+    if preset == 'yesterday':
+        return yesterday, yesterday, preset, False
+    if preset == 'week':
+        return yesterday - timedelta(days=6), yesterday, preset, False
+    if preset == 'this_month':
+        # [REASON]: первого числа текущий месяц -- одни сегодняшние, ещё не
+        # посчитанные сутки. Экран так и скажет, а не подменит месяц
+        # прошлым: для прошлого есть своя кнопка.
+        start = today.replace(day=1)
+        return start, max(start, yesterday), preset, False
+    if preset == 'last_month':
+        end = today.replace(day=1) - timedelta(days=1)
+        return end.replace(day=1), end, preset, False
+    date_to = _parse_date(args.get('to')) or yesterday
+    date_from = _parse_date(args.get('from')) or (
+        date_to - timedelta(days=MACHINE_DEFAULT_DAYS - 1))
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
+    capped = (date_to - date_from).days >= MACHINE_MAX_DAYS
+    if capped:
+        date_from = date_to - timedelta(days=MACHINE_MAX_DAYS - 1)
+    return date_from, date_to, PRESET_CUSTOM, capped
+
+
+def _rounded(geometry, digits=MAP_COORD_DIGITS):
+    """Та же геометрия, координаты -- до `digits` знаков."""
+    def walk(value):
+        if isinstance(value, float):
+            return round(value, digits)
+        if isinstance(value, list):
+            return [walk(item) for item in value]
+        return value
+    return dict(geometry, coordinates=walk(geometry.get('coordinates')))
+
+
+def machine_days(date_from, date_to, aggregates, sites_by_day, read_points):
+    """Строка на КАЖДЫЕ сутки периода -- и посчитанные, и нет.
+
+    `aggregates` -- {сутки: строка агрегата}, `sites_by_day` -- {сутки:
+    участки}, `read_points(сутки)` -- точки суток, как у _day_points.
+
+    [REASON]: сутки без строки агрегата стоят в таблице словами «расчёта
+    нет», а не пропадают: «мы не смотрели» и «работы нет» -- разные факты
+    (модель GpsDailyAggregate), и дыра в периоде должна быть видна.
+
+    [REASON]: гектары -- только у опубликованных суток и по fact_from_sites,
+    той же функции, что у сверки нарядов: «проезд» вычитается, участок без
+    ответа входит, и рядом -- сколько гектаров ещё без ответа. Полигоны
+    суток с причиной (спецтехника, редкая запись, неполный сбор) расчёт
+    намеренно не удаляет, и сложить их значило бы вернуть гектары, которые
+    правило не публикует.
+
+    [REASON]: время в движении -- track_summary по точкам суток, то же число,
+    что /gps/fact показывает за эти сутки. Сутки, у которых по расчёту точки
+    были, а в файле их нет (ретенция, файл не читается), -- время неизвестно,
+    а не ноль: ноль сказал бы «стояла».
+    """
+    vertices = max(MACHINE_DAY_MIN_VERTICES,
+                   TRACK_MAX_VERTICES // max(1, len(aggregates)))
+    rows = []
+    day = date_from
+    while day <= date_to:
+        aggregate = aggregates.get(day)
+        row = {'day': day, 'aggregate': aggregate, 'sites': [], 'ha': None,
+               'unanswered': 0, 'unanswered_ha': 0.0, 'moving_s': None,
+               'first_move': None, 'last_move': None, 'segments': []}
+        if aggregate is not None:
+            if aggregate.reason is None:
+                row['sites'] = sites_by_day.get(day, [])
+                (row['ha'], row['unanswered'],
+                 row['unanswered_ha']) = fact_from_sites(row['sites'])
+            points = read_points(day)
+            if points:
+                summary = track_summary(points)
+                row.update(moving_s=summary['moving_s'],
+                           first_move=summary['first_move'],
+                           last_move=summary['last_move'],
+                           segments=track_segments(points,
+                                                   max_vertices=vertices))
+            elif not aggregate.points_total:
+                row['moving_s'] = 0.0
+        rows.append(row)
+        day += timedelta(days=1)
+    return rows
+
+
+def machine_summary(rows):
+    """Сводка периода по строкам machine_days."""
+    computed = [r for r in rows if r['aggregate'] is not None]
+    published = [r for r in computed if r['aggregate'].reason is None]
+    moving = [r['moving_s'] for r in computed if r['moving_s'] is not None]
+    return {
+        'days': len(rows),
+        'computed': len(computed),
+        'published': len(published),
+        'work_days': sum(1 for r in published if r['ha']),
+        'ha': round(sum(r['ha'] for r in published), 3),
+        'sites': sum(len(r['sites']) for r in published),
+        'unanswered': sum(r['unanswered'] for r in published),
+        'unanswered_ha': round(sum(r['unanswered_ha'] for r in published), 3),
+        'km': round(sum(r['aggregate'].track_km or 0 for r in computed), 1),
+        'incomplete': sum(1 for r in computed
+                          if r['aggregate'].reason == 'sbor_nepolnyy'),
+        'moving_s': sum(moving),
+        'moving_unknown': len(computed) - len(moving),
+        'track_only': bool(computed) and all(
+            r['aggregate'].reason == REASON_TRACK_ONLY for r in computed),
+    }
+
+
+def machine_map_layers(rows, contours, is_ru):
+    """Слои карты периода: контуры полей, трек по суткам, участки.
+
+    [REASON]: у участков на карте периода нет постоянного номера, как на
+    /gps/fact: номер участка повторяется в каждых сутках, и за две недели
+    карта покрылась бы одинаковыми «1» и «2». Сутки, гектары и ответ -- в
+    подсказке под курсором, к разметке ведёт ссылка суток в таблице.
+    """
+    layers = []
+    group_contours = 'Контуры полей' if is_ru else 'Дала контурлари'
+    group_track = 'Трек за период' if is_ru else 'Давр треки'
+    group_sites = 'Участки' if is_ru else 'Участкалар'
+    for contour in contours:
+        geometry = _geometry(contour.geometry_geojson)
+        if geometry is not None:
+            layers.append({'kind': 'outline', 'group': group_contours,
+                           'title': contour.name,
+                           'geojson': _rounded(geometry)})
+    for row in rows:
+        if row['segments']:
+            layers.append({'kind': 'track', 'group': group_track,
+                           'title': row['day'].strftime('%d.%m.%Y'),
+                           'segments': row['segments']})
+    answers = {GPS_LABEL_WORK: 'работа' if is_ru else 'иш',
+               GPS_LABEL_PASSAGE: 'проезд' if is_ru else 'ўтиш'}
+    for row in rows:
+        for site in row['sites']:
+            geometry = _geometry(site.polygon_geojson)
+            if geometry is None:
+                continue
+            parts = [row['day'].strftime('%d.%m.%Y'), '№%d' % site.site_number,
+                     '%.2f %s' % (site.area_ha or 0, 'га'),
+                     '%d %s' % (round(site.minutes or 0),
+                                'мин' if is_ru else 'дақ')]
+            parts.append(answers.get(site.operator_label)
+                         or ('без ответа' if is_ru else 'жавобсиз'))
+            layers.append({'kind': 'area', 'group': group_sites,
+                           'title': ' · '.join(parts),
+                           'tone': SITE_TONES.get(site.operator_label,
+                                                  'primary'),
+                           'geojson': _rounded(geometry)})
+    return layers
+
+
+@gps_bp.route('/machine')
+@module_required('wialon')
+@login_required
+def machine():
+    is_ru = getattr(g, 'lang', 'uz') == 'ru'
+    date_from, date_to, preset, capped = machine_period(request.args,
+                                                       date_cls.today())
+    skipped = _excluded_units()
+    in_period = (GpsDailyAggregate.work_date >= date_from,
+                 GpsDailyAggregate.work_date <= date_to)
+    counts_query = (db.session.query(
+        GpsDailyAggregate.wialon_id, func.count(GpsDailyAggregate.id),
+        func.sum(case((GpsDailyAggregate.reason.is_(None), 1), else_=0)))
+        .filter(*in_period))
+    if skipped:
+        counts_query = counts_query.filter(
+            ~GpsDailyAggregate.wialon_id.in_(list(skipped)))
+    counts = {wialon_id: (int(total), int(published or 0))
+              for wialon_id, total, published
+              in counts_query.group_by(GpsDailyAggregate.wialon_id)}
+    machines = _machines(set(counts), is_ru)
+    order = sorted(counts, key=lambda w: (
+        not machines[w].name, (machines[w].name or '').casefold(), w))
+    filters = dict(_fact_filters(request.args), open=False)
+
+    def fits(wialon_id):
+        option = machines[wialon_id]
+        if filters['org'] == FILTER_NOT_LINKED:
+            if option.linked:
+                return False
+        elif filters['org'] is not None and option.org_id != filters['org']:
+            return False
+        return not (filters['cat'] and option.category != filters['cat'])
+
+    listed = [w for w in order if fits(w)]
+    listed_ids = set(listed)
+    hidden_keys = [search_key(machines[w].label) for w in order
+                   if w not in listed_ids]
+
+    # Какую машину показать -- тем же порядком, что на /gps/fact: выбранная
+    # в подсказках, иначе набранная вручную, иначе первая с площадью.
+    asked_unit = (request.args.get('unit') or '').strip()
+    asked = int(asked_unit) if asked_unit.isdigit() else None
+    typed = (request.args.get('q') or '').strip()
+    retyped = bool(typed) and not (
+        asked in machines
+        and search_key(typed) == search_key(machines[asked].label))
+    if asked not in listed_ids:
+        asked = None
+    search = None
+    unit_id = asked
+    if retyped:
+        key = search_key(typed)
+        found = [w for w in listed
+                 if key and key in search_key(machines[w].label)]
+        search = {'text': typed, 'found': len(found),
+                  'hidden': sum(1 for hidden_key in hidden_keys
+                                if key and key in hidden_key)}
+        if found:
+            unit_id = found[0]
+    if unit_id is None and listed:
+        with_area = [w for w in listed if counts[w][1]]
+        unit_id = (with_area or listed)[0]
+
+    def option_note(wialon_id):
+        option = machines[wialon_id]
+        parts = []
+        if option.org_name:
+            parts.append(option.org_name)
+        elif not option.linked:
+            parts.append('нет в справочнике техники' if is_ru
+                         else 'техника маълумотномасида йўқ')
+        total, published = counts[wialon_id]
+        parts.append(('суток с площадью: %d из %d' if is_ru
+                      else 'майдонли кунлар: %d / %d') % (published, total))
+        return ' · '.join(parts)
+
+    machine_options = [{'id': w, 'label': machines[w].label,
+                        'note': option_note(w)} for w in listed]
+    orgs, categories, unlinked = {}, set(), False
+    for wialon_id in order:
+        option = machines[wialon_id]
+        if option.linked:
+            orgs[option.org_id] = option.org_name
+            if option.category:
+                categories.add(option.category)
+        else:
+            unlinked = True
+    org_order = {org.id: (org.sort_order or 0, (org.name or '').casefold())
+                 for org in Organization.query.filter(
+                     Organization.id.in_([o for o in orgs if o is not None]
+                                         or [0]))}
+    org_options = sorted(((org_id, name) for org_id, name in orgs.items()
+                          if org_id is not None),
+                         key=lambda item: org_order.get(item[0], (0, '')))
+    category_options = [(slug, CATEGORIES[slug]) for slug in CATEGORIES
+                        if slug in categories]
+
+    key_file = current_app.config.get('MAP_ESRI_KEY_FILE')
+    instance_file = current_app.config.get('MAP_COPERNICUS_INSTANCE_FILE')
+    rows, summary, map_data = [], None, None
+    if unit_id is not None:
+        aggregates = {a.work_date: a for a in GpsDailyAggregate.query.filter(
+            GpsDailyAggregate.wialon_id == unit_id, *in_period)}
+        published_days = sorted(day for day, a in aggregates.items()
+                                if a.reason is None)
+        sites_by_day = defaultdict(list)
+        if published_days:
+            for site in (GpsWorkPolygon.query
+                         .filter(GpsWorkPolygon.wialon_id == unit_id,
+                                 GpsWorkPolygon.work_date.in_(published_days))
+                         .order_by(GpsWorkPolygon.work_date,
+                                   GpsWorkPolygon.site_number)):
+                sites_by_day[site.work_date].append(site)
+        rows = machine_days(date_from, date_to, aggregates, sites_by_day,
+                            lambda day: _day_points(unit_id, day))
+        summary = machine_summary(rows)
+        contour_ids = sorted({s.contour_id for r in rows for s in r['sites']
+                              if s.contour_id})
+        contours = (FieldContour.query.filter(FieldContour.id.in_(contour_ids))
+                    .order_by(FieldContour.id).all() if contour_ids else [])
+        layers = machine_map_layers(rows, contours, is_ru)
+        if layers:
+            map_data = {'base': vs_map.base_layers(is_ru, key_file,
+                                                   instance_file, day=date_to),
+                        'layers': layers, 'ui': map_controls(is_ru)}
+
+    return render_template(
+        'gps/machine.html',
+        date_from=date_from, date_to=date_to, preset=preset, capped=capped,
+        presets=MACHINE_PRESETS, max_days=MACHINE_MAX_DAYS,
+        unit_id=unit_id, machine=machines.get(unit_id), rows=rows,
+        summary=summary, reason_labels=REASON_LABELS,
+        map_data=map_data,
+        has_track=bool(map_data) and any(
+            layer['kind'] == 'track' for layer in map_data['layers']),
+        has_sites=bool(map_data) and any(
+            layer['kind'] == 'area' for layer in map_data['layers']),
+        has_contours=bool(map_data) and any(
+            layer['kind'] == 'outline' for layer in map_data['layers']),
+        satellite=vs_map.satellite_configured(key_file, instance_file),
+        fresh_on=bool(vs_map.copernicus_instance(instance_file)[0]),
+        filters=filters, filter_params=_filter_params(filters),
+        not_linked=FILTER_NOT_LINKED, org_options=org_options,
+        category_options=category_options, has_unlinked=unlinked,
+        categories=CATEGORIES, machine_options=machine_options,
+        listed_count=len(listed), total_count=len(order), hidden_keys=hidden_keys, search=search,
+        anchor=MACHINE_ANCHOR, track_only_reason=REASON_TRACK_ONLY,
+    )
