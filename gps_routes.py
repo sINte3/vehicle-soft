@@ -210,6 +210,43 @@ def _machines(wialon_ids, is_ru=True):
     return found
 
 
+def _org_scope():
+    """None -- без границы (администратор); иначе id организаций человека.
+
+    [REASON]: решение владельца 22.10.2026 -- «только свои машины должен
+    видеть»: не-админ на экранах GPS видит только машины своих организаций.
+    Та же граница, что у «Сверки» (agro_work_routes._scope) и у сверки
+    нарядов (orders): человек без организаций не видит ни одной машины, а
+    не все.
+    """
+    if current_user.is_admin:
+        return None
+    return set(current_user.get_org_ids()) or {0}
+
+
+def _units_in_scope(scope):
+    """wialon_id объектов, чья машина -- в организациях scope; None -- все.
+
+    [REASON]: машина объекта -- та же, что называет _machines: первая по
+    номеру строка сопоставления, у которой есть машина с именем. Иначе объект
+    со сменённым трекером мог бы стоять в списке под одной организацией, а
+    пропускаться границей по другой. Объект без машины в справочнике ни к
+    одной организации не относится (_machines), и не-админ его не видит.
+    """
+    if scope is None:
+        return None
+    owner = {}
+    for wialon_id, name, org_id in (
+            db.session.query(VialonMapping.wialon_id, Equipment.name,
+                             Equipment.organization_id)
+            .join(Equipment, VialonMapping.equipment_id == Equipment.id)
+            .filter(VialonMapping.wialon_id.isnot(None))
+            .order_by(VialonMapping.id)):
+        if name:
+            owner.setdefault(int(wialon_id), org_id)
+    return {wialon_id for wialon_id, org_id in owner.items() if org_id in scope}
+
+
 def _machine_names(wialon_ids):
     """wialon_id -> человеческое имя машины, где оно известно.
 
@@ -904,6 +941,15 @@ def fact():
         day_query = day_query.filter(~GpsDailyAggregate.wialon_id.in_(ids))
         aggregate_query = aggregate_query.filter(
             ~GpsDailyAggregate.wialon_id.in_(ids))
+    # [REASON]: граница организаций режет и сутки, а не только список машин:
+    # сутки, в которых работали одни чужие машины, стояли бы в выборе и
+    # открывались пустыми (_org_scope).
+    allowed = _units_in_scope(_org_scope())
+    if allowed is not None:
+        day_query = day_query.filter(
+            GpsDailyAggregate.wialon_id.in_(list(allowed)))
+        aggregate_query = aggregate_query.filter(
+            GpsDailyAggregate.wialon_id.in_(list(allowed)))
     days = [row[0] for row in day_query.distinct()
             .order_by(GpsDailyAggregate.work_date.desc()).all()]
     day = _parse_date(request.args.get('date'))
@@ -1109,6 +1155,11 @@ def map_controls(is_ru):
 @login_required
 def fact_answer():
     site = GpsWorkPolygon.query.get_or_404(request.form.get('site_id', type=int))
+    allowed = _units_in_scope(_org_scope())
+    if allowed is not None and site.wialon_id not in allowed:
+        # Участок чужой машины: экран его не показывает, и ответ по номеру
+        # участка из адреса граница тоже не пропускает (_org_scope).
+        abort(403)
     label = (request.form.get('label') or '').strip()
     if label not in GPS_OPERATOR_LABELS and label != '':
         abort(400)
@@ -1336,6 +1387,10 @@ def machine():
     if skipped:
         counts_query = counts_query.filter(
             ~GpsDailyAggregate.wialon_id.in_(list(skipped)))
+    allowed = _units_in_scope(_org_scope())
+    if allowed is not None:
+        counts_query = counts_query.filter(
+            GpsDailyAggregate.wialon_id.in_(list(allowed)))
     counts = {wialon_id: (int(total), int(published or 0))
               for wialon_id, total, published
               in counts_query.group_by(GpsDailyAggregate.wialon_id)}
