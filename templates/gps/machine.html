@@ -151,27 +151,27 @@
 <div class="vs-stat-grid vs-mb">
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Обработано, га' if is_ru else 'Ишланган, га' }}</div>
-    <div class="vs-stat-value is-num">{% if summary.track_only or not summary.published %}—{% else %}{{ '%.2f'|format(summary.ha) }}{% endif %}</div>
+    <div class="vs-stat-value">{% if summary.track_only or not summary.published %}—{% else %}{{ '%.2f'|format(summary.ha) }}{% endif %}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Суток с работой' if is_ru else 'Ишли кунлар' }}</div>
-    <div class="vs-stat-value is-num">{% if summary.track_only or not summary.published %}—{% else %}{{ summary.work_days }}{% endif %}</div>
+    <div class="vs-stat-value">{% if summary.track_only or not summary.published %}—{% else %}{{ summary.work_days }}{% endif %}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Участков, из них без ответа' if is_ru else 'Участкалар, шундан жавобсиз' }}</div>
-    <div class="vs-stat-value is-num">{{ summary.sites }} / {{ summary.unanswered }}</div>
+    <div class="vs-stat-value">{{ summary.sites }} / {{ summary.unanswered }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Пробег по треку, км' if is_ru else 'Трек бўйича масофа, км' }}</div>
-    <div class="vs-stat-value is-num">{{ '%.1f'|format(summary.km) }}</div>
+    <div class="vs-stat-value">{{ '%.1f'|format(summary.km) }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'В движении' if is_ru else 'Ҳаракатда' }}</div>
-    <div class="vs-stat-value is-num">{{ moving_min // 60 }} {{ 'ч' if is_ru else 'соат' }} {{ '%02d'|format(moving_min % 60) }} {{ 'мин' if is_ru else 'дақ' }}</div>
+    <div class="vs-stat-value">{{ moving_min // 60 }} {{ 'ч' if is_ru else 'соат' }} {{ '%02d'|format(moving_min % 60) }} {{ 'мин' if is_ru else 'дақ' }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Суток с расчётом, из них с площадью' if is_ru else 'Ҳисобли кунлар, шундан майдонли' }}</div>
-    <div class="vs-stat-value is-num">{{ summary.computed }} / {{ summary.published }}</div>
+    <div class="vs-stat-value">{{ summary.computed }} / {{ summary.published }}</div>
   </div>
 </div>
 

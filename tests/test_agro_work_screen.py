@@ -677,8 +677,8 @@ class Access(ScreenCase):
 # Раздел модуля «GPS план-факт» после сведения сверок (владелец, 08.10);
 # «Заявка -> работа» и «Работа -> заявка» с 19.10 -- вкладки «Сверки», а не
 # свои пункты (просьба владельца «объединить в один пункт»).
-GPS_MODULE_PAGES = sorted(['/gps/fact', '/agro-work/', '/agro-work/import',
-                           '/gps/sync'])
+GPS_MODULE_PAGES = sorted(['/gps/fact', '/gps/machine', '/agro-work/',
+                           '/agro-work/import', '/gps/sync'])
 
 
 def _strip(html):
@@ -738,11 +738,12 @@ class OneReconciliationSection(ScreenCase):
 
     def test_both_languages(self):
         for lang, labels, title in (
-                ('ru', ['Факт по технике', 'Сверка', 'Импорт заявок',
-                        'Приём данных'],
+                ('ru', ['Факт по технике', 'Машина за период', 'Сверка',
+                        'Импорт заявок', 'Приём данных'],
                  'Сверка — GPS'),
-                ('uz', ['Техника бўйича факт', 'Солиштирув',
-                        'Буюртмалар импорти', 'Маълумот қабули'],
+                ('uz', ['Техника бўйича факт', 'Машина давр бўйича',
+                        'Солиштирув', 'Буюртмалар импорти',
+                        'Маълумот қабули'],
                  'Солиштирув — GPS')):
             html = self.get('/agro-work/', lang=lang).get_data(as_text=True)
             pills = [x.strip() for x in re.findall(r'>([^<>]+)</a>',
