@@ -620,6 +620,16 @@ jobs:
           GPS_RELEASE_POWERSHELL: pwsh
         run: python -m unittest tests.test_gps_release_v129
 
+      # Release v1.30 (docs/GPS_RELEASE_V130_RUNBOOK.md): the machine card for
+      # a period (A3, /gps/machine) and rule Z, no migration. The blocks of
+      # v1.28 with new constants, against the same stand-ins, on pwsh 7 here
+      # and on Windows PowerShell 5.1 below; the suite checks what step 4
+      # names against the templates. Stdlib only.
+      - name: GPS release v1.30 runbook and blocks (pwsh 7)
+        env:
+          GPS_RELEASE_POWERSHELL: pwsh
+        run: python -m unittest tests.test_gps_release_v130
+
       # The GPS collector (gps_collector/) is a separate stdlib-only process:
       # the point store, the watermark and, since 09.10.2026, the Wialon
       # object names the /gps/fact screen shows instead of bare numbers. Its
@@ -759,3 +769,11 @@ jobs:
         env:
           GPS_RELEASE_POWERSHELL: powershell
         run: python -m unittest tests.test_gps_release_v129.ReleaseV129ToolFormats tests.test_gps_release_v129.ReleaseV129BlocksInPowerShell tests.test_gps_release_v129.ThirdLineInPowerShell tests.test_gps_release_v129.StepFiveReadsInPowerShell
+
+      # GPS release v1.30 (docs/GPS_RELEASE_V130_RUNBOOK.md): the same stop
+      # paths on the interpreter the owner pastes into.
+      - name: GPS release v1.30 blocks on Windows PowerShell 5.1
+        shell: powershell
+        env:
+          GPS_RELEASE_POWERSHELL: powershell
+        run: python -m unittest tests.test_gps_release_v130.ReleaseV130ToolFormats tests.test_gps_release_v130.ReleaseV130BlocksInPowerShell
