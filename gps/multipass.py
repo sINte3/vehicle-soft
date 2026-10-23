@@ -46,9 +46,18 @@ SEGMENT_MIN_M..SEGMENT_MAX_M; отрезок принадлежит участк
 Числа разведки 13.10 на стенде из 33 машино-суток -- в §2.14: повторный ход
 у бороны вдоль и поперёк 57 %, у бухарских комбайнов 0-4 %, у
 мирзачульских 0-14 %.
+
+ПРАВИЛО K1 (`multiplicity`) -- предрегистрация 22.10.2026 (§2.14,
+«Предрегистрация правила K»): свидетельство на крупнейшем участке, первая
+ступень «работа рядами» (`rows` по прореженным точкам, порог T1 -- из
+калибровки по стенду 13.10) и вторая -- повтор или два направления. Это
+правило для приёмки (`tools/gps_multipass_acceptance.py`); ночной расчёт его
+не вызывает, гектары и площадь A7 не меняются, пока приёмка не пройдена и
+включение не выпущено.
 """
 
 import math
+import random
 from collections import namedtuple
 
 import numpy as np
@@ -84,6 +93,36 @@ FAMILY_HALF_DEG = 20.0
 FAMILY_MIN_APART_DEG = 50.0
 FAMILY_BUFFER_M = 2.0
 FAMILY_MIN_SEGMENTS = 10
+
+# [REASON]: числа правила K1 -- предрегистрация 22.10.2026 (§2.14). Их нельзя
+# менять после прогона приёмки: правило с другими числами -- новое правило и
+# новая предрегистрация на новых данных.
+RULE_K1 = 'multipass-K1-2026-10-22'
+EVIDENCE_MIN_HA = 1.0
+EVIDENCE_MIN_KM = 2.0
+# [REASON]: трекеры пишут точку раз в 2-3 с или раз в 10-30 с, и мера по
+# курсам отрезков у частых трекеров «дрожит» (разведка 14.10: прямизна одних
+# и тех же суток 0,37 на сырых точках и 0,81 после прореживания). Прореживание
+# до 15 м делает меру первой ступени независимой от частоты записи.
+THIN_STEP_M = 15.0
+ROWS_PERCENTILE = 0.05
+REPEAT_MIN_K = 0.20
+TWO_DIRS_MIN_K = 0.20
+CALIBRATION_GROUPS = ('B', 'M', 'L', 'C')
+CALIBRATION_MIN_DAYS = 20
+
+K_NOT_JUDGED = 'ne_suditsya'
+K_NOT_ROWS = 'ne_ryadami'
+K_REPEAT = 'povtor'
+K_TWO_DIRS = 'dva_napravleniya'
+K_ONE = 'odin_prohod'
+
+# Синтетический двойной проход (условие P1 приёмки): тот же трек ещё раз,
+# через полчаса после конца суток, с медленно плывущей ошибкой GPS.
+SYNTH_GAP_S = 1800.0
+SYNTH_AR = 0.9
+M_PER_DEG_LAT = 110540.0
+M_PER_DEG_LON_EQUATOR = 111320.0
 
 Segment = namedtuple('Segment', 'line heading length time')
 
@@ -286,6 +325,105 @@ def two_directions(segs, region):
     return both / region.area, apart
 
 
+def thinned_segments(xy, times, region, step_m=THIN_STEP_M):
+    """Отрезки первой ступени K1: между точками, прореженными до step_m.
+
+    Точка остаётся, если до предыдущей оставленной не меньше step_m. Отрезок
+    -- между соседними оставленными точками, если между ними нет молчания
+    дольше SEGMENT_MAX_GAP_S и длина не больше SEGMENT_MAX_M; в счёт идёт,
+    если его середина внутри `region`.
+    """
+    inside = prep(region)
+    out, last = [], None
+    for i in range(len(xy)):
+        if last is None or times[i] - times[i - 1] > SEGMENT_MAX_GAP_S:
+            last = i
+            continue
+        (x0, y0), (x1, y1) = xy[last], xy[i]
+        length = math.hypot(x1 - x0, y1 - y0)
+        if length < step_m:
+            continue
+        if length <= SEGMENT_MAX_M and inside.contains(
+                Point(0.5 * (x0 + x1), 0.5 * (y0 + y1))):
+            out.append(Segment(LineString([(x0, y0), (x1, y1)]),
+                               heading(x0, y0, x1, y1), length,
+                               0.5 * (times[i] + times[last])))
+        last = i
+    return out
+
+
+def row_share(segs):
+    """Доля длины отрезков в двух семействах курсов -- мера `rows` K1.
+
+    Курс -- по модулю 180 (туда и обратно по ряду -- одно семейство). Первое
+    семейство -- не дальше FAMILY_HALF_DEG от середины самой тяжёлой по
+    длине корзины HEADING_BIN_DEG, второе -- так же от самой тяжёлой среди
+    остальных отрезков. None -- отрезков нет.
+    """
+    if not segs:
+        return None
+    axis = np.array([seg.heading % 180.0 for seg in segs])
+    weight = np.array([seg.length for seg in segs])
+    bins = int(round(180.0 / HEADING_BIN_DEG))
+    counts, _ = np.histogram(axis, bins=bins, range=(0.0, 180.0), weights=weight)
+    first = (int(np.argmax(counts)) + 0.5) * HEADING_BIN_DEG
+    chosen = np.array([axis_gap(value, first) <= FAMILY_HALF_DEG
+                       for value in axis])
+    rest = ~chosen
+    if rest.any():
+        counts, _ = np.histogram(axis[rest], bins=bins, range=(0.0, 180.0),
+                                 weights=weight[rest])
+        second = (int(np.argmax(counts)) + 0.5) * HEADING_BIN_DEG
+        chosen = chosen | (rest & np.array(
+            [axis_gap(value, second) <= FAMILY_HALF_DEG for value in axis]))
+    return float(weight[chosen].sum() / weight.sum())
+
+
+def multiplicity(measured, t1):
+    """(кратность, причина) правила K1 по признакам `measure_day` и T1.
+
+    Порядок -- предрегистрация 22.10.2026 (§2.14): свидетельство на
+    крупнейшем участке, работа рядами, повтор или два направления.
+    """
+    if (measured.get('largest_ha') or 0.0) < EVIDENCE_MIN_HA \
+            or (measured.get('largest_km') or 0.0) < EVIDENCE_MIN_KM:
+        return 1, K_NOT_JUDGED
+    if measured.get('rows') is None or measured['rows'] < t1:
+        return 1, K_NOT_ROWS
+    if (measured.get('repeat') or 0.0) >= REPEAT_MIN_K:
+        return 2, K_REPEAT
+    if (measured.get('two_dirs') or 0.0) >= TWO_DIRS_MIN_K:
+        return 2, K_TWO_DIRS
+    return 1, K_ONE
+
+
+def synthetic_double(points, sigma_m, seed):
+    """Те же сутки, пройденные дважды: трек ещё раз, с плывущей ошибкой GPS.
+
+    Копия идёт через SYNTH_GAP_S после последней точки суток -- окна и
+    прогоны не перемешиваются с первым проходом. Ошибка -- авторегрессия
+    SYNTH_AR с установившимся отклонением sigma_m по каждой оси, как в
+    `gps/tests/test_multipass.py` (drifting_noise); метры переводятся в
+    градусы у своей широты.
+    """
+    points = sorted(points)
+    if not points:
+        return []
+    shift = points[-1][0] - points[0][0] + SYNTH_GAP_S
+    rng = random.Random(seed)
+    step = sigma_m * math.sqrt(1.0 - SYNTH_AR ** 2)
+    dx = dy = 0.0
+    copy = []
+    for row in points:
+        dx = SYNTH_AR * dx + rng.gauss(0.0, step)
+        dy = SYNTH_AR * dy + rng.gauss(0.0, step)
+        lat = row[2]
+        lon_m = M_PER_DEG_LON_EQUATOR * math.cos(math.radians(lat))
+        copy.append((row[0] + shift, row[1] + dx / lon_m,
+                     lat + dy / M_PER_DEG_LAT) + tuple(row[3:]))
+    return points + copy
+
+
 def measure_day(points, sites=None):
     """Признаки одних машино-суток.
 
@@ -299,7 +437,8 @@ def measure_day(points, sites=None):
     a7_ha = sum(site.area_ha for site in sites)
     result = {'a7_ha': round(a7_ha, 4), 'sites': len(sites), 'track_km': 0.0,
               'km_per_ha': None, 'repeat': None, 'returns': 0, 'same_rows': 0,
-              'two_dirs': 0.0, 'two_dirs_angle': None}
+              'two_dirs': 0.0, 'two_dirs_angle': None, 'largest_ha': 0.0,
+              'largest_km': 0.0, 'rows': None}
     if not sites:
         return result
     region = unary_union([site.polygon for site in sites])
@@ -308,7 +447,13 @@ def measure_day(points, sites=None):
     repeat, length = repeat_share(segs)
     returns, same = same_row_returns(xy, times, region)
     both, apart = two_directions(segs, region)
+    biggest = max(sites, key=lambda site: site.area_ha)
+    on_largest = segments(xy, times, biggest.polygon)
+    rows = row_share(thinned_segments(xy, times, biggest.polygon))
     result.update(
+        largest_ha=round(biggest.area_ha, 4),
+        largest_km=round(sum(seg.length for seg in on_largest) / 1000.0, 3),
+        rows=None if rows is None else round(rows, 4),
         track_km=round(length / 1000.0, 3),
         km_per_ha=round(length / 1000.0 / a7_ha, 3) if a7_ha > 0 else None,
         repeat=None if repeat is None else round(repeat, 4),
