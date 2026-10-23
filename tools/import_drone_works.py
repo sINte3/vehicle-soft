@@ -356,7 +356,14 @@ FIELD_PHRASES = (
 
 # Expense columns. ALL of them present in a sheet are summed into other_costs;
 # six of the twenty-four layouts carry two at once.
-EXPENSE_PHRASES = ('Бошка харажатлар', 'Транспорт харажати', 'ЁММ харажати')
+EXPENSE_PHRASES = ('Бошка харажатлар', 'Транспорт харажати', 'ЁММ харажати',
+                   'Ёкилги ва бошка харажатлар')
+# [REASON]: the twenty-fifth layout, FIN-RECON-002. «Дрон Ғиждувон ПТЗ
+# Июнь.xlsx / свод ичи (Усмон)» carries «Ёкилги ва бошка харажатлар» next to
+# «Бошка харажатлар»; unmapped, the dry run of 2026-10-22 stored 3 500 000 of
+# the 6 425 000 the book spends on 13 rows. The scan of all 34 books of
+# 2025-09..2026-06 found this header in that one sheet only, so no row already
+# in drone_works was read without it.
 # [REASON]: the vehicle plate follows the header in brackets --
 # «Транспорт харажати (Мерс 80 L 422 MA)», «(Газель 80 120 FBA)», «Газел» --
 # so this one phrase is matched as a PREFIX. It is the only prefix rule there
