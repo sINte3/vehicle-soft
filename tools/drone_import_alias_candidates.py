@@ -47,6 +47,9 @@ TOL_HA, TOL_SUM = 0.005, 0.01
 HOLDING_MARKERS = ('агрокластер', 'агроклатер', 'гарден', 'сервис', 'птз', 'заминлари',
                    'худуд', 'тизим корхонаси')
 SIMILAR = 0.80
+# The owner's columns of the decision table, filled by hand and read by
+# tools/drone_alias_decisions.py.
+DECISION_COLUMNS = ('DECISION', 'TARGET_CARD_ID', 'NEW_CARD_TYPE', 'NOTE')
 
 
 def group_key(row):
@@ -120,9 +123,13 @@ def write_tables(out, result, directory, linked, new, empty, run, problems):
     names = {key: dict(result.created_customers).get(key, rows[0]['customer_raw']) for key, rows in new.items()}
     with open(os.path.join(out, 'NEW_CUSTOMER_DECISIONS.csv'), 'w', encoding='utf-8-sig', newline='') as fh:
         w = csv.writer(fh, delimiter=';')
-        w.writerow(['new_card_name_as_imported', 'line_break_in_name', 'rows', 'area_ha', 'amount', 'tariffs',
-                    'payment_types', 'source_sheets', 'holding_markers', 'hint', 'nearest_1', 'nearest_2',
-                    'nearest_3', 'OWNER_DECISION (alias to card id / NEW)'])
+        # normalized_key is the machine key tools/drone_alias_decisions.py
+        # matches on -- the importer's own customer_key(), one line, no «↵».
+        # The four upper-case columns are the owner's; this tool leaves them
+        # empty (docs/FIN_RECON_002_ALIAS_APPROVAL_PROTOCOL.md).
+        w.writerow(['normalized_key', 'new_card_name_as_imported', 'line_break_in_name', 'rows', 'area_ha',
+                    'amount', 'tariffs', 'payment_types', 'source_sheets', 'holding_markers', 'hint',
+                    'nearest_1', 'nearest_2', 'nearest_3'] + list(DECISION_COLUMNS))
         ordered = sorted(new.items(), key=lambda kv: (-totals(kv[1])[1], names[kv[0]]))
         for key, rows in ordered:
             name = names[key]
@@ -132,13 +139,13 @@ def write_tables(out, result, directory, linked, new, empty, run, problems):
             hint = ('HOLDING_ENTITY?' if marks else
                     'SIMILAR_EXISTING?' if near and near[0][0] >= SIMILAR else 'NEW?')
             n, ha, amount = totals(rows)
-            w.writerow([name.replace('\n', ' ↵ '), 'YES' if '\n' in name else '', n, ha, amount,
+            w.writerow([key, name.replace('\n', ' ↵ '), 'YES' if '\n' in name else '', n, ha, amount,
                         ' '.join(sorted({'%g' % r['price_per_ha'] for r in rows if r['price_per_ha'] is not None})),
                         ' '.join(sorted({r['payment_type'] for r in rows})),
                         ' | '.join(sorted({'%s / %s' % (r['source_file'], r['source_sheet']) for r in rows})),
                         ' '.join(marks), hint] +
                        ['%s #%s (%.2f)' % (cname.replace('\n', ' ↵ '), cid, ratio) for ratio, cid, cname in near] +
-                       [''] * (3 - len(near)) + [''])
+                       [''] * (3 - len(near)) + [''] * len(DECISION_COLUMNS))
     with open(os.path.join(out, 'MATCHED_EXISTING_CARDS.csv'), 'w', encoding='utf-8-sig', newline='') as fh:
         w = csv.writer(fh, delimiter=';')
         w.writerow(['card_id', 'card_name', 'rows', 'area_ha', 'amount', 'spellings_in_books'])

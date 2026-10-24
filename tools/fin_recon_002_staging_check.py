@@ -19,6 +19,9 @@ offline on 22.10.2026:
      report and debt screens;
   6. the alias decision table on the FULL customer directory, with its
      invariant pinned to 132 / 1 732.68 / 277 613 871.12;
+  6b. with --decisions: the owner's approved decision table, dry run (copy
+     byte-identical) and --apply on the copy; the import must then create
+     no card of its own;
   7. importer dry run of the two June books: 132 rows, nothing rejected,
      every operator resolved, no unknown header, nothing already present;
   8. importer apply on the same copy: every older row byte-identical, +132,
@@ -114,10 +117,15 @@ def main(argv=None):
     ap.add_argument('--backup', required=True)
     ap.add_argument('--books', required=True)
     ap.add_argument('--work', required=True)
+    ap.add_argument('--decisions', default=None,
+                    help="the owner's approved decision table (tools/drone_alias_decisions.py); "
+                         'applied on the copy before the import')
     a = ap.parse_args(argv)
     # [REASON]: every step runs as a subprocess from the repository root;
     # a relative path would point somewhere else there.
     a.backup, a.books, a.work = (os.path.abspath(p) for p in (a.backup, a.books, a.work))
+    if a.decisions:
+        a.decisions = os.path.abspath(a.decisions)
     if not os.path.isfile(a.backup) or not os.path.isdir(a.books):
         print('ERROR: --backup or --books not found')
         return 2
@@ -232,6 +240,20 @@ def main(argv=None):
     rep.check(rc == 0 and 'INVARIANTS: OK' in out,
               'alias decision table on the FULL directory: invariants hold (see alias_decisions/)')
 
+    # 6b. the owner's approved decision table, when one is given
+    if a.decisions:
+        tool = os.path.join(REPO, 'tools', 'drone_alias_decisions.py')
+        common = ['--decisions', a.decisions, '--dir', books_dir, '--manifest', manifest, '--db', copy]
+        sha_before = sha_file(copy)
+        rc, out = run([tool] + common + ['--out', os.path.join(a.work, 'decisions_dry_run')])
+        rep.info(out)
+        rep.check(rc == 0 and 'RESULT: DRY RUN OK' in out and 'IMPORT BLOCKED' not in out
+                  and sha_file(copy) == sha_before,
+                  'decision table dry run: OK, no HOLD, the copy byte-identical')
+        rc, out = run([tool] + common + ['--apply', '--receipt', os.path.join(a.work, 'decisions_receipt.json')])
+        rep.info(out)
+        rep.check(rc == 0 and 'RESULT: APPLIED' in out, 'decision table --apply on the copy: APPLIED')
+
     # 7. importer dry run
     imp = os.path.join(REPO, 'tools', 'import_drone_works.py')
     rc, out = run([imp, '--dir', books_dir, '--manifest', manifest, '--db', copy,
@@ -249,6 +271,10 @@ def main(argv=None):
               'importer dry run: 0 rejected, 0 unresolved operators, 0 present, 0 unsafe names, 0 unknown headers')
     rep.info('cards the import would create on the full directory: %s (owner alias table decides)'
              % num('customers to be created'))
+    if a.decisions:
+        rep.check(num('customers to be created') == 0,
+                  'after the decision table the import creates no card of its own (got %s)'
+                  % num('customers to be created'))
 
     # 8. importer apply on the copy
     con = sqlite3.connect(copy)
