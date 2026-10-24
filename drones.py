@@ -5793,11 +5793,22 @@ def customer_alias_update(alias_id):
     db.session.commit()
 
     if moved:
-        flash(_drone_t('«%s» ёзилиши «%s»га кўчирилди. Иш қаторлари '
-                       'ўзгартирилмади: улар келгуси импортда қайта '
-                       'боғланади.',
-                       'Написание «%s» перенесено к «%s». Строки работ не '
-                       'изменены: они перепривяжутся при следующем импорте.')
+        # [REASON]: FIN-RECON-002 audit, 24.10.2026. The message used to say
+        # the stored jobs «перепривяжутся при следующем импорте». They do not:
+        # apply_rows() skips every row whose (source_file, source_sheet,
+        # source_row) is already present, so a re-import inserts nothing and
+        # touches no drone_customer_id. Believing the old sentence, somebody
+        # moving a spelling to the right customer would think the past jobs
+        # followed it. Moving them is a targeted migration, as for the merged
+        # cells of June 2026.
+        flash(_drone_t('«%s» ёзилиши «%s»га кўчирилди. Аллақачон сақланган '
+                       'иш қаторлари ўзгармади ва қайта импортда ҳам қайта '
+                       'боғланмайди: уларни кўчириш — алоҳида миграция. '
+                       'Ёзилиш фақат янги импортга таъсир қилади.',
+                       'Написание «%s» перенесено к «%s». Уже сохранённые '
+                       'работы не изменены и повторным импортом не '
+                       'перепривязываются: их перенос — отдельная миграция. '
+                       'Написание действует только на новый импорт.')
               % (alias.raw_name, target.name), 'success')
     elif alias.is_active:
         flash(_drone_t('«%s» ёзилиши ёқилди.', 'Написание «%s» включено.')
