@@ -264,6 +264,24 @@ class Book(unittest.TestCase):
             self.assertFalse(any('farmer' in str(cell) for cell in row))
 
 
+class OutDir(unittest.TestCase):
+
+    def test_the_book_is_named_by_its_days(self):
+        folder = os.path.join(WORLD['root'], 'weekly')
+        os.mkdir(folder)
+        code, text = run_main('--db', WORLD['db'], '--vyvoz', WORLD['vyvoz'],
+                              '--reestr', WORLD['reestr'], '--out-dir', folder)
+        self.assertEqual(code, report.EXIT_OK, text)
+        self.assertEqual(os.listdir(folder), ['perevozki_1c_2026-10-10_2026-10-11.xlsx'])
+        self.assertIn('xlsx: %s' % os.path.join(folder, os.listdir(folder)[0]), text)
+
+    def test_a_missing_folder_is_refused(self):
+        code, text = run_main('--db', WORLD['db'], '--vyvoz', WORLD['vyvoz'],
+                              '--out-dir', os.path.join(WORLD['root'], 'no-such-folder'))
+        self.assertEqual(code, report.EXIT_BAD_INPUT, text)
+        self.assertIn('folder not found', text)
+
+
 class Parts(unittest.TestCase):
 
     def test_parse_mass(self):

@@ -48,11 +48,13 @@ NOT MET), а связка «госномер рейса 1С -- наша маши
   1  инструмент упал.
 
 Запуск -- системный Python (ему нужен openpyxl из requirements.txt), из
-C:\\gps-tools, по одной команде на строку:
+C:\\gps-tools. Каждую неделю одна и та же команда: выгрузки недели лежат под
+постоянными именами, а книга с --out-dir получает имя по своим суткам
+(perevozki_1c_2026-10-19_2026-10-25.xlsx), и прошлые недели не затираются:
 
-  & "C:\\Program Files\\Python314\\python.exe" C:\\gps-tools\\tools\\gps_onec_hauling_report.py --db C:\\transport-report\\instance\\transport.db --vyvoz C:\\gps-tools\\check\\onec_vyvoz_po_brutto_2026-10-20_26.xlsx --reestr C:\\gps-tools\\check\\onec_pk17_reestr_2026-10-20_26.xlsx --out C:\\gps-tools\\check\\perevozki_1c_2026-10-20_26.xlsx
+  & "C:\\Program Files\\Python314\\python.exe" C:\\gps-tools\\tools\\gps_onec_hauling_report.py --db C:\\transport-report\\instance\\transport.db --vyvoz C:\\gps-tools\\check\\onec_vyvoz_po_brutto_nedelya.xlsx --reestr C:\\gps-tools\\check\\onec_pk17_reestr_nedelya.xlsx --out-dir C:\\gps-tools\\check
 
-Ключи --vyvoz и --reestr повторяются.
+Ключи --vyvoz и --reestr повторяются; --out задаёт книгу явным путём.
 """
 
 import argparse
@@ -251,6 +253,20 @@ def write_book(path, app_lines, free, summary_rows):
     book.save(path)
 
 
+def book_name(days):
+    return 'perevozki_1c_%s_%s.xlsx' % (min(days).isoformat(), max(days).isoformat())
+
+
+def check_out(out, files, db):
+    out = os.path.abspath(out)
+    if (not out.lower().endswith('.xlsx') or not os.path.isdir(os.path.dirname(out))
+            or os.path.isdir(out)
+            or out in {os.path.abspath(p) for p, _k in files}
+            or out == os.path.abspath(db)):
+        raise BadInput('cannot write %s (an .xlsx path in an existing folder)' % out)
+    return out
+
+
 def check_inputs(args):
     if not os.path.isfile(args.db):
         raise BadInput('database not found: %s' % args.db)
@@ -260,12 +276,10 @@ def check_inputs(args):
     for path, _kind in files:
         if not os.path.isfile(path):
             raise BadInput('file not found: %s' % path)
-    out = os.path.abspath(args.out)
-    if (not out.lower().endswith('.xlsx') or not os.path.isdir(os.path.dirname(out))
-            or os.path.isdir(out)
-            or out in {os.path.abspath(p) for p, _k in files}
-            or out == os.path.abspath(args.db)):
-        raise BadInput('cannot write %s (an .xlsx path in an existing folder)' % args.out)
+    if args.out:
+        check_out(args.out, files, args.db)
+    elif not os.path.isdir(args.out_dir):
+        raise BadInput('folder not found: %s' % args.out_dir)
     return files
 
 
@@ -277,6 +291,8 @@ def run(args, out=print):
     days = covered_days(trips)
     if not days:
         raise BadInput('the exports have no dated trips')
+    book = check_out(args.out or os.path.join(args.out_dir, book_name(days)),
+                     files, args.db)
     con = open_readonly(args.db)
     try:
         if store.missing_tables(con):
@@ -329,7 +345,7 @@ def run(args, out=print):
         (('Тонны — нетто по 1С: вывоз — «Вес нетто», приём — «Масса физическая»',
           'Тонна — 1С бўйича нетто: олиб кетиш — «Вес нетто», қабул — «Масса физическая»'), ''),
     ]
-    write_book(args.out, app_lines, free, summary_rows)
+    write_book(book, app_lines, free, summary_rows)
 
     out('days %s .. %s: %d' % (min(days), max(days), len(days)))
     out('trips read: %d (removal %d, receiving %d) | ours %d | not ours %d | '
@@ -345,7 +361,7 @@ def run(args, out=print):
         'without an application %d | no verdict %d (%s)'
         % (len(free), free_states[rc.C_UNCOVERED], free_states[rc.C_NONE],
            ', '.join('%s %d' % item for item in sorted(free_reasons.items())) or '-'))
-    out('xlsx: %s' % args.out)
+    out('xlsx: %s' % book)
     out('READ ONLY: nothing was written but the workbook')
     return EXIT_OK
 
@@ -358,7 +374,9 @@ def main(argv=None, out=print):
                         help='1C report of removal trips by gross weighing date')
     parser.add_argument('--reestr', action='append', default=[],
                         help='1C detailed PK-17 register')
-    parser.add_argument('--out', required=True, help='the workbook (.xlsx)')
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument('--out', help='the workbook (.xlsx)')
+    target.add_argument('--out-dir', help='a folder; the workbook is named by its days')
     args = parser.parse_args(argv)
     try:
         return run(args, out)
