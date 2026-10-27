@@ -671,6 +671,15 @@ jobs:
       - name: GPS-35 -- weekly cotton hauling report by 1C trips (stdlib + openpyxl)
         run: python -m unittest tests.test_gps_onec_hauling_report
 
+      # GPS-36: the read-only probe of the 1C infobase before the scheduled
+      # export (tools/onec_probe.ps1). Runs against a stand-in 1C made of
+      # PowerShell objects; nothing reaches 1C. pwsh 7 here, Windows
+      # PowerShell 5.1 in the job below -- the server's console.
+      - name: GPS-36 -- 1C probe against a stand-in (pwsh 7)
+        env:
+          ONEC_POWERSHELL: pwsh
+        run: python -m unittest tests.test_onec_probe
+
   # DRONE-USEFUL-AREA-PILOT-001. The operator console on the server is
   # WINDOWS POWERSHELL 5.1, not pwsh 7, and the two differ exactly where this
   # kit writes files: 5.1 has no `utf8NoBOM`, and its native `>` redirection
@@ -809,3 +818,10 @@ jobs:
         env:
           GPS_RELEASE_POWERSHELL: powershell
         run: python -m unittest tests.test_gps_release_v131.ReleaseV131ToolFormats tests.test_gps_release_v131.ReleaseV131BlocksInPowerShell
+
+      # GPS-36: the 1C probe on the interpreter the owner runs it with.
+      - name: GPS-36 -- 1C probe on Windows PowerShell 5.1
+        shell: powershell
+        env:
+          ONEC_POWERSHELL: powershell
+        run: python -m unittest tests.test_onec_probe
