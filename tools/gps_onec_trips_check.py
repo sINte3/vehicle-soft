@@ -277,9 +277,11 @@ def resolve(plate, by_plate, units):
     return next(iter(objects)), ''
 
 
-def read_trips(path, kind):
+def read_trips(path, kind, extra=()):
+    """Рейсы выгрузки. `extra` -- ещё колонки, которые нужны вызывающему
+    (недельный отчёт GPS-35 берёт массу); их значения -- в `trip['extra']`."""
     header, rows = read_xlsx(path)
-    missing = [name for name in COLUMNS[kind] if name not in header]
+    missing = [name for name in COLUMNS[kind] + tuple(extra) if name not in header]
     if missing:
         raise BadInput('%s: %d expected column(s) missing'
                        % (os.path.basename(path), len(missing)))
@@ -293,7 +295,8 @@ def read_trips(path, kind):
         trips.append({'kind': kind, 'file': os.path.basename(path), 'row': number,
                       'point': point, 'point_key': point.casefold(),
                       'plate_raw': raw, 'plate': plate_key(kind, raw),
-                      'time': parse_time(row.get(time_column))})
+                      'time': parse_time(row.get(time_column)),
+                      'extra': {name: row.get(name) for name in extra}})
     return trips
 
 
