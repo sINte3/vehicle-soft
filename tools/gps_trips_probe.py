@@ -98,6 +98,8 @@ import shapely                                                      # noqa: E402
 from agro_work import methods, store                                # noqa: E402
 from agro_work import reconcile as rc                               # noqa: E402
 from gps import mileage                                             # noqa: E402
+from gps.hauling import (COTTON_MARKS, HAULING_MARK,                # noqa: E402,F401
+                         is_cotton, is_hauling)
 from gps.area import to_utm                                         # noqa: E402
 from gps.territory import SOURCE, ZONES_PATH, zone_polygon          # noqa: E402
 from gps_collector import config as collector_config                # noqa: E402
@@ -115,17 +117,8 @@ RECEIVING_KINDS = ('ptm', 'pakhta_zavod')
 # Заезд от 5 минут -- остановка, а не проезд через зону; число для разведки,
 # не порог правила.
 STOP_S = 300
-# [REASON]: перевозки -- виды работ «... ташиш» (agro-work, §9.4 п. 4: пахта
-# ташиш, юк ташиш, тола ташиш...). Метод у них «не сверяется» или не
-# размечен, единица -- тонны, поэтому отбор по имени вида, а не по методу.
-HAULING_MARK = 'ташиш'
 # Порог «работала» у транспорта -- 3 км (владелец 09.10, §9.4 п. 1).
 WORK_KM = 3.0
-# [REASON]: ступень 1 перевозок (владелец 27.10, трек §0.7): у хлопка --
-# «пахта» и «тола» -- перевозку подтверждают заезды в ПТМ и на хлопкозаводы,
-# у прочих грузов -- пробег. Группа контроля делится по этому же слову.
-COTTON_MARKS = ('пахта', 'тола')
-
 HAULING_DAY = 'hauling'
 OTHER_APP_DAY = 'other_app'
 NO_APP_DAY = 'no_app'
@@ -274,15 +267,6 @@ def window_points(folder, unit, window):
 def local_time(stamp):
     return datetime.fromtimestamp(int(stamp), collector_config.TZ).strftime(
         '%Y-%m-%d %H:%M')
-
-
-def is_hauling(name):
-    return HAULING_MARK in (name or '').casefold()
-
-
-def is_cotton(name):
-    folded = (name or '').casefold()
-    return any(mark in folded for mark in COTTON_MARKS)
 
 
 def period_rows(con, since, until):
