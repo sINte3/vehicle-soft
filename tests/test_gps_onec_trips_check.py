@@ -154,6 +154,9 @@ def setUpModule():
         dbh.add_equipment(con, 63, '80 779 HA')
         dbh.add_mapping(con, 63, 990, 63)
         dbh.add_mapping(con, 64, 991, 63)
+        # машина с объектом, но без рейсов: её заявка на хлопок -- без рейса 1С
+        dbh.add_equipment(con, 65, '80 880 HA')
+        dbh.add_mapping(con, 65, 995, 65)
         # заявки agro-work: хлопок у (0,0) 09--10.10 и у (0,1) 11.10, чизель у
         # (3,0), прочий груз у (1,0)
         con.execute("INSERT INTO agro_work_import_runs (id, started_at, status, "
@@ -163,12 +166,13 @@ def setUpModule():
             con.execute("INSERT INTO agro_work_work_types (id, name, unit, method, "
                         "first_seen_at, last_seen_at) VALUES (?, ?, 'TON', NULL, "
                         "'t', 't')", (work_type, name))
-        for name, (i, j), work_type, first, day in (
-                ('X', (0, 0), 'w-cotton', '2026-10-09', '2026-10-10'),
-                ('Y', (0, 1), 'w-cotton', '2026-10-11', '2026-10-11'),
-                ('Z', (3, 0), 'w-ga', '2026-10-10', '2026-10-10'),
-                ('W', (1, 0), 'w-cargo', '2026-10-10', '2026-10-10')):
-            eq = 10 + i * 2 + j
+        # 11.10 реестра нет -- сутки не покрыты, заявка Y не считается
+        for name, eq, work_type, first, day in (
+                ('X', 10, 'w-cotton', '2026-10-09', '2026-10-10'),
+                ('Y', 11, 'w-cotton', '2026-10-11', '2026-10-11'),
+                ('Z', 16, 'w-ga', '2026-10-10', '2026-10-10'),
+                ('W', 12, 'w-cargo', '2026-10-10', '2026-10-10'),
+                ('V', 65, 'w-cotton', '2026-10-10', '2026-10-10')):
             con.execute("INSERT INTO agro_work_transports (id, plate_number, "
                         "plate_norm, equipment_id, match_status, first_seen_at, "
                         "last_seen_at) VALUES (?, ?, ?, ?, 'auto', 't', 't')",
@@ -279,6 +283,10 @@ class Run(unittest.TestCase):
                                           check.NO_PLATE, check.NO_TIME,
                                           check.NO_GPS]))
 
+    def test_c1_by_kind_is_printed_for_reference(self):
+        self.assertIn('C1 by kind, removal: 30 of 31 = 96.8 %', WORLD['out'])
+        self.assertIn('C1 by kind, receiving: 30 of 30 = 100.0 %', WORLD['out'])
+
     def test_c1_counts_the_wrong_machine_as_far(self):
         out = WORLD['out']
         self.assertIn('points with 5+ trips with GPS: 6 | trips counted: 61', out)
@@ -311,9 +319,11 @@ class Run(unittest.TestCase):
 
     def test_reference_against_applications(self):
         out = WORLD['out']
+        # покрыты только сутки реестра -- 10.10: X (с рейсом) и V (без), Y
+        # 11.10 и 09.10 заявки X не считаются
+        self.assertIn('reference days (covered by the exports): 1', out)
         self.assertIn('reference: cotton hauling machine-days 2 | with a 1C trip 1', out)
-        # 09.10 заявки X -- вне периода рейсов и не считается; «юк ташиш» --
-        # заявка, но не хлопок
+        # «юк ташиш» -- заявка, но не хлопок
         self.assertIn('reference: removal trip machine-days 8 | without any '
                       'application 6', out)
         self.assertIn('reference: receiving trip machine-days 6 | without any '
@@ -337,6 +347,18 @@ class Parts(unittest.TestCase):
         self.assertEqual(check.plate_key(check.VYVOZ, '80 DA 609'), '80DA609')
         # кириллические двойники сводятся до переноса серии
         self.assertEqual(check.plate_key(check.REESTR, '80 НА 609'), '80609HA')
+
+    def test_covered_days_follow_the_register(self):
+        def trip(kind, day):
+            return {'kind': kind, 'time': None if day is None else datetime(2026, 10, day, 9)}
+        both = [trip(check.VYVOZ, 1), trip(check.VYVOZ, 2),
+                trip(check.REESTR, 2), trip(check.REESTR, 3), trip(check.REESTR, None)]
+        self.assertEqual(check.covered_days(both),
+                         {datetime(2026, 10, 2).date(), datetime(2026, 10, 3).date()})
+        removal_only = [trip(check.VYVOZ, 1), trip(check.VYVOZ, 2), trip(check.VYVOZ, None)]
+        self.assertEqual(check.covered_days(removal_only),
+                         {datetime(2026, 10, 1).date(), datetime(2026, 10, 2).date()})
+        self.assertEqual(check.covered_days([]), set())
 
     def test_parse_time(self):
         self.assertEqual(check.parse_time('2026-10-10 08:02:19'),
