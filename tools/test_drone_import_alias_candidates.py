@@ -136,6 +136,46 @@ class AliasCandidatesTest(unittest.TestCase):
         os.remove(self.db)
         self.assertEqual(self.run_tool()[0], 2)
 
+    def test_a_generic_citizen_is_its_own_group_not_a_card_to_create(self):
+        """FIN-RECON-002, 27.10.2026: «Фукаро» rows are counted, flagged and never offered as a new card."""
+        wb_path = os.path.join(self.books, 'Фукаро Июнь.xlsx')
+        wb = Workbook()
+        ws = wb.active
+        ws.title = 'свод ичи (Тест)'
+        ws.append(['Справка (июнь ойи)'])
+        ws.append(['№', 'ФХ номи', 'Майдон (га)', 'Хизмат кўрсатиш суммаси', 'Жами сумма (обьём)',
+                   'Кирим қилинган', 'Дрон ишлаган сана'])
+        ws.append([1, 'Фукаро', 5.0, 200000, 1000000, 0, '05.06.2026'])
+        ws.append([2, 'Ромитан т. Фукаро', 5.95, 200000, 1190000, 0, '06.06.2026'])
+        wb.save(wb_path)
+        with open(self.manifest, 'a', encoding='utf-8') as fh:
+            fh.write('Фукаро Июнь.xlsx    2026-06' + chr(10))
+        rc, out = self.run_tool()
+        self.assertEqual(rc, 0, out)
+        self.assertIn('payer a citizen, unidentified (no card): 2 rows / 10.95 ha / 2190000.00 (2 spellings)', out)
+        self.assertIn('cards to create: 3 rows / 12.60 ha / 1650810.80 (2 cards)', out)
+        status = {name: r['import_status'] for name, r in self.decisions().items()}
+        self.assertEqual(status['Фукаро'], 'UNIDENTIFIED')
+        self.assertEqual(status['Ромитан т. Фукаро'], 'UNIDENTIFIED')
+        self.assertEqual(status['Маълум фх'], 'MATCHED')
+
+        # Negative control: the stage-4 partition, which had no such group, breaks the invariant.
+        def old_partition(result):
+            linked, new, empty, _unidentified = real(result)
+            for key, rows in _unidentified.items():
+                new.setdefault(key, []).extend(rows)
+            return linked, new, empty, {}
+        real = tool.partition
+        tool.partition = old_partition
+        try:
+            import shutil
+            shutil.rmtree(self.out)
+            rc, out = self.run_tool()
+        finally:
+            tool.partition = real
+        self.assertEqual(rc, 1, out)
+        self.assertIn('INVARIANTS: FAILED', out)
+
 
 if __name__ == '__main__':
     unittest.main()
