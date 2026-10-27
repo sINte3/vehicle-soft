@@ -27,8 +27,10 @@ MET, хлопковые тракторы бывают в ПТМ почти ка�
      C1 -- доля рейсов не дальше 1 км от места своего пункта.
   5. Отрицательный контроль -- та же мера, когда каждому рейсу дана машина
      ближайшего по времени рейса с другим пунктом и другой машиной.
-  6. Справочно -- машино-сутки заявок «пахта ташиш» с рейсом в 1С и
-     машино-сутки рейсов 1С без единой заявки, по видам.
+  6. Справочно -- машино-сутки заявок «пахта ташиш» с рейсом в 1С (только
+     сутки, которые выгрузки покрывают: сутки реестра ПК-17), машино-сутки
+     рейсов 1С без единой заявки и C1 по видам рейсов -- ни одно из этого
+     не условие вердикта.
   7. CSV по рейсам и вердикт строкой `VERDICT ONEC JOIN: MET | NOT MET |
      NOT EVALUATED`.
 
@@ -328,6 +330,11 @@ def distance_m(a, b):
     return 2 * 6371000.0 * math.asin(math.sqrt(h))
 
 
+def is_near(metres):
+    """Рейс у своего пункта: не дальше 1 км включительно."""
+    return metres <= NEAR_M
+
+
 def measure(items):
     """items -- [(пункт, положение или None)].
 
@@ -350,7 +357,7 @@ def measure(items):
         metres = distance_m(where, places[key])
         distances.append(metres)
         counted += 1
-        near += metres <= NEAR_M
+        near += is_near(metres)
     return counted, near, places, distances
 
 
@@ -394,8 +401,25 @@ def judge(counted, near, with_machine, no_gps, control_counted, control_near):
 
 # --- справочно: заявки agro-work --------------------------------------------------
 
-def application_days(con, first, last):
-    """({(объект, сутки)} заявок «пахта ташиш», {(объект, сутки)} любых заявок)."""
+def covered_days(trips):
+    """Сутки, которые выгрузки покрывают целиком.
+
+    [REASON]: два периода с разрывом (01--03.10 и 13--15.10) -- не один
+    период 01--15.10. Прогон 27.10 считал заявки и за 04--12.10, когда
+    рейсов 1С никто не выгружал, и «с рейсом 1С» вышло 202 из 700. Реестр
+    ПК-17 выгружается ровно по «Дате брутто» периода, поэтому его сутки и
+    есть покрытые; отчёт вывоза отбирает по второму взвешиванию, и первое
+    задевает канун (30.09) -- его сутки берутся, только если реестра нет.
+    """
+    days = {trip['time'].date() for trip in trips
+            if trip['time'] and trip['kind'] == REESTR}
+    return days or {trip['time'].date() for trip in trips if trip['time']}
+
+
+def application_days(con, days):
+    """({(объект, сутки)} заявок «пахта ташиш», {(объект, сутки)} любых
+    заявок) -- только в сутки `days`."""
+    first, last = min(days), max(days)
     ctx = rc.Reconciliation(con, first, last)
     cotton, any_app = set(), set()
     for row in ctx.forward_rows():
@@ -405,7 +429,7 @@ def application_days(con, first, last):
                 or row['app'].row.get('work_type_name') or '')
         day, end = row['window']
         while day <= end:
-            if first <= day <= last:
+            if day in days:
                 any_app.add((row['wialon_id'], day))
                 if is_hauling(name) and is_cotton(name):
                     cotton.add((row['wialon_id'], day))
@@ -442,10 +466,10 @@ def run(args, out=print):
     con = open_readonly(args.db)
     try:
         by_plate, units = machine_index(con)
-        dated = [trip['time'].date() for trip in trips if trip['time']]
+        days = covered_days(trips)
         apps = None
-        if dated and not store.missing_tables(con):
-            apps = application_days(con, min(dated), max(dated))
+        if days and not store.missing_tables(con):
+            apps = application_days(con, days)
     finally:
         con.close()
 
@@ -495,16 +519,23 @@ def run(args, out=print):
         % (MIN_TRIPS_PER_POINT, len(places), counted))
     out('C1 (within %d m of the point): %s' % (NEAR_M, _share(near, counted)))
     out('negative control C1: %s' % _share(control_near, control_counted))
+    # справочно, не условие: из какого отчёта рейсы ложатся дальше
+    for kind, label in ((VYVOZ, 'removal'), (REESTR, 'receiving')):
+        kinds = [metres for trip, metres in zip(resolved, distances)
+                 if trip['kind'] == kind and metres is not None]
+        out('C1 by kind, %s: %s' % (label, _share(
+            sum(1 for metres in kinds if is_near(metres)), len(kinds))))
     if apps is not None:
         cotton, any_app = apps
+        out('reference days (covered by the exports): %d' % len(days))
         trip_days = {(trip['unit'], trip['time'].date()) for trip in resolved}
         out('reference: cotton hauling machine-days %d | with a 1C trip %d'
             % (len(cotton), len(cotton & trip_days)))
         for kind, label in ((VYVOZ, 'removal'), (REESTR, 'receiving')):
-            days = {(trip['unit'], trip['time'].date()) for trip in resolved
-                    if trip['kind'] == kind}
+            kind_days = {(trip['unit'], trip['time'].date()) for trip in resolved
+                         if trip['kind'] == kind}
             out('reference: %s trip machine-days %d | without any application %d'
-                % (label, len(days), len(days - any_app)))
+                % (label, len(kind_days), len(kind_days - any_app)))
     out('csv: %s' % args.out)
     out('VERDICT ONEC JOIN: %s' % verdict)
     out('READ ONLY: nothing was written but the CSV file')
