@@ -10,6 +10,9 @@
   * берутся только заявки метода «рейсы» с окном внутри периода; без
     объекта Wialon и без точек -- названной причиной, а не нулями;
   * многодневное окно читается целиком, заезд через полночь -- один;
+  * с --hauling -- заявки перевозок «ташиш» при любом методе (имя вида без
+    учёта регистра), заявки «рейсы» не берутся; подтверждение -- остановка
+    в пункте приёма, иначе пробег окна от 3 км, иначе «ничего»;
   * ничего не пишется, кроме двух CSV; в консоль -- ASCII; Flask не
     импортируется; неверный ввод -- код 2 до чтения.
 
@@ -100,6 +103,11 @@ TRACK_B = route([at(PTM, 1200), field(), at(AZS, 300), at(PTM, 360), field()])
 # Заявка G (объект 805): окно двое суток, заезд в ПТМ через полночь.
 TRACK_G1 = route([field(), at(PTM, 600)])
 TRACK_G2 = route([at(PTM, 600), field(), at(PTM, 600), field()])
+# Перевозки: K -- хлопок на ПТМ (остановка 10,5 мин, пробег около 2 км);
+# L -- груз на 5 км к югу, мимо всех зон; M -- стоит весь день.
+TRACK_K = route([field(), at(PTM, 600), field()])
+TRACK_L = route([field(), (0.0, -5000.0, 300)])
+TRACK_M = route([field(3600)])
 
 
 def digest(path):
@@ -143,7 +151,8 @@ def setUpModule():
                     "geometry_geojson, is_active) VALUES ('dji', ?, 'dji', ?, 1)",
                     (str(PTM), far))
         dbh.add_org(con, 1, 'Buxoro')
-        for number, unit in enumerate((801, 802, 804, 805, 806, 807), start=1):
+        for number, unit in enumerate((801, 802, 804, 805, 806, 807, 808, 809,
+                                       810), start=1):
             dbh.add_equipment(con, number, '80 %03d EA' % number, org_id=1)
             dbh.add_mapping(con, number, unit, number)
             con.execute("INSERT INTO agro_work_transports (id, plate_number, "
@@ -156,8 +165,10 @@ def setUpModule():
                     "last_seen_at) VALUES ('T803', 'P803', 'P803', NULL, "
                     "'none', 't', 't')")
         for work_type, name, unit_name, method in (
-                ('w-trip', 'Пахта ташиш', 'TRIP', 'reysy'),
-                ('w-ga', 'Чизеллаш', 'HECTARE', 'ga')):
+                ('w-trip', 'Сут махсулотлари', 'TRIP', 'reysy'),
+                ('w-ga', 'Чизеллаш', 'HECTARE', 'ga'),
+                ('w-cotton', 'Пахта ташиш', 'TON', 'ne_sveryaetsya'),
+                ('w-cargo', 'Юк ТАШИШ (метан)', 'TON', None)):
             con.execute("INSERT INTO agro_work_work_types (id, name, unit, method, "
                         "first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, 't', 't')",
                         (work_type, name, unit_name, method))
@@ -173,6 +184,9 @@ def setUpModule():
             ('G', 805, 'w-trip', '2', '2026-09-14', '2026-09-15'),
             # окно началось до периода -- не его заявка, хоть и задевает
             ('H', 807, 'w-trip', '1', '2026-08-31', '2026-09-01'),
+            ('K', 808, 'w-cotton', '12', '2026-09-20', '2026-09-20'),
+            ('L', 809, 'w-cargo', '8', '2026-09-21', '2026-09-21'),
+            ('M', 810, 'w-cotton', '10', '2026-09-22', '2026-09-22'),
         ]
         for name, unit, work_type, volume, first, last in apps:
             con.execute(
@@ -192,6 +206,9 @@ def setUpModule():
     write_track(folder, 805, '2026-09-14', TRACK_G1, hour=23)
     write_track(folder, 805, '2026-09-15', TRACK_G2, hour=0)
     write_track(folder, 807, '2026-09-01', TRACK_A)
+    write_track(folder, 808, '2026-09-20', TRACK_K)
+    write_track(folder, 809, '2026-09-21', TRACK_L)
+    write_track(folder, 810, '2026-09-22', TRACK_M)
     zones_csv = os.path.join(root, 'zones.csv')
     with open(zones_csv, 'w', encoding='utf-8', newline='') as handle:
         writer = csv.writer(handle)
@@ -206,8 +223,14 @@ def setUpModule():
     code, out = run_main('--db', db, '--dir', folder, '--from', SINCE,
                          '--to', UNTIL, '--csv', out_csv, '--visits-csv',
                          visits_csv, '--zones', zones_csv)
+    hauling_csv = os.path.join(root, 'hauling.csv')
+    hauling_visits = os.path.join(root, 'hauling_visits.csv')
+    h_code, h_out = run_main('--db', db, '--dir', folder, '--from', SINCE,
+                             '--to', UNTIL, '--csv', hauling_csv, '--visits-csv',
+                             hauling_visits, '--zones', zones_csv, '--hauling')
     WORLD.update(root=root, folder=folder, db=db, zones=zones_csv, code=code,
-                 out=out, csv=out_csv, visits=visits_csv, before=before)
+                 out=out, csv=out_csv, visits=visits_csv, before=before,
+                 h_code=h_code, h_out=h_out, h_csv=hauling_csv)
 
 
 def tearDownModule():
@@ -246,7 +269,7 @@ class Run(unittest.TestCase):
         self.assertEqual((a['obem'], a['wialon_id'], a['okno_s'], a['okno_po'],
                           a['sutok_s_tochkami'], a['prichina']),
                          ('3.0', '801', '2026-09-10', '2026-09-10', '1', ''))
-        self.assertEqual(a['vid_raboty'], 'Пахта ташиш')
+        self.assertEqual(a['vid_raboty'], 'Сут махсулотлари')
 
     def test_a_day_that_starts_inside_is_not_an_entry(self):
         b = apps()['N-B']
@@ -290,6 +313,42 @@ class Run(unittest.TestCase):
         for path, value in WORLD['before'].items():
             self.assertEqual(digest(path), value, path)
         self.assertTrue(WORLD['out'].isascii())
+
+
+class Hauling(unittest.TestCase):
+
+    def rows(self):
+        return {row['nomer_zayavki']: row for row in read(WORLD['h_csv'])}
+
+    def test_only_hauling_work_types_whatever_the_method(self):
+        self.assertEqual(WORLD['h_code'], probe.EXIT_OK, WORLD['h_out'])
+        self.assertEqual(sorted(self.rows()), ['N-K', 'N-L', 'N-M'])
+        self.assertIn('hauling applications in the period: 3', WORLD['h_out'])
+        # и наоборот: прогон «рейсов» перевозок не берёт
+        self.assertNotIn('N-K', apps())
+
+    def test_the_evidence_of_each_haul(self):
+        rows = self.rows()
+        self.assertEqual(rows['N-K']['zaezdy_priem_5min'], '1')
+        self.assertAlmostEqual(float(rows['N-K']['km']), 2.0, delta=0.1)
+        self.assertAlmostEqual(float(rows['N-L']['km']), 5.0, delta=0.1)
+        self.assertEqual(rows['N-L']['zaezdy_priem_5min'], '0')
+        self.assertEqual(rows['N-M']['km'], '0.0')
+        self.assertIn('evidence of hauling: receiving stop 1 | km only 1 | '
+                      'neither 1', WORLD['h_out'])
+        self.assertTrue(WORLD['h_out'].isascii())
+
+    def test_evidence_order_and_the_three_kilometres(self):
+        self.assertEqual(probe.evidence({'zaezdy_priem_5min': 1, 'km': 50.0}),
+                         'receiving stop')
+        self.assertEqual(probe.evidence({'zaezdy_priem_5min': 0, 'km': 3.0}),
+                         'km only')
+        self.assertEqual(probe.evidence({'zaezdy_priem_5min': 0, 'km': 2.99}),
+                         'neither')
+
+    def test_window_mileage_of_one_point_or_none_is_zero(self):
+        self.assertEqual(probe.window_km([(0, 64.4, 39.8, 10.0, 9)]), 0.0)
+        self.assertEqual(probe.window_km([]), 0.0)
 
 
 class Visits(unittest.TestCase):
