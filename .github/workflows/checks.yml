@@ -665,6 +665,12 @@ jobs:
       - name: GPS-34 -- 1C trip to machine join check (stdlib)
         run: python -m unittest tests.test_gps_onec_trips_check
 
+      # GPS-35: the weekly cotton hauling report by 1C trips (owner's decision
+      # 27.10.2026, GPS track §0.7). Read-only; stdlib plus openpyxl (installed
+      # above) for the workbook it writes.
+      - name: GPS-35 -- weekly cotton hauling report by 1C trips (stdlib + openpyxl)
+        run: python -m unittest tests.test_gps_onec_hauling_report
+
   # DRONE-USEFUL-AREA-PILOT-001. The operator console on the server is
   # WINDOWS POWERSHELL 5.1, not pwsh 7, and the two differ exactly where this
   # kit writes files: 5.1 has no `utf8NoBOM`, and its native `>` redirection
