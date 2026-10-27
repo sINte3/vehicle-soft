@@ -562,8 +562,11 @@ class TestB6LabelsAreOneStringNotTwo(unittest.TestCase):
         with app.test_request_context('/drones/works'):
             g.lang = 'ru'
             labels = drones._drone_customer_service_labels()
+        # [REASON]: FIN-RECON-002 (27.10) added the third fact, a citizen payer
+        # who is not established («Фукаро»); the set is pinned exactly.
         self.assertEqual(
-            {'Заказчик не указан', 'Заказчик не определён'},
+            {'Заказчик не указан', 'Заказчик не определён',
+             'Плательщик-гражданин не установлен'},
             set(labels.values()))
 
     def test_b6_the_two_labels_are_not_the_same_string(self):
@@ -574,7 +577,10 @@ class TestB6LabelsAreOneStringNotTwo(unittest.TestCase):
             with app.test_request_context('/drones/works'):
                 g.lang = lang
                 labels = drones._drone_customer_service_labels()
-            self.assertEqual(2, len(set(labels.values())), lang)
+            # [REASON]: one string per fact. FIN-RECON-002 made it three facts;
+            # the check stays «no two facts share a string», not a count of 2.
+            self.assertEqual(3, len(labels), lang)
+            self.assertEqual(len(labels), len(set(labels.values())), lang)
 
 
 # ---------------------------------------------------------------------------

@@ -4662,7 +4662,7 @@ DRONE_WORK_CUSTOMER_UNIDENTIFIED = 'unidentified'
 
 
 def _drone_customer_service_labels():
-    """The two labels a NULL drone_customer_id can carry -- and they are two.
+    """The labels a NULL drone_customer_id can carry -- one string per fact.
 
     [REASON]: DRONE-UI-CUSTOMER-LABEL-001. These strings existed inline in
     _drone_works_report_data() and the ledger cell carried a THIRD spelling of
@@ -4672,6 +4672,10 @@ def _drone_customer_service_labels():
     reading the ledger went looking for eight aliases that must not be created.
     One function owns the wording now, so the cell, the filter option and the
     report cut cannot drift apart again.
+
+    [REASON]: FIN-RECON-002 (owner decision 27.10) adds a third fact: the book
+    named a citizen («Фукаро») who is not established. It is neither «not
+    stated» nor «an alias to add», so it gets its own string, not a reuse.
     """
     return {
         DRONE_WORK_CUSTOMER_UNSTATED: _drone_t('Буюртмачи кўрсатилмаган',
