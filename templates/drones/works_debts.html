@@ -150,7 +150,7 @@
     <tbody>
       {% for r in debt.rows %}
       <tr>
-        <td>{{ r.label }}</td>
+        <td>{{ r.label }}{% if r.note %}<div class="vs-muted" style="font-size:11px;">{{ r.note }}</div>{% endif %}</td>
         <td class="right">{{ r.jobs }}</td>
         <td class="right">{{ money_cell(r.amount, r.jobs, r.no_amount, 'amount') }}</td>
         <td class="right">{{ money_cell(r.received, r.jobs, 0) }}</td>

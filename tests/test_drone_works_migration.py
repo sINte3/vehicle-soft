@@ -15,6 +15,8 @@ instance/transport.db.
 Run:
   python -m unittest tests.test_drone_works_migration -v
 """
+import contextlib
+import io
 import os
 import shutil
 import sqlite3
@@ -29,6 +31,7 @@ if REPO_ROOT not in sys.path:
 import migration_utils  # noqa: E402
 import migrate_drones_works_001 as works_mig  # noqa: E402
 import migrate_drones_works_002 as kind_mig  # noqa: E402
+import migrate_drones_works_payer_unidentified_001 as payer_mig  # noqa: E402
 
 # The two REFERENCES targets the migration insists on before it will run.
 PRECONDITION_DDL = {
@@ -388,6 +391,130 @@ class DroneWorksReceivedKindMigrationTests(unittest.TestCase):
     def test_missing_database_exits_2_and_creates_no_file(self):
         missing = os.path.join(self.tmp, 'nope.db')
         kind_mig.DB_PATH = missing
+        migration_utils.DB_PATH = missing
+        ok, code = self.run_migration()
+        self.assertFalse(ok)
+        self.assertEqual(code, 2)
+        self.assertFalse(os.path.exists(missing))
+
+    # ── Path 4: failed precondition ───────────────────────────────────────
+    def test_missing_drone_works_exits_1_and_records_nothing(self):
+        _make_db(self.db, ['users', 'drone_operators'])
+        ok, code = self.run_migration()
+        self.assertFalse(ok)
+        self.assertEqual(code, 1)
+        self.assertEqual(_registry_rows(self.db, self.MID), 0)
+
+
+class DroneWorksPayerUnidentifiedMigrationTests(unittest.TestCase):
+    """DRONES_WORKS_PAYER_UNIDENTIFIED_001 -- the four paths, plus no backfill.
+
+    The load-bearing assertion is the no-backfill one: the seven May works on
+    card #589 «Фукаро» belong to a closed period, and a migration that flagged
+    them would rewrite May. The negative control seeds a flagged row and shows
+    the postcondition really refuses it.
+    """
+    MID = payer_mig.MIGRATION_ID
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix='drone_works_payer_')
+        self.db = os.path.join(self.tmp, 'throwaway.db')
+        self._orig = (payer_mig.DB_PATH, kind_mig.DB_PATH, works_mig.DB_PATH,
+                      migration_utils.DB_PATH)
+        payer_mig.DB_PATH = kind_mig.DB_PATH = works_mig.DB_PATH = self.db
+        migration_utils.DB_PATH = self.db
+
+    def tearDown(self):
+        (payer_mig.DB_PATH, kind_mig.DB_PATH, works_mig.DB_PATH,
+         migration_utils.DB_PATH) = self._orig
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _base(self):
+        """DRONES_WORKS_001 and _002 applied, one May work on a «Фукаро» card."""
+        _make_db(self.db, ['users', 'drone_operators'])
+        works_mig.run()
+        kind_mig.run()
+        con = sqlite3.connect(self.db)
+        con.execute("INSERT INTO drone_customers (id, name, customer_type) "
+                    "VALUES (589, 'Фукаро', 'external')")
+        con.execute("INSERT INTO drone_works (period_month, customer_raw, "
+                    "drone_customer_id, area_ha, amount, payment_type) VALUES "
+                    "('2026-05', 'Фукаро', 589, 5.64, 1128000, 'cash')")
+        con.commit()
+        con.close()
+
+    def run_migration(self):
+        try:
+            payer_mig.run()
+            return True, 0
+        except SystemExit as exc:
+            return False, exc.code
+
+    def _columns(self):
+        return [r[1] for r in _query(self.db, 'PRAGMA table_info(drone_works)')]
+
+    # ── Path 1: clean database ────────────────────────────────────────────
+    def test_clean_database_adds_the_column_and_records_once(self):
+        self._base()
+        self.assertTrue(self.run_migration()[0])
+        self.assertEqual(_registry_rows(self.db, self.MID), 1)
+        self.assertIn('payer_unidentified', self._columns())
+
+    def test_the_may_work_on_the_generic_card_is_not_touched(self):
+        self._base()
+        before = _query(self.db, 'SELECT * FROM drone_works')
+        self.assertTrue(self.run_migration()[0])
+        after = _query(self.db, 'SELECT * FROM drone_works')
+        self.assertEqual([r[:-1] for r in after], before)
+        self.assertEqual([r[-1] for r in after], [None])
+
+    def test_a_flagged_row_stops_the_migration_and_records_nothing(self):
+        """Negative control: the no-backfill postcondition can say no."""
+        self._base()
+        con = sqlite3.connect(self.db)
+        con.execute('ALTER TABLE drone_works ADD COLUMN payer_unidentified '
+                    'BOOLEAN')
+        con.execute('UPDATE drone_works SET payer_unidentified = 1')
+        con.commit()
+        con.close()
+        ok, code = self.run_migration()
+        self.assertFalse(ok)
+        self.assertEqual(code, 1)
+        self.assertEqual(_registry_rows(self.db, self.MID), 0)
+
+    def test_db_override_writes_the_column_and_the_registry_into_the_copy(self):
+        """The rehearsal path: --db moves BOTH paths, never the default one."""
+        self._base()
+        default_db = os.path.join(self.tmp, 'default.db')
+        payer_mig.DB_PATH = migration_utils.DB_PATH = default_db
+        with contextlib.redirect_stdout(io.StringIO()):
+            payer_mig.main(['--db', self.db])
+        self.assertFalse(os.path.exists(default_db))
+        self.assertIn('payer_unidentified', self._columns())
+        self.assertEqual(_registry_rows(self.db, self.MID), 1)
+
+    # ── Path 2: repeat run ────────────────────────────────────────────────
+    def test_rerun_is_a_clean_noop(self):
+        self._base()
+        self.assertTrue(self.run_migration()[0])
+        self.assertTrue(self.run_migration()[0])
+        self.assertEqual(_registry_rows(self.db, self.MID), 1)
+        self.assertEqual(self._columns().count('payer_unidentified'), 1)
+
+    def test_rerun_after_a_lost_registry_row_does_not_duplicate_the_column(self):
+        self._base()
+        self.assertTrue(self.run_migration()[0])
+        con = sqlite3.connect(self.db)
+        con.execute('DELETE FROM schema_migrations WHERE name=?', (self.MID,))
+        con.commit()
+        con.close()
+        self.assertTrue(self.run_migration()[0])
+        self.assertEqual(self._columns().count('payer_unidentified'), 1)
+
+    # ── Path 3: missing database ──────────────────────────────────────────
+    def test_missing_database_exits_2_and_creates_no_file(self):
+        missing = os.path.join(self.tmp, 'nope.db')
+        payer_mig.DB_PATH = missing
         migration_utils.DB_PATH = missing
         ok, code = self.run_migration()
         self.assertFalse(ok)

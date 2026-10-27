@@ -2357,6 +2357,14 @@ class DroneWork(db.Model):
     # records which header the figure came from. NULL on rows imported before
     # this migration and on rows typed by hand.
     received_kind     = db.Column(db.String(20), nullable=True)
+    # [REASON]: DRONES_WORKS_PAYER_UNIDENTIFIED_001, owner's decision of
+    # 27.10.2026. True when the sheet names the payer only generically --
+    # «Фукаро», a citizen -- and the individual is not established. Such a
+    # work keeps drone_customer_id NULL: one card for the word would make
+    # several people one debtor whose payments offset each other's debts.
+    # NULL on every row imported before the migration, May on card #589
+    # included -- a closed period, deliberately not backfilled.
+    payer_unidentified = db.Column(db.Boolean, nullable=True)
 
     # One of DRONE_WORK_PAYMENT_TYPES.
     payment_type      = db.Column(db.String(20), nullable=False)

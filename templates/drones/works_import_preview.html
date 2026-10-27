@@ -245,7 +245,8 @@
     <div class="vs-help vs-mb-sm">
       {{ 'Сопоставлено с алиасом строк' if is_ru else 'Алиас билан мосланган қаторлар' }}: <strong>{{ snapshot.customers_matched|vs_num }}</strong> ·
       {{ 'оператор определён у строк' if is_ru else 'оператори аниқланган қаторлар' }}: <strong>{{ snapshot.operators_matched|vs_num }}</strong> ·
-      {{ 'строк без имени заказчика' if is_ru else 'буюртмачи номи йўқ қаторлар' }}: <strong>{{ snapshot.empty_customer_rows|vs_num }}</strong>
+      {{ 'строк без имени заказчика' if is_ru else 'буюртмачи номи йўқ қаторлар' }}: <strong>{{ snapshot.empty_customer_rows|vs_num }}</strong> ·
+      {{ 'плательщик — гражданин, не установлен («Фукаро»), строк без карточки' if is_ru else 'тўловчи — фуқаро, аниқланмаган («Фукаро»), карточкасиз қаторлар' }}: <strong>{{ snapshot.payer_unidentified_rows|default(0)|vs_num }}</strong>
     </div>
 
     <div class="vs-label-upper vs-label">{{ 'Будут заведены новые написания заказчика' if is_ru else 'Буюртмачининг янги ёзилишлари яратилади' }} ({{ snapshot.customers_to_create|length }})</div>

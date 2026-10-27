@@ -33,6 +33,7 @@ from tools.import_drone_works import (  # noqa: E402
     Directory,
     ImportPreconditionError,
     _connect,
+    _require_payer_unidentified,
     _require_received_kind,
     _require_tables,
     apply_rows,
@@ -466,6 +467,7 @@ def run_import(db_path, batch_path, files_meta, period_month, apply, batch,
     try:
         _require_tables(con, REQUIRED_TABLES)
         _require_received_kind(con)
+        _require_payer_unidentified(con)
         dir_obj = Directory(con)
         # [REASON]: time.monotonic, never time.time. The wall clock on this
         # server is corrected by the domain and steps both ways; a parse that
@@ -601,6 +603,7 @@ def preview_snapshot(result, stats, parse_seconds):
         'customers_matched': result.matched_customers,
         'customers_to_create': [name for _key, name
                                 in result.created_customers],
+        'payer_unidentified_rows': result.payer_unidentified_rows,
         'operators_matched': result.matched_operators,
         'operators_unresolved': [
             {'operator': raw, 'reason': reason, 'rows': count}

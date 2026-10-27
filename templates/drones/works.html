@@ -9,6 +9,9 @@
    служебных строк разреза, поэтому расходиться им негде. #}
 {% set t_customer_unstated = customer_labels[customer_unstated_group] %}
 {% set t_customer_unresolved = customer_labels[customer_unresolved_group] %}
+{# FIN-RECON-002: третья метка — «Фукаро», гражданин не установлен. Не алиас,
+   который надо завести, и не своя земля холдинга. #}
+{% set t_customer_unidentified = customer_labels[customer_unidentified_group] %}
 {% set t_none_operator = 'Оператор не определён' if is_ru else 'Оператор аниқланмаган' %}
 {% set t_no_date = 'Дата не указана' if is_ru else 'Сана кўрсатилмаган' %}
 {% block title %}{{ 'Дроны — работы' if is_ru else 'Дронлар — ишлар' }}{% endblock %}
@@ -61,6 +64,7 @@
           <option value="">{{ '— все заказчики —' if is_ru else '— барча буюртмачилар —' }}</option>
           <option value="{{ unstated_key }}" {% if filters.customer_id == unstated_key %}selected{% endif %}>{{ t_customer_unstated }}</option>
           <option value="{{ unresolved_key }}" {% if filters.customer_id == unresolved_key %}selected{% endif %}>{{ t_customer_unresolved }}</option>
+          <option value="{{ unidentified_key }}" {% if filters.customer_id == unidentified_key %}selected{% endif %}>{{ t_customer_unidentified }}</option>
           {% for c in customers %}
           <option value="{{ c.id }}" {% if filters.customer_id == c.id %}selected{% endif %}>{{ c.name }}</option>
           {% endfor %}
@@ -350,6 +354,7 @@
         </td>
         <td>
           {% if w.drone_customer %}{{ w.drone_customer.name }}
+          {% elif w.payer_unidentified %}<span class="vs-badge">{{ t_customer_unidentified }}</span>
           {% elif not (w.customer_raw or '').strip() %}<span class="vs-badge">{{ t_customer_unstated }}</span>
           {% else %}<span class="vs-badge">{{ t_customer_unresolved }}</span>{% endif %}
           <div class="vs-muted" style="font-size:11px;">{{ w.customer_raw }}</div>

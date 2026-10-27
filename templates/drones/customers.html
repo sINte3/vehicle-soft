@@ -29,6 +29,15 @@
   </div>
 </div>
 {% endif %}
+{% if unidentified.jobs %}
+<div class="vs-alert is-info vs-mb">
+  <div>
+  {{ 'Работ, где плательщик — гражданин не установлен («Фукаро»)' if is_ru else 'Тўловчи — фуқаро аниқланмаган ишлар («Фукаро»)' }}: <b>{{ unidentified.jobs }}</b> ({{ '%.2f'|format(unidentified.area)|vs_num }} {{ 'га' if is_ru else 'га' }}).
+  <a href="{{ url_for('drones.works', customer_id=unidentified_key) }}">{{ 'Показать их' if is_ru else 'Уларни кўрсатиш' }}</a>.
+  {{ 'Написание для них не добавляется: «Фукаро» — это разные люди. Конкретного плательщика указывают в самой работе.' if is_ru else 'Улар учун ёзилиш қўшилмайди: «Фукаро» — бу турли одамлар. Аниқ тўловчи ишнинг ўзида кўрсатилади.' }}
+  </div>
+</div>
+{% endif %}
 
 {% if can_edit_cust %}
 <div class="vs-card vs-mb">
