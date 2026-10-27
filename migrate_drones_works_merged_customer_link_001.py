@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Migration DRONES_WORKS_JUN2026_MERGED_CUSTOMER_LINK_001 (и майский двойник
-DRONES_WORKS_MAY2026_MERGED_CUSTOMER_LINK_001) -- заказчик из объединённой
-ячейки.
+"""Migration DRONES_WORKS_JUN2026_MERGED_CUSTOMER_LINK_001 (и отдельная
+DRONES_WORKS_JUN2026_ZAMINLARI_ANCHOR_137_001) -- заказчик из объединённой
+ячейки, июнь 2026.
 
 ЧТО ПОЧИНЕНО. В июне 2026 года 31 строка книг на 900.30 га (77 095 080.10 сум
 по книге) лежит в drone_works с customer_raw = '' и drone_customer_id NULL, и
@@ -9,9 +9,9 @@ DRONES_WORKS_MAY2026_MERGED_CUSTOMER_LINK_001) -- заказчик из объе
 стоит в ОБЪЕДИНЁННОЙ ячейке колонки «ФХ номи», которая накрывает и строку
 выше, и все эти строки:
 
-    книга / лист                                  ячейка   строк      га   заказчик (id)
-    ИЮНЬ Агрокластер.xlsx / свод ичи (Сайфулло)   B12:B33     21  755.60   Бухоро Агрокластер Заминлари (136)
-    Сервис Дрон маълумот Июнь.xlsx / свод ичи (Фуркат)  B33:B43  10  144.70   Бухоро Сервис Агрокластер (138)
+    книга / лист                                        ячейка   строк      га   плательщик (карточка)
+    ИЮНЬ Агрокластер.xlsx / свод ичи (Сайфулло)         B12:B33     21  755.60   Бухоро Агрокластер Заминлари МЧЖ (137)
+    Сервис Дрон маълумот Июнь.xlsx / свод ичи (Фуркат)  B33:B43     10  144.70   Бухоро Сервис Агрокластер (138)
 
 ПОЧЕМУ ТАК ВЫШЛО. Импортёр читает книгу в режиме read_only и values_only. В
 этом режиме openpyxl отдаёт значение объединённой ячейки только её первой
@@ -22,24 +22,29 @@ DRONES_WORKS_MAY2026_MERGED_CUSTOMER_LINK_001) -- заказчик из объе
 
 ЧЕМ ОПОЗНАН ЗАКАЗЧИК. Не похожестью букв, а самой книгой: диапазон
 объединённой ячейки и есть запись диспетчера «эти строки -- этого хозяйства».
-Карточка берётся та, к которой импорт уже привязал первую строку диапазона,
-поэтому новой карточки, нового алиаса и нового решения о справочнике здесь
-нет. Диапазоны сняты с книг пакета FIN-RECON-002 (openpyxl, не read_only) и
+Диапазоны сняты с книг пакета FIN-RECON-002 (openpyxl, не read_only) и
 совпали с производственной выгрузкой 22.10.2026 строка в строку.
 
-МАЙ. В «Агрокластер Дрон маълумот МАЙ.xlsx / свод ичи (Сайфулло)» тот же
-диапазон B16:B24: 8 строк на 216.00 га (id 14-21) за тем же заказчиком 136.
-Май закрыт владельцем 22.10.2026 (190 / 3 499.45 га), поэтому майская часть --
-ОТДЕЛЬНАЯ миграция со своим идентификатором и запускается только по его
-отдельному решению: --scope may. Площадь и деньги мая она не двигает, но
-меняет разрез мая по заказчикам.
+КАКАЯ КАРТОЧКА -- РЕШЕНИЕ ВЛАДЕЛЬЦА 27.10.2026. «Заминлари» -- одна
+организация при всех написаниях; каноническая карточка №137 «Бухоро
+Агрокластер Заминлари МЧЖ», №136 и №209 -- её старые варианты. Поэтому 21
+строку диапазона B12:B33 эта миграция ведёт на №137, а не на №136, к которой
+импорт привязал первую строку. Остальные 10 -- на №138, как и прежде.
+Карточки №136/№209 не удаляются и не сливаются, прошлые периоды не
+переписываются.
+
+ПЕРВАЯ СТРОКА ДИАПАЗОНА (id 997, 27.00 га, июнь) сохранена на №136. Её
+перенос на №137 -- ОТДЕЛЬНАЯ миграция --scope june-anchor со своим
+идентификатором и своей квитанцией: это смена уже сохранённой связи, а не
+заполнение пустой, и владелец разрешил её только для июня. Майские работы
+№136 (id 13 и 32) не трогает ни одна из двух; май закрыт 22.10.2026, и
+майской части у этой миграции больше нет.
 
 ЧТО НЕ ТРОГАЕТСЯ. Меняется ровно одно поле -- drone_customer_id, и только у
-перечисленных id. customer_raw остаётся '' (ячейка в книге действительно
-пуста; это сырьё, а не вывод), площадь, сумма, расходы, приход, тип оплаты,
-даты, оператор, партия -- без изменений. Тип карточек 136 и 138 «external»
-при том, что это подразделения холдинга, -- отдельный вопрос владельцу, здесь
-не решается.
+перечисленных id. customer_raw остаётся как есть ('' у 31 строки: ячейка в
+книге действительно пуста; это сырьё, а не вывод), площадь, сумма, расходы,
+приход, тип оплаты, даты, оператор, партия -- без изменений. Тип карточек
+(internal/external) здесь не меняется.
 
 [REASON]: ПОИМЁННО, по id, и каждая строка закреплена своими ключом, площадью
 и суммой. Правка «все пустые строки листа» выглядит проще и неверна: в
@@ -47,17 +52,26 @@ DRONES_WORKS_MAY2026_MERGED_CUSTOMER_LINK_001) -- заказчик из объе
 книги, а имя «свод ичи (Сайфулло)» есть и в майской, и в июньской книге
 Агрокластера. Если книгу перезагрузили и id сместились -- отказ, а не догадка.
 
+[REASON]: ID КАРТОЧКИ НЕ УГАДЫВАЕТСЯ. Номер 137 записан владельцем, и миграция
+сверяет с ним имя и активность карточки в той базе, где запущена. Другое имя
+или выключенная карточка -- отказ с кодом 1: значит, справочник не тот, что
+видел владелец, а не повод выбрать похожую.
+
 Безопасность / идемпотентность:
   - отказ с кодом 2 при отсутствии базы, файл НЕ создаётся;
-  - ПРЕДУСЛОВИЕ: карточка существует и названа как в книге; первая строка
-    диапазона привязана к ней; каждая целевая строка -- ровно тот id, ключ,
-    период, площадь и сумма, что сняты 22.10.2026, с пустым customer_raw и
-    NULL drone_customer_id; других пустых строк в этом листе этой книги нет.
+  - ПРЕДУСЛОВИЕ: карточка существует, включена и названа так, как записал
+    владелец; первая строка диапазона на своём месте, с написанием книги и на
+    одной из допустимых карточек; каждая целевая строка -- ровно тот id,
+    ключ, период, площадь и сумма, что сняты 22.10.2026, в исходном
+    состоянии (у привязки: пустой customer_raw и NULL drone_customer_id; у
+    переноса: прежняя карточка и написание книги); других пустых строк в этом
+    листе нет; у переноса -- на прежней карточке нет других июньских работ.
     Одно отличие -- код 1, ничего не изменено;
   - ПОСТУСЛОВИЕ (до записи в реестр): все целевые строки за своей
     карточкой; все остальные поля этих строк и все прочие строки таблицы
     побайтно прежние; число строк и суммы площади, денег, расходов и прихода
-    по таблице прежние; карточка получила ровно своё число строк и гектаров;
+    по таблице прежние; каждая затронутая карточка получила (или отдала)
+    ровно своё число строк и гектаров;
   - ОДНА транзакция на всё (BEGIN IMMEDIATE): предусловия проверяются ещё раз
     уже под блокировкой записи, затем правка, постусловия и строка
     schema_migrations -- через то же соединение, одним COMMIT. Правка без
@@ -80,14 +94,18 @@ DRONES_WORKS_MAY2026_MERGED_CUSTOMER_LINK_001) -- заказчик из объе
     NEEDS_RECOVERY;
   - stdlib sqlite3 без Flask; вывод в консоль только ASCII.
 
-Запуск (production, служба ОСТАНОВЛЕНА, после свежего бэкапа):
+Запуск (production, служба ОСТАНОВЛЕНА, после свежего бэкапа; две миграции
+независимы, порядок любой, у каждой своя квитанция):
   cd C:\\transport-report
   & "C:\\Program Files\\Python314\\python.exe" migrate_drones_works_merged_customer_link_001.py
   & "C:\\Program Files\\Python314\\python.exe" migrate_drones_works_merged_customer_link_001.py --apply --receipt C:\\VehicleSoft_Release\\FIN_RECON_002_MERGED_LINK_RECEIPT.json
+  & "C:\\Program Files\\Python314\\python.exe" migrate_drones_works_merged_customer_link_001.py --scope june-anchor
+  & "C:\\Program Files\\Python314\\python.exe" migrate_drones_works_merged_customer_link_001.py --scope june-anchor --apply --receipt C:\\VehicleSoft_Release\\FIN_RECON_002_ZAMINLARI_ANCHOR_RECEIPT.json
 
 Откат КОДА: git revert коммита.
 Откат ДАННЫХ: печатается готовым к вставке блоком и лежит в квитанции:
-  UPDATE drone_works SET drone_customer_id = NULL WHERE id IN (...) AND drone_customer_id = <id>;
+  UPDATE drone_works SET drone_customer_id = NULL WHERE id IN (...) AND drone_customer_id = <id>;   (привязка)
+  UPDATE drone_works SET drone_customer_id = 136 WHERE id IN (997) AND drone_customer_id = 137;    (перенос)
   DELETE FROM schema_migrations WHERE name = '<MIGRATION_ID>';
 """
 
@@ -109,20 +127,36 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 TOLERANCE_HA = 0.005
 TOLERANCE_SUM = 0.01
 
+ZAMINLARI_CARD = 137
+ZAMINLARI_CARD_NAME = 'Бухоро Агрокластер Заминлари МЧЖ'
+# The spelling of the book, and the old card the import put the first row on.
+ZAMINLARI_BOOK_NAME = 'Бухоро Агрокластер Заминлари'
+ZAMINLARI_OLD_CARD = 136
+
 # Значения сняты с производственной выгрузки 22.10.2026 (бэкап
 # transport_20261022_150645.db, MANIFEST.json b1d9d11d...) и сверены с книгами.
-# Группа: (файл, лист, id карточки, название карточки, (id, строка) первой
-# строки диапазона, ячейка, целевые строки (id, строка, период, га, сумма)).
+# Группа:
+#   file, sheet, cell   -- источник
+#   card, card_name     -- куда ведёт (id и имя записаны владельцем)
+#   from_card           -- None: привязка пустой связи; id: перенос с этой карточки
+#   raw                 -- написание книги у целевых строк ('' у привязки)
+#   anchor, anchor_raw, anchor_cards -- первая строка диапазона (id, строка),
+#                          её написание и карточки, на которых она может стоять
+#   period_guard        -- у переноса: на from_card в этом периоде только эти id
+#   targets             -- (id, строка, период, га, сумма)
 SCOPES = {
     'june': {
         'migration_id': 'DRONES_WORKS_JUN2026_MERGED_CUSTOMER_LINK_001',
         'description': ('June 2026: 31 book rows (900.30 ha) whose farm sits in a '
-                        'merged Excel cell linked to the customer card of the '
-                        'first row of that range (136, 138). Only '
-                        'drone_customer_id changes.'),
+                        'merged Excel cell linked to the payer of that range: 21 '
+                        'to canonical card 137 (owner decision 27.10.2026), 10 to '
+                        '138. Only drone_customer_id changes.'),
         'groups': (
-            ('ИЮНЬ Агрокластер.xlsx', 'свод ичи (Сайфулло)', 136,
-             'Бухоро Агрокластер Заминлари', (997, 12), 'B12:B33', (
+            {'file': 'ИЮНЬ Агрокластер.xlsx', 'sheet': 'свод ичи (Сайфулло)', 'cell': 'B12:B33',
+             'card': ZAMINLARI_CARD, 'card_name': ZAMINLARI_CARD_NAME, 'from_card': None, 'raw': '',
+             'anchor': (997, 12), 'anchor_raw': ZAMINLARI_BOOK_NAME,
+             'anchor_cards': (ZAMINLARI_OLD_CARD, ZAMINLARI_CARD), 'period_guard': None,
+             'targets': (
                  (998, 13, '2026-06', 38.80, 3322544.49),
                  (999, 14, '2026-06', 27.40, 2346332.97),
                  (1000, 15, '2026-06', 19.00, 1627019.21),
@@ -143,9 +177,12 @@ SCOPES = {
                  (1015, 30, '2026-06', 36.80, 3151279.31),
                  (1016, 31, '2026-06', 15.20, 1301615.37),
                  (1017, 32, '2026-06', 50.10, 4290192.76),
-                 (1018, 33, '2026-06', 184.60, 15807776.11))),
-            ('Сервис Дрон маълумот Июнь.xlsx', 'свод ичи (Фуркат)', 138,
-             'Бухоро Сервис Агрокластер', (1042, 33), 'B33:B43', (
+                 (1018, 33, '2026-06', 184.60, 15807776.11))},
+            {'file': 'Сервис Дрон маълумот Июнь.xlsx', 'sheet': 'свод ичи (Фуркат)', 'cell': 'B33:B43',
+             'card': 138, 'card_name': 'Бухоро Сервис Агрокластер', 'from_card': None, 'raw': '',
+             'anchor': (1042, 33), 'anchor_raw': 'Бухоро Сервис Агрокластер',
+             'anchor_cards': (138,), 'period_guard': None,
+             'targets': (
                  (1043, 34, '2026-06', 20.65, 1768321.45),
                  (1044, 35, '2026-06', 13.30, 1138918.90),
                  (1045, 36, '2026-06', 17.50, 1498577.50),
@@ -155,29 +192,29 @@ SCOPES = {
                  (1049, 40, '2026-06', 19.40, 1661280.20),
                  (1050, 41, '2026-06', 11.50, 984779.50),
                  (1051, 42, '2026-06', 7.70, 659374.10),
-                 (1052, 43, '2026-06', 10.85, 929118.05))),
+                 (1052, 43, '2026-06', 10.85, 929118.05))},
         ),
         'expect': (31, 900.30, 77095080.10),
     },
-    'may': {
-        'migration_id': 'DRONES_WORKS_MAY2026_MERGED_CUSTOMER_LINK_001',
-        'description': ('May 2026: 8 book rows (216.00 ha) whose farm sits in a '
-                        'merged Excel cell linked to customer card 136 of the '
-                        'first row of that range. Only drone_customer_id '
-                        'changes; separate owner decision (May is closed).'),
+    # [REASON]: owner's decision of 27.10.2026 -- the one June work already
+    # STORED on the old card 136 may move to 137, June only, with its own
+    # proof and receipt. A separate migration id, so it is applied, recorded
+    # and rolled back on its own; the 31 empty links above do not depend on it.
+    'june-anchor': {
+        'migration_id': 'DRONES_WORKS_JUN2026_ZAMINLARI_ANCHOR_137_001',
+        'description': ('June 2026: the one stored June work of «Бухоро Агрокластер '
+                        'Заминлари» (id 997, 27.00 ha) moves from old card 136 to '
+                        'canonical card 137 (owner decision 27.10.2026). May on 136 '
+                        'is not touched. Only drone_customer_id changes.'),
         'groups': (
-            ('Агрокластер Дрон маълумот МАЙ.xlsx', 'свод ичи (Сайфулло)', 136,
-             'Бухоро Агрокластер Заминлари', (13, 16), 'B16:B24', (
-                 (14, 17, '2026-05', 18.70, 1601336.35),
-                 (15, 18, '2026-05', 32.50, 2783071.20),
-                 (16, 19, '2026-05', 22.80, 1952431.49),
-                 (17, 20, '2026-05', 38.50, 3296868.96),
-                 (18, 21, '2026-05', 23.50, 2012374.56),
-                 (19, 22, '2026-05', 10.00, 856329.60),
-                 (20, 23, '2026-05', 39.00, 3339685.44),
-                 (21, 24, '2026-05', 31.00, 2654621.76))),
+            {'file': 'ИЮНЬ Агрокластер.xlsx', 'sheet': 'свод ичи (Сайфулло)', 'cell': 'B12',
+             'card': ZAMINLARI_CARD, 'card_name': ZAMINLARI_CARD_NAME,
+             'from_card': ZAMINLARI_OLD_CARD, 'from_card_name': ZAMINLARI_BOOK_NAME,
+             'raw': ZAMINLARI_BOOK_NAME, 'anchor': None, 'anchor_raw': None, 'anchor_cards': (),
+             'period_guard': '2026-06',
+             'targets': ((997, 12, '2026-06', 27.00, 2312079.93),)},
         ),
-        'expect': (8, 216.00, 18496719.36),
+        'expect': (1, 27.00, 2312079.93),
     },
 }
 
@@ -227,28 +264,57 @@ def _customer_totals(conn, customer_id):
 
 
 def target_ids(scope):
-    return [t[0] for g in SCOPES[scope]['groups'] for t in g[6]]
+    return [t[0] for g in SCOPES[scope]['groups'] for t in g['targets']]
+
+
+def touched_cards(scope):
+    """{card id: (rows, ha)} the scope adds to (+) or takes from (-) each card."""
+    delta = {}
+    for g in SCOPES[scope]['groups']:
+        n, ha = len(g['targets']), sum(t[3] for t in g['targets'])
+        rows, hectares = delta.get(g['card'], (0, 0.0))
+        delta[g['card']] = (rows + n, hectares + ha)
+        if g['from_card'] is not None:
+            rows, hectares = delta.get(g['from_card'], (0, 0.0))
+            delta[g['from_card']] = (rows - n, hectares - ha)
+    return delta
+
+
+def _check_card(conn, card_id, card_name, role):
+    card = conn.execute('SELECT name, is_active FROM drone_customers WHERE id = ?',
+                        (card_id,)).fetchone()
+    if card is None:
+        return ['  %s card %d: does not exist' % (role, card_id)]
+    problems = []
+    if normalize(card[0]) != normalize(card_name):
+        problems.append('  %s card %d: is not named as the owner wrote it' % (role, card_id))
+    # [REASON]: is_active IS 0, never «not = 1»: the column is BOOLEAN DEFAULT
+    # 1 and a hand-inserted card can hold NULL, which the directory treats as
+    # active (see import_drone_works.Directory).
+    if card[1] is not None and int(card[1]) == 0:
+        problems.append('  %s card %d: is switched off' % (role, card_id))
+    return problems
 
 
 def check_precondition(conn, scope):
     problems = []
-    groups = SCOPES[scope]['groups']
-    for source_file, sheet, cust_id, cust_name, anchor, cell, targets in groups:
-        card = conn.execute('SELECT name, is_active FROM drone_customers '
-                            'WHERE id = ?', (cust_id,)).fetchone()
-        if card is None or normalize(card[0]) != normalize(cust_name):
-            problems.append('  customer card %d: expected the book name, found %s'
-                            % (cust_id, 'none' if card is None else 'another name'))
-        anchor_row = conn.execute(
-            'SELECT source_file, source_sheet, source_row, drone_customer_id, '
-            'customer_raw FROM drone_works WHERE id = ?', (anchor[0],)).fetchone()
-        if (anchor_row is None or anchor_row[:3] != (source_file, sheet, anchor[1])
-                or anchor_row[3] != cust_id
-                or normalize(anchor_row[4]) != normalize(cust_name)):
-            problems.append('  %s: first row of the range (id %d, row %d) is not '
-                            'linked to card %d with the book name'
-                            % (cell, anchor[0], anchor[1], cust_id))
-        for work_id, row_no, period, area, amount in targets:
+    for g in SCOPES[scope]['groups']:
+        problems += _check_card(conn, g['card'], g['card_name'], 'target')
+        if g['from_card'] is not None:
+            problems += _check_card(conn, g['from_card'], g['from_card_name'], 'source')
+        if g['anchor'] is not None:
+            anchor_row = conn.execute(
+                'SELECT source_file, source_sheet, source_row, drone_customer_id, '
+                'customer_raw FROM drone_works WHERE id = ?', (g['anchor'][0],)).fetchone()
+            if (anchor_row is None
+                    or anchor_row[:3] != (g['file'], g['sheet'], g['anchor'][1])
+                    or anchor_row[3] not in g['anchor_cards']
+                    or normalize(anchor_row[4]) != normalize(g['anchor_raw'])):
+                problems.append('  %s: first row of the range (id %d, row %d) is not the '
+                                'book name on card %s'
+                                % (g['cell'], g['anchor'][0], g['anchor'][1],
+                                   ' or '.join(str(c) for c in g['anchor_cards'])))
+        for work_id, row_no, period, area, amount in g['targets']:
             got = conn.execute(
                 'SELECT source_file, source_sheet, source_row, period_month, '
                 'area_ha, amount, drone_customer_id, customer_raw '
@@ -256,59 +322,79 @@ def check_precondition(conn, scope):
             if got is None:
                 problems.append('  id %d: missing' % work_id)
                 continue
-            if got[:4] != (source_file, sheet, row_no, period):
+            if got[:4] != (g['file'], g['sheet'], row_no, period):
                 problems.append('  id %d: key or period differs from row %d of %s'
-                                % (work_id, row_no, cell))
+                                % (work_id, row_no, g['cell']))
             if (got[4] is None or abs(float(got[4]) - area) > TOLERANCE_HA
                     or got[5] is None or abs(float(got[5]) - amount) > TOLERANCE_SUM):
                 problems.append('  id %d: area or amount differs (expected %.2f ha / %.2f)'
                                 % (work_id, area, amount))
-            if got[6] is not None:
-                problems.append('  id %d: already linked to card %s' % (work_id, got[6]))
-            if (got[7] or '').strip():
-                problems.append('  id %d: customer_raw is not empty' % work_id)
-        # [REASON]: a NULL row of this sheet that is NOT in the list means the
-        # book was re-imported or the range is wider than measured -- linking
-        # the listed rows only would leave a silent remainder.
-        ids = {t[0] for t in targets}
-        others = [r[0] for r in conn.execute(
-            "SELECT id FROM drone_works WHERE source_file = ? AND source_sheet = ? "
-            "AND drone_customer_id IS NULL AND TRIM(COALESCE(customer_raw, '')) = ''",
-            (source_file, sheet)) if r[0] not in ids]
-        if others:
-            problems.append('  %s: %d other unlinked row(s) with an empty customer in '
-                            'this sheet, ids %s' % (cell, len(others), others[:10]))
+            if got[6] != g['from_card']:
+                problems.append('  id %d: on card %s, expected %s'
+                                % (work_id, got[6], g['from_card'] if g['from_card'] is not None
+                                   else 'none'))
+            if normalize(got[7]) != normalize(g['raw']):
+                problems.append('  id %d: customer_raw is not %s'
+                                % (work_id, 'the book name' if g['raw'] else 'empty'))
+        ids = {t[0] for t in g['targets']}
+        if g['from_card'] is None:
+            # [REASON]: a NULL row of this sheet that is NOT in the list means the
+            # book was re-imported or the range is wider than measured -- linking
+            # the listed rows only would leave a silent remainder.
+            others = [r[0] for r in conn.execute(
+                "SELECT id FROM drone_works WHERE source_file = ? AND source_sheet = ? "
+                "AND drone_customer_id IS NULL AND TRIM(COALESCE(customer_raw, '')) = ''",
+                (g['file'], g['sheet'])) if r[0] not in ids]
+            if others:
+                problems.append('  %s: %d other unlinked row(s) with an empty customer in '
+                                'this sheet, ids %s' % (g['cell'], len(others), others[:10]))
+        if g['period_guard']:
+            # [REASON]: the owner allowed moving THE stored June work of the old
+            # card. Another June work on it means the database is not the one he
+            # looked at; moving "the listed one" would split June silently.
+            on_card = sorted(r[0] for r in conn.execute(
+                'SELECT id FROM drone_works WHERE drone_customer_id = ? AND period_month = ?',
+                (g['from_card'], g['period_guard'])))
+            if on_card != sorted(ids):
+                problems.append('  card %d in %s holds ids %s, expected exactly %s'
+                                % (g['from_card'], g['period_guard'], on_card[:10], sorted(ids)))
     if problems:
-        problems.append('  The figures were measured on production 2026-10-22. A '
-                        'difference means the books were re-imported or edited '
-                        'since; refusing to guess.')
+        problems.append('  The figures were measured on production 2026-10-22 and the '
+                        'cards were named by the owner 2026-10-27. A difference means '
+                        'the books or the directory changed since; refusing to guess.')
     return problems
 
 
 def apply_changes(conn, scope):
     rows = []
-    for source_file, sheet, cust_id, _name, _anchor, cell, targets in SCOPES[scope]['groups']:
-        for work_id, row_no, _period, area, amount in targets:
-            cur = conn.execute(
-                'UPDATE drone_works SET drone_customer_id = ? WHERE id = ? '
-                "AND drone_customer_id IS NULL AND TRIM(COALESCE(customer_raw, '')) = ''",
-                (cust_id, work_id))
+    for g in SCOPES[scope]['groups']:
+        for work_id, row_no, _period, area, amount in g['targets']:
+            if g['from_card'] is None:
+                cur = conn.execute(
+                    'UPDATE drone_works SET drone_customer_id = ? WHERE id = ? '
+                    "AND drone_customer_id IS NULL AND TRIM(COALESCE(customer_raw, '')) = ''",
+                    (g['card'], work_id))
+            else:
+                cur = conn.execute(
+                    'UPDATE drone_works SET drone_customer_id = ? WHERE id = ? '
+                    'AND drone_customer_id = ?', (g['card'], work_id, g['from_card']))
             if cur.rowcount != 1:
                 raise LookupError('id %d: expected to update 1 row, updated %d'
                                   % (work_id, cur.rowcount))
-            rows.append({'id': work_id, 'source_file': source_file, 'source_sheet': sheet,
-                         'source_row': row_no, 'merged_cell': cell, 'area_ha': area,
-                         'amount': amount, 'drone_customer_id_before': None,
-                         'drone_customer_id_after': cust_id})
+            rows.append({'id': work_id, 'source_file': g['file'], 'source_sheet': g['sheet'],
+                         'source_row': row_no, 'merged_cell': g['cell'], 'area_ha': area,
+                         'amount': amount, 'drone_customer_id_before': g['from_card'],
+                         'drone_customer_id_after': g['card']})
     return rows
 
 
 def rollback_sql(scope):
     lines = []
-    for _f, _s, cust_id, _n, _a, _c, targets in SCOPES[scope]['groups']:
-        lines.append('UPDATE drone_works SET drone_customer_id = NULL WHERE id IN (%s) '
+    for g in SCOPES[scope]['groups']:
+        lines.append('UPDATE drone_works SET drone_customer_id = %s WHERE id IN (%s) '
                      'AND drone_customer_id = %d;'
-                     % (', '.join(str(t[0]) for t in targets), cust_id))
+                     % ('NULL' if g['from_card'] is None else g['from_card'],
+                        ', '.join(str(t[0]) for t in g['targets']), g['card']))
     lines.append("DELETE FROM schema_migrations WHERE name = '%s';"
                  % SCOPES[scope]['migration_id'])
     return lines
@@ -318,20 +404,19 @@ def check_postcondition(conn, scope, before):
     problems = []
     ids = target_ids(scope)
     marks = ', '.join('?' * len(ids))
-    for _f, _s, cust_id, _n, _a, _cell, targets in SCOPES[scope]['groups']:
-        for work_id, *_rest in targets:
+    for g in SCOPES[scope]['groups']:
+        for work_id, *_rest in g['targets']:
             got = conn.execute('SELECT drone_customer_id FROM drone_works WHERE id = ?',
                                (work_id,)).fetchone()
-            if got is None or got[0] != cust_id:
-                problems.append('  id %d: not linked to card %d' % (work_id, cust_id))
-    # Per card, not per group: two groups may one day share a card.
-    for cust_id, (b_rows, b_ha) in before['cards'].items():
-        shared = [g for g in SCOPES[scope]['groups'] if g[2] == cust_id]
-        want_rows = sum(len(g[6]) for g in shared)
-        want_ha = sum(t[3] for g in shared for t in g[6])
+            if got is None or got[0] != g['card']:
+                problems.append('  id %d: not linked to card %d' % (work_id, g['card']))
+    # Per card, not per group: two groups may share a card, and a move both
+    # adds to one card and takes from another.
+    for cust_id, (want_rows, want_ha) in touched_cards(scope).items():
+        b_rows, b_ha = before['cards'][cust_id]
         rows, hectares = _customer_totals(conn, cust_id)
         if rows - b_rows != want_rows or abs((hectares - b_ha) - want_ha) > TOLERANCE_HA:
-            problems.append('  card %d: expected +%d rows / +%.2f ha, got +%d / +%.2f'
+            problems.append('  card %d: expected %+d rows / %+.2f ha, got %+d / %+.2f'
                             % (cust_id, want_rows, want_ha, rows - b_rows, hectares - b_ha))
     if _fingerprint(conn, 'WHERE id IN (%s)' % marks, ids, skip=(LINK_COLUMN,)) != before['targets']:
         problems.append('  a field other than drone_customer_id moved on a target row')
@@ -373,11 +458,11 @@ def database_state(conn, scope):
     """
     registered = _registry_has(conn, SCOPES[scope]['migration_id'])
     linked = 0
-    for _f, _s, cust_id, _n, _a, _c, targets in SCOPES[scope]['groups']:
-        for target in targets:
+    for g in SCOPES[scope]['groups']:
+        for target in g['targets']:
             row = conn.execute('SELECT drone_customer_id FROM drone_works WHERE id = ?',
                                (target[0],)).fetchone()
-            if row is not None and row[0] == cust_id:
+            if row is not None and row[0] == g['card']:
                 linked += 1
     if registered and linked == len(target_ids(scope)):
         return 'APPLIED'
@@ -422,7 +507,7 @@ def _before(conn, scope):
         'targets': _fingerprint(conn, 'WHERE id IN (%s)' % marks, ids, skip=(LINK_COLUMN,)),
         'others': _fingerprint(conn, 'WHERE id NOT IN (%s)' % marks, ids),
         'totals': _table_totals(conn),
-        'cards': {g[2]: _customer_totals(conn, g[2]) for g in SCOPES[scope]['groups']},
+        'cards': {cid: _customer_totals(conn, cid) for cid in touched_cards(scope)},
     }
 
 
@@ -499,9 +584,13 @@ def _result(status, code, lines=()):
 
 def _report_changes(got, scope):
     print('Changes: %d rows / %.2f ha / %.2f linked; only drone_customer_id moved.' % got)
-    print('Postconditions: every target row is linked to the card of the first row '
-          'of its merged range; all other fields of these rows, all other rows and '
-          'the table totals are byte-identical.')
+    for g in SCOPES[scope]['groups']:
+        print('  %s: %d row(s) / %.2f ha  card %s -> %d'
+              % (g['cell'], len(g['targets']), sum(t[3] for t in g['targets']),
+                 'none' if g['from_card'] is None else g['from_card'], g['card']))
+    print('Postconditions: every target row is on the card the owner named for its '
+          'payer; all other fields of these rows, all other rows and the table totals '
+          'are byte-identical.')
     print('')
     print('ROLLBACK OF DATA (run in this order):')
     for line in rollback_sql(scope):
@@ -670,7 +759,8 @@ def main(argv=None):
     parser.add_argument('--db', default=DB_PATH,
                         help='override only for testing on a copy')
     parser.add_argument('--scope', choices=sorted(SCOPES), default='june',
-                        help="'june' (default) or 'may' -- May needs its own owner decision")
+                        help="'june' (default): the 31 empty links; 'june-anchor': the one "
+                             "stored June work 997 from card 136 to 137, its own receipt")
     parser.add_argument('--apply', action='store_true',
                         help='write the changes; without it a dry run on an in-memory copy')
     parser.add_argument('--receipt', default=None,
