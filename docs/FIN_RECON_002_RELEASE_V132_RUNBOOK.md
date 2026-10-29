@@ -17,7 +17,7 @@
      установлен».
 
    Вместе с выпуском приедут ручные инструменты трека GPS, влитые в `main`
-   после v1.31 (PR #229–#245):
+   после v1.31 (PR #229–#246):
    - разведка перевозок;
    - проверка рейсов 1С;
    - зонд 1С;
@@ -99,7 +99,7 @@ $py        = 'C:\Program Files\Python314\python.exe'
 $backupBat = 'C:\transport-report\backup_production_db.bat'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $baseline  = '998bc20bfdb81e6d90ab413b63ab59da665aac65'
-$reviewed  = 'ead958f020512ad0f3f9b856d408b0271204bd6f'
+$reviewed  = 'f8d4c05812d7ee659ef852ed332c73abc95eceee'
 $runbookTest = 'tests/test_fin_recon_002_release_runbook.py'
 $expectMig = 'migrate_drones_works_merged_customer_link_001.py migrate_drones_works_payer_unidentified_001.py'
 $frdir     = 'C:\VehicleSoft_Release\fin_recon_002'
@@ -264,7 +264,7 @@ $errLog    = 'C:\transport-report\logs\error.log'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '998bc20bfdb81e6d90ab413b63ab59da665aac65'
-$reviewed  = 'ead958f020512ad0f3f9b856d408b0271204bd6f'
+$reviewed  = 'f8d4c05812d7ee659ef852ed332c73abc95eceee'
 $runbookTest = 'tests/test_fin_recon_002_release_runbook.py'
 $expectMig = 'migrate_drones_works_merged_customer_link_001.py migrate_drones_works_payer_unidentified_001.py'
 $frdir     = 'C:\VehicleSoft_Release\fin_recon_002'
@@ -627,7 +627,7 @@ $prod      = 'C:\transport-report'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '998bc20bfdb81e6d90ab413b63ab59da665aac65'
-$reviewed  = 'ead958f020512ad0f3f9b856d408b0271204bd6f'
+$reviewed  = 'f8d4c05812d7ee659ef852ed332c73abc95eceee'
 $runbookTest = 'tests/test_fin_recon_002_release_runbook.py'
 $work      = 'C:\VehicleSoft_Release'
 $log       = 'C:\VehicleSoft_Release\release_v132_rollback.log'
