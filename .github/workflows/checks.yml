@@ -688,6 +688,14 @@ jobs:
           ONEC_POWERSHELL: pwsh
         run: python -m unittest tests.test_onec_export tests.test_gps_onec_export_check
 
+      # GPS-38: the Task Scheduler's weekly run (tools/onec_weekly.ps1) -- the
+      # export, then the GPS-35 book; steps are stand-in scripts, and the real
+      # ones are reached where they answer without 1C and without agro-work.
+      - name: GPS-38 -- weekly task, export then book (pwsh 7)
+        env:
+          ONEC_POWERSHELL: pwsh
+        run: python -m unittest tests.test_onec_weekly
+
   # DRONE-USEFUL-AREA-PILOT-001. The operator console on the server is
   # WINDOWS POWERSHELL 5.1, not pwsh 7, and the two differ exactly where this
   # kit writes files: 5.1 has no `utf8NoBOM`, and its native `>` redirection
@@ -840,3 +848,10 @@ jobs:
         env:
           ONEC_POWERSHELL: powershell
         run: python -m unittest tests.test_onec_export
+
+      # GPS-38: the weekly task on the interpreter the Task Scheduler starts.
+      - name: GPS-38 -- weekly task on Windows PowerShell 5.1
+        shell: powershell
+        env:
+          ONEC_POWERSHELL: powershell
+        run: python -m unittest tests.test_onec_weekly

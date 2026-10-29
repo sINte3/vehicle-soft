@@ -66,22 +66,6 @@ $Invariant = [System.Globalization.CultureInfo]::InvariantCulture
 
 . (Join-Path $PSScriptRoot 'onec_com.ps1')
 
-function Get-WeekStart([string]$week, [string]$today) {
-  if ($week) {
-    try {
-      $start = [datetime]::ParseExact($week, 'yyyy-MM-dd', $Invariant)
-    } catch {
-      throw ('-Week is YYYY-MM-DD: ' + $week)
-    }
-    if ($start.DayOfWeek -ne [System.DayOfWeek]::Monday) { throw ('-Week is not a Monday: ' + $week) }
-    return $start
-  }
-  $day = if ($today) { [datetime]::ParseExact($today, 'yyyy-MM-dd', $Invariant) } else { (Get-Date).Date }
-  # Monday of this week, then one week back: the last full week.
-  $monday = $day.AddDays(-((([int]$day.DayOfWeek) + 6) % 7))
-  return $monday.AddDays(-7)
-}
-
 function Read-Spec([string]$name) {
   $path = Join-Path $SpecDir ($name + '.json')
   return ([System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8) | ConvertFrom-Json)
