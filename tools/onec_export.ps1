@@ -23,7 +23,8 @@
 #
 # WHAT IT DOES NOT DO
 # Writes nothing to 1C: it runs two SELECT queries. Takes no farmer, no
-# commodity expert, nothing but point, transport, time, mass, organization.
+# commodity expert, nothing but point, transport, time, mass, organization,
+# the document date (the acceptance check reads it) and the harvest.
 # A file is replaced only when both queries succeeded: the two files go to
 # temporary names first and are moved over the old ones at the end, so a
 # failed run leaves last week's files whole and says so by its exit code.
@@ -53,7 +54,7 @@ param(
   [switch]$LoadOnly
 )
 
-$ExportVersion = 'onec_export v3'
+$ExportVersion = 'onec_export v4'
 $SpecDir = Join-Path $PSScriptRoot 'onec_export'
 $SpecNames = @('vyvoz', 'reestr')
 # [REASON]: the plate is the tail of the 1C transport name -- two digits of

@@ -85,6 +85,17 @@ class Specs(unittest.TestCase):
         for name in check.COLUMNS[check.REESTR] + ('Масса физическая,кг',):
             self.assertIn(name, headers)
 
+    def test_both_files_carry_the_document_date(self):
+        # приёмка (дополнение 29.10) отделяет по ней строки, введённые после
+        # выгрузки чата
+        from tools import gps_onec_export_check as acceptance
+        for name, table in (('vyvoz', 'Вывоз'), ('reestr', 'Поступление')):
+            with self.subTest(name=name):
+                this = spec(name)
+                self.assertIn('%s.Дата КАК DocDate' % table, this['query'])
+                self.assertIn({'alias': 'DocDate', 'header': acceptance.DOC_DATE},
+                              this['columns'])
+
     def test_no_person_is_selected(self):
         # ни фермер, ни товаровед не выбираются
         for name in ('vyvoz', 'reestr'):
@@ -127,7 +138,7 @@ class ExportAgainstStandIn(unittest.TestCase):
     def test_the_week_goes_to_two_files(self):
         code, console = self.run_case('ok')
         self.assertEqual(code, 0, console)
-        self.assertIn('onec_export v3 | week 2026-10-19 .. 2026-10-25', console)
+        self.assertIn('onec_export v4 | week 2026-10-19 .. 2026-10-25', console)
         self.assertIn('vyvoz: 5 rows | sum 17940.5 | ', console)
         self.assertIn('vyvoz plates: from the name 2 | from the GosNomer attribute 2 | none 1',
                       console)
@@ -138,7 +149,7 @@ class ExportAgainstStandIn(unittest.TestCase):
         self.assertEqual(vyvoz[0], ['Завод', 'Пункт приема', 'Транспорт (как в 1С)',
                                     'Гос номер (из названия)', 'Время первого взвешивания',
                                     'Время второго взвешивания', 'Вес нетто, кг',
-                                    'Транспорт (представление)',
+                                    'Дата документа', 'Транспорт (представление)',
                                     'Гос номер (реквизит справочника)'])
         # понедельник 00:00:00 и воскресенье 23:59:59 входят; 18.10 23:59:59 и
         # 26.10 00:00:00 -- нет. Название транспорта -- String() ссылки (с
@@ -147,16 +158,19 @@ class ExportAgainstStandIn(unittest.TestCase):
         # -- реквизит: по образцу номера или как есть; пустой -- пусто
         self.assertEqual(vyvoz[1:], [
             ['OOO "BUXORO AGROKLASTER"', 'Вобкент ПТМ', 'МТЗ-80-1 80 283 HA', '80 283 HA',
-             '2026-10-19 07:28:06', '2026-10-19 08:46:56', '6620', 'МТЗ-80-1', '80 283 HA'],
+             '2026-10-19 07:28:06', '2026-10-19 08:46:56', '6620', '2026-10-19 09:00:00',
+             'МТЗ-80-1', '80 283 HA'],
             ['OOO "BUXORO AGROKLASTER"', 'Харгуш ПТМ', 'МТЗ-80-1(калхида) 80 240 HA', '80 240 HA',
-             '2026-10-25 22:10:00', '2026-10-25 23:59:59', '5320.5', 'МТЗ-80-1(калхида)',
-             '80999HA'],
+             '2026-10-25 22:10:00', '2026-10-25 23:59:59', '5320.5', '2026-10-26 08:00:00',
+             'МТЗ-80-1(калхида)', '80999HA'],
             ['OOO "BUXORO AGROKLASTER"', 'Вобкент ПТМ', 'Камаз', '',
-             '', '2026-10-19 00:00:00', '1000', 'Камаз', '  '],
+             '', '2026-10-19 00:00:00', '1000', '2026-10-19 00:10:00', 'Камаз', '  '],
             ['OOO "BUXORO AGROKLASTER"', 'Харгуш ПТМ', 'Трактор', '80 123 НА',
-             '2026-10-21 09:00:00', '2026-10-21 10:15:00', '2000', 'Трактор', '80123НА'],
+             '2026-10-21 09:00:00', '2026-10-21 10:15:00', '2000', '2026-10-21 10:20:00',
+             'Трактор', '80123НА'],
             ['OOO "BUXORO AGROKLASTER"', 'Вобкент ПТМ', 'ГАЗ-53', '80 A 123 BC',
-             '2026-10-22 11:00:00', '2026-10-22 12:30:00', '3000', 'ГАЗ-53', ' 80  A 123 BC ']])
+             '2026-10-22 11:00:00', '2026-10-22 12:30:00', '3000', '2026-10-22 12:31:00',
+             'ГАЗ-53', ' 80  A 123 BC ']])
         reestr = self.rows(REESTR)
         self.assertEqual(reestr[0], ['Организация (завод)', 'Пункт приема', 'Транспорт',
                                      'Дата брутто', 'Масса физическая,кг', 'Дата документа',

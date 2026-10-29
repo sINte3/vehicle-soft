@@ -1,7 +1,7 @@
 {
   "file": "onec_vyvoz_po_brutto_nedelya.csv",
-  "about": "1C report 'Vyvoz na zavod - Vyvoz po date vzveshivaniya brutto' (VyvozNaZavodVyvozPoDateBrutto): the same document, the same deletion mark and the same period field as its schema (probe 29.10); no plant or region filter, as the weekly export was made. The transport name is taken by String() of the reference, as 1C forms and the report show it ('MTZ-80-1 80 283 HA'): PRESENTATION() in a query gives the model only (export 29.10). The plate is cut from the String() name; a name without a plate at its end takes the plate from the catalog's own attribute GosNomer (catalog TransportPoVyvozuKhlopkaSyrtsa, probe v3 29.10), and the attribute is written as a column of its own.",
-  "query": "ВЫБРАТЬ РАЗРЕШЕННЫЕ\n\tПРЕДСТАВЛЕНИЕ(Вывоз.Организация) КАК Org,\n\tПРЕДСТАВЛЕНИЕ(Вывоз.ПунктПриема) КАК Point,\n\tПРЕДСТАВЛЕНИЕ(Вывоз.Транспорт) КАК Transport,\n\tВывоз.Транспорт КАК TransportRef,\n\tВывоз.Транспорт.ГосНомер КАК Plate,\n\tВывоз.ВремяПервогоВзвешивания КАК FirstWeighing,\n\tВывоз.ВремяВторогоВзвешивания КАК SecondWeighing,\n\tВывоз.ВесНетто КАК Net\nИЗ\n\tДокумент.ВывозХлопкаСырцаИзПунктовПриемаНаЗавод_Шлюз КАК Вывоз\nГДЕ\n\tНЕ Вывоз.ПометкаУдаления\n\tИ Вывоз.ВремяВторогоВзвешивания МЕЖДУ &Since И &Until",
+  "about": "1C report 'Vyvoz na zavod - Vyvoz po date vzveshivaniya brutto' (VyvozNaZavodVyvozPoDateBrutto): the same document, the same deletion mark and the same period field as its schema (probe 29.10); no plant or region filter, as the weekly export was made. The transport name is taken by String() of the reference, as 1C forms and the report show it ('MTZ-80-1 80 283 HA'): PRESENTATION() in a query gives the model only (export 29.10). The plate is cut from the String() name; a name without a plate at its end takes the plate from the catalog's own attribute GosNomer (catalog TransportPoVyvozuKhlopkaSyrtsa, probe v3 29.10), and the attribute is written as a column of its own. The document date is written for the acceptance check (track, addendum of 29.10 after the second run): a row the chat's file lacks and dated after that file was written was entered after the chat's export.",
+  "query": "ВЫБРАТЬ РАЗРЕШЕННЫЕ\n\tПРЕДСТАВЛЕНИЕ(Вывоз.Организация) КАК Org,\n\tПРЕДСТАВЛЕНИЕ(Вывоз.ПунктПриема) КАК Point,\n\tПРЕДСТАВЛЕНИЕ(Вывоз.Транспорт) КАК Transport,\n\tВывоз.Транспорт КАК TransportRef,\n\tВывоз.Транспорт.ГосНомер КАК Plate,\n\tВывоз.ВремяПервогоВзвешивания КАК FirstWeighing,\n\tВывоз.ВремяВторогоВзвешивания КАК SecondWeighing,\n\tВывоз.ВесНетто КАК Net,\n\tВывоз.Дата КАК DocDate\nИЗ\n\tДокумент.ВывозХлопкаСырцаИзПунктовПриемаНаЗавод_Шлюз КАК Вывоз\nГДЕ\n\tНЕ Вывоз.ПометкаУдаления\n\tИ Вывоз.ВремяВторогоВзвешивания МЕЖДУ &Since И &Until",
   "columns": [
     {
       "alias": "Org",
@@ -32,6 +32,10 @@
     {
       "alias": "Net",
       "header": "Вес нетто, кг"
+    },
+    {
+      "alias": "DocDate",
+      "header": "Дата документа"
     },
     {
       "alias": "Transport",
