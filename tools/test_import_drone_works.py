@@ -597,7 +597,12 @@ class ManifestTests(ImportTestBase):
         # (DRONE-SVODKA-READER-001, решение владельца 2026-08-11) + две
         # июньские, загруженные через экран 2026-08-11 (только Агрокластер
         # и Сервис — остальные подразделения июнь не сдали).
-        self.assertEqual(len(manifest), 31)
+        # [REASON]: FIN-RECON-002, выпуск v1.32 — ещё две июньские книги,
+        # Ғиждувон и Шофиркон; их загружает окно выпуска, а не экран.
+        self.assertEqual(len(manifest), 33)
+        self.assertEqual(manifest['Дрон Ғиждувон ПТЗ Июнь.xlsx'], '2026-06')
+        self.assertEqual(manifest['Шофиркон ПТЗ Дрон маълумот Июнь.xlsx'],
+                         '2026-06')
         self.assertEqual(
             manifest['Дрон_маълумот_Достон_АКА_АГРОКЛАСТЕР.xlsx'], '2025-09')
         self.assertEqual(manifest['ИЮНЬ Агрокластер.xlsx'], '2026-06')
