@@ -10,6 +10,9 @@ each block is parsed by PowerShell itself.
 
 Run: python -m unittest tests.test_fin_recon_002_release_runbook -v
 """
+import glob
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -24,7 +27,8 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, 'tools')):
         sys.path.insert(0, _p)
 
 from tests.test_agro_work_release_v122 import functions, release_block  # noqa: E402
-from tests.test_agro_work_runbook import commands, constants, git, has_commit, sections, text  # noqa: E402
+from tests.test_agro_work_runbook import (commands, constants, gate_lines, git, has_commit, prepare,  # noqa: E402
+                                          sections, text)
 from tests.test_gps_release_v131 import RELEASE as V131  # noqa: E402
 
 import drone_alias_decisions as decisions  # noqa: E402
@@ -34,7 +38,7 @@ import migrate_drones_works_merged_customer_link_001 as link  # noqa: E402
 
 RUNBOOK = os.path.join(REPO_ROOT, 'docs', 'FIN_RECON_002_RELEASE_V132_RUNBOOK.md')
 RUNBOOK_TEST = 'tests/test_fin_recon_002_release_runbook.py'
-BLOCKS = ('Шаг 2', 'Шаг 3', 'Откат')
+BLOCKS = ('Шаг 2', 'Шаг 3', 'Восстановление', 'Откат')
 BASELINE = '998bc20bfdb81e6d90ab413b63ab59da665aac65'
 
 
@@ -53,9 +57,9 @@ def read(*parts):
 
 class ReleaseV132Runbook(unittest.TestCase):
 
-    def test_three_blocks_ascii_without_tabs_placeholders_or_double_ampersand(self):
+    def test_four_blocks_ascii_without_tabs_placeholders_or_double_ampersand(self):
         bodies = re.findall(r'```powershell\n(.*?)```', text(RUNBOOK), re.S)
-        self.assertEqual(len(bodies), 3)
+        self.assertEqual(len(bodies), 4)
         for body in bodies:
             self.assertTrue(body.isascii(), body[:80])
             self.assertNotIn('\t', body)
@@ -72,6 +76,12 @@ class ReleaseV132Runbook(unittest.TestCase):
             self.assertEqual(len(values), 1, (name, values))
         for name in ('tableSha', 'bookShas', 'table', 'frdir', 'expectMig', 'forbid', 'db', 'py', 'backupBat'):
             self.assertEqual(constants(block('Шаг 2'))[name], constants(block('Шаг 3'))[name], name)
+        # The stop mark of the window is the one the restore reads and the rollback refuses on.
+        for name in ('stopMark', 'work'):
+            values = {constants(block(b))[name] for b in ('Шаг 3', 'Восстановление', 'Откат')}
+            self.assertEqual(len(values), 1, (name, values))
+        for name in ('db', 'py', 'site'):
+            self.assertEqual(constants(block('Шаг 3'))[name], constants(block('Восстановление'))[name], name)
 
     def test_the_baseline_is_production(self):
         self.assertEqual(const('Шаг 3', 'baseline'), BASELINE)
@@ -134,13 +144,15 @@ class ReleaseV132Runbook(unittest.TestCase):
         self.assertEqual(seen['clone'], {'Шаг 2'})
         self.assertEqual(seen['checkout'], {'Шаг 2'})
         self.assertEqual(seen['merge'], {'Шаг 3'})
-        self.assertEqual(seen['reset'], {'Шаг 3', 'Откат'})
+        self.assertEqual(seen['reset'], {'Шаг 3', 'Восстановление', 'Откат'})
         self.assertIn("checkout --quiet --detach $release", block('Шаг 2'))
 
     def test_services_stop_only_in_the_window_and_the_rollback(self):
         self.assertNotIn('Stop-Service', block('Шаг 2'))
         self.assertIn('Stop-Service', block('Шаг 3'))
         self.assertIn('Stop-Service', block('Откат'))
+        # The restore never stops anything: it runs only while the window left the services stopped.
+        self.assertNotIn('Stop-Service', block('Восстановление'))
 
     def test_the_helpers_are_word_for_word_those_of_v131(self):
         v131 = {}
@@ -163,9 +175,19 @@ class ReleaseV132Runbook(unittest.TestCase):
         at = [body.index(step) for step in order]
         self.assertEqual(at, sorted(at), order)
         self.assertIn("foreach ($scope in @('june', 'june-anchor'))", body)
-        # Without the column the new code cannot run: back to the baseline before the start.
-        self.assertIn("if ($updated -and (-not $payerDone))", body)
+        # [REASON]: the database starts to change with the payer column. A stop
+        # before it returns the code and starts the old program; a stop after it
+        # (the release check included) must not start anything on a partly
+        # changed database -- the restore block is the way back.
+        self.assertLess(body.index("'merge', '--ff-only'"), body.index('$dbTouched = $true'))
+        self.assertLess(body.index('$dbTouched = $true'), body.index("'migrate_drones_works_payer_unidentified_001.py'"))
+        self.assertLess(body.index("'^RESULT: RELEASE CHECK PASSED'"), body.index('$passed = $true'))
+        self.assertLess(body.index('$passed = $true'), body.index('} catch {\n  $failure = $_.Exception.Message'))
+        self.assertIn('if ($dbTouched -and (-not $passed)) {\n    $noStart = $true', body)
+        self.assertIn("if ($updated -and (-not $dbTouched))", body)
+        self.assertNotIn('payerDone', body)
         self.assertLess(body.index('git reset --keep $baseline'), body.index('Restart-Service'))
+        self.assertIn('if ($stopped -and (-not $noStart))', body)
         # The window refuses to run without a rehearsal of this very version.
         self.assertIn('fr002_step2_passed_$release.txt', block('Шаг 2'))
         self.assertIn('fr002_step2_passed_$release.txt', body)
@@ -253,6 +275,283 @@ class ReleaseV132BlocksParseInPowerShell(unittest.TestCase):
                 out = subprocess.run([powershell(), '-NoProfile', '-NonInteractive', '-Command', probe],
                                      capture_output=True, text=True, timeout=120)
                 self.assertIn('ERRORS 0', out.stdout, out.stdout + out.stderr)
+
+
+HARNESS = os.path.join(REPO_ROOT, 'tests', 'fin_recon_002_release_harness.ps1')
+RELEASE_HASH = 'f1e2c032' + 'c0ffee' * 5 + 'ab'
+TEST_SERVICES = ['V132TestReport', 'V132TestBot', 'V132TestBot003']
+DB_BEFORE = b'SQLite format 3\x00' + b'x' * 48
+# The STOP the window prints when the named tool fails.
+STOP_AT = {
+    'backup': 'the backup did not pass',
+    'merge': 'git merge --ff-only failed',
+    'untracked': 'the untracked files changed during the update',
+    'payer': 'the payer_unidentified migration did not pass',
+    'link': 'the link migration --scope june-anchor did not pass',
+    'decisions': 'the decision table did not pass',
+    'import': 'the import did not pass',
+    'registry': 'after the release the registry is',
+    'release_check': 'the release check did not pass',
+}
+BEFORE_THE_DATABASE = ('backup', 'merge', 'untracked')
+AFTER_THE_DATABASE = ('payer', 'link', 'decisions', 'import', 'registry', 'release_check')
+
+
+def sha256(path):
+    with open(path, 'rb') as fh:
+        return hashlib.sha256(fh.read()).hexdigest()
+
+
+def read_bytes(path):
+    with open(path, 'rb') as fh:
+        return fh.read()
+
+
+# [REASON]: the blocks join server paths with a backslash ("$frdir\books") and
+# the server runs Windows PowerShell 5.1, so they are executed on Windows only:
+# here on the workstation and in the CI job windows-powershell-51. The Linux
+# job still parses every block with pwsh 7 (the class above).
+@unittest.skipUnless(os.name == 'nt' and powershell(), 'the blocks run on Windows PowerShell only')
+class ReleaseV132BlocksRunInPowerShell(unittest.TestCase):
+    """Step 3, the restore and the rollback run against a stand-in server.
+
+    The defect this guards (independent review 29.10): a stop after the
+    database started to change -- the release check included -- restarted the
+    services on a partly changed database. Now only a stop before the first
+    write starts the old program; after it the services stay stopped, the
+    backup, receipts and log stay, and the restore block brings back the
+    window's backup, proven byte for byte, before anything starts.
+    """
+
+    def setUp(self):
+        self.server = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.server, True)
+        self.prod = os.path.join(self.server, 'prod')
+        self.work = os.path.join(self.server, 'work')
+        self.frdir = os.path.join(self.server, 'fr')
+        os.makedirs(os.path.join(self.prod, 'instance'))
+        os.makedirs(os.path.join(self.frdir, 'books'))
+        os.makedirs(self.work)
+        os.makedirs(os.path.join(self.server, 'backups'))
+        self.db = os.path.join(self.prod, 'instance', 'transport.db')
+        with open(self.db, 'wb') as fh:
+            fh.write(DB_BEFORE)
+        self.errlog = os.path.join(self.prod, 'error.log')
+        with open(self.errlog, 'w', encoding='ascii') as fh:
+            fh.write('INFO:waitress:Serving on http://0.0.0.0:5050\n')
+        self.table = os.path.join(self.frdir, 'release_table.csv')
+        with open(self.table, 'w', encoding='ascii') as fh:
+            fh.write('stand-in table\n')
+        books = []
+        for name in ('june_one.xlsx', 'june_two.xlsx'):
+            path = os.path.join(self.frdir, 'books', name)
+            with open(path, 'w', encoding='ascii') as fh:
+                fh.write('stand-in book %s\n' % name)
+            books.append(sha256(path))
+        self.book_shas = ' '.join(sorted(books))
+        with open(os.path.join(self.work, 'fr002_step2_passed_%s.txt' % RELEASE_HASH), 'w', encoding='ascii') as fh:
+            fh.write('rehearsal passed\n')
+        self.backup = os.path.join(self.server, 'backups', 'transport_window.db')
+        self.stop_mark = os.path.join(self.work, 'fr002_step3_db_stop.txt')
+        self.runs = 0
+
+    def scenario(self, **changes):
+        value = {
+            'Host': 'SRV-YOQSH', 'Head': BASELINE, 'Baseline': BASELINE,
+            'Reviewed': const('Шаг 3', 'reviewed'), 'Release': RELEASE_HASH,
+            'Services': TEST_SERVICES, 'ServiceStatus': 'Running',
+            'GateLines': gate_lines(0), 'FailAt': None, 'CopyCorrupts': False,
+            'NoFile': const('Шаг 3', 'noFile').split(), 'Db': self.db, 'BackupFile': self.backup,
+        }
+        value.update(changes)
+        return value
+
+    def run_block(self, name, scenario):
+        self.runs += 1
+        folder = os.path.join(self.server, 'run%d' % self.runs)
+        os.makedirs(folder)
+        log = os.path.join(self.work, 'release_%d.log' % self.runs)
+        body = prepare(block(name), {
+            'prod': "'%s'" % self.prod, 'db': "'%s'" % self.db,
+            'py': "'Invoke-FakePython'", 'backupBat': "'Invoke-FakeBackup'",
+            'errLog': "'%s'" % self.errlog,
+            'services': '@(%s)' % ', '.join("'%s'" % s for s in TEST_SERVICES),
+            'site': "'http://v132-test.invalid'", 'work': "'%s'" % self.work,
+            'log': "'%s'" % log, 'admin': '$true', 'frdir': "'%s'" % self.frdir,
+            'table': "'%s'" % self.table, 'tableSha': "'%s'" % sha256(self.table),
+            'bookShas': "'%s'" % self.book_shas, 'stopMark': "'%s'" % self.stop_mark,
+        })
+        block_file = os.path.join(folder, 'block.ps1')
+        scenario_file = os.path.join(folder, 'scenario.json')
+        calls_file = os.path.join(folder, 'calls.txt')
+        with open(block_file, 'w', encoding='ascii') as fh:
+            fh.write(body)
+        with open(scenario_file, 'w', encoding='ascii') as fh:
+            json.dump(scenario, fh, ensure_ascii=True)
+        proc = subprocess.run(
+            [powershell(), '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', HARNESS,
+             '-BlockFile', block_file, '-ScenarioFile', scenario_file, '-CallsFile', calls_file],
+            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=300)
+        output = proc.stdout + proc.stderr
+        results = [line for line in output.splitlines() if line.startswith('RESULT: ')]
+        self.assertEqual(len(results), 1, output)
+        with open(calls_file, encoding='utf-8-sig') as fh:
+            calls = [line for line in fh.read().splitlines() if line]
+        return results[0], calls, output, log
+
+    def started(self, calls):
+        return [c for c in calls if c.startswith(('Restart-Service', 'Start-Service'))]
+
+    def assertInOrder(self, calls, *prefixes):
+        where = []
+        for prefix in prefixes:
+            hits = [i for i, call in enumerate(calls) if call.startswith(prefix)]
+            self.assertTrue(hits, '%s not called: %s' % (prefix, calls))
+            where.append(hits[0])
+        self.assertEqual(where, sorted(where), calls)
+
+    def mark(self):
+        with open(self.stop_mark, encoding='ascii') as fh:
+            return dict(line.split(': ', 1) for line in fh.read().splitlines() if ': ' in line)
+
+    def kept(self):
+        return glob.glob(os.path.join(self.work, 'fr002_db_after_stop_*'))
+
+    def stop_the_window(self, fail_at='release_check'):
+        result, calls, output, log = self.run_block('Шаг 3', self.scenario(FailAt=fail_at))
+        self.assertTrue(result.startswith('RESULT: STOP - ' + STOP_AT[fail_at]), output)
+        self.assertTrue(os.path.isfile(self.stop_mark), output)
+        return output
+
+    # --- step 3 -----------------------------------------------------------------
+
+    def test_the_release_passes_and_starts_the_new_program(self):
+        result, calls, output, log = self.run_block('Шаг 3', self.scenario())
+        self.assertEqual(result, 'RESULT: RELEASE PASSED', output)
+        self.assertInOrder(calls, 'Stop-Service', 'backup', 'git merge --ff-only',
+                           'python migrate_drones_works_payer_unidentified_001.py',
+                           'python migrate_drones_works_merged_customer_link_001.py',
+                           'python tools\\drone_alias_decisions.py', 'python tools\\import_drone_works.py',
+                           'python tools\\fin_recon_002_release_check.py', 'Restart-Service', 'GET /login')
+        self.assertEqual(sorted(c.split()[1] for c in self.started(calls)), sorted(TEST_SERVICES))
+        self.assertFalse(os.path.exists(self.stop_mark))
+        self.assertFalse([c for c in calls if c.startswith('git reset')])
+
+    def test_a_stop_before_the_database_changes_starts_the_old_program(self):
+        for fail_at in BEFORE_THE_DATABASE:
+            with self.subTest(fail_at=fail_at):
+                self.setUp()
+                result, calls, output, log = self.run_block('Шаг 3', self.scenario(FailAt=fail_at))
+                self.assertTrue(result.startswith('RESULT: STOP - ' + STOP_AT[fail_at]), output)
+                self.assertFalse([c for c in calls if c.startswith('python migrate')], calls)
+                self.assertEqual(read_bytes(self.db), DB_BEFORE)
+                self.assertFalse(os.path.exists(self.stop_mark))
+                self.assertEqual(sorted(c.split()[1] for c in self.started(calls)), sorted(TEST_SERVICES), output)
+                if fail_at == 'untracked':
+                    # The code had moved: it goes back before anything starts.
+                    self.assertInOrder(calls, 'git merge --ff-only', 'git reset --keep ' + BASELINE, 'Restart-Service')
+                else:
+                    self.assertFalse([c for c in calls if c.startswith('git reset')], calls)
+
+    def test_a_stop_after_the_database_changed_leaves_the_services_stopped(self):
+        for fail_at in AFTER_THE_DATABASE:
+            with self.subTest(fail_at=fail_at):
+                self.setUp()
+                result, calls, output, log = self.run_block('Шаг 3', self.scenario(FailAt=fail_at))
+                self.assertTrue(result.startswith('RESULT: STOP - ' + STOP_AT[fail_at]), output)
+                self.assertEqual(self.started(calls), [], output)
+                self.assertFalse([c for c in calls if c.startswith(('git reset', 'GET '))], calls)
+                self.assertIn('the services are NOT started', output)
+                # The backup, the receipts and the log stay; the mark names them.
+                mark = self.mark()
+                self.assertEqual(mark['RELEASE'], RELEASE_HASH)
+                self.assertEqual(mark['BACKUP'], self.backup)
+                self.assertEqual(read_bytes(self.backup), DB_BEFORE)
+                self.assertTrue(os.path.isdir(mark['RECEIPTS']), mark)
+                self.assertEqual(mark['LOG'], log)
+                self.assertTrue(os.path.isfile(log))
+                self.assertIn(STOP_AT[fail_at], mark['FAILURE'])
+                self.assertIn('BACKUP OF THIS WINDOW: ' + self.backup, output)
+
+    def test_the_window_does_not_start_while_a_stop_mark_lies(self):
+        self.stop_the_window('import')
+        result, calls, output, log = self.run_block('Шаг 3', self.scenario())
+        self.assertTrue(result.startswith('RESULT: STOP - a previous window stopped after the database changed'),
+                        output)
+        self.assertFalse([c for c in calls if c.startswith(('Stop-Service', 'backup', 'git merge', 'python'))], calls)
+        self.assertEqual(self.started(calls), [])
+
+    # --- the restore ------------------------------------------------------------
+
+    def test_the_restore_returns_the_window_backup_and_the_old_code_then_starts(self):
+        self.stop_the_window('release_check')
+        self.assertNotEqual(read_bytes(self.db), DB_BEFORE)
+        self.assertTrue(os.path.isfile(self.db + '-wal'))
+        result, calls, output, log = self.run_block(
+            'Восстановление', self.scenario(Head=RELEASE_HASH, ServiceStatus='Stopped'))
+        self.assertEqual(result, 'RESULT: RESTORE PASSED', output)
+        self.assertEqual(read_bytes(self.db), DB_BEFORE)
+        self.assertEqual(read_bytes(self.db), read_bytes(self.backup))
+        self.assertFalse(os.path.exists(self.db + '-wal'))
+        # The window's files are moved aside, not deleted.
+        kept = self.kept()
+        self.assertEqual(len(kept), 1, kept)
+        self.assertIn(b'written by the window', read_bytes(os.path.join(kept[0], 'transport.db')))
+        self.assertTrue(os.path.isfile(os.path.join(kept[0], 'transport.db-wal')))
+        self.assertInOrder(calls, 'python tools\\check_db_lock.py', 'copy', 'git reset --keep ' + BASELINE,
+                           'Restart-Service', 'GET /login')
+        self.assertFalse([c for c in calls if c.startswith('Stop-Service')])
+        self.assertFalse(os.path.exists(self.stop_mark))
+        self.assertEqual(len(glob.glob(os.path.join(self.work, 'fr002_step3_db_stop_restored_*.txt'))), 1)
+
+    def test_the_restore_without_a_mark_changes_nothing(self):
+        result, calls, output, log = self.run_block(
+            'Восстановление', self.scenario(Head=RELEASE_HASH, ServiceStatus='Stopped'))
+        self.assertEqual(result, 'RESULT: STOP - no window stopped after a database change - this block is not needed',
+                         output)
+        # Only the closing line that names the program version.
+        self.assertEqual(calls, ['git rev-parse --short HEAD'])
+        self.assertEqual(read_bytes(self.db), DB_BEFORE)
+
+    def test_the_restore_refuses_while_the_services_run_or_the_backup_is_gone(self):
+        self.stop_the_window('import')
+        window_db = read_bytes(self.db)
+        result, calls, output, log = self.run_block(
+            'Восстановление', self.scenario(Head=RELEASE_HASH, ServiceStatus='Running'))
+        self.assertTrue(result.startswith('RESULT: STOP - these services are not stopped'), output)
+        self.assertEqual(self.started(calls), [])
+        self.assertEqual(read_bytes(self.db), window_db)
+        os.rename(self.backup, self.backup + '.elsewhere')
+        result, calls, output, log = self.run_block(
+            'Восстановление', self.scenario(Head=RELEASE_HASH, ServiceStatus='Stopped'))
+        self.assertTrue(result.startswith('RESULT: STOP - the backup of the window is not found'), output)
+        self.assertEqual(self.started(calls), [])
+        self.assertFalse([c for c in calls if c.startswith(('copy', 'git reset'))], calls)
+        self.assertEqual(read_bytes(self.db), window_db)
+        self.assertEqual(self.kept(), [])
+
+    def test_a_restore_that_cannot_prove_the_copy_does_not_start(self):
+        self.stop_the_window('link')
+        result, calls, output, log = self.run_block(
+            'Восстановление', self.scenario(Head=RELEASE_HASH, ServiceStatus='Stopped', CopyCorrupts=True))
+        self.assertEqual(result, 'RESULT: STOP - the restored database differs from the backup', output)
+        self.assertEqual(self.started(calls), [])
+        self.assertFalse([c for c in calls if c.startswith('git reset')], calls)
+        self.assertIn('THE SERVICES ARE NOT STARTED', output)
+        kept = self.kept()
+        self.assertEqual(len(kept), 1, kept)
+        self.assertIn(b'written by the window', read_bytes(os.path.join(kept[0], 'transport.db')))
+        self.assertTrue(os.path.isfile(self.stop_mark))
+
+    # --- the rollback -----------------------------------------------------------
+
+    def test_the_rollback_refuses_after_a_window_stopped_on_a_changed_database(self):
+        self.stop_the_window('decisions')
+        result, calls, output, log = self.run_block(
+            'Откат', self.scenario(Head=RELEASE_HASH, ServiceStatus='Stopped'))
+        self.assertTrue(result.startswith('RESULT: STOP - the window stopped after a database change'), output)
+        self.assertEqual(calls, ['git rev-parse --short HEAD'])
+        self.assertTrue(os.path.isfile(self.stop_mark))
 
 
 if __name__ == '__main__':

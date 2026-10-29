@@ -839,14 +839,17 @@ jobs:
         run: python -m unittest tests.test_gps_release_v131.ReleaseV131ToolFormats tests.test_gps_release_v131.ReleaseV131BlocksInPowerShell
 
       # FIN-RECON-002 release v1.32: its blocks parsed by the interpreter the
-      # owner pastes into. openpyxl only because the suite imports the importer.
+      # owner pastes into, then step 3, the restore and the rollback executed
+      # against a stand-in server (tests/fin_recon_002_release_harness.ps1):
+      # every stop after the database started to change leaves the services
+      # stopped. openpyxl only because the suite imports the importer.
       - name: FIN-RECON-002 release v1.32 blocks on Windows PowerShell 5.1
         shell: powershell
         env:
           FIN_RECON_RELEASE_POWERSHELL: powershell
         run: |
           python -m pip install --quiet openpyxl
-          python -m unittest tests.test_fin_recon_002_release_runbook.ReleaseV132BlocksParseInPowerShell
+          python -m unittest tests.test_fin_recon_002_release_runbook.ReleaseV132BlocksParseInPowerShell tests.test_fin_recon_002_release_runbook.ReleaseV132BlocksRunInPowerShell
 
       # GPS-36: the 1C probe on the interpreter the owner runs it with.
       - name: GPS-36 -- 1C probe on Windows PowerShell 5.1

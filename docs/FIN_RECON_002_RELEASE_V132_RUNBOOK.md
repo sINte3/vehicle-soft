@@ -39,7 +39,9 @@
    5. проверка базы против копии, снятой в этом же окне.
 3. Май и все закрытые периоды не меняются — это проверяется побайтно.
 4. Программа и оба Telegram-бота **не работают около 10 минут**.
-   Перед окном — резервная копия, сразу проверяется.
+   Перед окном — резервная копия, сразу проверяется. Если окно
+   остановится, когда база уже менялась, программа сама **не запускается**:
+   путь назад — «Восстановление базы» из копии окна.
 
 **Когда:** день назовёте вы. **Не с 00:30 до 05:00** — ночью на сервере свои
 задачи. Шаг 2 (репетиция) — в тот же день, что шаг 3, после ночной копии.
@@ -244,13 +246,22 @@ try { Stop-Transcript | Out-Null } catch { }
 10. Проверка базы против копии пункта 3 (`tools\fin_recon_002_release_check.py`).
 11. Запускает программу и ботов; страница входа и раздел Дронов открываются.
 
-Если что-то не так, блок останавливается и **всё равно запускает программу
-обратно**:
+Если что-то не так, блок останавливается. Дальше всё зависит от того,
+начала ли меняться база:
 
-- если колонка «Фукаро» ещё не добавлена, сначала возвращает код к
-  `998bc20` — новый код без колонки работать не может;
-- после колонки каждый следующий шаг — одна транзакция: он либо записан
-  целиком, либо не записан вовсе. Программа запускается на новой версии.
+- **сбой в пунктах 1–4** (база ещё не менялась): блок возвращает код к
+  `998bc20` и запускает программу обратно, на прежней версии;
+- **сбой в пунктах 5–10** (база уже менялась), в том числе если не прошла
+  итоговая проверка пункта 10 или окно прервано: блок **не запускает**
+  программу. Он печатает `RESULT: STOP`, путь к резервной копии окна и к
+  папке квитанций и оставляет файл-отметку
+  `C:\VehicleSoft_Release\fr002_step3_db_stop.txt`. Копия, квитанции и
+  журнал остаются на месте. Службы руками не запускать, «Откат» не
+  выполнять: путь назад — раздел «Восстановление базы» ниже. Пока программа
+  стояла, пользователи ничего не записали, поэтому копия окна возвращает
+  базу ровно в состояние до выпуска.
+
+Пока отметка лежит, шаг 3 повторно не запускается.
 
 ```powershell
 & {
@@ -275,6 +286,7 @@ $noFile    = 'DRONES_WORKS_JUN2026_MERGED_CUSTOMER_LINK_001 DRONES_WORKS_JUN2026
 $batch     = 'FIN_RECON_002_JUNE_2026'
 $forbid    = '589,684-692,803'
 $work      = 'C:\VehicleSoft_Release'
+$stopMark  = 'C:\VehicleSoft_Release\fr002_step3_db_stop.txt'
 $log       = 'C:\VehicleSoft_Release\release_v132_step3.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 function Get-OpenItems([string[]]$lines) {
@@ -357,7 +369,8 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 try { Start-Transcript -Path $log -Append | Out-Null } catch { Write-Host 'NOTE: the log file could not be started' }
 $stopped = $false
 $updated = $false
-$payerDone = $false
+$dbTouched = $false
+$passed = $false
 $noStart = $false
 $failure = $null
 $warnings = @()
@@ -366,6 +379,7 @@ try {
   Write-Host '== 1. Checks - nothing is changed yet'
   if (-not $admin) { throw 'this window is not run as administrator - close it and open PowerShell with Run as administrator' }
   if ((hostname) -ne 'srv-yoqsh') { throw "this computer is $(hostname), not SRV-YOQSH" }
+  if (Test-Path -LiteralPath $stopMark) { throw "a previous window stopped after the database changed ($stopMark) - run the restore block first" }
   foreach ($path in @($db, $py, $backupBat, $table)) {
     if (-not (Test-Path -LiteralPath $path)) { throw "not found: $path" }
   }
@@ -434,9 +448,9 @@ try {
   Write-Host "UPDATED: $head -> $now (untracked files $($untracked0.Count) before and after, the same list)"
 
   Write-Host '== 5. The payer_unidentified column - before the new code starts'
+  $dbTouched = $true
   $r = Invoke-Tool $py @('migrate_drones_works_payer_unidentified_001.py', '--db', $db)
   if (($r.Code -ne 0) -or (@($r.Lines -match '^Done\. 1 column added to drone_works').Count -ne 1)) { throw "the payer_unidentified migration did not pass (exit $($r.Code))" }
-  $payerDone = $true
 
   Write-Host '== 6. June links of the merged cells'
   foreach ($scope in @('june', 'june-anchor')) {
@@ -463,11 +477,23 @@ try {
   Write-Host '== 10. The database against the backup of this window'
   $r = Invoke-Tool $py @('tools\fin_recon_002_release_check.py', '--db', $db, '--baseline', $backup.Path)
   if (($r.Code -ne 0) -or (@($r.Lines -match '^RESULT: RELEASE CHECK PASSED').Count -ne 1)) { throw 'the release check did not pass - see the FAIL lines above' }
+  $passed = $true
 } catch {
   $failure = $_.Exception.Message
 } finally {
-  if ($updated -and (-not $payerDone)) {
-    Write-Host '== The payer_unidentified column is not there - the code goes back before the start'
+  if ($dbTouched -and (-not $passed)) {
+    $noStart = $true
+    if (-not $failure) { $failure = 'the window was interrupted after the database started to change' }
+    $mark = @("RELEASE: $release", "BACKUP: $($backup.Path)", "RECEIPTS: $receipts", "LOG: $log", "FAILURE: $failure", "TIME: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
+    try { [System.IO.File]::WriteAllLines($stopMark, [string[]]$mark) } catch { Write-Host "THE STOP FILE COULD NOT BE WRITTEN: $stopMark - keep this window open and send the log" }
+    Write-Host '== The database was being changed when the window stopped - the services are NOT started'
+    Write-Host "BACKUP OF THIS WINDOW: $($backup.Path)"
+    Write-Host "RECEIPTS: $receipts"
+    Write-Host "STOP FILE: $stopMark"
+    Write-Host 'Do not start the services by hand and do not run the rollback block. Send the log file and the receipts folder; the way back is the restore block.'
+  }
+  if ($updated -and (-not $dbTouched)) {
+    Write-Host '== The database was not changed - the code goes back before the start'
     & git reset --keep $baseline 2>&1 | ForEach-Object { Write-Host "    $_" }
     if (($LASTEXITCODE -ne 0) -or ([string](& git rev-parse HEAD) -ne $baseline)) {
       $noStart = $true
@@ -587,12 +613,19 @@ try { Stop-Transcript | Out-Null } catch { }
 | `RESULT: STOP - the backup did not pass` | копия базы не записалась | прислать журнал; программа запущена на прежней версии |
 | `RESULT: STOP - git merge --ff-only failed` | Git не забрал новую версию | прислать журнал; программа запущена на прежней версии |
 | `RESULT: STOP - the untracked files changed during the update` | обновление задело неотслеживаемые файлы | ничего не удалять; прислать журнал |
-| `RESULT: STOP - the payer_unidentified migration did not pass` | колонка не добавилась | код возвращён к `998bc20`, программа запущена; прислать журнал |
-| `RESULT: STOP - the link migration` | привязки не записаны | прислать журнал; программа на новой версии, база с колонкой |
-| `RESULT: STOP - the decision table did not pass` | таблица не записана | прислать журнал; программа на новой версии, книги не загружены |
-| `RESULT: STOP - the import did not pass` | книги не загружены | прислать журнал и отчёт импорта из `receipts_...` |
-| `RESULT: STOP - after the release the registry is` | реестр не тот, что ожидался | прислать журнал |
-| `RESULT: STOP - the release check did not pass` | база изменилась не так, как решено | прислать журнал; ничего не исправлять самому |
+| `RESULT: STOP - a previous window stopped after the database changed` | прошлое окно остановилось после изменения базы | сначала «Восстановление базы»; ничего не менялось |
+| `RESULT: STOP - the payer_unidentified migration did not pass` | колонка не добавилась | **программа не запущена**; прислать журнал; «Восстановление базы» |
+| `RESULT: STOP - the link migration` | привязки не записаны | **программа не запущена**; прислать журнал и квитанции; «Восстановление базы» |
+| `RESULT: STOP - the decision table did not pass` | таблица не записана | **программа не запущена**; прислать журнал и квитанции; «Восстановление базы» |
+| `RESULT: STOP - the import did not pass` | книги не загружены | **программа не запущена**; прислать журнал и отчёт импорта из `receipts_...`; «Восстановление базы» |
+| `RESULT: STOP - after the release the registry is` | реестр не тот, что ожидался | **программа не запущена**; прислать журнал; «Восстановление базы» |
+| `RESULT: STOP - the release check did not pass` | база изменилась не так, как решено | **программа не запущена**; прислать журнал; ничего не исправлять самому; «Восстановление базы» |
+| `RESULT: STOP - the window was interrupted after the database started to change` | окно прервано (Ctrl+C) после начала записи | **программа не запущена**; прислать журнал; «Восстановление базы» |
+| `RESULT: STOP - no window stopped after a database change` | «Восстановление» без отметки шага 3 | блок не нужен; ничего не менялось |
+| `RESULT: STOP - the backup of the window is not found` | копии из отметки нет на диске | не запускать программу; прислать журнал; ничего не менялось |
+| `RESULT: STOP - these services are not stopped` | кто-то запустил службы после остановки окна | прислать журнал; ничего не менялось |
+| `RESULT: STOP - the restored database differs from the backup` | копия легла не байт в байт | **программа не запущена**; файлы окна лежат в `fr002_db_after_stop_...`; прислать журнал |
+| `RESULT: STOP - the window stopped after a database change` | «Откат» после остановки окна с изменённой базой | выполнить «Восстановление базы», не «Откат»; ничего не менялось |
 | `RESULT: STOP - /drones/works answered` | раздел Дронов не открывается | прислать журнал; если программа не открывается совсем — «Откат» |
 
 ## Критерии STOP — коротко
@@ -603,13 +636,166 @@ try { Stop-Transcript | Out-Null } catch { }
   - строка «Плательщик-гражданин не установлен» не 12 работ;
   - №137 или №155 — не «внутренний»;
   - карточек «Ғиждувон ПТЗ» не ровно одна.
-- **Откатывать сразу — только код** и только если программа не открывается
-  совсем. Данные окна прошли проверку против копии и для прежнего кода
-  безопасны:
+- **Если шаг 3 остановился после изменения базы** — программа не запущена,
+  это намеренно. Службы руками не запускать. Путь назад — «Восстановление
+  базы»: копия окна, сверенная по SHA-256, и код `998bc20`.
+- **Откатывать сразу — только код** и только если шаг 3 прошёл, а программа
+  не открывается совсем. Данные окна прошли проверку против копии и для
+  прежнего кода безопасны:
   - лишняя колонка `payer_unidentified` прежним кодом не читается;
   - строки, карточки и алиасы — обычные записи.
 - **Восстанавливать базу из копии шага 3 — только вместе с сессией.**
   Восстановление сотрёт всё, что пользователи записали после запуска.
+
+## Восстановление базы — только если шаг 3 остановился после изменения базы
+
+Когда: шаг 3 напечатал `The database was being changed when the window
+stopped`, и лежит отметка `C:\VehicleSoft_Release\fr002_step3_db_stop.txt`.
+Сначала прислать журнал и квитанции; блок выполнить после ответа.
+
+Что делает блок:
+
+1. Проверяет отметку, копию окна из неё и то, что службы всё ещё
+   остановлены.
+2. Убирает файлы базы окна (`transport.db`, `-wal`, `-shm`) в папку
+   `C:\VehicleSoft_Release\fr002_db_after_stop_<время>` — ничего не
+   удаляется.
+3. Кладёт на место копию окна и сверяет её с копией по SHA-256 байт в байт.
+4. Возвращает код к `998bc20`.
+5. Переименовывает отметку и только после всего этого запускает программу.
+
+Любая проверка не прошла — программа не запускается, а файлы окна остаются
+в папке из пункта 2. Пользовательские записи не теряются: пока программа
+стояла, их не было.
+
+```powershell
+& {
+$ErrorActionPreference = 'Continue'
+$ProgressPreference = 'SilentlyContinue'
+$prod      = 'C:\transport-report'
+$db        = 'C:\transport-report\instance\transport.db'
+$py        = 'C:\Program Files\Python314\python.exe'
+$services  = @('TransportReport', 'TransportBot', 'TransportBot003')
+$site      = 'http://10.103.25.14:5050'
+$baseline  = '998bc20bfdb81e6d90ab413b63ab59da665aac65'
+$reviewed  = 'f8d4c05812d7ee659ef852ed332c73abc95eceee'
+$runbookTest = 'tests/test_fin_recon_002_release_runbook.py'
+$work      = 'C:\VehicleSoft_Release'
+$stopMark  = 'C:\VehicleSoft_Release\fr002_step3_db_stop.txt'
+$log       = 'C:\VehicleSoft_Release\release_v132_restore.log'
+$admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+function Invoke-Tool([string]$exe, [string[]]$arguments) {
+  $lines = @(& $exe @arguments 2>&1 | ForEach-Object { "$_" })
+  $code = $LASTEXITCODE
+  foreach ($line in $lines) { Write-Host "    $line" }
+  return [pscustomobject]@{ Code = $code; Lines = $lines }
+}
+function Test-Lock($result) {
+  if ($result.Code -eq 0) { return $true }
+  return (($result.Code -eq 3) -and (@($result.Lines -match 'no process holds the database').Count -gt 0))
+}
+function Wait-Services([string]$want, [int]$seconds) {
+  $deadline = (Get-Date).AddSeconds($seconds)
+  while ($true) {
+    $late = @($services | Where-Object { [string](Get-Service -Name $_).Status -ne $want })
+    if ($late.Count -eq 0) { return $true }
+    if ((Get-Date) -gt $deadline) { return $false }
+    Start-Sleep -Seconds 2
+  }
+}
+New-Item -ItemType Directory -Force -Path $work | Out-Null
+try { Start-Transcript -Path $log -Append | Out-Null } catch { Write-Host 'NOTE: the log file could not be started' }
+$moved = $false
+$restored = $false
+$keep = $null
+$failure = $null
+try {
+  if (-not $admin) { throw 'this window is not run as administrator - close it and open PowerShell with Run as administrator' }
+  if ((hostname) -ne 'srv-yoqsh') { throw "this computer is $(hostname), not SRV-YOQSH" }
+  if (-not (Test-Path -LiteralPath $stopMark)) { throw 'no window stopped after a database change - this block is not needed' }
+  $backupPath = ''
+  foreach ($line in @(Get-Content -LiteralPath $stopMark)) { if ($line -match '^BACKUP: (.+)$') { $backupPath = $Matches[1].Trim() } }
+  if ((-not $backupPath) -or (-not (Test-Path -LiteralPath $backupPath))) { throw "the backup of the window is not found: '$backupPath'" }
+  $running = @($services | Where-Object { [string](Get-Service -Name $_).Status -ne 'Stopped' })
+  if ($running.Count -gt 0) { throw "these services are not stopped: $($running -join ', ') - the restore works only while the program is stopped" }
+  Set-Location -LiteralPath $prod
+  $head = [string](& git rev-parse HEAD)
+  if ($head -ne $baseline) {
+    & git merge-base --is-ancestor $reviewed $head
+    if ($LASTEXITCODE -ne 0) { throw 'the program is neither at the previous version nor at this release - restore only together with the session' }
+    $changed = @(& git diff --name-only $reviewed $head | Where-Object { ($_ -notlike 'docs/*') -and ($_ -notlike '.github/*') -and ($_ -ne $runbookTest) })
+    if ($changed.Count -gt 0) { throw "the program is past this release (code changed after it: $($changed -join ', ')) - restore only together with the session" }
+    & git merge-base --is-ancestor $baseline $head
+    if ($LASTEXITCODE -ne 0) { throw 'the previous version is not an ancestor of the current one' }
+  }
+  $modified = @(& git status --porcelain --untracked-files=no)
+  if ($modified.Count -gt 0) { throw "program files were edited on this server: $($modified -join '; ')" }
+  if (-not (Test-Lock (Invoke-Tool $py @('tools\check_db_lock.py', '--db', $db)))) { throw 'the database is held by another program (check_db_lock)' }
+  $want = (Get-FileHash -LiteralPath $backupPath -Algorithm SHA256).Hash
+  $keep = "$work\fr002_db_after_stop_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+  New-Item -ItemType Directory -Force -Path $keep | Out-Null
+  Write-Host '== Moving the database files of the stopped window aside - nothing is deleted'
+  $moved = $true
+  foreach ($suffix in @('', '-wal', '-shm', '-journal')) {
+    if (Test-Path -LiteralPath "$db$suffix") { Move-Item -LiteralPath "$db$suffix" -Destination $keep -ErrorAction Stop }
+  }
+  Write-Host "KEPT: $keep"
+  Copy-Item -LiteralPath $backupPath -Destination $db -ErrorAction Stop
+  $got = (Get-FileHash -LiteralPath $db -Algorithm SHA256).Hash
+  if ($got -ne $want) { throw 'the restored database differs from the backup' }
+  foreach ($suffix in @('-wal', '-shm', '-journal')) {
+    if (Test-Path -LiteralPath "$db$suffix") { throw "a $suffix file is beside the restored database" }
+  }
+  Write-Host "RESTORED: $backupPath -> $db (SHA-256 $want, the same)"
+  if ($head -ne $baseline) {
+    & git reset --keep $baseline 2>&1 | ForEach-Object { Write-Host "    $_" }
+    if ($LASTEXITCODE -ne 0) { throw "git reset --keep failed (exit $LASTEXITCODE)" }
+  }
+  $now = [string](& git rev-parse HEAD)
+  if ($now -ne $baseline) { throw "after the restore the code is at $now, expected $baseline" }
+  Write-Host "CODE: $head -> $now"
+  Rename-Item -LiteralPath $stopMark -NewName "fr002_step3_db_stop_restored_$(Get-Date -Format 'yyyyMMdd_HHmmss').txt" -ErrorAction Stop
+  $restored = $true
+} catch {
+  $failure = $_.Exception.Message
+} finally {
+  if ($restored) {
+    Write-Host '== Starting the program and both bots'
+    foreach ($name in $services) { Restart-Service -Name $name }
+    if (Wait-Services 'Running' 90) {
+      Write-Host 'SERVICES: Running'
+    } else {
+      Write-Host 'THE SERVICES ARE NOT RUNNING - start them by hand: Restart-Service TransportReport; Restart-Service TransportBot; Restart-Service TransportBot003'
+      if (-not $failure) { $failure = 'the services did not start within 90 seconds' }
+    }
+  } elseif ($moved) {
+    Write-Host "THE SERVICES ARE NOT STARTED - the database files of the window are kept in $keep; send the log file"
+  } else {
+    Write-Host 'Nothing was changed: the services stay stopped.'
+  }
+}
+if ($restored -and (-not $failure)) {
+  $code = 0
+  $deadline = (Get-Date).AddSeconds(90)
+  while ((Get-Date) -lt $deadline) {
+    try { $code = [int](Invoke-WebRequest -Uri ($site + '/login') -UseBasicParsing -TimeoutSec 15).StatusCode } catch { $code = 0 }
+    if ($code -eq 200) { break }
+    Start-Sleep -Seconds 3
+  }
+  if ($code -ne 200) { $failure = "the login page did not open (HTTP $code)" } else { Write-Host 'SMOKE /login: 200' }
+}
+Write-Host "PROGRAM VERSION NOW: $([string](& git -C $prod rev-parse --short HEAD))"
+if ($failure) { Write-Host "RESULT: STOP - $failure" } else { Write-Host 'RESULT: RESTORE PASSED' }
+Write-Host "LOG FILE: $log"
+try { Stop-Transcript | Out-Null } catch { }
+}
+```
+
+**Что должно получиться:** `KEPT: ...`, `RESTORED: ... (SHA-256 ..., the same)`,
+`CODE: ... -> 998bc20...`, `SERVICES: Running`, `SMOKE /login: 200`,
+`RESULT: RESTORE PASSED`. Программа снова на v1.31 с базой до выпуска.
+**Прислать:** `C:\VehicleSoft_Release\release_v132_restore.log`. Повторный
+выпуск — только после разбора причины.
 
 ## Откат — только если после шага 3 программа не открывается
 
@@ -630,6 +816,7 @@ $baseline  = '998bc20bfdb81e6d90ab413b63ab59da665aac65'
 $reviewed  = 'f8d4c05812d7ee659ef852ed332c73abc95eceee'
 $runbookTest = 'tests/test_fin_recon_002_release_runbook.py'
 $work      = 'C:\VehicleSoft_Release'
+$stopMark  = 'C:\VehicleSoft_Release\fr002_step3_db_stop.txt'
 $log       = 'C:\VehicleSoft_Release\release_v132_rollback.log'
 $admin     = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 function Wait-Services([string]$want, [int]$seconds) {
@@ -648,6 +835,7 @@ $failure = $null
 try {
   if (-not $admin) { throw 'this window is not run as administrator - close it and open PowerShell with Run as administrator' }
   if ((hostname) -ne 'srv-yoqsh') { throw "this computer is $(hostname), not SRV-YOQSH" }
+  if (Test-Path -LiteralPath $stopMark) { throw "the window stopped after a database change ($stopMark) - this block does not fit, run the restore block" }
   Set-Location -LiteralPath $prod
   $head = [string](& git rev-parse HEAD)
   if ($head -eq $baseline) { throw 'the program is already on the previous version - there is nothing to roll back' }
