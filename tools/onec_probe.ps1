@@ -26,12 +26,14 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File C:\gps-tools\tools\onec_probe.ps1 -Server srv-1c -Base uzpaxta -CredentialsFile C:\VehicleSoft_Secrets\onec_credentials.txt -Out C:\gps-tools\check\onec_probe.txt
 #
 # EXIT CODES
-#   0  the file is written
+#   0  the file is written, every part read
+#   4  the file is written, some parts failed: each is a line starting with
+#      '!' that names the part and the 1C member it stopped on
 #   2  bad input: no credentials file, a key missing or unknown, no folder
 #      for -Out; nothing is written
 #   3  1C refused the connection (wrong login or password, no right
 #      "external connection", no licence): the masked 1C text is in -Out
-#   1  the probe crashed
+#   1  the probe crashed outside its parts
 #
 # ASCII only: Windows PowerShell 5.1 reads a file without a BOM as ANSI, so
 # Cyrillic search words below are \u escapes inside .NET regular expressions.
@@ -44,7 +46,7 @@ param(
   [switch]$LoadOnly
 )
 
-$ProbeVersion = 'onec_probe v1'
+$ProbeVersion = 'onec_probe v2'
 
 # [REASON]: the two reports are found by their synonyms -- "reestr" (the
 # PK-17 register, "jadval 7"), "vyvoz" (removal by gross weighing date),
@@ -129,41 +131,124 @@ function Test-Com($obj) {
   return ($null -ne $obj -and $obj.GetType().IsCOMObject)
 }
 
+# [REASON]: the second run on the server (29.10) stopped on
+# DISP_E_UNKNOWNNAME without saying which name 1C did not know. Each 1C
+# member is now asked for by its English name and then by its Russian one
+# (1C knows both for platform objects, but which one a given object answers
+# to through COM is exactly what we could not see), and a member neither
+# name reaches is reported by both names.
+$Alternates = @{}
+$Alternates['Metadata'] = [regex]::Unescape('\u041c\u0435\u0442\u0430\u0434\u0430\u043d\u043d\u044b\u0435')
+$Alternates['Name'] = [regex]::Unescape('\u0418\u043c\u044f')
+$Alternates['Synonym'] = [regex]::Unescape('\u0421\u0438\u043d\u043e\u043d\u0438\u043c')
+$Alternates['Version'] = [regex]::Unescape('\u0412\u0435\u0440\u0441\u0438\u044f')
+$Alternates['Reports'] = [regex]::Unescape('\u041e\u0442\u0447\u0435\u0442\u044b')
+$Alternates['Count'] = [regex]::Unescape('\u041a\u043e\u043b\u0438\u0447\u0435\u0441\u0442\u0432\u043e')
+$Alternates['Get'] = [regex]::Unescape('\u041f\u043e\u043b\u0443\u0447\u0438\u0442\u044c')
+$Alternates['MainDataCompositionSchema'] = [regex]::Unescape('\u041e\u0441\u043d\u043e\u0432\u043d\u0430\u044f\u0421\u0445\u0435\u043c\u0430\u041a\u043e\u043c\u043f\u043e\u043d\u043e\u0432\u043a\u0438\u0414\u0430\u043d\u043d\u044b\u0445')
+$Alternates['Attributes'] = [regex]::Unescape('\u0420\u0435\u043a\u0432\u0438\u0437\u0438\u0442\u044b')
+$Alternates['Templates'] = [regex]::Unescape('\u041c\u0430\u043a\u0435\u0442\u044b')
+$Alternates['Type'] = [regex]::Unescape('\u0422\u0438\u043f')
+$Alternates['Create'] = [regex]::Unescape('\u0421\u043e\u0437\u0434\u0430\u0442\u044c')
+$Alternates['GetTemplate'] = [regex]::Unescape('\u041f\u043e\u043b\u0443\u0447\u0438\u0442\u044c\u041c\u0430\u043a\u0435\u0442')
+$Alternates['Parameters'] = [regex]::Unescape('\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b')
+$Alternates['Title'] = [regex]::Unescape('\u0417\u0430\u0433\u043e\u043b\u043e\u0432\u043e\u043a')
+$Alternates['ValueType'] = [regex]::Unescape('\u0422\u0438\u043f\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f')
+$Alternates['Value'] = [regex]::Unescape('\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435')
+$Alternates['DataSets'] = [regex]::Unescape('\u041d\u0430\u0431\u043e\u0440\u044b\u0414\u0430\u043d\u043d\u044b\u0445')
+$Alternates['Query'] = [regex]::Unescape('\u0417\u0430\u043f\u0440\u043e\u0441')
+$Alternates['Items'] = [regex]::Unescape('\u042d\u043b\u0435\u043c\u0435\u043d\u0442\u044b')
+$Alternates['ObjectName'] = [regex]::Unescape('\u0418\u043c\u044f\u041e\u0431\u044a\u0435\u043a\u0442\u0430')
+$Alternates['Fields'] = [regex]::Unescape('\u041f\u043e\u043b\u044f')
+$Alternates['DataPath'] = [regex]::Unescape('\u041f\u0443\u0442\u044c\u041a\u0414\u0430\u043d\u043d\u044b\u043c')
+$Alternates['Field'] = [regex]::Unescape('\u041f\u043e\u043b\u0435')
+$Alternates['CalculatedFields'] = [regex]::Unescape('\u0412\u044b\u0447\u0438\u0441\u043b\u044f\u0435\u043c\u044b\u0435\u041f\u043e\u043b\u044f')
+$Alternates['TotalFields'] = [regex]::Unescape('\u041f\u043e\u043b\u044f\u0418\u0442\u043e\u0433\u0430')
+$Alternates['Expression'] = [regex]::Unescape('\u0412\u044b\u0440\u0430\u0436\u0435\u043d\u0438\u0435')
+$Alternates['SettingsVariants'] = [regex]::Unescape('\u0412\u0430\u0440\u0438\u0430\u043d\u0442\u044b\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a')
+$Alternates['Presentation'] = [regex]::Unescape('\u041f\u0440\u0435\u0434\u0441\u0442\u0430\u0432\u043b\u0435\u043d\u0438\u0435')
+$Alternates['Subsystems'] = [regex]::Unescape('\u041f\u043e\u0434\u0441\u0438\u0441\u0442\u0435\u043c\u044b')
+$Alternates['Content'] = [regex]::Unescape('\u0421\u043e\u0441\u0442\u0430\u0432')
+$Alternates['FullName'] = [regex]::Unescape('\u041f\u043e\u043b\u043d\u043e\u0435\u0418\u043c\u044f')
+$Alternates['Documents'] = [regex]::Unescape('\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u044b')
+$Alternates['AccumulationRegisters'] = [regex]::Unescape('\u0420\u0435\u0433\u0438\u0441\u0442\u0440\u044b\u041d\u0430\u043a\u043e\u043f\u043b\u0435\u043d\u0438\u044f')
+$Alternates['InformationRegisters'] = [regex]::Unescape('\u0420\u0435\u0433\u0438\u0441\u0442\u0440\u044b\u0421\u0432\u0435\u0434\u0435\u043d\u0438\u0439')
+$Alternates['String'] = [regex]::Unescape('\u0421\u0442\u0440\u043e\u043a\u0430')
+
+$DispUnknownName = -2147352570   # 0x80020006, DISP_E_UNKNOWNNAME
+
+function Test-UnknownName($err) {
+  $e = $err.Exception
+  while ($null -ne $e) {
+    if ($e.HResult -eq $DispUnknownName -or $e -is [System.MissingMemberException]) { return $true }
+    $e = $e.InnerException
+  }
+  return $false
+}
+
 # [REASON]: a 1C collection supports For Each over COM, and PowerShell
-# unrolls every enumerable a function returns into its elements: the caller
-# would get an array of report descriptions instead of the collection, and
-# Count() of 1C would turn into the array's length. That is how the probe
-# failed on the server on 29.10. Every value leaves these helpers through
-# one `return ,$value`, which hands the object over whole.
-function Get-Prop($obj, [string]$name) {
-  if ($null -eq $obj) { return $null }
+# unrolls every enumerable value a function returns into its elements: the
+# caller would get an array instead of the collection (the first run on the
+# server failed so on 29.10). The value leaves through `return ,$value`,
+# which hands the object over whole; the callers pass command output on
+# with a plain `return`, which does not unroll.
+function Invoke-Raw($obj, [string]$name, [bool]$method, [object[]]$arguments) {
   if (Test-Com $obj) {
-    $value = $obj.GetType().InvokeMember($name, [System.Reflection.BindingFlags]::GetProperty, $null, $obj, $null)
+    if ($method) {
+      # An argument that came out of a function is wrapped in a PSObject;
+      # 1C must get its own object back (String() of a type description),
+      # not a .NET wrapper, so each argument goes over as its base object.
+      $plain = New-Object 'object[]' $arguments.Count
+      for ($i = 0; $i -lt $arguments.Count; $i++) {
+        if ($null -ne $arguments[$i]) { $plain[$i] = $arguments[$i].PSObject.BaseObject }
+      }
+      $value = $obj.GetType().InvokeMember($name, [System.Reflection.BindingFlags]::InvokeMethod, $null, $obj, $plain)
+    } else {
+      $value = $obj.GetType().InvokeMember($name, [System.Reflection.BindingFlags]::GetProperty, $null, $obj, $null)
+    }
   } else {
-    $value = $obj.$name
+    # A stand-in object answers like COM: a member it does not have is an
+    # unknown name, not a silent $null.
+    $member = $obj.PSObject.Members[$name]
+    if ($null -eq $member) { throw (New-Object System.MissingMemberException($name)) }
+    if ($method) { $value = $member.Invoke($arguments) } else { $value = $member.Value }
   }
   return ,$value
 }
 
-function Invoke-Method($obj, [string]$name, [object[]]$arguments = @()) {
-  if (Test-Com $obj) {
-    # An argument that came out of a function is wrapped in a PSObject; 1C
-    # must get its own object back (String() of a type description), not a
-    # .NET wrapper, so each argument goes over as its base object.
-    $plain = New-Object 'object[]' $arguments.Count
-    for ($i = 0; $i -lt $arguments.Count; $i++) {
-      if ($null -ne $arguments[$i]) { $plain[$i] = $arguments[$i].PSObject.BaseObject }
+function Invoke-Named($obj, [string]$name, [bool]$method, [object[]]$arguments) {
+  $names = @($name)
+  if ($Alternates.ContainsKey($name)) { $names += $Alternates[$name] }
+  foreach ($candidate in $names) {
+    try {
+      return Invoke-Raw $obj $candidate $method $arguments
+    } catch {
+      if (-not (Test-UnknownName $_)) { throw }
     }
-    $value = $obj.GetType().InvokeMember($name, [System.Reflection.BindingFlags]::InvokeMethod, $null, $obj, $plain)
-  } else {
-    $value = $obj.$name.Invoke($arguments)
   }
-  return ,$value
+  throw (New-Object System.MissingMemberException(('1C does not know the member ' + ($names -join ' / '))))
+}
+
+function Get-Prop($obj, [string]$name) {
+  if ($null -eq $obj) { return $null }
+  return Invoke-Named $obj $name $false @()
+}
+
+function Invoke-Method($obj, [string]$name, [object[]]$arguments = @()) {
+  return Invoke-Named $obj $name $true $arguments
 }
 
 function Get-Items($collection) {
   $items = New-Object System.Collections.ArrayList
   if ($null -eq $collection) { return ,$items }
+  # [REASON]: PowerShell walks a 1C collection by itself -- it did so on the
+  # server on 29.10, unasked. That is the first way; Count()/Get() of 1C
+  # stay for a collection PowerShell does not see as one.
+  $enumerator = [System.Management.Automation.LanguagePrimitives]::GetEnumerator($collection)
+  if ($null -ne $enumerator) {
+    while ($enumerator.MoveNext()) { [void]$items.Add($enumerator.Current) }
+    return ,$items
+  }
   $count = [int](Invoke-Method $collection 'Count')
   for ($i = 0; $i -lt $count; $i++) {
     [void]$items.Add((Invoke-Method $collection 'Get' @($i)))
@@ -192,11 +277,29 @@ function Add-Block($lines, [string]$text) {
   foreach ($line in ($text -split "`r?`n")) { [void]$lines.Add('    | ' + $line) }
 }
 
-function Add-MetaList($conn, $lines, [string]$title, $collection) {
-  $items = Get-Items $collection
+# [REASON]: one failing part must not cost the owner the rest of the file:
+# every run on the server is a round trip. A part that fails is written as
+# a line starting with '!' and counted; the probe goes on to the next part.
+function Add-Failure($lines, [string]$part, $err) {
+  $script:Failed += 1
+  Add-Line $lines ('  ! {0} failed: {1}' -f $part, (Hide-Secret $err.Exception.Message $script:Secret))
+}
+
+function Add-MetaList($conn, $lines, [string]$title, $metadata, [string]$member) {
+  try {
+    $items = Get-Items (Get-Prop $metadata $member)
+  } catch {
+    Add-Line $lines ('=== {0}' -f $title)
+    Add-Failure $lines $title $_
+    return
+  }
   Add-Line $lines ('=== {0}: {1}' -f $title, $items.Count)
   foreach ($item in $items) {
-    Add-Line $lines ('  {0} | {1}' -f (Get-Prop $item 'Name'), (Get-Text $conn (Get-Prop $item 'Synonym')))
+    try {
+      Add-Line $lines ('  {0} | {1}' -f (Get-Prop $item 'Name'), (Get-Text $conn (Get-Prop $item 'Synonym')))
+    } catch {
+      Add-Failure $lines ($title + ' item') $_
+    }
   }
 }
 
@@ -261,9 +364,8 @@ function Add-DataSet($conn, $lines, $set, [string]$indent) {
   }
 }
 
-function Add-Report($conn, $lines, $meta) {
-  $name = [string](Get-Prop $meta 'Name')
-  Add-Line $lines ('=== report {0} | {1}' -f $name, (Get-Text $conn (Get-Prop $meta 'Synonym')))
+function Add-Report($conn, $lines, $meta, [string]$name, [string]$synonym) {
+  Add-Line $lines ('=== report {0} | {1}' -f $name, $synonym)
   foreach ($a in (Get-Items (Get-Prop $meta 'Attributes'))) {
     Add-Line $lines ('  A {0} | {1} | {2}' -f (Get-Prop $a 'Name'),
       (Get-Text $conn (Get-Prop $a 'Synonym')), (Get-Text $conn (Get-Prop $a 'Type')))
@@ -283,35 +385,78 @@ function Add-Report($conn, $lines, $meta) {
     $schema = Invoke-Method (Invoke-Method $manager 'Create') 'GetTemplate' @($template)
     Add-Schema $conn $lines $schema
   } catch {
-    Add-Line $lines ('  schema not read: ' + $_.Exception.Message)
+    Add-Line $lines ('  schema not read: ' + (Hide-Secret $_.Exception.Message $script:Secret))
   }
+}
+
+function Get-MemberNames($obj) {
+  # What PowerShell itself sees on the object: on a 1C object this shows in
+  # which language its members answer, if any name above was unknown.
+  try {
+    $names = @(Get-Member -InputObject $obj -ErrorAction Stop | ForEach-Object { $_.Name } | Sort-Object -Unique)
+  } catch {
+    return 'Get-Member failed: ' + $_.Exception.Message
+  }
+  if ($names.Count -eq 0) { return '(none)' }
+  return (@($names | Select-Object -First 80)) -join ', '
 }
 
 function Invoke-Probe($conn, [string[]]$wanted) {
   $lines = New-Object System.Collections.ArrayList
+  $script:Failed = 0
   Add-Line $lines $ProbeVersion
-  $metadata = Get-Prop $conn 'Metadata'
-  Add-Line $lines ('configuration: {0} | {1} | version {2}' -f (Get-Prop $metadata 'Name'),
-    (Get-Text $conn (Get-Prop $metadata 'Synonym')), (Get-Prop $metadata 'Version'))
-  $reports = Get-Items (Get-Prop $metadata 'Reports')
+  $metadata = $null
+  $reports = New-Object System.Collections.ArrayList
   $chosen = New-Object System.Collections.ArrayList
-  Add-Line $lines ('=== reports: {0}' -f $reports.Count)
-  foreach ($meta in $reports) {
-    $name = [string](Get-Prop $meta 'Name')
-    $synonym = Get-Text $conn (Get-Prop $meta 'Synonym')
-    $schema = if ($null -eq (Get-Prop $meta 'MainDataCompositionSchema')) { 'no' } else { 'yes' }
-    $pick = if ($wanted.Count -gt 0) { $wanted -contains $name } else { ($name + ' ' + $synonym) -match $ReportPattern }
-    $mark = if ($pick) { '*' } else { ' ' }
-    Add-Line $lines ('{0} {1} | {2} | schema {3}' -f $mark, $name, $synonym, $schema)
-    if ($pick -and $chosen.Count -lt $MaxDetailed) { [void]$chosen.Add($meta) }
+  try {
+    $metadata = Get-Prop $conn 'Metadata'
+    Add-Line $lines ('configuration: {0} | {1} | version {2}' -f (Get-Prop $metadata 'Name'),
+      (Get-Text $conn (Get-Prop $metadata 'Synonym')), (Get-Prop $metadata 'Version'))
+  } catch {
+    Add-Failure $lines 'configuration' $_
   }
-  foreach ($meta in $chosen) { Add-Report $conn $lines $meta }
+  try {
+    $reports = Get-Items (Get-Prop $metadata 'Reports')
+    Add-Line $lines ('=== reports: {0}' -f $reports.Count)
+  } catch {
+    Add-Line $lines '=== reports'
+    Add-Failure $lines 'reports' $_
+  }
+  $number = 0
+  foreach ($meta in $reports) {
+    $number += 1
+    try {
+      $name = [string](Get-Prop $meta 'Name')
+      $synonym = Get-Text $conn (Get-Prop $meta 'Synonym')
+      $schema = if ($null -eq (Get-Prop $meta 'MainDataCompositionSchema')) { 'no' } else { 'yes' }
+      $pick = if ($wanted.Count -gt 0) { $wanted -contains $name } else { ($name + ' ' + $synonym) -match $ReportPattern }
+      $mark = if ($pick) { '*' } else { ' ' }
+      Add-Line $lines ('{0} {1} | {2} | schema {3}' -f $mark, $name, $synonym, $schema)
+      if ($pick -and $chosen.Count -lt $MaxDetailed) { [void]$chosen.Add(@($meta, $name, $synonym)) }
+    } catch {
+      Add-Failure $lines ('report #' + $number) $_
+    }
+  }
+  foreach ($entry in $chosen) {
+    try {
+      Add-Report $conn $lines $entry[0] $entry[1] $entry[2]
+    } catch {
+      Add-Failure $lines ('report ' + $entry[1]) $_
+    }
+  }
   Add-Line $lines '=== subsystems'
-  Add-Subsystems $conn $lines (Get-Prop $metadata 'Subsystems') '  '
-  Add-MetaList $conn $lines 'documents' (Get-Prop $metadata 'Documents')
-  Add-MetaList $conn $lines 'accumulation registers' (Get-Prop $metadata 'AccumulationRegisters')
-  Add-MetaList $conn $lines 'information registers' (Get-Prop $metadata 'InformationRegisters')
-  return @{ Lines = $lines; Reports = $reports.Count; Detailed = $chosen.Count }
+  try {
+    Add-Subsystems $conn $lines (Get-Prop $metadata 'Subsystems') '  '
+  } catch {
+    Add-Failure $lines 'subsystems' $_
+  }
+  Add-MetaList $conn $lines 'documents' $metadata 'Documents'
+  Add-MetaList $conn $lines 'accumulation registers' $metadata 'AccumulationRegisters'
+  Add-MetaList $conn $lines 'information registers' $metadata 'InformationRegisters'
+  Add-Line $lines '=== members seen by PowerShell'
+  Add-Line $lines ('  connection: ' + (Get-MemberNames $conn))
+  if ($null -ne $metadata) { Add-Line $lines ('  metadata: ' + (Get-MemberNames $metadata)) }
+  return @{ Lines = $lines; Reports = $reports.Count; Detailed = $chosen.Count; Failed = $script:Failed }
 }
 
 function Write-Utf8([string]$path, $lines) {
@@ -349,6 +494,10 @@ function Invoke-Main([scriptblock]$Connect) {
     Write-Host ('ERROR: 1C refused the connection; the 1C message is in ' + $Out)
     return 3
   }
+  # [REASON]: only error texts are masked -- they are where a 1C message
+  # could echo the connection string. Masking the whole file would cut a
+  # short password out of query texts and names.
+  $script:Secret = $password
   try {
     $result = Invoke-Probe $conn $wanted
     Write-Utf8 $Out $result.Lines
@@ -364,9 +513,10 @@ function Invoke-Main([scriptblock]$Connect) {
       [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($conn)
     }
   }
-  Write-Host ('connected; reports {0}; described {1}' -f $result.Reports, $result.Detailed)
+  Write-Host ('connected; reports {0}; described {1}; failed parts {2}' -f $result.Reports, $result.Detailed, $result.Failed)
   Write-Host ('written: ' + $Out)
   Write-Host 'READ ONLY: nothing was written to 1C'
+  if ($result.Failed -gt 0) { return 4 }
   return 0
 }
 
