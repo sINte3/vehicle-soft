@@ -1,7 +1,7 @@
 # tests/fin_recon_002_release_harness.ps1 -- runs ONE block of
-# docs/FIN_RECON_002_RELEASE_V132_RUNBOOK.md (step 3, the restore block or
-# the rollback block) against stand-ins for git, the Windows services,
-# python, the backup script and the web site.
+# docs/FIN_RECON_002_RELEASE_V132_RUNBOOK.md (step 2, step 3, the restore
+# block or the rollback block) against stand-ins for git, the Windows
+# services, the drives, python, the backup script and the web site.
 #
 # Called by tests/test_fin_recon_002_release_runbook.py (class
 # ReleaseV132BlocksRunInPowerShell), which first replaces every path, service
@@ -17,8 +17,11 @@
 # -wal file beside it, the way an interrupted SQLite writer would; the restore
 # block has to move both aside.
 #
-# Scenario.FailAt names the one tool that fails: backup, merge, untracked,
-# payer, link, decisions, import, registry, release_check (or nothing).
+# Scenario.FailAt names the one tool that fails: rehearsal, backup, merge,
+# untracked, payer, link, decisions, import, registry, release_check (or
+# nothing). Scenario.Main is the top of origin/main and Scenario.History the
+# commits in the order they were made: the release is pinned, main may be
+# ahead of it -- or, in a scenario, may not contain it at all.
 #
 # ASCII only, Windows PowerShell 5.1 and PowerShell 7 alike.
 param(
@@ -29,7 +32,7 @@ param(
 $ErrorActionPreference = 'Continue'
 $global:scenario = Get-Content -LiteralPath $ScenarioFile -Raw | ConvertFrom-Json
 $global:calls = New-Object System.Collections.ArrayList
-$global:state = @{ Head = [string]$global:scenario.Head; Applied = 0; Merged = $false; Services = @{} }
+$global:state = @{ Head = [string]$global:scenario.Head; CloneHead = ''; Applied = 0; Merged = $false; Services = @{} }
 foreach ($name in @($global:scenario.Services)) { $global:state.Services[[string]$name] = [string]$global:scenario.ServiceStatus }
 $global:clock = [datetime]'2026-10-30T10:00:00'
 
@@ -106,6 +109,12 @@ function Start-Service {
   $global:state.Services[$Name] = 'Running'
 }
 
+function Get-PSDrive {
+  [CmdletBinding()]
+  param([string]$Name)
+  return [pscustomobject]@{ Name = $Name; Free = [long]1000000000000 }
+}
+
 function Invoke-WebRequest {
   [CmdletBinding()]
   param([string]$Uri, [switch]$UseBasicParsing, [int]$TimeoutSec)
@@ -116,25 +125,34 @@ function Invoke-WebRequest {
 
 function git {
   $a = @($args | ForEach-Object { [string]$_ })
-  if ($a[0] -eq '-C') { $a = @($a | Select-Object -Skip 2) }
+  $dir = ''
+  if ($a[0] -eq '-C') { $dir = $a[1]; $a = @($a | Select-Object -Skip 2) }
+  if ($a[0] -eq '--no-pager') { $a = @($a | Select-Object -Skip 1) }
   Add-Call ('git ' + ($a -join ' '))
   $s = $global:scenario
   $global:LASTEXITCODE = 0
   switch ($a[0]) {
     'fetch' { return }
     'rev-parse' {
-      if ($a -contains 'origin/main') { return [string]$s.Release }
+      if ($a -contains 'origin/main') { return [string]$s.Main }
+      if ($dir -like '*fr002_src_*') { return $global:state.CloneHead }
       if ($a -contains '--short') { return $global:state.Head.Substring(0, 7) }
       return $global:state.Head
     }
+    'clone' { return }
+    'checkout' {
+      $global:state.CloneHead = [string]$a[-1]
+      return
+    }
+    'log' { return @($s.Later | ForEach-Object { [string]$_ }) }
     'status' {
       if ($a -contains '--untracked-files=no') { return @() }
       if ($global:state.Merged -and ($s.FailAt -eq 'untracked')) { return @('?? notes.txt', '?? tools/onec_export.ps1') }
       return @('?? notes.txt')
     }
     'merge-base' {
-      # --is-ancestor A B: the history is baseline -> reviewed -> release.
-      $order = @([string]$s.Baseline, [string]$s.Reviewed, [string]$s.Release)
+      # --is-ancestor A B: A was made before B in Scenario.History.
+      $order = @($s.History | ForEach-Object { [string]$_ })
       $from = [array]::IndexOf($order, $a[2])
       $to = [array]::IndexOf($order, $a[3])
       if (($from -ge 0) -and ($to -ge 0) -and ($from -le $to)) { $global:LASTEXITCODE = 0 } else { $global:LASTEXITCODE = 1 }
@@ -150,7 +168,8 @@ function git {
         $global:LASTEXITCODE = 1
         return 'error: The following untracked working tree files would be overwritten by merge'
       }
-      $global:state.Head = [string]$s.Release
+      # git merge --ff-only X moves the code to X, whatever X is.
+      $global:state.Head = [string]$a[-1]
       $global:state.Merged = $true
       return 'Fast-forward'
     }
@@ -216,6 +235,10 @@ function Invoke-FakePython {
     if ($s.FailAt -eq 'import') { return (Set-Answer 1 @('Traceback (most recent call last):', 'sqlite3.OperationalError: database disk image is malformed')) }
     Write-Database $a
     return (Set-Answer 0 @('WRITTEN: 0 customers created, 132 works inserted, 0 already present and skipped.'))
+  }
+  if ($tool -like '*fin_recon_002_staging_check*') {
+    if ($s.FailAt -eq 'rehearsal') { return (Set-Answer 1 @('FAIL  May byte-identical', 'RESULT: FAIL (1 failed). Report: STAGING_CHECK_REPORT.txt')) }
+    return (Set-Answer 0 @('RESULT: PASS (0 failed). Report: STAGING_CHECK_REPORT.txt'))
   }
   if ($tool -like '*fin_recon_002_release_check*') {
     if ($s.FailAt -eq 'release_check') { return (Set-Answer 1 @('FAIL  May byte-identical', 'RESULT: RELEASE CHECK FAILED (1 failed)')) }
