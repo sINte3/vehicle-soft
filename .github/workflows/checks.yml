@@ -847,9 +847,10 @@ jobs:
         shell: powershell
         env:
           FIN_RECON_RELEASE_POWERSHELL: powershell
+          FIN_RECON_RELEASE_RUN_REQUIRED: '1'
         run: |
           python -m pip install --quiet openpyxl
-          python -m unittest tests.test_fin_recon_002_release_runbook.ReleaseV132BlocksParseInPowerShell tests.test_fin_recon_002_release_runbook.ReleaseV132BlocksRunInPowerShell
+          python -m unittest tests.test_fin_recon_002_release_runbook.ReleaseV132BlocksParseInPowerShell tests.test_fin_recon_002_release_runbook.ReleaseV132BlocksRunWhereRequired tests.test_fin_recon_002_release_runbook.ReleaseV132BlocksRunInPowerShell
 
       # GPS-36: the 1C probe on the interpreter the owner runs it with.
       - name: GPS-36 -- 1C probe on Windows PowerShell 5.1

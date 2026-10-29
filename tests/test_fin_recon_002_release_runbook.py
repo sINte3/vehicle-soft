@@ -307,6 +307,20 @@ def read_bytes(path):
         return fh.read()
 
 
+class ReleaseV132BlocksRunWhereRequired(unittest.TestCase):
+    """A skipped class passes as quietly as a passing one.
+
+    The CI job windows-powershell-51 sets FIN_RECON_RELEASE_RUN_REQUIRED=1:
+    there the execution class below must run, not skip.
+    """
+
+    def test_the_execution_class_is_not_skipped_where_it_is_required(self):
+        if os.environ.get('FIN_RECON_RELEASE_RUN_REQUIRED') != '1':
+            self.skipTest('FIN_RECON_RELEASE_RUN_REQUIRED is not set')
+        self.assertEqual(os.name, 'nt')
+        self.assertTrue(powershell(), 'no Windows PowerShell: ReleaseV132BlocksRunInPowerShell would be skipped')
+
+
 # [REASON]: the blocks join server paths with a backslash ("$frdir\books") and
 # the server runs Windows PowerShell 5.1, so they are executed on Windows only:
 # here on the workstation and in the CI job windows-powershell-51. The Linux
