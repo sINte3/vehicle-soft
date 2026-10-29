@@ -225,6 +225,33 @@ def customer_key(value):
     return _WS_RE.sub(' ', str(value)).strip().casefold()
 
 
+# [REASON]: FIN-RECON-002, owner's decision of 27.10.2026. «Фукаро» is Uzbek
+# for «citizen»: the dispatchers write it for any client without a legal
+# entity, so the same spelling stands for DIFFERENT people. A card (or an
+# alias) for it turns them into one debtor whose payments offset each other's
+# debts -- on the June books 11 works / 55.85 ha / 11 170 000 were about to
+# land on card #589 that way. A row whose WHOLE normalised name is one of
+# these keys is stored with drone_customer_id NULL and payer_unidentified = 1,
+# whatever alias the directory holds for it, and no card is created.
+#
+# EXACT keys, never a substring or a fuzzy match: «Жамшид (фукаро)» and
+# «Фукаро (Халимов Ж)» name a person and keep resolving through their alias.
+# The list is deliberately narrow and grows only by the owner's decision and
+# a code change with a test -- «Ромитан т. Фукаро» is the owner's own second
+# example. Spellings with a district in brackets («Фукаро (Шофиркон т.)») or
+# «Ромитан Фукаро» already have cards; whether they are generic too is an
+# open question for the owner and they are NOT listed here.
+GENERIC_PAYER_KEYS = frozenset((
+    'фукаро',
+    'ромитан т. фукаро',
+))
+
+
+def is_generic_payer(customer_raw):
+    """True when the whole spelling names a citizen only generically."""
+    return customer_key(customer_raw) in GENERIC_PAYER_KEYS
+
+
 def _text(value):
     if value is None:
         return ''
@@ -356,7 +383,14 @@ FIELD_PHRASES = (
 
 # Expense columns. ALL of them present in a sheet are summed into other_costs;
 # six of the twenty-four layouts carry two at once.
-EXPENSE_PHRASES = ('Бошка харажатлар', 'Транспорт харажати', 'ЁММ харажати')
+EXPENSE_PHRASES = ('Бошка харажатлар', 'Транспорт харажати', 'ЁММ харажати',
+                   'Ёкилги ва бошка харажатлар')
+# [REASON]: the twenty-fifth layout, FIN-RECON-002. «Дрон Ғиждувон ПТЗ
+# Июнь.xlsx / свод ичи (Усмон)» carries «Ёкилги ва бошка харажатлар» next to
+# «Бошка харажатлар»; unmapped, the dry run of 2026-10-22 stored 3 500 000 of
+# the 6 425 000 the book spends on 13 rows. The scan of all 34 books of
+# 2025-09..2026-06 found this header in that one sheet only, so no row already
+# in drone_works was read without it.
 # [REASON]: the vehicle plate follows the header in brackets --
 # «Транспорт харажати (Мерс 80 L 422 MA)», «(Газель 80 120 FBA)», «Газел» --
 # so this one phrase is matched as a PREFIX. It is the only prefix rule there
@@ -1353,6 +1387,20 @@ def _require_received_kind(con):
             'migrate_drones_works_002.py first.')
 
 
+def _require_payer_unidentified(con):
+    """Refuse to run against a database that predates the «Фукаро» column.
+
+    [REASON]: same reason as _require_received_kind -- the INSERT names the
+    column, and a dry run that passes followed by an --apply that raises is
+    the worst place to learn it.
+    """
+    columns = {row[1] for row in con.execute('PRAGMA table_info(drone_works)')}
+    if 'payer_unidentified' not in columns:
+        raise ImportPreconditionError(
+            'ERROR: drone_works.payer_unidentified is missing. Run '
+            'migrate_drones_works_payer_unidentified_001.py first.')
+
+
 class Directory(object):
     """Operators, subdivisions and customer aliases, read once."""
 
@@ -1519,6 +1567,8 @@ class RunResult(object):
         self.operator_from_row = 0
         self.operator_from_sheet = 0
         self.received_kinds = {}          # kind -> row count
+        # FIN-RECON-002: rows whose payer is a citizen named generically
+        self.payer_unidentified_rows = 0
 
 
 def collect(directory_path, manifest, dirs_files, dir_obj, default_payment):
@@ -1642,12 +1692,23 @@ def resolve(result, dir_obj):
         # would then swallow every future nameless row. The work row keeps
         # customer_raw = '' and drone_customer_id NULL, and the reports say
         # «Заказчик не указан» -- which is the fact.
+        row['payer_unidentified'] = False
         if not row['customer_raw']:
             row['drone_customer_id'] = None
             row['customer_is_new'] = False
             continue
 
         key = customer_key(row['customer_raw'])
+        # [REASON]: BEFORE the alias lookup. «фукаро» has an alias to card
+        # #589 in the production directory; consulting it first is exactly
+        # how eleven different citizens would become one debtor. See
+        # GENERIC_PAYER_KEYS.
+        if key in GENERIC_PAYER_KEYS:
+            row['drone_customer_id'] = None
+            row['customer_is_new'] = False
+            row['payer_unidentified'] = True
+            result.payer_unidentified_rows += 1
+            continue
         customer_id = dir_obj.aliases.get(key)
         if customer_id is not None:
             row['drone_customer_id'] = customer_id
@@ -1698,7 +1759,7 @@ def apply_rows(con, result, batch):
         for row in result.rows:
             # An empty customer_raw normalises to '' and must never be
             # attached to a customer created for some other spelling.
-            if (row['customer_raw']
+            if (row['customer_raw'] and not row.get('payer_unidentified')
                     and customer_key(row['customer_raw']) == key):
                 row['drone_customer_id'] = customer_id
 
@@ -1718,8 +1779,9 @@ def apply_rows(con, result, batch):
             'drone_customer_id, customer_raw, area_ha, price_per_ha, amount, '
             'other_costs, received_amount, received_kind, payment_type, '
             'subdivision_name, source_file, source_sheet, source_row, '
-            'import_batch, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '
-            '?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'import_batch, note, created_at, payer_unidentified) VALUES (?, '
+            '?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '
+            '?)',
             (row['period_month'],
              row['work_date_from'].isoformat() if row['work_date_from'] else None,
              row['work_date_to'].isoformat() if row['work_date_to'] else None,
@@ -1729,7 +1791,10 @@ def apply_rows(con, result, batch):
              row['received_amount'], row['received_kind'],
              row['payment_type'],
              row['subdivision_name'], row['source_file'], row['source_sheet'],
-             row['source_row'], batch, row['note'], now))
+             row['source_row'], batch, row['note'], now,
+             # NULL, not 0, on an ordinary row: the same value every row
+             # imported before the column existed carries.
+             1 if row.get('payer_unidentified') else None))
         inserted += 1
     con.commit()
     return created, inserted, skipped
@@ -1866,6 +1931,8 @@ def print_console(result, stats, args, batch):
     print('')
     print('customers matched to an alias : %d' % result.matched_customers)
     print('customers to be created       : %d' % len(result.created_customers))
+    print('payer a citizen, unidentified : %d rows (no card)'
+          % result.payer_unidentified_rows)
     print('operator resolved rows        : %d' % result.matched_operators)
     print('operator UNRESOLVED rows      : %d'
           % sum(result.unresolved_operators.values()))
@@ -2130,6 +2197,8 @@ def write_report(path, result, stats, args, batch, include_prediction=True):
     add('  будет заведено новых: %d' % len(result.created_customers))
     for key, raw_name in result.created_customers:
         add('  + %s' % raw_name)
+    add('  плательщик-гражданин не установлен («Фукаро»): %d строк -- '
+        'без карточки' % result.payer_unidentified_rows)
 
     if result.month_outliers:
         add('')
@@ -2204,6 +2273,7 @@ def main(argv=None):
             _require_tables(con, ('drone_works', 'drone_customers',
                                   'drone_customer_aliases', 'drone_operators'))
             _require_received_kind(con)
+            _require_payer_unidentified(con)
             dir_obj = Directory(con)
             result = collect(args.dir, manifest, files, dir_obj,
                              args.default_payment)

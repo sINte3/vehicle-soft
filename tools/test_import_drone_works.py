@@ -597,7 +597,12 @@ class ManifestTests(ImportTestBase):
         # (DRONE-SVODKA-READER-001, решение владельца 2026-08-11) + две
         # июньские, загруженные через экран 2026-08-11 (только Агрокластер
         # и Сервис — остальные подразделения июнь не сдали).
-        self.assertEqual(len(manifest), 31)
+        # [REASON]: FIN-RECON-002, выпуск v1.32 — ещё две июньские книги,
+        # Ғиждувон и Шофиркон; их загружает окно выпуска, а не экран.
+        self.assertEqual(len(manifest), 33)
+        self.assertEqual(manifest['Дрон Ғиждувон ПТЗ Июнь.xlsx'], '2026-06')
+        self.assertEqual(manifest['Шофиркон ПТЗ Дрон маълумот Июнь.xlsx'],
+                         '2026-06')
         self.assertEqual(
             manifest['Дрон_маълумот_Достон_АКА_АГРОКЛАСТЕР.xlsx'], '2025-09')
         self.assertEqual(manifest['ИЮНЬ Агрокластер.xlsx'], '2026-06')
@@ -737,7 +742,7 @@ class ResolutionTests(ImportTestBase):
         self.assertFalse(row['customer_is_new'])
         self.assertEqual(result.matched_customers, 1)
         self.assertEqual(len(result.created_customers),
-                         EXPECTED['distinct_customers'] - 1)
+                         EXPECTED['cards_created'] - 1)
 
     def test_a_null_is_active_alias_still_resolves(self):
         """isnot(False), never == True -- the bug already caught once."""
@@ -828,14 +833,18 @@ class ApplyTests(ImportTestBase):
             self.assertAlmostEqual(area, EXPECTED['area'], places=2)
             self.assertEqual(
                 con.execute('SELECT COUNT(*) FROM drone_customers')
-                .fetchone()[0], EXPECTED['distinct_customers'])
+                .fetchone()[0], EXPECTED['cards_created'])
             self.assertEqual(
                 con.execute('SELECT COUNT(*) FROM drone_customer_aliases')
-                .fetchone()[0], EXPECTED['distinct_customers'])
+                .fetchone()[0], EXPECTED['cards_created'])
+            # The only rows without a card are the generic «Фукаро» ones, and
+            # each of them says why.
             self.assertEqual(
-                con.execute('SELECT COUNT(*) FROM drone_works '
-                            'WHERE drone_customer_id IS NULL').fetchone()[0],
-                0)
+                con.execute('SELECT COUNT(*), SUM(payer_unidentified) '
+                            'FROM drone_works '
+                            'WHERE drone_customer_id IS NULL').fetchone(),
+                (EXPECTED['generic_payer_rows'],
+                 EXPECTED['generic_payer_rows']))
             self.assertEqual(
                 con.execute("SELECT COUNT(*) FROM drone_works "
                             "WHERE import_batch='b1'").fetchone()[0],
@@ -854,7 +863,7 @@ class ApplyTests(ImportTestBase):
                 EXPECTED['rows'])
             self.assertEqual(
                 con.execute('SELECT COUNT(*) FROM drone_customers')
-                .fetchone()[0], EXPECTED['distinct_customers'])
+                .fetchone()[0], EXPECTED['cards_created'])
             self.assertEqual(
                 con.execute("SELECT COUNT(*) FROM drone_works "
                             "WHERE import_batch='b2'").fetchone()[0], 0)

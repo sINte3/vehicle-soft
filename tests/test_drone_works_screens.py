@@ -2189,12 +2189,15 @@ class DroneNumberPlacementTests(unittest.TestCase):
         #   the provisional RAW and count). The passport carries none: its
         #   hectares of one flight print four decimals, and its identifiers,
         #   hashes and percentages are never grouped.
+        #   FIN-RECON-002 (27.10.2026) brought customers.html 3 (the hectares
+        #   of the works whose payer is an unidentified citizen) and
+        #   works_import_preview.html 31 (the count of such rows).
         expected = {
             '_accepted.html': 15,
             '_money_cell.html': 1, 'area_control.html': 25,
             'area_evidence.html': 28,
             'coverage.html': 9,
-            'customers.html': 2, 'field.html': 6, 'fields.html': 13,
+            'customers.html': 3, 'field.html': 6, 'fields.html': 13,
             'flight_calendar.html': 3,
             'health.html': 11, 'list.html': 3,
             'operator_cash.html': 19,
@@ -2203,13 +2206,13 @@ class DroneNumberPlacementTests(unittest.TestCase):
             'works_assignment_hints.html': 9, 'works_closing.html': 24,
             'works_debts.html': 18, 'works_debts_aging.html': 15,
             'works_flights_reconcile.html': 14, 'works_import.html': 4,
-            'works_import_preview.html': 30, 'works_reports.html': 9,
+            'works_import_preview.html': 31, 'works_reports.html': 9,
         }
         actual = {name: self.source(name).count('|vs_num')
                   for name in self.TEMPLATES
                   if '|vs_num' in self.source(name)}
         self.assertEqual(actual, expected)
-        self.assertEqual(sum(actual.values()), 359)
+        self.assertEqual(sum(actual.values()), 361)
 
 
 class DroneUiFixUzbekTests(unittest.TestCase):

@@ -243,7 +243,10 @@ class TestC11AlertsNeverExceedTwoFlexItems(unittest.TestCase):
 
     def test_c1_1_the_three_wrapped_alerts_have_exactly_one_child(self):
         """The three alerts this increment wrapped, pinned by file and shape."""
-        wrapped = {'spray_usage.html': 1, 'customers.html': 1,
+        # [REASON]: FIN-RECON-002 (27.10) added a second alert to customers.html
+        # (works whose payer is a citizen not established), built with the same
+        # single <div> wrapper -- hence 2 there.
+        wrapped = {'spray_usage.html': 1, 'customers.html': 2,
                    'works_debts.html': 1}
         for name, line, items in audit_drone_templates():
             if name in wrapped and items == ['<div>']:

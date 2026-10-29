@@ -221,6 +221,12 @@ EXPECTED = {
     'wage_rows': 2,
     'files_skipped_no_manifest': 1,
     'distinct_customers': 22,
+    # FIN-RECON-002, owner's decision of 27.10.2026: «Фукаро» names a citizen,
+    # not one customer. The trap (f) row keeps its spelling and is stored with
+    # no card and payer_unidentified = 1, so the run creates one card fewer
+    # than it reads spellings.
+    'generic_payer_rows': 1,
+    'cards_created': 21,
     'payments': {'cash': 12, 'transfer': 8, 'internal': 2, 'unknown': 0},
     'payment_area': {'cash': 390.59, 'transfer': 202.5, 'internal': 85.0,
                      'unknown': 0.0},
@@ -431,6 +437,7 @@ def build_database(path):
     re-typed, so a fixture cannot drift away from the migration, and
     migrate_drones_works_002.py is then applied on top of it for the same
     reason -- received_kind must exist exactly as production will have it.
+    migrate_drones_works_payer_unidentified_001.py follows, likewise.
     """
     import sqlite3
 
@@ -439,6 +446,7 @@ def build_database(path):
         sys.path.insert(0, repo_root)
     import migrate_drones_works_001 as works_mig
     import migrate_drones_works_002 as kind_mig
+    import migrate_drones_works_payer_unidentified_001 as payer_mig
 
     con = sqlite3.connect(path)
     try:
@@ -452,7 +460,8 @@ def build_database(path):
         con.execute(works_mig.CREATE_DRONE_WORKS)
         for statement in works_mig.CREATE_INDEXES:
             con.execute(statement)
-        for column, ddl_type in kind_mig.NEW_WORK_COLUMNS:
+        for column, ddl_type in (kind_mig.NEW_WORK_COLUMNS
+                                 + payer_mig.NEW_WORK_COLUMNS):
             con.execute('ALTER TABLE drone_works ADD COLUMN %s %s'
                         % (column, ddl_type))
         for full_name, subdivision in OPERATORS:

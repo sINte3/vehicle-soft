@@ -4646,15 +4646,23 @@ DRONE_WORK_UNRESOLVED = -1
 # see _drone_works_report_data() -- and the ledger filter now agrees with it.
 DRONE_WORK_CUSTOMER_UNSTATED_FILTER = -2
 
+# [REASON]: FIN-RECON-002, owner's decision of 27.10.2026. A THIRD meaning of
+# a NULL drone_customer_id: the sheet names the payer only as «Фукаро» -- a
+# citizen -- and the person is not established. Not an alias to add (that is
+# -1) and not the holding's own land (-2); see GENERIC_PAYER_KEYS in
+# tools/import_drone_works.py and DroneWork.payer_unidentified.
+DRONE_WORK_CUSTOMER_UNIDENTIFIED_FILTER = -3
+
 # Group keys of the two customer service rows. Strings, because the group
 # expression has to produce one column type and the ordinary keys are customer
 # ids rendered with printf.
 DRONE_WORK_CUSTOMER_UNSTATED = 'unstated'
 DRONE_WORK_CUSTOMER_UNRESOLVED = 'unresolved'
+DRONE_WORK_CUSTOMER_UNIDENTIFIED = 'unidentified'
 
 
 def _drone_customer_service_labels():
-    """The two labels a NULL drone_customer_id can carry -- and they are two.
+    """The labels a NULL drone_customer_id can carry -- one string per fact.
 
     [REASON]: DRONE-UI-CUSTOMER-LABEL-001. These strings existed inline in
     _drone_works_report_data() and the ledger cell carried a THIRD spelling of
@@ -4664,12 +4672,18 @@ def _drone_customer_service_labels():
     reading the ledger went looking for eight aliases that must not be created.
     One function owns the wording now, so the cell, the filter option and the
     report cut cannot drift apart again.
+
+    [REASON]: FIN-RECON-002 (owner decision 27.10) adds a third fact: the book
+    named a citizen («Фукаро») who is not established. It is neither «not
+    stated» nor «an alias to add», so it gets its own string, not a reuse.
     """
     return {
         DRONE_WORK_CUSTOMER_UNSTATED: _drone_t('Буюртмачи кўрсатилмаган',
                                                'Заказчик не указан'),
         DRONE_WORK_CUSTOMER_UNRESOLVED: _drone_t('Буюртмачи аниқланмаган',
                                                  'Заказчик не определён'),
+        DRONE_WORK_CUSTOMER_UNIDENTIFIED: _drone_t(
+            'Тўловчи фуқаро аниқланмаган', 'Плательщик-гражданин не установлен'),
     }
 
 
@@ -4682,6 +4696,19 @@ def _drone_work_customer_unstated_cond():
     on the ledger, and nothing would report the disagreement.
     """
     return func.trim(func.coalesce(DroneWork.customer_raw, '')) == ''
+
+
+def _drone_work_payer_unidentified_cond():
+    """«The payer is a citizen named only generically» -- and no card yet.
+
+    [REASON]: IS 1, null-safe, never «= 1» negated with NOT: every row
+    imported before the column existed holds NULL, and NOT (NULL = 1) is NULL,
+    which would silently drop all of them from the «не определён» filter. The
+    card wins over the flag: once somebody sets the person on the work it is
+    an ordinary job of that card (works_update clears the flag too).
+    """
+    return and_(DroneWork.drone_customer_id.is_(None),
+                DroneWork.payer_unidentified.is_(True))
 
 
 def _drone_payment_labels():
@@ -4790,12 +4817,19 @@ def _drone_work_conditions(filters):
     # matched no alias. On the production data of 2026-08-06 that turns 8 rows
     # into 0, and the 8 move to -2. That is the fix, not a regression: the 8
     # were never aliases waiting to be created.
+    # [REASON]: FIN-RECON-002. -1 narrows once more, to exclude the works
+    # whose payer is an unidentified citizen: they are not an alias anybody
+    # should add, and an alias for «Фукаро» is precisely the error the owner
+    # forbade on 27.10.2026. They have their own value, -3.
     if filters['customer_id'] == DRONE_WORK_UNRESOLVED:
         conds.append(and_(DroneWork.drone_customer_id.is_(None),
-                          ~_drone_work_customer_unstated_cond()))
+                          ~_drone_work_customer_unstated_cond(),
+                          DroneWork.payer_unidentified.isnot(True)))
     elif filters['customer_id'] == DRONE_WORK_CUSTOMER_UNSTATED_FILTER:
         conds.append(and_(DroneWork.drone_customer_id.is_(None),
                           _drone_work_customer_unstated_cond()))
+    elif filters['customer_id'] == DRONE_WORK_CUSTOMER_UNIDENTIFIED_FILTER:
+        conds.append(_drone_work_payer_unidentified_cond())
     elif filters['customer_id']:
         conds.append(DroneWork.drone_customer_id == filters['customer_id'])
     if filters['payment']:
@@ -4956,9 +4990,11 @@ def works():
         # labels from the same function the report cut uses, so that the two
         # screens cannot disagree about what a NULL customer means.
         unstated_key=DRONE_WORK_CUSTOMER_UNSTATED_FILTER,
+        unidentified_key=DRONE_WORK_CUSTOMER_UNIDENTIFIED_FILTER,
         customer_labels=_drone_customer_service_labels(),
         customer_unstated_group=DRONE_WORK_CUSTOMER_UNSTATED,
         customer_unresolved_group=DRONE_WORK_CUSTOMER_UNRESOLVED,
+        customer_unidentified_group=DRONE_WORK_CUSTOMER_UNIDENTIFIED,
         price_suggestions=DRONE_WORK_PRICE_SUGGESTIONS,
         payment_types=DRONE_WORK_PAYMENT_TYPES,
         **context)
@@ -5089,6 +5125,11 @@ def works_update(work_id):
         return _drone_work_redirect(filters)
     for key, value in values.items():
         setattr(row, key, value)
+    # [REASON]: FIN-RECON-002. The flag says «the citizen is not
+    # established»; a card chosen on this form is that act. Leaving the flag
+    # would keep a work with a named payer in the unidentified filter.
+    if row.drone_customer_id is not None and row.payer_unidentified:
+        row.payer_unidentified = None
     db.session.commit()
     flash(_drone_t('Иш янгиланди: «%s».', 'Работа обновлена: «%s».')
           % values['customer_raw'], 'success')
@@ -5601,10 +5642,18 @@ def customers():
     ).group_by(DroneWork.drone_customer_id).all():
         usage[customer_id] = {'jobs': jobs, 'area': float(area or 0.0)}
 
+    # [REASON]: FIN-RECON-002. The banner below says «add a spelling to the
+    # right customer». For a work whose payer is an unidentified citizen that
+    # advice is the error itself, so those works are counted apart.
     unresolved = db.session.query(
         func.count(DroneWork.id),
         func.coalesce(func.sum(DroneWork.area_ha), 0.0)
-    ).filter(DroneWork.drone_customer_id.is_(None)).one()
+    ).filter(DroneWork.drone_customer_id.is_(None),
+             DroneWork.payer_unidentified.isnot(True)).one()
+    unidentified = db.session.query(
+        func.count(DroneWork.id),
+        func.coalesce(func.sum(DroneWork.area_ha), 0.0)
+    ).filter(_drone_work_payer_unidentified_cond()).one()
 
     return render_template(
         'drones/customers.html',
@@ -5620,6 +5669,9 @@ def customers():
         # would read as «almost nothing to fix» on page 1 of 15.
         unresolved={'jobs': unresolved[0] or 0,
                     'area': float(unresolved[1] or 0.0)},
+        unidentified={'jobs': unidentified[0] or 0,
+                      'area': float(unidentified[1] or 0.0)},
+        unidentified_key=DRONE_WORK_CUSTOMER_UNIDENTIFIED_FILTER,
         type_labels=_drone_customer_type_labels(),
         customer_types=DRONE_CUSTOMER_TYPES,
         focus=request.args.get('focus', type=int),
@@ -5793,11 +5845,22 @@ def customer_alias_update(alias_id):
     db.session.commit()
 
     if moved:
-        flash(_drone_t('«%s» ёзилиши «%s»га кўчирилди. Иш қаторлари '
-                       'ўзгартирилмади: улар келгуси импортда қайта '
-                       'боғланади.',
-                       'Написание «%s» перенесено к «%s». Строки работ не '
-                       'изменены: они перепривяжутся при следующем импорте.')
+        # [REASON]: FIN-RECON-002 audit, 24.10.2026. The message used to say
+        # the stored jobs «перепривяжутся при следующем импорте». They do not:
+        # apply_rows() skips every row whose (source_file, source_sheet,
+        # source_row) is already present, so a re-import inserts nothing and
+        # touches no drone_customer_id. Believing the old sentence, somebody
+        # moving a spelling to the right customer would think the past jobs
+        # followed it. Moving them is a targeted migration, as for the merged
+        # cells of June 2026.
+        flash(_drone_t('«%s» ёзилиши «%s»га кўчирилди. Аллақачон сақланган '
+                       'иш қаторлари ўзгармади ва қайта импортда ҳам қайта '
+                       'боғланмайди: уларни кўчириш — алоҳида миграция. '
+                       'Ёзилиш фақат янги импортга таъсир қилади.',
+                       'Написание «%s» перенесено к «%s». Уже сохранённые '
+                       'работы не изменены и повторным импортом не '
+                       'перепривязываются: их перенос — отдельная миграция. '
+                       'Написание действует только на новый импорт.')
               % (alias.raw_name, target.name), 'success')
     elif alias.is_active:
         flash(_drone_t('«%s» ёзилиши ёқилди.', 'Написание «%s» включено.')
@@ -5815,7 +5878,7 @@ def customer_alias_update(alias_id):
 # ─── DRONE-WORKS-001: reports ────────────────────────────────────────────────
 
 def _drone_work_cut(conds, group_expr, total_row, service_labels,
-                    label_map=None, order_by_area=True):
+                    label_map=None, order_by_area=True, per_work_keys=()):
     """One breakdown of the ledger, with its service buckets as visible rows.
 
     service_labels is an ORDERED sequence of (key, label): every group whose
@@ -5836,7 +5899,16 @@ def _drone_work_cut(conds, group_expr, total_row, service_labels,
     facts needing different actions. The first is how the holding's own land
     is written down and needs nothing; the second is an alias somebody has to
     add. One combined row would hide the second inside the first.
+
+    [REASON]: per_work_keys, FIN-RECON-002. A group named there is not one
+    debtor -- «Плательщик-гражданин не установлен» collects DIFFERENT people.
+    Its outstanding is therefore the sum of each work's own unpaid balance,
+    never amount - received over the group: one citizen's overpayment must not
+    reduce another citizen's debt (owner's decision of 27.10.2026). An
+    overpaid part, if any, is carried as 'overpaid' and said in the note.
+    Amount and received still sum as usual, so the cut still reconciles.
     """
+    owing_expr = _drone_work_outstanding_expr()
     groups = db.session.query(
         group_expr,
         func.count(DroneWork.id),
@@ -5870,12 +5942,15 @@ def _drone_work_cut(conds, group_expr, total_row, service_labels,
         # months believing they are cleaning up an oversight -- or, worse,
         # restores the dash believing they are fixing one.
         func.sum(case((DroneWork.received_amount.is_(None), 1), else_=0)),
+        func.coalesce(func.sum(case((owing_expr > 0, owing_expr),
+                                    else_=0.0)), 0.0),
     ).filter(*conds).group_by(group_expr).all()
 
     service_map = dict(service_labels)
     rows = []
     found = {}
-    for key, jobs, area, amount, received, no_amount, no_received in groups:
+    for (key, jobs, area, amount, received, no_amount, no_received,
+         owing_by_work) in groups:
         cell = {
             'key': key,
             'jobs': jobs,
@@ -5886,6 +5961,20 @@ def _drone_work_cut(conds, group_expr, total_row, service_labels,
             'no_received': int(no_received or 0),
         }
         cell['outstanding'] = cell['amount'] - cell['received']
+        if key in per_work_keys:
+            cell['outstanding'] = float(owing_by_work or 0.0)
+            cell['overpaid'] = cell['outstanding'] - (cell['amount']
+                                                      - cell['received'])
+            note = _drone_t(
+                'Турли фуқаролар: қарз ҳар бир иш бўйича, бир ишнинг тўлови '
+                'бошқасига ўтказилмайди',
+                'Разные граждане: долг по каждой работе отдельно, оплата '
+                'одной не засчитывается за другую')
+            if cell['overpaid'] > 0.005:
+                note += _drone_t('; ортиқча тўлов %s алоҳида',
+                                 '; переплата %s отдельно') % (
+                    '{:,.0f}'.format(cell['overpaid']).replace(',', ' '))
+            cell['note'] = note
         cell['share'] = _drone_share(cell['area'], total_row['area'])
         if key in service_map:
             cell['label'] = service_map[key]
@@ -6011,6 +6100,10 @@ def _drone_works_report_data(conds):
     customer_group = case(
         (DroneWork.drone_customer_id.isnot(None),
          func.printf('%d', DroneWork.drone_customer_id)),
+        # FIN-RECON-002: a citizen not established -- before «не определён»,
+        # which would otherwise swallow it and ask for an alias.
+        (DroneWork.payer_unidentified.is_(True),
+         DRONE_WORK_CUSTOMER_UNIDENTIFIED),
         (_drone_work_customer_unstated_cond(), DRONE_WORK_CUSTOMER_UNSTATED),
         else_=DRONE_WORK_CUSTOMER_UNRESOLVED)
     # The wording now comes from _drone_customer_service_labels(), which the
@@ -6021,9 +6114,12 @@ def _drone_works_report_data(conds):
         conds, customer_group, totals,
         ((DRONE_WORK_CUSTOMER_UNSTATED,
           service_labels[DRONE_WORK_CUSTOMER_UNSTATED]),
+         (DRONE_WORK_CUSTOMER_UNIDENTIFIED,
+          service_labels[DRONE_WORK_CUSTOMER_UNIDENTIFIED]),
          (DRONE_WORK_CUSTOMER_UNRESOLVED,
           service_labels[DRONE_WORK_CUSTOMER_UNRESOLVED])),
-        label_map={('%d' % c.id): c.name for c in DroneCustomer.query.all()})
+        label_map={('%d' % c.id): c.name for c in DroneCustomer.query.all()},
+        per_work_keys=(DRONE_WORK_CUSTOMER_UNIDENTIFIED,))
     by_operator = _drone_work_cut(
         conds, DroneWork.drone_operator_id, totals,
         ((None, _drone_t('Оператор аниқланмаган', 'Оператор не определён')),),
@@ -7530,10 +7626,13 @@ def _drone_works_debt_aging_data(conds):
         DroneWork.amount,
         DroneWork.received_amount,
         DroneWork.area_ha,
+        DroneWork.payer_unidentified,
     ).filter(*conds).all())
 
     customer_names = {c.id: c.name for c in DroneCustomer.query.all()}
     label_unstated = _drone_t('Буюртмачи кўрсатилмаган', 'Заказчик не указан')
+    label_unidentified = _drone_customer_service_labels()[
+        DRONE_WORK_CUSTOMER_UNIDENTIFIED]
 
     bucket_labels = _drone_debt_bucket_labels()
     buckets = {key: {'key': key, 'label': label, 'jobs': 0, 'area': 0.0,
@@ -7547,7 +7646,7 @@ def _drone_works_debt_aging_data(conds):
     by_customer = {}
 
     for (work_id, customer_id, customer_raw, date_from, amount, received,
-         area) in rows:
+         area, payer_unidentified) in rows:
         amount_f = float(amount or 0.0)
         received_f = float(received or 0.0)
         outstanding = amount_f - received_f
@@ -7562,11 +7661,20 @@ def _drone_works_debt_aging_data(conds):
                 target['oldest'] = age
             key = customer_id if customer_id is not None else ('raw',
                                                                customer_raw)
+            label = (customer_names.get(customer_id)
+                     if customer_id is not None
+                     else (customer_raw or label_unstated))
+            # [REASON]: FIN-RECON-002. Grouping by the spelling would make
+            # every «Фукаро» one debtor on a collection worklist -- the exact
+            # error the owner forbade on 27.10.2026. Each such work is its own
+            # line, named by its number, until the person is established.
+            if customer_id is None and payer_unidentified:
+                key = ('work', work_id)
+                label = '%s · %s · №%d' % (label_unidentified, customer_raw,
+                                           work_id)
             entry = by_customer.setdefault(key, {
                 'customer_id': customer_id,
-                'label': (customer_names.get(customer_id)
-                          if customer_id is not None
-                          else (customer_raw or label_unstated)),
+                'label': label,
                 'jobs': 0, 'area': 0.0, 'amount': 0.0, 'received': 0.0,
                 'outstanding': 0.0, 'oldest': None, 'undated_jobs': 0})
             entry['jobs'] += 1
