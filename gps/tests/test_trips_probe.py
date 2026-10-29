@@ -10,7 +10,14 @@
   * берутся только заявки метода «рейсы» с окном внутри периода; без
     объекта Wialon и без точек -- названной причиной, а не нулями;
   * многодневное окно читается целиком, заезд через полночь -- один;
-  * ничего не пишется, кроме двух CSV; в консоль -- ASCII; Flask не
+  * с --hauling -- заявки перевозок «ташиш» при любом методе (имя вида без
+    учёта регистра), заявки «рейсы» не берутся; подтверждение -- остановка
+    в пункте приёма, иначе пробег окна от 3 км, иначе «ничего»;
+  * контроль (--control-csv, только с --hauling) -- те же машины по
+    суткам периода с точками: сутки перевозки, сутки только другой заявки,
+    сутки без заявок; окно заявки, начатой до периода, сутки периода
+    покрывает; группа -- хлопок («пахта», «тола») или прочий груз;
+  * ничего не пишется, кроме CSV; в консоль -- ASCII; Flask не
     импортируется; неверный ввод -- код 2 до чтения.
 
 Запуск из корня репозитория окружением расчёта:
@@ -100,6 +107,11 @@ TRACK_B = route([at(PTM, 1200), field(), at(AZS, 300), at(PTM, 360), field()])
 # Заявка G (объект 805): окно двое суток, заезд в ПТМ через полночь.
 TRACK_G1 = route([field(), at(PTM, 600)])
 TRACK_G2 = route([at(PTM, 600), field(), at(PTM, 600), field()])
+# Перевозки: K -- хлопок на ПТМ (остановка 10,5 мин, пробег около 2 км);
+# L -- груз на 5 км к югу, мимо всех зон; M -- стоит весь день.
+TRACK_K = route([field(), at(PTM, 600), field()])
+TRACK_L = route([field(), (0.0, -5000.0, 300)])
+TRACK_M = route([field(3600)])
 
 
 def digest(path):
@@ -143,7 +155,8 @@ def setUpModule():
                     "geometry_geojson, is_active) VALUES ('dji', ?, 'dji', ?, 1)",
                     (str(PTM), far))
         dbh.add_org(con, 1, 'Buxoro')
-        for number, unit in enumerate((801, 802, 804, 805, 806, 807), start=1):
+        for number, unit in enumerate((801, 802, 804, 805, 806, 807, 808, 809,
+                                       810), start=1):
             dbh.add_equipment(con, number, '80 %03d EA' % number, org_id=1)
             dbh.add_mapping(con, number, unit, number)
             con.execute("INSERT INTO agro_work_transports (id, plate_number, "
@@ -156,8 +169,10 @@ def setUpModule():
                     "last_seen_at) VALUES ('T803', 'P803', 'P803', NULL, "
                     "'none', 't', 't')")
         for work_type, name, unit_name, method in (
-                ('w-trip', 'Пахта ташиш', 'TRIP', 'reysy'),
-                ('w-ga', 'Чизеллаш', 'HECTARE', 'ga')):
+                ('w-trip', 'Сут махсулотлари', 'TRIP', 'reysy'),
+                ('w-ga', 'Чизеллаш', 'HECTARE', 'ga'),
+                ('w-cotton', 'Пахта ташиш', 'TON', 'ne_sveryaetsya'),
+                ('w-cargo', 'Юк ТАШИШ (метан)', 'TON', None)):
             con.execute("INSERT INTO agro_work_work_types (id, name, unit, method, "
                         "first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, 't', 't')",
                         (work_type, name, unit_name, method))
@@ -173,6 +188,13 @@ def setUpModule():
             ('G', 805, 'w-trip', '2', '2026-09-14', '2026-09-15'),
             # окно началось до периода -- не его заявка, хоть и задевает
             ('H', 807, 'w-trip', '1', '2026-08-31', '2026-09-01'),
+            ('K', 808, 'w-cotton', '12', '2026-09-20', '2026-09-20'),
+            ('L', 809, 'w-cargo', '8', '2026-09-21', '2026-09-21'),
+            ('M', 810, 'w-cotton', '10', '2026-09-22', '2026-09-22'),
+            # контроль: другая заявка у машины перевозки и перевозка, начатая
+            # до периода (в разведку не идёт, но 01.09 её сутки)
+            ('P', 809, 'w-ga', '3', '2026-09-25', '2026-09-25'),
+            ('Q', 810, 'w-cotton', '9', '2026-08-30', '2026-09-02'),
         ]
         for name, unit, work_type, volume, first, last in apps:
             con.execute(
@@ -192,6 +214,15 @@ def setUpModule():
     write_track(folder, 805, '2026-09-14', TRACK_G1, hour=23)
     write_track(folder, 805, '2026-09-15', TRACK_G2, hour=0)
     write_track(folder, 807, '2026-09-01', TRACK_A)
+    write_track(folder, 808, '2026-09-20', TRACK_K)
+    write_track(folder, 809, '2026-09-21', TRACK_L)
+    write_track(folder, 810, '2026-09-22', TRACK_M)
+    # контроль: 808 без заявок 23.09 стоит в ПТМ, 24.09 -- на поле; 809 в
+    # сутки чизеля стоит; 810 возит хлопок по заявке Q 01.09
+    write_track(folder, 808, '2026-09-23', TRACK_K)
+    write_track(folder, 808, '2026-09-24', TRACK_M)
+    write_track(folder, 809, '2026-09-25', TRACK_M)
+    write_track(folder, 810, '2026-09-01', TRACK_K)
     zones_csv = os.path.join(root, 'zones.csv')
     with open(zones_csv, 'w', encoding='utf-8', newline='') as handle:
         writer = csv.writer(handle)
@@ -206,8 +237,21 @@ def setUpModule():
     code, out = run_main('--db', db, '--dir', folder, '--from', SINCE,
                          '--to', UNTIL, '--csv', out_csv, '--visits-csv',
                          visits_csv, '--zones', zones_csv)
+    hauling_csv = os.path.join(root, 'hauling.csv')
+    hauling_visits = os.path.join(root, 'hauling_visits.csv')
+    h_code, h_out = run_main('--db', db, '--dir', folder, '--from', SINCE,
+                             '--to', UNTIL, '--csv', hauling_csv, '--visits-csv',
+                             hauling_visits, '--zones', zones_csv, '--hauling')
+    control_csv = os.path.join(root, 'control.csv')
+    c_code, c_out = run_main('--db', db, '--dir', folder, '--from', SINCE,
+                             '--to', UNTIL, '--csv', os.path.join(root, 'c.csv'),
+                             '--visits-csv', os.path.join(root, 'cv.csv'),
+                             '--zones', zones_csv, '--hauling',
+                             '--control-csv', control_csv)
     WORLD.update(root=root, folder=folder, db=db, zones=zones_csv, code=code,
-                 out=out, csv=out_csv, visits=visits_csv, before=before)
+                 out=out, csv=out_csv, visits=visits_csv, before=before,
+                 h_code=h_code, h_out=h_out, h_csv=hauling_csv,
+                 c_code=c_code, c_out=c_out, c_csv=control_csv)
 
 
 def tearDownModule():
@@ -246,7 +290,7 @@ class Run(unittest.TestCase):
         self.assertEqual((a['obem'], a['wialon_id'], a['okno_s'], a['okno_po'],
                           a['sutok_s_tochkami'], a['prichina']),
                          ('3.0', '801', '2026-09-10', '2026-09-10', '1', ''))
-        self.assertEqual(a['vid_raboty'], 'Пахта ташиш')
+        self.assertEqual(a['vid_raboty'], 'Сут махсулотлари')
 
     def test_a_day_that_starts_inside_is_not_an_entry(self):
         b = apps()['N-B']
@@ -290,6 +334,159 @@ class Run(unittest.TestCase):
         for path, value in WORLD['before'].items():
             self.assertEqual(digest(path), value, path)
         self.assertTrue(WORLD['out'].isascii())
+
+
+class Hauling(unittest.TestCase):
+
+    def rows(self):
+        return {row['nomer_zayavki']: row for row in read(WORLD['h_csv'])}
+
+    def test_only_hauling_work_types_whatever_the_method(self):
+        self.assertEqual(WORLD['h_code'], probe.EXIT_OK, WORLD['h_out'])
+        self.assertEqual(sorted(self.rows()), ['N-K', 'N-L', 'N-M'])
+        self.assertIn('hauling applications in the period: 3', WORLD['h_out'])
+        # и наоборот: прогон «рейсов» перевозок не берёт
+        self.assertNotIn('N-K', apps())
+
+    def test_the_evidence_of_each_haul(self):
+        rows = self.rows()
+        self.assertEqual(rows['N-K']['zaezdy_priem_5min'], '1')
+        self.assertAlmostEqual(float(rows['N-K']['km']), 2.0, delta=0.1)
+        self.assertAlmostEqual(float(rows['N-L']['km']), 5.0, delta=0.1)
+        self.assertEqual(rows['N-L']['zaezdy_priem_5min'], '0')
+        self.assertEqual(rows['N-M']['km'], '0.0')
+        self.assertIn('evidence of hauling: receiving stop 1 | km only 1 | '
+                      'neither 1', WORLD['h_out'])
+        self.assertTrue(WORLD['h_out'].isascii())
+
+    def test_evidence_order_and_the_three_kilometres(self):
+        self.assertEqual(probe.evidence({'zaezdy_priem_5min': 1, 'km': 50.0}),
+                         'receiving stop')
+        self.assertEqual(probe.evidence({'zaezdy_priem_5min': 0, 'km': 3.0}),
+                         'km only')
+        self.assertEqual(probe.evidence({'zaezdy_priem_5min': 0, 'km': 2.99}),
+                         'neither')
+
+    def test_window_mileage_of_one_point_or_none_is_zero(self):
+        self.assertEqual(probe.window_km([(0, 64.4, 39.8, 10.0, 9)]), 0.0)
+        self.assertEqual(probe.window_km([]), 0.0)
+
+
+class Control(unittest.TestCase):
+
+    def rows(self):
+        return {(row['wialon_id'], row['den']): row for row in read(WORLD['c_csv'])}
+
+    def test_days_of_the_same_machines_by_class(self):
+        self.assertEqual(WORLD['c_code'], probe.EXIT_OK, WORLD['c_out'])
+        rows = self.rows()
+        self.assertEqual(sorted(rows), [
+            ('808', '2026-09-20'), ('808', '2026-09-23'), ('808', '2026-09-24'),
+            ('809', '2026-09-21'), ('809', '2026-09-25'),
+            ('810', '2026-09-01'), ('810', '2026-09-22')])
+        self.assertEqual({key: (row['klass'], row['gruppa'])
+                          for key, row in rows.items()}, {
+            ('808', '2026-09-20'): ('hauling', 'cotton'),
+            ('808', '2026-09-23'): ('no_app', 'cotton'),
+            ('808', '2026-09-24'): ('no_app', 'cotton'),
+            ('809', '2026-09-21'): ('hauling', 'other'),
+            ('809', '2026-09-25'): ('other_app', 'other'),
+            ('810', '2026-09-01'): ('hauling', 'cotton'),
+            ('810', '2026-09-22'): ('hauling', 'cotton')})
+
+    def test_a_window_begun_before_the_period_covers_its_days(self):
+        row = self.rows()[('810', '2026-09-01')]
+        self.assertEqual((row['zayavki'], row['vidy_rabot']), ('N-Q', 'Пахта ташиш'))
+        self.assertEqual(row['zaezdy_priem_5min'], '1')
+        # в разведку заявок Q не идёт: окно началось до периода
+        self.assertIn('hauling applications in the period: 3', WORLD['c_out'])
+
+    def test_a_stop_without_an_application_is_counted_as_such(self):
+        row = self.rows()[('808', '2026-09-23')]
+        self.assertEqual((row['zayavki'], row['zaezdy_priem_5min']), ('', '1'))
+        self.assertAlmostEqual(float(row['km']), 2.0, delta=0.1)
+
+    def test_the_console_table(self):
+        out = WORLD['c_out']
+        self.assertIn('control: machines 3 | machine-days 90 | without points 83 '
+                      '| with points 7', out)
+        for line in ('control cotton hauling: days 3 | receiving stop 2 | km 3+ 0',
+                     'control cotton other_app: days 0 | receiving stop 0 | km 3+ 0',
+                     'control cotton no_app: days 2 | receiving stop 1 | km 3+ 0',
+                     'control other hauling: days 1 | receiving stop 0 | km 3+ 1',
+                     'control other other_app: days 1 | receiving stop 0 | km 3+ 0',
+                     'control other no_app: days 0 | receiving stop 0 | km 3+ 0'):
+            self.assertIn(line, out)
+        self.assertTrue(out.isascii())
+
+    def test_without_hauling_the_control_is_refused(self):
+        target = os.path.join(WORLD['root'], 'refused.csv')
+        code, out = run_main('--db', WORLD['db'], '--dir', WORLD['folder'],
+                             '--from', SINCE, '--to', UNTIL,
+                             '--csv', os.path.join(WORLD['root'], 'r1.csv'),
+                             '--visits-csv', os.path.join(WORLD['root'], 'r2.csv'),
+                             '--zones', WORLD['zones'], '--control-csv', target)
+        self.assertEqual(code, probe.EXIT_BAD_INPUT, out)
+        self.assertIn('--control-csv needs --hauling', out)
+        self.assertFalse(os.path.exists(target))
+
+
+class ControlDays(unittest.TestCase):
+    """Классы суток -- без базы и файлов."""
+
+    @staticmethod
+    def row(unit, work_type, first, last, number='N'):
+        from datetime import date
+        app = unittest.mock.Mock()
+        app.number = number
+        return {'wialon_id': unit, 'work_type': work_type,
+                'window': (date.fromisoformat(first), date.fromisoformat(last)),
+                'app': app}
+
+    def classes(self, all_rows, picked, since='2026-09-01', until='2026-09-03'):
+        return [(unit, day.isoformat(), kind, group)
+                for unit, day, kind, group, _covering in
+                probe.control_days(all_rows, picked, since, until)]
+
+    def test_hauling_wins_over_another_application_on_the_same_day(self):
+        haul = self.row(7, 'Юк ташиш', '2026-09-02', '2026-09-02')
+        other = self.row(7, 'Чизеллаш', '2026-09-01', '2026-09-03')
+        self.assertEqual(self.classes([haul, other], [haul]), [
+            (7, '2026-09-01', 'other_app', 'other'),
+            (7, '2026-09-02', 'hauling', 'other'),
+            (7, '2026-09-03', 'other_app', 'other')])
+
+    def test_the_cotton_group_follows_the_day_or_the_machine(self):
+        cargo = self.row(7, 'юк ташиш (дизел)', '2026-09-01', '2026-09-01')
+        lint = self.row(7, 'Тола ташиш (ички)', '2026-09-03', '2026-09-03')
+        self.assertEqual(self.classes([cargo, lint], [cargo, lint]), [
+            (7, '2026-09-01', 'hauling', 'other'),
+            (7, '2026-09-02', 'no_app', 'cotton'),
+            (7, '2026-09-03', 'hauling', 'cotton')])
+
+    def test_cotton_picking_is_not_a_cotton_haul(self):
+        # «пахта» в имени вида без «ташиш» -- уборка, не перевозка: ни сутки
+        # перевозки груза, ни машину в группу хлопка она не переводит
+        cargo = self.row(7, 'Юк ташиш', '2026-09-01', '2026-09-01')
+        picking = self.row(7, 'Пахта териш', '2026-09-01', '2026-09-03')
+        self.assertEqual(self.classes([cargo, picking], [cargo]), [
+            (7, '2026-09-01', 'hauling', 'other'),
+            (7, '2026-09-02', 'other_app', 'other'),
+            (7, '2026-09-03', 'other_app', 'other')])
+
+    def test_only_machines_of_picked_hauls_and_no_machine_is_skipped(self):
+        haul = self.row(7, 'Пахта ташиш', '2026-09-01', '2026-09-01')
+        stranger = self.row(8, 'Пахта ташиш', '2026-09-01', '2026-09-01')
+        orphan = self.row(None, 'Пахта ташиш', '2026-09-01', '2026-09-01')
+        days = self.classes([haul, stranger, orphan], [haul, orphan])
+        self.assertEqual({unit for unit, *_rest in days}, {7})
+        self.assertEqual(len(days), 3)
+
+    def test_cotton_marks(self):
+        self.assertTrue(probe.is_cotton('ПАХТА ташиш Мирзачўл'))
+        self.assertTrue(probe.is_cotton('тола ташиш (кўча)'))
+        self.assertFalse(probe.is_cotton('Юк ташиш (хар хил кўча)'))
+        self.assertFalse(probe.is_cotton(None))
 
 
 class Visits(unittest.TestCase):
@@ -380,6 +577,17 @@ class Refusals(unittest.TestCase):
                 self.assertEqual(code, probe.EXIT_BAD_INPUT, out)
                 self.assertFalse(os.path.exists(os.path.join(WORLD['root'], 'x.csv')))
         self.assertFalse(os.path.exists(missing))
+
+    def test_an_unwritable_control_csv_is_refused_before_reading(self):
+        code, out = run_main('--db', WORLD['db'], '--dir', WORLD['folder'],
+                             '--from', SINCE, '--to', UNTIL,
+                             '--csv', os.path.join(WORLD['root'], 'x.csv'),
+                             '--visits-csv', os.path.join(WORLD['root'], 'y.csv'),
+                             '--zones', WORLD['zones'], '--hauling',
+                             '--control-csv',
+                             os.path.join(WORLD['root'], 'nodir', 'c.csv'))
+        self.assertEqual(code, probe.EXIT_BAD_INPUT, out)
+        self.assertFalse(os.path.exists(os.path.join(WORLD['root'], 'x.csv')))
 
     def test_a_zone_list_without_zones_is_refused(self):
         empty = os.path.join(WORLD['root'], 'empty.csv')
