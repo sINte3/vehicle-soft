@@ -277,10 +277,29 @@ def resolve(plate, by_plate, units):
     return next(iter(objects)), ''
 
 
+def read_csv(path):
+    """Строки CSV недельной выгрузки (`tools/onec_export.ps1`): UTF-8 с BOM,
+    разделитель «;», первая строка -- заголовок; то же, что `read_xlsx`."""
+    try:
+        with open(path, encoding='utf-8-sig', newline='') as handle:
+            table = list(csv.reader(handle, delimiter=';'))
+    except (OSError, UnicodeDecodeError) as problem:
+        raise BadInput('%s is not a UTF-8 csv file (%s)'
+                       % (os.path.basename(path), type(problem).__name__))
+    if not table:
+        raise BadInput('%s is empty' % os.path.basename(path))
+    header = [name.strip() for name in table[0]]
+    return header, [dict(zip(header, row)) for row in table[1:]]
+
+
 def read_trips(path, kind, extra=()):
     """Рейсы выгрузки. `extra` -- ещё колонки, которые нужны вызывающему
-    (недельный отчёт GPS-35 берёт массу); их значения -- в `trip['extra']`."""
-    header, rows = read_xlsx(path)
+    (недельный отчёт GPS-35 берёт массу); их значения -- в `trip['extra']`.
+
+    Выгрузка -- xlsx соседнего чата или CSV скрипта `tools/onec_export.ps1`
+    (GPS-37): колонки у них одни."""
+    header, rows = (read_csv(path) if path.lower().endswith('.csv')
+                    else read_xlsx(path))
     missing = [name for name in COLUMNS[kind] + tuple(extra) if name not in header]
     if missing:
         raise BadInput('%s: %d expected column(s) missing'

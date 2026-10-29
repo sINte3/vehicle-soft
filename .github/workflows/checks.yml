@@ -691,6 +691,14 @@ jobs:
           ONEC_POWERSHELL: pwsh
         run: python -m unittest tests.test_onec_probe
 
+      # GPS-37: the weekly 1C export by the COM connection (tools/onec_export.ps1)
+      # against a stand-in 1C, and its acceptance check against the neighbour
+      # chat's files (stdlib). pwsh 7 here, Windows PowerShell 5.1 below.
+      - name: GPS-37 -- weekly 1C export and its acceptance check (pwsh 7)
+        env:
+          ONEC_POWERSHELL: pwsh
+        run: python -m unittest tests.test_onec_export tests.test_gps_onec_export_check
+
   # DRONE-USEFUL-AREA-PILOT-001. The operator console on the server is
   # WINDOWS POWERSHELL 5.1, not pwsh 7, and the two differ exactly where this
   # kit writes files: 5.1 has no `utf8NoBOM`, and its native `>` redirection
@@ -846,3 +854,10 @@ jobs:
         env:
           ONEC_POWERSHELL: powershell
         run: python -m unittest tests.test_onec_probe
+
+      # GPS-37: the weekly 1C export on the interpreter the scheduled task uses.
+      - name: GPS-37 -- weekly 1C export on Windows PowerShell 5.1
+        shell: powershell
+        env:
+          ONEC_POWERSHELL: powershell
+        run: python -m unittest tests.test_onec_export
