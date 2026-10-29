@@ -17,7 +17,7 @@
      установлен».
 
    Вместе с выпуском приедут ручные инструменты трека GPS, влитые в `main`
-   после v1.31 (PR #229–#247):
+   после v1.31 (PR #229–#248):
    - разведка перевозок;
    - проверка рейсов 1С;
    - зонд 1С;
@@ -101,7 +101,7 @@ $py        = 'C:\Program Files\Python314\python.exe'
 $backupBat = 'C:\transport-report\backup_production_db.bat'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $baseline  = '998bc20bfdb81e6d90ab413b63ab59da665aac65'
-$reviewed  = '36df6f3f0956ed355e960e1fbffb6afdfb2ae186'
+$reviewed  = '518b6407821c65f3bb17d4f8889d7ec031cb5a4f'
 $runbookTest = 'tests/test_fin_recon_002_release_runbook.py'
 $expectMig = 'migrate_drones_works_merged_customer_link_001.py migrate_drones_works_payer_unidentified_001.py'
 $frdir     = 'C:\VehicleSoft_Release\fin_recon_002'
@@ -275,7 +275,7 @@ $errLog    = 'C:\transport-report\logs\error.log'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '998bc20bfdb81e6d90ab413b63ab59da665aac65'
-$reviewed  = '36df6f3f0956ed355e960e1fbffb6afdfb2ae186'
+$reviewed  = '518b6407821c65f3bb17d4f8889d7ec031cb5a4f'
 $runbookTest = 'tests/test_fin_recon_002_release_runbook.py'
 $expectMig = 'migrate_drones_works_merged_customer_link_001.py migrate_drones_works_payer_unidentified_001.py'
 $frdir     = 'C:\VehicleSoft_Release\fin_recon_002'
@@ -678,7 +678,7 @@ $py        = 'C:\Program Files\Python314\python.exe'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '998bc20bfdb81e6d90ab413b63ab59da665aac65'
-$reviewed  = '36df6f3f0956ed355e960e1fbffb6afdfb2ae186'
+$reviewed  = '518b6407821c65f3bb17d4f8889d7ec031cb5a4f'
 $runbookTest = 'tests/test_fin_recon_002_release_runbook.py'
 $work      = 'C:\VehicleSoft_Release'
 $stopMark  = 'C:\VehicleSoft_Release\fr002_step3_db_stop.txt'
@@ -813,7 +813,7 @@ $prod      = 'C:\transport-report'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '998bc20bfdb81e6d90ab413b63ab59da665aac65'
-$reviewed  = '36df6f3f0956ed355e960e1fbffb6afdfb2ae186'
+$reviewed  = '518b6407821c65f3bb17d4f8889d7ec031cb5a4f'
 $runbookTest = 'tests/test_fin_recon_002_release_runbook.py'
 $work      = 'C:\VehicleSoft_Release'
 $stopMark  = 'C:\VehicleSoft_Release\fr002_step3_db_stop.txt'
