@@ -17,7 +17,9 @@
 #             organization at once (the report takes one at a time).
 # The columns and their headers are the neighbour chat's files, so GPS-35
 # reads either; "Gos nomer (iz nazvaniya)" is cut from the end of the
-# transport name exactly as there ("MTZ-80-1 80 283 HA" -> "80 283 HA").
+# transport name exactly as there ("MTZ-80-1 80 283 HA" -> "80 283 HA"). A
+# name without a plate at its end takes the plate from the catalog's own
+# attribute GosNomer (probe v3, 29.10); the console counts both kinds.
 #
 # WHAT IT DOES NOT DO
 # Writes nothing to 1C: it runs two SELECT queries. Takes no farmer, no
@@ -51,7 +53,7 @@ param(
   [switch]$LoadOnly
 )
 
-$ExportVersion = 'onec_export v2'
+$ExportVersion = 'onec_export v3'
 $SpecDir = Join-Path $PSScriptRoot 'onec_export'
 $SpecNames = @('vyvoz', 'reestr')
 # [REASON]: the plate is the tail of the 1C transport name -- two digits of
@@ -98,6 +100,30 @@ function Get-Plate([string]$name) {
   return '{0} {1} {2}' -f $found.Groups[1].Value, $found.Groups[2].Value, $found.Groups[3].Value
 }
 
+function Get-PlateCell($conn, $selection, $column, $counts) {
+  # [REASON]: the plate GPS-35 joins by is the one people see in 1C -- the
+  # tail of the transport name, as the neighbour chat cut it. The catalog
+  # attribute GosNomer fills in only where the name has none: PRESENTATION()
+  # gave the model only (export 29.10), and whether String() adds the plate
+  # is seen on the server, not here.
+  $plate = Get-Plate (Get-Text $conn (Get-Prop $selection $column.plate_from))
+  if ($plate) {
+    $counts['name'] += 1
+    return $plate
+  }
+  if ($column.plate_attribute) {
+    $own = ((Get-Text $conn (Get-Prop $selection $column.plate_attribute)) -replace '\s+', ' ').Trim()
+    if ($own) {
+      $counts['attribute'] += 1
+      $plate = Get-Plate $own
+      if ($plate) { return $plate }
+      return $own
+    }
+  }
+  $counts['none'] += 1
+  return ''
+}
+
 function ConvertTo-CsvLine([string[]]$cells) {
   return ($cells | ForEach-Object { '"' + $_.Replace('"', '""') + '"' }) -join ';'
 }
@@ -127,13 +153,14 @@ function Invoke-Export($conn, $spec, [datetime]$since, [datetime]$until) {
   [void]$lines.Add((ConvertTo-CsvLine @($spec.columns | ForEach-Object { $_.header })))
   $count = 0
   $sum = [decimal]0
+  $plates = @{ name = 0; attribute = 0; none = 0 }
   while ([bool](Invoke-Method $selection 'Next')) {
     # [REASON]: a reference is turned into text by String() of 1C -- the
     # name forms and reports show ("MTZ-80-1 80 283 HA"); PRESENTATION() in
     # the query gives the model only, without the plate (export 29.10).
     $cells = foreach ($column in $spec.columns) {
       if ($column.plate_from) {
-        Get-Plate (Get-Text $conn (Get-Prop $selection $column.plate_from))
+        Get-PlateCell $conn $selection $column $plates
       } elseif ($column.as_text) {
         Get-Text $conn (Get-Prop $selection $column.alias)
       } else {
@@ -145,7 +172,8 @@ function Invoke-Export($conn, $spec, [datetime]$since, [datetime]$until) {
     if ($null -ne $mass) { $sum += [decimal]$mass }
     $count += 1
   }
-  return @{ Lines = $lines; Count = $count; Sum = $sum }
+  $hasPlate = @($spec.columns | Where-Object { $_.plate_from }).Count -gt 0
+  return @{ Lines = $lines; Count = $count; Sum = $sum; Plates = $(if ($hasPlate) { $plates } else { $null }) }
 }
 
 # [REASON]: the console gets Write-Host, never Write-Output: output of a
@@ -214,6 +242,11 @@ function Invoke-Main([scriptblock]$Connect) {
     Move-Item -LiteralPath ($target + '.tmp') -Destination $target -Force
     Write-Host ('{0}: {1} rows | sum {2} | {3}' -f $SpecNames[$i], $results[$SpecNames[$i]].Count,
       $results[$SpecNames[$i]].Sum.ToString($Invariant), $target)
+    $plates = $results[$SpecNames[$i]].Plates
+    if ($null -ne $plates) {
+      Write-Host ('{0} plates: from the name {1} | from the GosNomer attribute {2} | none {3}' -f $SpecNames[$i],
+        $plates['name'], $plates['attribute'], $plates['none'])
+    }
   }
   Write-Host 'READ ONLY: nothing was written to 1C'
   return 0
