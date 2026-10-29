@@ -1,0 +1,28 @@
+{
+  "file": "onec_pk17_reestr_nedelya.csv",
+  "about": "1C report 'Zagotovka - Reestr PK17 (jadval 7)' (ZagotovkaReestrPK17_J7): the same document, posted only, and the same period field (posting date) as its schema (probe 29.10); every organization in one pass, where the report takes one at a time.",
+  "query": "ВЫБРАТЬ\n\tПРЕДСТАВЛЕНИЕ(Поступление.Организация) КАК Org,\n\tПРЕДСТАВЛЕНИЕ(Поступление.ПунктПриема) КАК Point,\n\tПРЕДСТАВЛЕНИЕ(Поступление.ТранспортноеСредство) КАК Transport,\n\tПоступление.ВремяВзвешиванияБрутто КАК GrossWeighing,\n\tПоступление.ВесФизический КАК Mass\nИЗ\n\tДокумент.ПоступлениеХлопкаСырца КАК Поступление\nГДЕ\n\tПоступление.Проведен\n\tИ Поступление.ДатаПроводки МЕЖДУ &Since И &Until",
+  "columns": [
+    {
+      "alias": "Org",
+      "header": "Организация (завод)"
+    },
+    {
+      "alias": "Point",
+      "header": "Пункт приема"
+    },
+    {
+      "alias": "Transport",
+      "header": "Транспорт"
+    },
+    {
+      "alias": "GrossWeighing",
+      "header": "Дата брутто"
+    },
+    {
+      "alias": "Mass",
+      "header": "Масса физическая,кг"
+    }
+  ],
+  "sum": "Mass"
+}
