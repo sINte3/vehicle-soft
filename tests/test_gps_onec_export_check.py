@@ -9,7 +9,11 @@
   * строки скрипта по организациям, которых нет у чата, -- отдельным
     числом, не расхождение;
   * MATCH -- ни недостающих, ни лишних строк; DIFFERS -- иначе, расходящиеся
-    строки -- в --csv; консоль -- ASCII; неверный ввод -- код 2.
+    строки -- в --csv; консоль -- ASCII; неверный ввод -- код 2;
+  * дополнение 29.10 (после второго прогона): лишняя строка скрипта с «Датой
+    документа» позже времени файла чата (по Ташкенту) -- введена после
+    выгрузки чата, считается отдельно; из строк с одним ключом лишние --
+    самые поздние; без колонки и для недостающих -- не действует.
 
 Запуск из корня репозитория:
   python -m unittest tests.test_gps_onec_export_check
@@ -21,6 +25,9 @@ import os
 import shutil
 import tempfile
 import unittest
+from datetime import datetime
+
+from gps_collector import config as collector_config
 
 import tools.gps_onec_export_check as tool
 from tests.onec_xlsx import write_xlsx
@@ -55,6 +62,12 @@ EXPORT_REESTR = [REESTR_XLSX,
                  (OTHER, 'Завод олди ПТМ', '80 HA 999', '2026-10-21 10:00:00', '1500')]
 
 
+# файлы чата записаны 29.10 в 13:20:00 по Ташкенту
+CHAT_WRITTEN = datetime(2026, 10, 29, 13, 20, tzinfo=collector_config.TZ).timestamp()
+REESTR_DATED = REESTR_XLSX + ('Дата документа',)
+EXPORT_REESTR_DATED = [REESTR_DATED] + [row + ('2026-10-26 10:00:00',) for row in EXPORT_REESTR[1:]]
+
+
 def write_csv(path, rows):
     with open(path, 'w', encoding='utf-8-sig', newline='') as handle:
         csv.writer(handle, delimiter=';', quoting=csv.QUOTE_ALL).writerows(rows)
@@ -69,6 +82,8 @@ class ExportCheck(unittest.TestCase):
                       ('exp_v.xlsx', 'exp_r.xlsx', 'v.csv', 'r.csv', 'diff.csv')}
         write_xlsx(self.paths['exp_v.xlsx'], EXPECTED_VYVOZ)
         write_xlsx(self.paths['exp_r.xlsx'], EXPECTED_REESTR)
+        for name in ('exp_v.xlsx', 'exp_r.xlsx'):
+            os.utime(self.paths[name], (CHAT_WRITTEN, CHAT_WRITTEN))
 
     def run_tool(self, vyvoz, reestr, with_csv=True):
         write_csv(self.paths['v.csv'], vyvoz)
@@ -86,6 +101,12 @@ class ExportCheck(unittest.TestCase):
         self.assertTrue(text.isascii(), text)
         return code, lines, text
 
+    @staticmethod
+    def line(lines, prefix):
+        found = [text for text in lines if text.startswith(prefix)]
+        assert len(found) == 1, (prefix, lines)
+        return found[0]
+
     def differences(self):
         with open(self.paths['diff.csv'], encoding='utf-8-sig', newline='') as handle:
             return list(csv.reader(handle, delimiter=';'))
@@ -96,12 +117,15 @@ class ExportCheck(unittest.TestCase):
         # скрипта -- не расхождение
         code, lines, text = self.run_tool(EXPORT_VYVOZ, EXPORT_REESTR)
         self.assertEqual(code, tool.EXIT_OK, text)
-        self.assertEqual(lines[0], 'vyvoz: expected 2 rows / 11940 kg | export 2 rows / 11940 kg '
-                                   '| missing 0 | extra 0 | other organizations in the export: '
-                                   '0 (0 rows / 0 kg)')
-        self.assertEqual(lines[1], 'reestr: expected 3 rows / 9640 kg | export 3 rows / 9640 kg '
-                                   '| missing 0 | extra 0 | other organizations in the export: '
-                                   '1 (1 rows / 1500 kg)')
+        # время файла чата -- по Ташкенту, как дата документа 1С
+        self.assertEqual(lines[:2], ["vyvoz: the chat's file was written 2026-10-29 13:20:00",
+                                     "reestr: the chat's file was written 2026-10-29 13:20:00"])
+        self.assertEqual(lines[2], "vyvoz: expected 2 rows / 11940 kg | export 2 rows / 11940 kg "
+                                   "| missing 0 | extra 0 | entered after the chat's file 0 "
+                                   "| other organizations in the export: 0 (0 rows / 0 kg)")
+        self.assertEqual(lines[3], "reestr: expected 3 rows / 9640 kg | export 3 rows / 9640 kg "
+                                   "| missing 0 | extra 0 | entered after the chat's file 0 "
+                                   "| other organizations in the export: 1 (1 rows / 1500 kg)")
         self.assertEqual(lines[-1], 'VERDICT EXPORT: MATCH')
         self.assertEqual(self.differences(), [list(tool.CSV_COLUMNS)])
 
@@ -111,26 +135,99 @@ class ExportCheck(unittest.TestCase):
         code, lines, text = self.run_tool(EXPORT_VYVOZ, reestr)
         self.assertEqual(code, tool.EXIT_OK, text)
         self.assertIn('reestr: expected 3 rows / 9640 kg | export 2 rows / 7241 kg '
-                      '| missing 2 | extra 1 |', lines[1])
+                      '| missing 2 | extra 1 |', self.line(lines, 'reestr: expected'))
         self.assertEqual(lines[-1], 'VERDICT EXPORT: DIFFERS')
         self.assertEqual(sorted(self.differences()[1:]), sorted([
             ['reestr', 'lishnyaya_v_skripte', 'кумушкент птм', '80368KA', '2026-10-20 19:16:47',
-             '4841', BUXORO],
+             '4841', BUXORO, ''],
             ['reestr', 'net_v_skripte', 'кумушкент птм', '80368KA', '2026-10-20 19:16:47',
-             '4840', BUXORO],
+             '4840', BUXORO, ''],
             ['reestr', 'net_v_skripte', 'х.нарзи птм', '80254HA', '2026-10-25 20:26:10',
-             '2400', MIRZA]]))
+             '2400', MIRZA, '']]))
 
     def test_extra_rows_alone_differ_and_are_listed_each(self):
         # недостающих нет, лишняя строка -- дважды: расхождение, и в --csv
         # она дважды
+        # без колонки «Дата документа» ни одна строка не считается введённой
+        # после выгрузки чата
         extra = (BUXORO, 'Кумушкент ПТМ', '80 KA 368', '2026-10-22 09:00:00', '3000')
         code, lines, text = self.run_tool(EXPORT_VYVOZ, EXPORT_REESTR + [extra, extra])
-        self.assertIn('| missing 0 | extra 2 |', lines[1])
+        self.assertIn("| missing 0 | extra 2 | entered after the chat's file 0 |",
+                      self.line(lines, 'reestr: expected'))
         self.assertEqual(lines[-1], 'VERDICT EXPORT: DIFFERS')
         self.assertEqual(self.differences()[1:], [
             ['reestr', 'lishnyaya_v_skripte', 'кумушкент птм', '80368KA', '2026-10-22 09:00:00',
-             '3000', BUXORO]] * 2)
+             '3000', BUXORO, '']] * 2)
+
+    def test_rows_entered_after_the_chats_file_are_counted_apart(self):
+        # вторая строка с ключом, который у чата один раз, и новая строка --
+        # обе датированы позже файла чата: отдельно, расхождения нет. Из двух
+        # строк с одним ключом лишняя -- более поздняя
+        twin = EXPORT_REESTR[1] + ('2026-10-29 14:07:44',)
+        dated = list(EXPORT_REESTR_DATED)
+        dated[1] = EXPORT_REESTR[1] + ('2026-10-20 19:30:00',)
+        new = (BUXORO, 'Кумушкент ПТМ', '80 KA 368', '2026-10-25 17:39:35', '218',
+               '2026-10-29 14:11:44')
+        # двойник -- ниже своей пары: лишней берётся самая поздняя по дате
+        # документа, а не первая в файле
+        code, lines, text = self.run_tool(EXPORT_VYVOZ, dated[:2] + [twin] + dated[2:] + [new])
+        self.assertEqual(code, tool.EXIT_OK, text)
+        self.assertEqual(self.line(lines, 'reestr: expected'),
+                         "reestr: expected 3 rows / 9640 kg | export 5 rows / 14698 kg "
+                         "| missing 0 | extra 0 | entered after the chat's file 2 "
+                         "| other organizations in the export: 1 (1 rows / 1500 kg)")
+        self.assertEqual(lines[-1], 'VERDICT EXPORT: MATCH')
+        self.assertEqual(sorted(self.differences()[1:]), sorted([
+            ['reestr', 'vvedena_posle_fayla_chata', 'кумушкент птм', '80368KA',
+             '2026-10-20 19:16:47', '4840', BUXORO, '2026-10-29 14:07:44'],
+            ['reestr', 'vvedena_posle_fayla_chata', 'кумушкент птм', '80368KA',
+             '2026-10-25 17:39:35', '218', BUXORO, '2026-10-29 14:11:44']]))
+
+    def test_an_extra_row_dated_before_the_chats_file_still_differs(self):
+        # дата документа раньше файла чата, ровно его время или пустая --
+        # обычная лишняя строка
+        for stamp in ('2026-10-29 13:19:59', '2026-10-29 13:20:00', ''):
+            with self.subTest(stamp=stamp):
+                extra = (BUXORO, 'Кумушкент ПТМ', '80 KA 368', '2026-10-22 09:00:00', '3000',
+                         stamp)
+                code, lines, text = self.run_tool(EXPORT_VYVOZ, EXPORT_REESTR_DATED + [extra])
+                self.assertIn("| missing 0 | extra 1 | entered after the chat's file 0 |",
+                              self.line(lines, 'reestr: expected'))
+                self.assertEqual(lines[-1], 'VERDICT EXPORT: DIFFERS')
+                self.assertEqual(self.differences()[1][1], 'lishnyaya_v_skripte')
+
+    def test_one_key_can_hold_a_late_and_a_real_extra_row(self):
+        # у чата строка один раз, у скрипта трижды: одна -- пара, одна
+        # датирована позже файла чата, третья -- раньше: она остаётся лишней
+        early = EXPORT_REESTR[1] + ('2026-10-21 08:00:00',)
+        late = EXPORT_REESTR[1] + ('2026-10-29 14:07:44',)
+        code, lines, text = self.run_tool(EXPORT_VYVOZ, EXPORT_REESTR_DATED + [early, late])
+        self.assertIn("| missing 0 | extra 1 | entered after the chat's file 1 |",
+                      self.line(lines, 'reestr: expected'))
+        self.assertEqual(lines[-1], 'VERDICT EXPORT: DIFFERS')
+        self.assertEqual(sorted(row[1] + ' ' + row[7] for row in self.differences()[1:]), [
+            'lishnyaya_v_skripte 2026-10-26 10:00:00',
+            'vvedena_posle_fayla_chata 2026-10-29 14:07:44'])
+
+    def test_a_row_without_a_date_is_the_chats_pair_of_a_late_one(self):
+        # строка, датированная позже файла чата, у чата быть не могла: его
+        # парой считается строка без даты
+        undated = EXPORT_REESTR[1] + ('',)
+        late = EXPORT_REESTR[1] + ('2026-10-29 14:07:44',)
+        rows = [REESTR_DATED, undated, late] + EXPORT_REESTR_DATED[2:]
+        code, lines, text = self.run_tool(EXPORT_VYVOZ, rows)
+        self.assertIn("| missing 0 | extra 0 | entered after the chat's file 1 |",
+                      self.line(lines, 'reestr: expected'))
+        self.assertEqual(lines[-1], 'VERDICT EXPORT: MATCH')
+
+    def test_a_missing_row_differs_even_beside_late_ones(self):
+        # недостающая строка не прощается ничем
+        late = (BUXORO, 'Кумушкент ПТМ', '80 KA 368', '2026-10-25 17:39:35', '218',
+                '2026-10-29 14:11:44')
+        code, lines, text = self.run_tool(EXPORT_VYVOZ, EXPORT_REESTR_DATED[:3] + [late])
+        self.assertIn("| missing 1 | extra 0 | entered after the chat's file 1 |",
+                      self.line(lines, 'reestr: expected'))
+        self.assertEqual(lines[-1], 'VERDICT EXPORT: DIFFERS')
 
     def test_a_shifted_time_or_another_plate_differs(self):
         for column, value in ((4, '2026-10-19 07:46:40'), (3, '80 284 HA')):
@@ -139,7 +236,7 @@ class ExportCheck(unittest.TestCase):
                 row[column] = value
                 code, lines, text = self.run_tool([EXPORT_VYVOZ[0], tuple(row), EXPORT_VYVOZ[2]],
                                                   EXPORT_REESTR, with_csv=False)
-                self.assertIn('| missing 1 | extra 1 |', lines[0])
+                self.assertIn('| missing 1 | extra 1 |', self.line(lines, 'vyvoz: expected'))
                 self.assertEqual(lines[-1], 'VERDICT EXPORT: DIFFERS')
 
     def test_bad_input_is_code_two(self):
