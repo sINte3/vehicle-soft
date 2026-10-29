@@ -53,6 +53,9 @@ $C['DOCS'] = [regex]::Unescape('\u0412\u0437\u0432\u0435\u0448\u0438\u0432\u0430
 $C['AR'] = [regex]::Unescape('\u041e\u0441\u0442\u0430\u0442\u043a\u0438\u0425\u043b\u043e\u043f\u043a\u0430')
 $C['ARS'] = [regex]::Unescape('\u041e\u0441\u0442\u0430\u0442\u043a\u0438 \u0445\u043b\u043e\u043f\u043a\u0430')
 $C['CONF'] = [regex]::Unescape('\u0423\u0437\u043f\u0430\u0445\u0442\u0430')
+$C['METADATA_RU'] = [regex]::Unescape('\u041c\u0435\u0442\u0430\u0434\u0430\u043d\u043d\u044b\u0435')
+$C['VERSION_RU'] = [regex]::Unescape('\u0412\u0435\u0440\u0441\u0438\u044f')
+$C['REPORTS_RU'] = [regex]::Unescape('\u041e\u0442\u0447\u0435\u0442\u044b')
 $C['REFUSED'] = [regex]::Unescape('\u0418\u0434\u0435\u043d\u0442\u0438\u0444\u0438\u043a\u0430\u0446\u0438\u044f \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f \u043d\u0435 \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u0430')
 
 # [REASON]: a 1C collection supports For Each over COM, so PowerShell
@@ -60,16 +63,25 @@ $C['REFUSED'] = [regex]::Unescape('\u0418\u0434\u0435\u043d\u0442\u0438\u0444\u0
 # failed exactly so on the server on 29.10 ("[System.Int32] has no method
 # Invoke": Count of the unrolled array). The stand-in collection is
 # enumerable for the same reason; a plain object would hide the defect.
+# Walked only by enumeration: no Count()/Get() here, so a probe that stops
+# enumerating fails on it (New-PlainColl below keeps the other way tested).
 class FakeColl : System.Collections.IEnumerable {
   [object[]]$Items
   FakeColl([object[]]$items) { $this.Items = $items }
-  [int] Count() { return $this.Items.Count }
-  [object] Get([int]$index) { return $this.Items[$index] }
   [System.Collections.IEnumerator] GetEnumerator() { return $this.Items.GetEnumerator() }
 }
 
 function New-Coll([object[]]$items) {
   return ,([FakeColl]::new([object[]]@($items)))
+}
+
+# A collection PowerShell cannot walk: the probe must fall back on Count()
+# and Get() of 1C.
+function New-PlainColl([object[]]$items) {
+  $o = [pscustomobject]@{ Items = @($items) }
+  $o | Add-Member -MemberType ScriptMethod -Name Count -Value { return @($this.Items).Count }
+  $o | Add-Member -MemberType ScriptMethod -Name Get -Value { param($i) return @($this.Items)[$i] }
+  return $o
 }
 
 function New-Named([string]$name, [string]$synonym) {
@@ -141,7 +153,7 @@ $metadata = [pscustomobject]@{
     (New-Subsystem $C['SS1'] $C['SS1S'] @((New-Full $C['C1']), (New-Full $C['C2'])) @(
       (New-Subsystem $C['SS2'] $C['SS2'] @((New-Full $C['C3'])) @()))),
     (New-Subsystem $C['SS3'] $C['SS3'] @((New-Full $C['C4'])) @())))
-  Documents = (New-Coll @((New-Named $C['DOC'] $C['DOCS'])))
+  Documents = (New-PlainColl @((New-Named $C['DOC'] $C['DOCS'])))
   AccumulationRegisters = (New-Coll @((New-Named $C['AR'] $C['ARS'])))
   InformationRegisters = (New-Coll @())
 }
@@ -180,6 +192,28 @@ switch ($Scenario) {
       Metadata = [pscustomobject]@{ Name = 'UzPaxta'; Synonym = ''; Version = '1'; Reports = $failing } }
   }
   'no-folder' { $Out = Join-Path (Join-Path $Folder 'missing') 'probe.txt' }
+  'russian' {
+    # The connection and the configuration answer only to Russian names.
+    $ru = [pscustomobject]@{ Name = 'UzPaxta'; Synonym = $C['CONF']
+      Subsystems = $metadata.Subsystems; Documents = $metadata.Documents
+      AccumulationRegisters = $metadata.AccumulationRegisters
+      InformationRegisters = $metadata.InformationRegisters }
+    $ru | Add-Member -NotePropertyName $C['VERSION_RU'] -NotePropertyValue '1.0.5'
+    $ru | Add-Member -NotePropertyName $C['REPORTS_RU'] -NotePropertyValue $metadata.Reports
+    $ruConn = [pscustomobject]@{ Reports = $conn.Reports }
+    $ruConn | Add-Member -NotePropertyName $C['METADATA_RU'] -NotePropertyValue $ru
+    $ruConn | Add-Member -MemberType ScriptMethod -Name String -Value { param($value) return 'S<' + $value.Kind + '>' }
+    $script:conn = $ruConn
+  }
+  'partial' {
+    # No subsystems under either name: that part fails, the rest is read.
+    $script:conn = [pscustomobject]@{ Reports = $conn.Reports
+      Metadata = [pscustomobject]@{ Name = 'UzPaxta'; Synonym = $C['CONF']; Version = '1.0.5'
+        Reports = $metadata.Reports; Documents = $metadata.Documents
+        AccumulationRegisters = $metadata.AccumulationRegisters
+        InformationRegisters = $metadata.InformationRegisters } }
+    $script:conn | Add-Member -MemberType ScriptMethod -Name String -Value { param($value) return 'S<' + $value.Kind + '>' }
+  }
   default { throw ('unknown scenario ' + $Scenario) }
 }
 

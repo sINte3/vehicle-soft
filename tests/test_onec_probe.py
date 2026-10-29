@@ -7,11 +7,14 @@
     данных с текстом запроса, поля, вычисляемые поля и итоги, варианты; у
     старого отчёта -- реквизиты и макеты; прочие отчёты только в списке;
   * подсистемы -- деревом, состав -- только у «заготовки хлопка»; документы и
-    регистры -- списком;
+    регистры -- списком; в конце -- какие члены видит PowerShell;
+  * член 1С спрашивается по-английски, затем по-русски; коллекция -- перебором
+    PowerShell, иначе Count()/Get(); часть, которая упала, -- строка «!» с
+    именем члена, остальное пишется (код 4);
   * пароль не попадает ни в файл, ни в консоль, в том числе из текста ошибки
     1С; в консоль -- только ASCII;
-  * коды: 0 -- файл записан, 2 -- неверный ввод (ничего не записано), 3 --
-    1С отказала в соединении, 1 -- разведка упала;
+  * коды: 0 -- файл записан целиком, 4 -- записан, часть упала, 2 -- неверный
+    ввод (ничего не записано), 3 -- 1С отказала в соединении;
   * файл учётных данных: login=/password=, UTF-8 с BOM или cp1251,
     незнакомый ключ -- отказ с номером строки, без значения.
 
@@ -104,12 +107,12 @@ class ProbeAgainstStandIn(unittest.TestCase):
     def test_describes_the_cotton_reports(self):
         code, console, text = self.run_case('ok')
         self.assertEqual(code, 0, console)
-        self.assertIn('connected; reports 4; described 3', console)
+        self.assertIn('connected; reports 4; described 3; failed parts 0', console)
         self.assertIn('READ ONLY: nothing was written to 1C', console)
         self.assertClean(console, text)
         lines = text.splitlines()
         self.assertEqual(lines[:7], [
-            'onec_probe v1',
+            'onec_probe v2',
             'configuration: UzPaxta | Узпахта | version 1.0.5',
             '=== reports: 4',
             '* РеестрПК17 | Реестр ПК-17 (жадвал 7) | schema yes',
@@ -150,7 +153,8 @@ class ProbeAgainstStandIn(unittest.TestCase):
         # отчёт вне шаблона только в списке
         self.assertNotIn('=== report Остатки | Остатки на складах', lines)
         tail = lines[lines.index('=== subsystems'):]
-        self.assertEqual(tail, [
+        # документы -- коллекция без перебора: прочитаны через Count()/Get()
+        self.assertEqual(tail[:11], [
             '=== subsystems',
             '  S ЗаготовкаХлопкаСырца | Заготовка хлопка сырца | objects 2',
             '      - Отчет.РеестрПК17',
@@ -162,6 +166,11 @@ class ProbeAgainstStandIn(unittest.TestCase):
             '=== accumulation registers: 1',
             '  ОстаткиХлопка | Остатки хлопка',
             '=== information registers: 0'])
+        self.assertEqual(tail[11], '=== members seen by PowerShell')
+        self.assertTrue(tail[12].startswith('  connection: '), tail[12])
+        self.assertIn('Metadata', tail[12])
+        self.assertTrue(tail[13].startswith('  metadata: '), tail[13])
+        self.assertEqual(len(tail), 14)
 
     def test_named_reports_replace_the_search(self):
         # -Report через -File приходит одной строкой «A,B»
@@ -184,13 +193,37 @@ class ProbeAgainstStandIn(unittest.TestCase):
         self.assertIn('Идентификация пользователя не выполнена', text)
         self.assertIn('Pwd="***', text)
 
-    def test_a_failed_probe_is_code_one_and_masked(self):
+    def test_a_failing_part_is_named_masked_and_the_rest_is_read(self):
+        # Count() коллекции отчётов падает с текстом, где есть пароль
         code, console, text = self.run_case('broken')
-        self.assertEqual(code, 1, console)
-        self.assertIn('ERROR: the probe failed', console)
+        self.assertEqual(code, 4, console)
         self.assertClean(console, text)
-        self.assertIn('probe failed:', text)
-        self.assertIn('***', text)
+        lines = text.splitlines()
+        failed = [line for line in lines if line.startswith('  ! reports failed: ')]
+        self.assertEqual(len(failed), 1, text)
+        self.assertIn('***', failed[0])
+        self.assertIn('=== members seen by PowerShell', lines)
+
+    def test_russian_member_names_are_the_fallback(self):
+        code, console, text = self.run_case('russian')
+        self.assertEqual(code, 0, console)
+        self.assertIn('failed parts 0', console)
+        lines = text.splitlines()
+        self.assertEqual(lines[1], 'configuration: UzPaxta | Узпахта | version 1.0.5')
+        self.assertIn('* РеестрПК17 | Реестр ПК-17 (жадвал 7) | schema yes', lines)
+        connection = [line for line in lines if line.startswith('  connection: ')]
+        self.assertIn('Метаданные', connection[0])
+
+    def test_one_missing_part_does_not_stop_the_others(self):
+        code, console, text = self.run_case('partial')
+        self.assertEqual(code, 4, console)
+        self.assertIn('failed parts 1', console)
+        lines = text.splitlines()
+        at = lines.index('=== subsystems')
+        self.assertEqual(lines[at + 1],
+                         '  ! subsystems failed: 1C does not know the member Subsystems / Подсистемы')
+        self.assertEqual(lines[at + 2:at + 4], ['=== documents: 1', '  Взвешивание | Взвешивание хлопка'])
+        self.assertIn('=== report РеестрПК17 | Реестр ПК-17 (жадвал 7)', lines)
 
     def test_bad_input_is_code_two_and_nothing_is_written(self):
         cases = (
