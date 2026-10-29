@@ -8,9 +8,9 @@
 вердикта. Объём в часах -- допуск В-2. Пока таблицы часов нет, заявка
 остаётся с прежней причиной.
 
-Публикация выключена (`rc.TIME_VERDICTS_PUBLISHED`): проверка правил 20.10
-не прошла. Вердикт проверяется здесь включённым -- это код, который
-заработает после новой проверки; выключенный -- `NotPublished`.
+Публикация включена (`rc.TIME_VERDICTS_PUBLISHED`) после проверки часов
+против счётчика Wialon 29.10 -- MET. Вердикт проверяется здесь включённым;
+выключатель оставлен, и выключенный -- `NotPublished`.
 
 Запуск: python -m unittest tests.test_agro_work_time_method -v
 """
@@ -92,18 +92,23 @@ class WithoutTheTable(Base):
         self.assertIsNone(row['gps_on_s'])
 
 
-class NotPublished(Base):
-    """Таблица часов есть и часы в ней есть, но вердикты не публикуются."""
+class Switch(unittest.TestCase):
 
-    published = False
-
-    def test_publication_is_off_until_a_check_passes(self):
-        # [REASON]: проверка GPS-28 20.10.2026 -- NOT MET (трек GPS, §0.6).
-        self.assertIs(PUBLISHED_IN_CODE, False)
+    def test_publication_is_on_after_the_counter_check(self):
+        # [REASON]: проверка часов против счётчика Wialon 29.10.2026 -- MET
+        # (трек GPS, §0.6); выключатель снимается только новым исходом.
+        self.assertIs(PUBLISHED_IN_CODE, True)
         with open(os.path.join(REPO_ROOT, 'docs', 'tracks', 'gps-plan-fakt.md'),
                   encoding='utf-8') as fh:
             track = ' '.join(fh.read().split())
-        self.assertIn('`VERDICT HOURS: NOT MET`', track)
+        self.assertIn('**Исход проверки часов против счётчика Wialon (29.10.2026, '
+                      'дописано после прогона): MET.**', track)
+
+
+class NotPublished(Base):
+    """Выключатель снят: таблица часов есть и часы в ней есть, но вердиктов нет."""
+
+    published = False
 
     def test_a_time_application_keeps_its_old_reason_with_the_table(self):
         self.fx.hours(1001, 10, 2 * HOUR)

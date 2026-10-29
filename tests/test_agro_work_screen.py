@@ -241,6 +241,20 @@ class Numbers(ScreenCase):
         self.assertIn('coverage=bez_zayavki', html)
         self.assertIn('Машина agro-work не связана с нашей техникой', html)
 
+    def test_the_dashboard_says_time_applications_are_reconciled(self):
+        # [REASON]: вердикты «время» включены 29.10 (проверка часов по
+        # счётчику Wialon -- MET); примечание экрана не должно говорить, что
+        # время трек GPS не публикует.
+        ru = self.get('/agro-work/', lang='ru').get_data(as_text=True)
+        self.assertIn('Сверяются заявки видов работ с методами «гектары» и «время» '
+                      '(часы зажигания по GPS): рейсы трек GPS пока не публикует.', ru)
+        self.assertNotIn('время и рейсы трек GPS пока не публикует', ru)
+        uz = self.get('/agro-work/', lang='uz').get_data(as_text=True)
+        self.assertIn('«Гектарлар» ва «вақт» (GPS бўйича ўт олдириш соатлари) усулидаги '
+                      'иш турлари буюртмалари солиштирилади: рейсларни GPS трек ҳали '
+                      'эълон қилмайди.', uz)
+        self.assertNotIn('вақт ва рейсларни', uz)
+
     def test_applications_list_puts_the_violation_first(self):
         html = self.get('/agro-work/applications', lang='ru').get_data(as_text=True)
         order = [m for m in re.findall(r'APP-TEST-\d{3}', html)]
@@ -581,8 +595,8 @@ class TimeOnScreen(ScreenCase):
 
     def setUp(self):
         super().setUp()
-        # Вердикты «время» не публикуются (проверка 20.10 не прошла); экран
-        # с ними проверяется включённым, выключенный -- последним тестом.
+        # Вердикты «время» публикуются (проверка по счётчику 29.10 -- MET);
+        # выключатель задан явно, выключенный -- последним тестом.
         from agro_work import reconcile
         patcher = mock.patch.object(reconcile, 'TIME_VERDICTS_PUBLISHED', True)
         patcher.start()
@@ -634,8 +648,7 @@ class TimeOnScreen(ScreenCase):
             html = self.get('/agro-work/applications', lang='ru').get_data(
                 as_text=True)
         row = row_of(html, 'APP-TEST-007')
-        self.assertIn('Метод «время»: трек GPS время работы пока не публикует',
-                      row)
+        self.assertIn('Метод «время»: часы зажигания по GPS ещё не готовы', row)
         self.assertNotIn('по GPS 3.00 ч', row)
         self.assertNotIn('В допуске', row)
 
