@@ -51,7 +51,7 @@ param(
   [switch]$LoadOnly
 )
 
-$ExportVersion = 'onec_export v1'
+$ExportVersion = 'onec_export v2'
 $SpecDir = Join-Path $PSScriptRoot 'onec_export'
 $SpecNames = @('vyvoz', 'reestr')
 # [REASON]: the plate is the tail of the 1C transport name -- two digits of
@@ -128,9 +128,14 @@ function Invoke-Export($conn, $spec, [datetime]$since, [datetime]$until) {
   $count = 0
   $sum = [decimal]0
   while ([bool](Invoke-Method $selection 'Next')) {
+    # [REASON]: a reference is turned into text by String() of 1C -- the
+    # name forms and reports show ("MTZ-80-1 80 283 HA"); PRESENTATION() in
+    # the query gives the model only, without the plate (export 29.10).
     $cells = foreach ($column in $spec.columns) {
       if ($column.plate_from) {
-        Get-Plate ([string](Get-Prop $selection $column.plate_from))
+        Get-Plate (Get-Text $conn (Get-Prop $selection $column.plate_from))
+      } elseif ($column.as_text) {
+        Get-Text $conn (Get-Prop $selection $column.alias)
       } else {
         ConvertTo-Cell (Get-Prop $selection $column.alias)
       }
