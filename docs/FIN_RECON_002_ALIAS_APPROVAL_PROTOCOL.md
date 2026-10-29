@@ -124,7 +124,16 @@
    ```
    **Пока в таблице есть `HOLD`**: ожидается `RESULT: HOLD_BLOCKED` (код 4). Отдельной строкой проверяется «decision table --apply with HOLD: REFUSED, the copy byte-identical». Импорт не репетируется. **Это не готовность к production.**
    **Когда `HOLD` нет**: ожидается `RESULT: PASS` (код 0) со строками «books -> 137 / 155 / PTZ / UNIDENTIFIED … owner decided …» и «no row of the books on a forbidden card».
-5. Окно записи — только по отдельному разрешению владельца. Порядок:
+   **Июнь 2026, 29.10.** Владелец закрыл 17 `HOLD` правилом «неопределённый внешний — `NEW external`». Утверждённая таблица:
+   - SHA `085df4bc9e5e681d0aa639c8624079ac375b13bbf17359095fc27feb69ae548f`;
+   - ALIAS 14, NEW 44, GROUP_NEW 5, KEEP 8, REPOINT 1, UNIDENTIFIED 2.
+
+   **Таблица выпуска** — утверждённая байт в байт плюс две строки `SET_TYPE` (№137, №155 → `internal`):
+   - SHA `754dab3571f4cae516933fd55cf3ee68a7f83b4a21162767b2833f67220a99d0`;
+   - запись в реестре — `DRONE_ALIAS_DECISIONS_754DAB3571F4CAE5`.
+
+   `SET_TYPE` в тип, который у карточки уже стоит, ничего не меняет, а повтор таблицы — `ALREADY APPLIED`.
+5. Окно записи — только по отдельному разрешению владельца; пошагово — `docs/FIN_RECON_002_RELEASE_V132_RUNBOOK.md`. Порядок:
    1. `migrate_drones_works_payer_unidentified_001.py`, **до** запуска нового кода;
    2. две миграции привязок (`--scope june`, `--scope june-anchor`);
    3. `tools/drone_alias_decisions.py --apply --receipt … --forbid-cards 589,684-692,803`;
