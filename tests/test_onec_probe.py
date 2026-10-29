@@ -112,7 +112,7 @@ class ProbeAgainstStandIn(unittest.TestCase):
         self.assertClean(console, text)
         lines = text.splitlines()
         self.assertEqual(lines[:7], [
-            'onec_probe v2',
+            'onec_probe v3',
             'configuration: UzPaxta | Узпахта | version 1.0.5',
             '=== reports: 4',
             '* РеестрПК17 | Реестр ПК-17 (жадвал 7) | schema yes',
@@ -120,13 +120,15 @@ class ProbeAgainstStandIn(unittest.TestCase):
             '  Остатки | Остатки на складах | schema yes',
             '* ЖурналВзвешиваний | Журнал взвешиваний | schema yes'])
         start = lines.index('=== report РеестрПК17 | Реестр ПК-17 (жадвал 7)')
-        self.assertEqual(lines[start + 1:start + 28], [
+        self.assertEqual(lines[start + 1:start + 29], [
             '  main schema: ОсновнаяСхемаКомпоновкиДанных',
             '  parameters: 1',
             '    P НачалоПериода | Начало периода | type S<date-type> | value S<standard-period>',
             '  data sets: 2',
             '    D НаборДанных1 | query',
             '      F Масса | Масса | Масса физическая,кг',
+            '      F ВывозТранспорт | ВывозТранспорт | Транспорт | presentation: '
+            'ВывозТранспорт.Наименование + " " + ВывозТранспорт.ГосНомер',
             '      query:',
             '    | ВЫБРАТЬ',
             '    |     Взвешивание.МассаФизическая КАК Масса',
@@ -148,29 +150,43 @@ class ProbeAgainstStandIn(unittest.TestCase):
             '  main schema: none (an old-style report: its logic is in the module)',
             '=== report ЖурналВзвешиваний | Журнал взвешиваний',
             '  main schema: ОсновнаяСхемаКомпоновкиДанных'])
-        self.assertTrue(lines[start + 28].startswith('  schema not read: '))
-        self.assertIn('template is not available', lines[start + 28])
+        self.assertTrue(lines[start + 29].startswith('  schema not read: '))
+        self.assertIn('template is not available', lines[start + 29])
+        # оба документа выгрузки -- с реквизитами; транспорт -- до справочника
+        at = lines.index('=== document ВывозХлопкаСырцаИзПунктовПриемаНаЗавод_Шлюз '
+                         '| Вывоз хлопка сырца на завод')
+        self.assertEqual(lines[at + 1:at + 7], [
+            '  A Организация | Организация | S<org-type>',
+            '  A Транспорт | Транспорт | S<transport-ref>',
+            '    -> Справочник.ТранспортХлопка | Транспорт хлопка | presentation S<as-description> '
+            '| code length 9 | description length 50',
+            '      CA ГосНомер | Гос номер | S<string-type>',
+            '=== document ПоступлениеХлопкаСырца | Поступление хлопка сырца',
+            '  A ТранспортноеСредство | Транспортное средство | S<string-ref>'])
+        self.assertEqual(lines[at + 7], '=== subsystems')
         # отчёт вне шаблона только в списке
         self.assertNotIn('=== report Остатки | Остатки на складах', lines)
         tail = lines[lines.index('=== subsystems'):]
         # документы -- коллекция без перебора: прочитаны через Count()/Get()
-        self.assertEqual(tail[:11], [
+        self.assertEqual(tail[:13], [
             '=== subsystems',
             '  S ЗаготовкаХлопкаСырца | Заготовка хлопка сырца | objects 2',
             '      - Отчет.РеестрПК17',
             '      - Документ.Взвешивание',
             '    S Настройки | Настройки | objects 1',
             '  S Бухгалтерия | Бухгалтерия | objects 1',
-            '=== documents: 1',
+            '=== documents: 3',
             '  Взвешивание | Взвешивание хлопка',
+            '  ВывозХлопкаСырцаИзПунктовПриемаНаЗавод_Шлюз | Вывоз хлопка сырца на завод',
+            '  ПоступлениеХлопкаСырца | Поступление хлопка сырца',
             '=== accumulation registers: 1',
             '  ОстаткиХлопка | Остатки хлопка',
             '=== information registers: 0'])
-        self.assertEqual(tail[11], '=== members seen by PowerShell')
-        self.assertTrue(tail[12].startswith('  connection: '), tail[12])
-        self.assertIn('Metadata', tail[12])
-        self.assertTrue(tail[13].startswith('  metadata: '), tail[13])
-        self.assertEqual(len(tail), 14)
+        self.assertEqual(tail[13], '=== members seen by PowerShell')
+        self.assertTrue(tail[14].startswith('  connection: '), tail[14])
+        self.assertIn('Metadata', tail[14])
+        self.assertTrue(tail[15].startswith('  metadata: '), tail[15])
+        self.assertEqual(len(tail), 16)
 
     def test_named_reports_replace_the_search(self):
         # -Report через -File приходит одной строкой «A,B»
@@ -217,12 +233,15 @@ class ProbeAgainstStandIn(unittest.TestCase):
     def test_one_missing_part_does_not_stop_the_others(self):
         code, console, text = self.run_case('partial')
         self.assertEqual(code, 4, console)
-        self.assertIn('failed parts 1', console)
+        self.assertIn('failed parts 2', console)
         lines = text.splitlines()
+        self.assertIn('=== document ПоступлениеХлопкаСырца', lines)
+        self.assertIn('  ! document ПоступлениеХлопкаСырца failed: 1C has no document '
+                      'ПоступлениеХлопкаСырца', lines)
         at = lines.index('=== subsystems')
         self.assertEqual(lines[at + 1],
                          '  ! subsystems failed: 1C does not know the member Subsystems / Подсистемы')
-        self.assertEqual(lines[at + 2:at + 4], ['=== documents: 1', '  Взвешивание | Взвешивание хлопка'])
+        self.assertEqual(lines[at + 2:at + 4], ['=== documents: 2', '  Взвешивание | Взвешивание хлопка'])
         self.assertIn('=== report РеестрПК17 | Реестр ПК-17 (жадвал 7)', lines)
 
     def test_bad_input_is_code_two_and_nothing_is_written(self):
