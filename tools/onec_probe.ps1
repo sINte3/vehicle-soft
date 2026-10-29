@@ -129,19 +129,36 @@ function Test-Com($obj) {
   return ($null -ne $obj -and $obj.GetType().IsCOMObject)
 }
 
+# [REASON]: a 1C collection supports For Each over COM, and PowerShell
+# unrolls every enumerable a function returns into its elements: the caller
+# would get an array of report descriptions instead of the collection, and
+# Count() of 1C would turn into the array's length. That is how the probe
+# failed on the server on 29.10. Every value leaves these helpers through
+# one `return ,$value`, which hands the object over whole.
 function Get-Prop($obj, [string]$name) {
   if ($null -eq $obj) { return $null }
   if (Test-Com $obj) {
-    return $obj.GetType().InvokeMember($name, [System.Reflection.BindingFlags]::GetProperty, $null, $obj, $null)
+    $value = $obj.GetType().InvokeMember($name, [System.Reflection.BindingFlags]::GetProperty, $null, $obj, $null)
+  } else {
+    $value = $obj.$name
   }
-  return $obj.$name
+  return ,$value
 }
 
 function Invoke-Method($obj, [string]$name, [object[]]$arguments = @()) {
   if (Test-Com $obj) {
-    return $obj.GetType().InvokeMember($name, [System.Reflection.BindingFlags]::InvokeMethod, $null, $obj, $arguments)
+    # An argument that came out of a function is wrapped in a PSObject; 1C
+    # must get its own object back (String() of a type description), not a
+    # .NET wrapper, so each argument goes over as its base object.
+    $plain = New-Object 'object[]' $arguments.Count
+    for ($i = 0; $i -lt $arguments.Count; $i++) {
+      if ($null -ne $arguments[$i]) { $plain[$i] = $arguments[$i].PSObject.BaseObject }
+    }
+    $value = $obj.GetType().InvokeMember($name, [System.Reflection.BindingFlags]::InvokeMethod, $null, $obj, $plain)
+  } else {
+    $value = $obj.$name.Invoke($arguments)
   }
-  return $obj.$name.Invoke($arguments)
+  return ,$value
 }
 
 function Get-Items($collection) {
@@ -358,6 +375,6 @@ if ($LoadOnly) { return }
 $code = Invoke-Main {
   param($connectionString)
   $connector = New-Object -ComObject 'V83.COMConnector'
-  return $connector.Connect($connectionString)
+  return ,($connector.Connect($connectionString))
 }
 exit $code
