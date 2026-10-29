@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -40,6 +41,8 @@ RUNBOOK = os.path.join(REPO_ROOT, 'docs', 'FIN_RECON_002_RELEASE_V132_RUNBOOK.md
 RUNBOOK_TEST = 'tests/test_fin_recon_002_release_runbook.py'
 BLOCKS = ('Шаг 2', 'Шаг 3', 'Восстановление', 'Откат')
 BASELINE = '998bc20bfdb81e6d90ab413b63ab59da665aac65'
+# The merge commit of PR #232: the release is this commit, not the top of main.
+RELEASE = 'c4b039630fd75264994267abe69f89d9eaba7632'
 
 
 def block(prefix):
@@ -74,7 +77,8 @@ class ReleaseV132Runbook(unittest.TestCase):
         for name in ('baseline', 'reviewed', 'runbookTest', 'prod', 'services'):
             values = {constants(block(b))[name] for b in BLOCKS}
             self.assertEqual(len(values), 1, (name, values))
-        for name in ('tableSha', 'bookShas', 'table', 'frdir', 'expectMig', 'forbid', 'db', 'py', 'backupBat'):
+        for name in ('release', 'tableSha', 'bookShas', 'table', 'frdir', 'expectMig', 'forbid', 'db', 'py',
+                     'backupBat'):
             self.assertEqual(constants(block('Шаг 2'))[name], constants(block('Шаг 3'))[name], name)
         # The stop mark of the window is the one the restore reads and the rollback refuses on.
         for name in ('stopMark', 'work'):
@@ -88,6 +92,30 @@ class ReleaseV132Runbook(unittest.TestCase):
         self.assertIn('Production baseline | `%s`' % BASELINE, read('docs', 'RELEASE_GATE.md'))
         self.assertEqual(const('Шаг 3', 'runbookTest'), RUNBOOK_TEST)
         self.assertTrue(os.path.isfile(os.path.join(REPO_ROOT, *RUNBOOK_TEST.split('/'))))
+
+    def test_the_release_is_the_pinned_commit_not_the_top_of_main(self):
+        # [REASON]: main moves on after the release PR (GPS PRs #249, #250 on
+        # 29.10). The release files on the server were checked for c4b0396;
+        # steps 2 and 3 must rehearse and install exactly it, never whatever
+        # origin/main points at that day.
+        for name in ('Шаг 2', 'Шаг 3'):
+            body = block(name)
+            self.assertEqual(const(name, 'release'), RELEASE)
+            self.assertEqual(len(re.findall(r'(?m)^\s*\$release\s*=', body)), 1, name)
+            self.assertNotIn('$release = [string](& git rev-parse origin/main)', body)
+            self.assertIn('$main = [string](& git rev-parse origin/main)', body)
+            at_main = body.index('& git merge-base --is-ancestor $release $main')
+            self.assertLess(at_main, body.index("& git merge-base --is-ancestor $head $release"), name)
+            self.assertIn('throw "the release commit is not in main: $release, main $main"', body)
+            self.assertIn('& git diff --name-only $reviewed $release', body)
+            # The gate is the project's list as it stands now: read on main.
+            self.assertIn('& git show "${main}:docs/RELEASE_GATE.md"', body)
+            self.assertIn('if ($head -ne $baseline)', body)
+        self.assertIn('checkout --quiet --detach $release', block('Шаг 2'))
+        self.assertIn("Invoke-Tool 'git' @('merge', '--ff-only', $release)", block('Шаг 3'))
+        self.assertIn('if ($now -ne $release)', block('Шаг 3'))
+        self.assertNotIn('$main', block('Восстановление') + block('Откат'))
+        self.assertIn('`%s`' % RELEASE, text(RUNBOOK))
 
     def test_the_release_files_are_the_ones_the_tools_check(self):
         self.assertEqual(const('Шаг 3', 'tableSha'), rc.RELEASE_TABLE_SHA)
@@ -111,21 +139,26 @@ class ReleaseV132Runbook(unittest.TestCase):
         self.assertEqual(const('Шаг 3', 'expectMig'),
                          'migrate_drones_works_merged_customer_link_001.py '
                          'migrate_drones_works_payer_unidentified_001.py')
-        if not has_commit(BASELINE):
-            self.skipTest('production baseline is outside this clone')
-        names = sorted(n for n in git('diff', '--name-only', BASELINE, 'HEAD').split() if n.startswith('migrate_'))
+        if not (has_commit(BASELINE) and has_commit(RELEASE)):
+            self.skipTest('production baseline or the release is outside this clone')
+        names = sorted(n for n in git('diff', '--name-only', BASELINE, RELEASE).split() if n.startswith('migrate_'))
         self.assertEqual(' '.join(names), const('Шаг 3', 'expectMig'))
 
-    def test_the_pin_was_right_when_the_runbook_was_written(self):
+    def test_the_pinned_release_holds_the_checked_code(self):
         commit = const('Шаг 3', 'reviewed')
-        written = git('log', '-1', '--format=%H', '--', 'docs/FIN_RECON_002_RELEASE_V132_RUNBOOK.md').strip()
-        if not (written and has_commit(commit) and has_commit(written)):
+        if not (has_commit(commit) and has_commit(RELEASE) and has_commit(BASELINE)):
             self.skipTest('the pinned history is outside this clone')
-        self.assertEqual(subprocess.run(['git', 'merge-base', '--is-ancestor', commit, written],
-                                        cwd=REPO_ROOT).returncode, 0)
-        # After the pinned commit only what never runs on the server: docs,
-        # the CI workflow and this test (the blocks allow exactly these).
-        names = git('diff', '--name-only', commit, written).split()
+
+        def ancestor(older, newer):
+            return subprocess.run(['git', 'merge-base', '--is-ancestor', older, newer], cwd=REPO_ROOT).returncode == 0
+
+        self.assertTrue(ancestor(BASELINE, RELEASE), 'production is not an ancestor of the release')
+        self.assertTrue(ancestor(commit, RELEASE), 'the release does not contain the checked version')
+        self.assertTrue(ancestor(RELEASE, 'HEAD'), 'this runbook is not written on top of the release')
+        # Between the checked version and the release only what never runs on
+        # the server: docs, the CI workflow and this test (the blocks allow
+        # exactly these). What main got after the release does not matter.
+        names = git('diff', '--name-only', commit, RELEASE).split()
         self.assertEqual([n for n in names if not n.startswith(('docs/', '.github/')) and n != RUNBOOK_TEST], [])
         for name in BLOCKS:
             self.assertIn("($_ -notlike 'docs/*') -and ($_ -notlike '.github/*') -and ($_ -ne $runbookTest)",
@@ -278,7 +311,10 @@ class ReleaseV132BlocksParseInPowerShell(unittest.TestCase):
 
 
 HARNESS = os.path.join(REPO_ROOT, 'tests', 'fin_recon_002_release_harness.ps1')
-RELEASE_HASH = 'f1e2c032' + 'c0ffee' * 5 + 'ab'
+RELEASE_HASH = RELEASE
+# origin/main two commits past the release, as on 29.10 (stand-in hashes).
+MAIN_HASH = '5ca1ab1e' * 5
+LATER = ['5ca1ab1', '1a7e2c0']
 TEST_SERVICES = ['V132TestReport', 'V132TestBot', 'V132TestBot003']
 DB_BEFORE = b'SQLite format 3\x00' + b'x' * 48
 # The STOP the window prints when the named tool fails.
@@ -327,7 +363,10 @@ class ReleaseV132BlocksRunWhereRequired(unittest.TestCase):
 # job still parses every block with pwsh 7 (the class above).
 @unittest.skipUnless(os.name == 'nt' and powershell(), 'the blocks run on Windows PowerShell only')
 class ReleaseV132BlocksRunInPowerShell(unittest.TestCase):
-    """Step 3, the restore and the rollback run against a stand-in server.
+    """Steps 2 and 3, the restore and the rollback run against a stand-in server.
+
+    origin/main stands two commits past the release, as on 29.10: both steps
+    must rehearse and install the pinned commit, not the top of main.
 
     The defect this guards (independent review 29.10): a stop after the
     database started to change -- the release check included -- restarted the
@@ -347,6 +386,14 @@ class ReleaseV132BlocksRunInPowerShell(unittest.TestCase):
         os.makedirs(os.path.join(self.frdir, 'books'))
         os.makedirs(self.work)
         os.makedirs(os.path.join(self.server, 'backups'))
+        self.daily = os.path.join(self.server, 'daily')
+        os.makedirs(self.daily)
+        nightly = os.path.join(self.daily, 'transport_20261030_013000.db')
+        with open(nightly, 'wb') as fh:
+            fh.write(DB_BEFORE)
+        # The harness clock reads 2026-10-30 10:00; the nightly copy is from 01:30.
+        stamp = time.mktime((2026, 10, 30, 1, 30, 0, 0, 0, -1))
+        os.utime(nightly, (stamp, stamp))
         self.db = os.path.join(self.prod, 'instance', 'transport.db')
         with open(self.db, 'wb') as fh:
             fh.write(DB_BEFORE)
@@ -372,7 +419,8 @@ class ReleaseV132BlocksRunInPowerShell(unittest.TestCase):
     def scenario(self, **changes):
         value = {
             'Host': 'SRV-YOQSH', 'Head': BASELINE, 'Baseline': BASELINE,
-            'Reviewed': const('Шаг 3', 'reviewed'), 'Release': RELEASE_HASH,
+            'Reviewed': const('Шаг 3', 'reviewed'), 'Release': RELEASE_HASH, 'Main': MAIN_HASH, 'Later': LATER,
+            'History': [BASELINE, const('Шаг 3', 'reviewed'), RELEASE_HASH, MAIN_HASH],
             'Services': TEST_SERVICES, 'ServiceStatus': 'Running',
             'GateLines': gate_lines(0), 'FailAt': None, 'CopyCorrupts': False,
             'NoFile': const('Шаг 3', 'noFile').split(), 'Db': self.db, 'BackupFile': self.backup,
@@ -394,6 +442,7 @@ class ReleaseV132BlocksRunInPowerShell(unittest.TestCase):
             'log': "'%s'" % log, 'admin': '$true', 'frdir': "'%s'" % self.frdir,
             'table': "'%s'" % self.table, 'tableSha': "'%s'" % sha256(self.table),
             'bookShas': "'%s'" % self.book_shas, 'stopMark': "'%s'" % self.stop_mark,
+            'daily': "'%s'" % self.daily, 'repoUrl': "'https://v132-test.invalid/repo.git'",
         })
         block_file = os.path.join(folder, 'block.ps1')
         scenario_file = os.path.join(folder, 'scenario.json')
@@ -437,11 +486,60 @@ class ReleaseV132BlocksRunInPowerShell(unittest.TestCase):
         self.assertTrue(os.path.isfile(self.stop_mark), output)
         return output
 
+    def passed_files(self):
+        return sorted(os.path.basename(p) for p in glob.glob(os.path.join(self.work, 'fr002_step2_passed_*.txt')))
+
+    # --- step 2 -----------------------------------------------------------------
+
+    def test_step_2_rehearses_the_pinned_commit_while_main_moved_on(self):
+        os.remove(os.path.join(self.work, 'fr002_step2_passed_%s.txt' % RELEASE_HASH))
+        result, calls, output, log = self.run_block('Шаг 2', self.scenario())
+        self.assertEqual(result, 'RESULT: CHECK PASSED - go on to step 3', output)
+        self.assertEqual([c for c in calls if c.startswith('git checkout')],
+                         ['git checkout --quiet --detach ' + RELEASE_HASH])
+        self.assertInOrder(calls, 'git merge-base --is-ancestor %s %s' % (RELEASE_HASH, MAIN_HASH),
+                           'git clone', 'git checkout', 'python ')
+        self.assertIn('git show %s:docs/RELEASE_GATE.md' % MAIN_HASH, calls)
+        self.assertEqual(self.passed_files(), ['fr002_step2_passed_%s.txt' % RELEASE_HASH])
+        self.assertIn('RELEASE: %s -> %s' % (BASELINE, RELEASE_HASH), output)
+        self.assertIn('MAIN: %s - 2 later commit(s) of main are not taken' % MAIN_HASH, output)
+        self.assertFalse([c for c in calls if c.startswith(('Stop-Service', 'backup', 'git merge ', 'git reset'))],
+                         calls)
+
+    def test_step_2_does_not_mark_a_failed_rehearsal(self):
+        os.remove(os.path.join(self.work, 'fr002_step2_passed_%s.txt' % RELEASE_HASH))
+        result, calls, output, log = self.run_block('Шаг 2', self.scenario(FailAt='rehearsal'))
+        self.assertTrue(result.startswith('RESULT: STOP - the rehearsal did not pass'), output)
+        self.assertEqual(self.passed_files(), [])
+
+    def test_a_release_outside_main_or_a_server_off_the_baseline_stops_before_anything(self):
+        cases = {
+            # main does not contain the release commit (History has no main in it).
+            'the release commit is not in main': dict(History=[BASELINE, const('Шаг 3', 'reviewed'), RELEASE_HASH]),
+            # production is not at 998bc20.
+            'the program here is at': dict(Head='0bad0bad' * 5),
+        }
+        for name in ('Шаг 2', 'Шаг 3'):
+            for stop, change in cases.items():
+                with self.subTest(block=name, stop=stop):
+                    self.setUp()
+                    result, calls, output, log = self.run_block(name, self.scenario(**change))
+                    self.assertTrue(result.startswith('RESULT: STOP - ' + stop), output)
+                    self.assertFalse([c for c in calls if c.startswith(
+                        ('Stop-Service', 'backup', 'git clone', 'git checkout', 'git merge ', 'git reset', 'python'))],
+                        calls)
+                    self.assertEqual(self.started(calls), [])
+                    self.assertEqual(read_bytes(self.db), DB_BEFORE)
+
     # --- step 3 -----------------------------------------------------------------
 
     def test_the_release_passes_and_starts_the_new_program(self):
         result, calls, output, log = self.run_block('Шаг 3', self.scenario())
         self.assertEqual(result, 'RESULT: RELEASE PASSED', output)
+        # main is two commits ahead; the code moves to the release and no further.
+        self.assertEqual([c for c in calls if c.startswith('git merge ')], ['git merge --ff-only ' + RELEASE_HASH])
+        self.assertIn('UPDATED: %s -> %s' % (BASELINE, RELEASE_HASH), output)
+        self.assertIn('MAIN: %s - 2 later commit(s) of main are not taken' % MAIN_HASH, output)
         self.assertInOrder(calls, 'Stop-Service', 'backup', 'git merge --ff-only',
                            'python migrate_drones_works_payer_unidentified_001.py',
                            'python migrate_drones_works_merged_customer_link_001.py',

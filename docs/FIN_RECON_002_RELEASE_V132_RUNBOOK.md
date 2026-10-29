@@ -8,8 +8,8 @@
 
 ## Что произойдёт — коротко
 
-1. Программа обновится с `998bc20` (выпуск v1.31) до версии, в которой
-   влит этот запрос. Новое:
+1. Программа обновится с `998bc20` (выпуск v1.31) ровно до `c4b0396` —
+   merge-коммита этого запроса. Новое:
    - работы «Фукаро» и «Ромитан т. Фукаро» хранятся без карточки, с отметкой
      «Плательщик-гражданин не установлен»; долг по ним — по каждой работе,
      без взаимозачёта;
@@ -26,6 +26,11 @@
    Программа и ночные задачи их не вызывают: `gps/hauling.py` импортируют
    только они. Задание Планировщика для выгрузки 1С этот выпуск не ставит —
    оно идёт отдельным PR трека GPS.
+
+   **Выпуск закреплён на `c4b039630fd75264994267abe69f89d9eaba7632`.**
+   Коммиты, влитые в `main` позже (PR #249 и дальше), в него не входят:
+   шаги 2 и 3 проверяют, что `c4b0396` есть в `main` и что `998bc20` — его
+   предок, репетируют и ставят ровно его.
 2. **В базе** (в одном окне, программа остановлена), по порядку:
    1. колонка `drone_works.payer_unidentified` — **до** запуска нового кода;
    2. 31 июньская строка объединённых ячеек → №137 (21) и №138 (10);
@@ -61,8 +66,9 @@ Enter; ждать строку `PS C:\...>`.
 ## Шаг 1. Разрешение, слияние, файлы — программа не трогается
 
 1. Ваше письменное разрешение на выпуск. Без него шаги 2–4 не выполняются.
-2. Слить https://github.com/sINte3/vehicle-soft/pull/232 кнопкой
-   **«Create a merge commit»** (не squash).
+2. https://github.com/sINte3/vehicle-soft/pull/232 слит 29.10 кнопкой
+   «Create a merge commit» — коммит
+   `c4b039630fd75264994267abe69f89d9eaba7632`. Это и есть выпуск.
 3. Положить на сервер, в `C:\VehicleSoft_Release\fin_recon_002\`, файлы из
    приватного пакета:
    - таблицу `FIN_RECON_002_RELEASE_DECISIONS_20261029.csv`;
@@ -81,8 +87,8 @@ Enter; ждать строку `PS C:\...>`.
    (`085df4bc9e5e681d0aa639c8624079ac375b13bbf17359095fc27feb69ae548f`)
    байт в байт плюс две строки `SET_TYPE`: №137 и №155 → `internal`.
 
-**До конца шага 4 не вливайте в `main` другой код.** Шаги 2 и 3 остановятся
-сами и ничего не тронут.
+Код, влитый в `main` после `c4b0396`, шагам 2–4 не мешает и на сервер не
+попадает: блоки берут закреплённый коммит, а не вершину `main`.
 
 ## Шаг 2. Проверка и репетиция на копии — production не меняется
 
@@ -102,6 +108,7 @@ $backupBat = 'C:\transport-report\backup_production_db.bat'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $baseline  = '998bc20bfdb81e6d90ab413b63ab59da665aac65'
 $reviewed  = '518b6407821c65f3bb17d4f8889d7ec031cb5a4f'
+$release   = 'c4b039630fd75264994267abe69f89d9eaba7632'
 $runbookTest = 'tests/test_fin_recon_002_release_runbook.py'
 $expectMig = 'migrate_drones_works_merged_customer_link_001.py migrate_drones_works_payer_unidentified_001.py'
 $frdir     = 'C:\VehicleSoft_Release\fin_recon_002'
@@ -160,12 +167,14 @@ try {
   & git fetch --quiet origin
   if ($LASTEXITCODE -ne 0) { throw "git fetch failed (exit $LASTEXITCODE) - is there a connection to GitHub?" }
   $head = [string](& git rev-parse HEAD)
-  $release = [string](& git rev-parse origin/main)
+  $main = [string](& git rev-parse origin/main)
+  & git merge-base --is-ancestor $release $main
+  if ($LASTEXITCODE -ne 0) { throw "the release commit is not in main: $release, main $main" }
   & git merge-base --is-ancestor $reviewed $release
-  if ($LASTEXITCODE -ne 0) { throw 'the checked version is not in main yet - was the release PR merged in step 1?' }
+  if ($LASTEXITCODE -ne 0) { throw 'the release commit does not contain the checked version' }
   $changed = @(& git diff --name-only $reviewed $release | Where-Object { ($_ -notlike 'docs/*') -and ($_ -notlike '.github/*') -and ($_ -ne $runbookTest) })
-  if ($changed.Count -gt 0) { throw "after the checked version main got changes outside docs/: $($changed -join ', ')" }
-  $open = Get-OpenItems @(& git show "${release}:docs/RELEASE_GATE.md")
+  if ($changed.Count -gt 0) { throw "between the checked version and the release commit there are changes outside docs/: $($changed -join ', ')" }
+  $open = Get-OpenItems @(& git show "${main}:docs/RELEASE_GATE.md")
   if ($open -lt 0) { throw 'docs/RELEASE_GATE.md could not be read' }
   if ($open -gt 0) { throw "the release gate is closed: $open open item(s) in docs/RELEASE_GATE.md - the deploy waits until they are removed" }
   & git merge-base --is-ancestor $reviewed $head
@@ -182,6 +191,8 @@ try {
   if ($clash.Count -gt 0) { throw "files of the release already lie on the server: $($clash -join ', ')" }
   Write-Host "UNTRACKED FILES: $($untracked.Count), none of them is a file of the release"
   Write-Host "RELEASE: $head -> $release"
+  $later = @(& git --no-pager log --format=%h "$release..$main")
+  Write-Host "MAIN: $main - $($later.Count) later commit(s) of main are not taken"
   & git --no-pager log --merges --format=%s "$head..$release" | Where-Object { $_ -like 'Merge pull request*' } | ForEach-Object { Write-Host "  $_" }
   $latest = Get-ChildItem -LiteralPath $daily -Filter 'transport_*.db' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
   if (-not $latest) { throw "no daily backup in $daily" }
@@ -216,7 +227,9 @@ try { Stop-Transcript | Out-Null } catch { }
 - `FILES: ...`;
 - `UNTRACKED FILES: 111, none of them is a file of the release` (число —
   сколько на сервере сейчас; 22.10 было 111);
-- `RELEASE: 998bc20... -> ...` и список влитых PR;
+- `RELEASE: 998bc20... -> c4b0396...` и список влитых PR;
+- `MAIN: ... - N later commit(s) of main are not taken` — сколько коммитов
+  `main` после выпуска остаются в стороне;
 - `REHEARSAL: PASS ...`. Это 39 проверок репетиции: май побайтно, 132
   строки, маршруты 137 / 155 / ПТЗ / без карточки, №137 и №155
   `internal`, повторный импорт +0.
@@ -236,8 +249,9 @@ try { Stop-Transcript | Out-Null } catch { }
 2. Останавливает программу и обоих ботов, проверяет, что база свободна.
 3. Делает резервную копию в `D:\transport-report-backups\production\daily\` и
    проверяет её.
-4. Перематывает код (`git merge --ff-only`). Неотслеживаемые файлы
-   сверяются списком до и после.
+4. Перематывает код ровно до `c4b0396` (`git merge --ff-only`), более
+   поздние коммиты `main` не забирает. Неотслеживаемые файлы сверяются
+   списком до и после.
 5. Колонка «Фукаро» — **до** запуска нового кода.
 6. Привязки июня: `june`, затем `june-anchor`.
 7. Таблица решений.
@@ -276,6 +290,7 @@ $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '998bc20bfdb81e6d90ab413b63ab59da665aac65'
 $reviewed  = '518b6407821c65f3bb17d4f8889d7ec031cb5a4f'
+$release   = 'c4b039630fd75264994267abe69f89d9eaba7632'
 $runbookTest = 'tests/test_fin_recon_002_release_runbook.py'
 $expectMig = 'migrate_drones_works_merged_customer_link_001.py migrate_drones_works_payer_unidentified_001.py'
 $frdir     = 'C:\VehicleSoft_Release\fin_recon_002'
@@ -395,12 +410,14 @@ try {
   & git fetch --quiet origin
   if ($LASTEXITCODE -ne 0) { throw "git fetch failed (exit $LASTEXITCODE) - is there a connection to GitHub?" }
   $head = [string](& git rev-parse HEAD)
-  $release = [string](& git rev-parse origin/main)
+  $main = [string](& git rev-parse origin/main)
+  & git merge-base --is-ancestor $release $main
+  if ($LASTEXITCODE -ne 0) { throw "the release commit is not in main: $release, main $main" }
   & git merge-base --is-ancestor $reviewed $release
-  if ($LASTEXITCODE -ne 0) { throw 'the checked version is not in main yet - was the release PR merged in step 1?' }
+  if ($LASTEXITCODE -ne 0) { throw 'the release commit does not contain the checked version' }
   $changed = @(& git diff --name-only $reviewed $release | Where-Object { ($_ -notlike 'docs/*') -and ($_ -notlike '.github/*') -and ($_ -ne $runbookTest) })
-  if ($changed.Count -gt 0) { throw "after the checked version main got changes outside docs/: $($changed -join ', ')" }
-  $open = Get-OpenItems @(& git show "${release}:docs/RELEASE_GATE.md")
+  if ($changed.Count -gt 0) { throw "between the checked version and the release commit there are changes outside docs/: $($changed -join ', ')" }
+  $open = Get-OpenItems @(& git show "${main}:docs/RELEASE_GATE.md")
   if ($open -lt 0) { throw 'docs/RELEASE_GATE.md could not be read' }
   if ($open -gt 0) { throw "the release gate is closed: $open open item(s) in docs/RELEASE_GATE.md - the deploy waits until they are removed" }
   & git merge-base --is-ancestor $reviewed $head
@@ -417,6 +434,8 @@ try {
   $receipts = "$frdir\receipts_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
   New-Item -ItemType Directory -Force -Path $receipts | Out-Null
   Write-Host "RELEASE: $head -> $release"
+  $later = @(& git --no-pager log --format=%h "$release..$main")
+  Write-Host "MAIN: $main - $($later.Count) later commit(s) of main are not taken"
   $drift0Lines = (Invoke-Tool $py @('tools\check_migration_drift.py', '--db', $db)).Lines
   $drift0 = Get-Drift $drift0Lines
   $noFile0 = @(Get-NoFile $drift0Lines)
@@ -554,11 +573,11 @@ try { Stop-Transcript | Out-Null } catch { }
 
 **Что должно получиться:** в конце `RESULT: RELEASE PASSED`. Выше, по порядку:
 
-- `RELEASE: 998bc20... -> ...`;
+- `RELEASE: 998bc20... -> c4b0396...` и `MAIN: ... not taken`;
 - `SERVICES: Stopped`;
 - `CLEAN ...` или `STALE: no process holds the database` — оба ответа годятся;
 - `BACKUP: D:\transport-report-backups\production\daily\transport_....db (...)`;
-- `UPDATED: ... (untracked files 111 before and after, the same list)`;
+- `UPDATED: 998bc20... -> c4b0396... (untracked files 111 before and after, the same list)`;
 - `Done. 1 column added to drone_works, no row backfilled.`;
 - дважды `RESULT: APPLIED` (привязки);
 - `RESULT: APPLIED` (таблица);
@@ -601,8 +620,9 @@ try { Stop-Transcript | Out-Null } catch { }
 | `RESULT: STOP - the decision table is not the release one` | в папке не та таблица | положить таблицу из приватного пакета; ничего не менялось |
 | `RESULT: STOP - the books folder must hold exactly the two June books of the release` | в `books\` лишние файлы или не те книги | оставить ровно две книги из шага 1; ничего не менялось |
 | `RESULT: STOP - the release gate is closed` | в `docs/RELEASE_GATE.md` открытые пункты | ждать снятия; ничего не менялось |
-| `RESULT: STOP - the checked version is not in main yet` | PR #232 не слит | шаг 1, пункт 2; ничего не менялось |
-| `RESULT: STOP - after the checked version main got changes outside docs/` | после проверки в `main` влит другой код | прислать журнал; выпуск пересоберу; ничего не менялось |
+| `RESULT: STOP - the release commit is not in main` | в `main` с сервера не видно `c4b0396` | прислать журнал; ничего не менялось |
+| `RESULT: STOP - the release commit does not contain the checked version` | постоянные блока не согласованы | прислать журнал; ничего не менялось |
+| `RESULT: STOP - between the checked version and the release commit there are changes outside docs/` | в выпуске код, которого не было в проверке | прислать журнал; ничего не менялось |
 | `RESULT: STOP - this version is already on the server` | шаг 3 уже выполнен | к шагу 4 |
 | `RESULT: STOP - the program here is at ...` | на сервере не `998bc20` | прислать журнал; ничего не менялось |
 | `RESULT: STOP - migrations in the release` | состав миграций не тот | прислать журнал; ничего не менялось |
