@@ -1,0 +1,36 @@
+{
+  "file": "onec_vyvoz_po_brutto_nedelya.csv",
+  "about": "1C report 'Vyvoz na zavod - Vyvoz po date vzveshivaniya brutto' (VyvozNaZavodVyvozPoDateBrutto): the same document, the same deletion mark and the same period field as its schema (probe 29.10); no plant or region filter, as the weekly export was made.",
+  "query": "ВЫБРАТЬ РАЗРЕШЕННЫЕ\n\tПРЕДСТАВЛЕНИЕ(Вывоз.Организация) КАК Org,\n\tПРЕДСТАВЛЕНИЕ(Вывоз.ПунктПриема) КАК Point,\n\tПРЕДСТАВЛЕНИЕ(Вывоз.Транспорт) КАК Transport,\n\tВывоз.ВремяПервогоВзвешивания КАК FirstWeighing,\n\tВывоз.ВремяВторогоВзвешивания КАК SecondWeighing,\n\tВывоз.ВесНетто КАК Net\nИЗ\n\tДокумент.ВывозХлопкаСырцаИзПунктовПриемаНаЗавод_Шлюз КАК Вывоз\nГДЕ\n\tНЕ Вывоз.ПометкаУдаления\n\tИ Вывоз.ВремяВторогоВзвешивания МЕЖДУ &Since И &Until",
+  "columns": [
+    {
+      "alias": "Org",
+      "header": "Завод"
+    },
+    {
+      "alias": "Point",
+      "header": "Пункт приема"
+    },
+    {
+      "alias": "Transport",
+      "header": "Транспорт (как в 1С)"
+    },
+    {
+      "plate_from": "Transport",
+      "header": "Гос номер (из названия)"
+    },
+    {
+      "alias": "FirstWeighing",
+      "header": "Время первого взвешивания"
+    },
+    {
+      "alias": "SecondWeighing",
+      "header": "Время второго взвешивания"
+    },
+    {
+      "alias": "Net",
+      "header": "Вес нетто, кг"
+    }
+  ],
+  "sum": "Net"
+}
