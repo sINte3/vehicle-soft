@@ -17,13 +17,15 @@
      установлен».
 
    Вместе с выпуском приедут ручные инструменты трека GPS, влитые в `main`
-   после v1.31 (PR #229–#244):
+   после v1.31 (PR #229–#245):
    - разведка перевозок;
    - проверка рейсов 1С;
-   - зонд 1С.
+   - зонд 1С;
+   - недельная выгрузка 1С и её приёмка (GPS-37).
 
    Программа и ночные задачи их не вызывают: `gps/hauling.py` импортируют
-   только они.
+   только они. Задание Планировщика для выгрузки 1С этот выпуск не ставит —
+   оно идёт отдельным PR трека GPS.
 2. **В базе** (в одном окне, программа остановлена), по порядку:
    1. колонка `drone_works.payer_unidentified` — **до** запуска нового кода;
    2. 31 июньская строка объединённых ячеек → №137 (21) и №138 (10);
@@ -97,7 +99,7 @@ $py        = 'C:\Program Files\Python314\python.exe'
 $backupBat = 'C:\transport-report\backup_production_db.bat'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $baseline  = '998bc20bfdb81e6d90ab413b63ab59da665aac65'
-$reviewed  = '71f4f3ff03e9a80978492ac5fd2e91bd92106d74'
+$reviewed  = 'ead958f020512ad0f3f9b856d408b0271204bd6f'
 $runbookTest = 'tests/test_fin_recon_002_release_runbook.py'
 $expectMig = 'migrate_drones_works_merged_customer_link_001.py migrate_drones_works_payer_unidentified_001.py'
 $frdir     = 'C:\VehicleSoft_Release\fin_recon_002'
@@ -262,7 +264,7 @@ $errLog    = 'C:\transport-report\logs\error.log'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '998bc20bfdb81e6d90ab413b63ab59da665aac65'
-$reviewed  = '71f4f3ff03e9a80978492ac5fd2e91bd92106d74'
+$reviewed  = 'ead958f020512ad0f3f9b856d408b0271204bd6f'
 $runbookTest = 'tests/test_fin_recon_002_release_runbook.py'
 $expectMig = 'migrate_drones_works_merged_customer_link_001.py migrate_drones_works_payer_unidentified_001.py'
 $frdir     = 'C:\VehicleSoft_Release\fin_recon_002'
@@ -625,7 +627,7 @@ $prod      = 'C:\transport-report'
 $services  = @('TransportReport', 'TransportBot', 'TransportBot003')
 $site      = 'http://10.103.25.14:5050'
 $baseline  = '998bc20bfdb81e6d90ab413b63ab59da665aac65'
-$reviewed  = '71f4f3ff03e9a80978492ac5fd2e91bd92106d74'
+$reviewed  = 'ead958f020512ad0f3f9b856d408b0271204bd6f'
 $runbookTest = 'tests/test_fin_recon_002_release_runbook.py'
 $work      = 'C:\VehicleSoft_Release'
 $log       = 'C:\VehicleSoft_Release\release_v132_rollback.log'
