@@ -697,18 +697,20 @@ class ReleaseV129Runbook(unittest.TestCase):
     def test_time_verdicts_stay_off_as_the_runbook_says(self):
         # [REASON]: проверка GPS-28 20.10 -- NOT MET (трек GPS, §0.6): выпуск
         # не публикует вердикты «время». Ранбук обещает владельцу прежнюю
-        # причину на экране -- в коде выключатель выключен, а причина та,
-        # что на экране.
+        # причину на экране -- в выпущенном коде выключатель выключен, а
+        # причина та, что на экране. Код -- проверенного коммита ранбука:
+        # вердикты включены позже (29.10, проверка по счётчику -- MET).
         flat = ' '.join(text(RELEASE).split())
-        reconcile = read('agro_work', 'reconcile.py')
-        labels = read('agro_work', 'labels.py')
-        self.assertIn('\nTIME_VERDICTS_PUBLISHED = False\n', reconcile)
-        self.assertIn('and TIME_VERDICTS_PUBLISHED)', reconcile)
         self.assertIn('вердикты «время» в «Сверке» не включаются', flat)
         self.assertIn('Сверка «время» в этом выпуске не включается', flat)
         label = 'Метод «время»: трек GPS время работы пока не публикует'
-        self.assertIn(label, labels)
         self.assertIn(label, ' '.join(step('Шаг 4').split()))
+        commit = constants(block('Шаг 3'))['reviewed'].strip("'")
+        if has_commit(commit):
+            reconcile = git('show', '%s:agro_work/reconcile.py' % commit)
+            self.assertIn('\nTIME_VERDICTS_PUBLISHED = False\n', reconcile)
+            self.assertIn('and TIME_VERDICTS_PUBLISHED)', reconcile)
+            self.assertIn(label, git('show', '%s:agro_work/labels.py' % commit))
         for gone in ('Вердикты появятся', 'больше нет',
                      'зажигание включено 30 минут и больше'):
             with self.subTest(gone=gone):
