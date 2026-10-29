@@ -55,11 +55,21 @@ $C['ARS'] = [regex]::Unescape('\u041e\u0441\u0442\u0430\u0442\u043a\u0438 \u0445
 $C['CONF'] = [regex]::Unescape('\u0423\u0437\u043f\u0430\u0445\u0442\u0430')
 $C['REFUSED'] = [regex]::Unescape('\u0418\u0434\u0435\u043d\u0442\u0438\u0444\u0438\u043a\u0430\u0446\u0438\u044f \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f \u043d\u0435 \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u0430')
 
+# [REASON]: a 1C collection supports For Each over COM, so PowerShell
+# unrolls it into its elements whenever a function returns it -- the probe
+# failed exactly so on the server on 29.10 ("[System.Int32] has no method
+# Invoke": Count of the unrolled array). The stand-in collection is
+# enumerable for the same reason; a plain object would hide the defect.
+class FakeColl : System.Collections.IEnumerable {
+  [object[]]$Items
+  FakeColl([object[]]$items) { $this.Items = $items }
+  [int] Count() { return $this.Items.Count }
+  [object] Get([int]$index) { return $this.Items[$index] }
+  [System.Collections.IEnumerator] GetEnumerator() { return $this.Items.GetEnumerator() }
+}
+
 function New-Coll([object[]]$items) {
-  $o = [pscustomobject]@{ Items = @($items) }
-  $o | Add-Member -MemberType ScriptMethod -Name Count -Value { return @($this.Items).Count }
-  $o | Add-Member -MemberType ScriptMethod -Name Get -Value { param($i) return @($this.Items)[$i] }
-  return $o
+  return ,([FakeColl]::new([object[]]@($items)))
 }
 
 function New-Named([string]$name, [string]$synonym) {
