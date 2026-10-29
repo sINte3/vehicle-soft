@@ -29,6 +29,9 @@ $C['P_NARZI'] = [regex]::Unescape('\u0425.\u041d\u0430\u0440\u0437\u0438 \u041f\
 $C['T_MTZ'] = [regex]::Unescape('\u041c\u0422\u0417-80-1 80 283 HA')
 $C['T_KALHIDA'] = [regex]::Unescape('\u041c\u0422\u0417-80-1(\u043a\u0430\u043b\u0445\u0438\u0434\u0430) 80 240 HA')
 $C['T_KAMAZ'] = [regex]::Unescape('\u041a\u0430\u043c\u0430\u0437')
+$C['T_TRAKTOR'] = [regex]::Unescape('\u0422\u0440\u0430\u043a\u0442\u043e\u0440')
+$C['T_GAZ'] = [regex]::Unescape('\u0413\u0410\u0417-53')
+$C['PLATE_CYR'] = [regex]::Unescape('80123\u041d\u0410')
 $C['ORG_MIRZA'] = [regex]::Unescape('\u041c\u0438\u0440\u0437\u0430\u0447\u0443\u043b \u0410\u0433\u0440\u043e\u043a\u043b\u0430\u0441\u0442\u0435\u0440 \u0433\u0440\u043e\u0443\u043f \u041c\u0427\u0416')
 
 function T([string]$text) { return [datetime]::ParseExact($text, 'yyyy-MM-dd HH:mm:ss', [System.Globalization.CultureInfo]::InvariantCulture) }
@@ -36,15 +39,21 @@ function T([string]$text) { return [datetime]::ParseExact($text, 'yyyy-MM-dd HH:
 $buxoro = 'OOO "BUXORO AGROKLASTER"'
 # A transport reference: PRESENTATION() in the query gives the model only,
 # String() of 1C gives the name with the plate (as on the server, 29.10).
+# Plate is the catalog attribute GosNomer: it differs from the name on the
+# second row (the name wins), fills in where the name has no plate (rows of
+# the tractor and the GAZ: one in the plate pattern, one not) and is empty
+# for the Kamaz.
 function New-Ref([string]$full) { return [pscustomobject]@{ Kind = 'ref'; Full = $full } }
 function Get-Model([string]$full) { return ($full -replace '\s*\d{2}\s*\d{3}\s*\S+$', '') }
 # Rows of the removal document; SecondWeighing is also the period field.
 $vyvozRows = @(
-  [ordered]@{ Org = $buxoro; Point = $C['P_VOBKENT']; Transport = (Get-Model $C['T_MTZ']); TransportRef = (New-Ref $C['T_MTZ']); FirstWeighing = (T '2026-10-19 07:28:06'); SecondWeighing = (T '2026-10-19 08:46:56'); Net = [decimal]6620 },
-  [ordered]@{ Org = $buxoro; Point = $C['P_HARGUSH']; Transport = (Get-Model $C['T_KALHIDA']); TransportRef = (New-Ref $C['T_KALHIDA']); FirstWeighing = (T '2026-10-25 22:10:00'); SecondWeighing = (T '2026-10-25 23:59:59'); Net = [decimal]5320.5 },
-  [ordered]@{ Org = $buxoro; Point = $C['P_VOBKENT']; Transport = $C['T_KAMAZ']; TransportRef = (New-Ref $C['T_KAMAZ']); FirstWeighing = $null; SecondWeighing = (T '2026-10-19 00:00:00'); Net = [decimal]1000 },
-  [ordered]@{ Org = $buxoro; Point = $C['P_VOBKENT']; Transport = (Get-Model $C['T_MTZ']); TransportRef = (New-Ref $C['T_MTZ']); FirstWeighing = (T '2026-10-18 22:00:00'); SecondWeighing = (T '2026-10-18 23:59:59'); Net = [decimal]7000 },
-  [ordered]@{ Org = $buxoro; Point = $C['P_VOBKENT']; Transport = (Get-Model $C['T_MTZ']); TransportRef = (New-Ref $C['T_MTZ']); FirstWeighing = (T '2026-10-25 23:30:00'); SecondWeighing = (T '2026-10-26 00:00:00'); Net = [decimal]7100 }
+  [ordered]@{ Org = $buxoro; Point = $C['P_VOBKENT']; Transport = (Get-Model $C['T_MTZ']); TransportRef = (New-Ref $C['T_MTZ']); Plate = '80 283 HA'; FirstWeighing = (T '2026-10-19 07:28:06'); SecondWeighing = (T '2026-10-19 08:46:56'); Net = [decimal]6620 },
+  [ordered]@{ Org = $buxoro; Point = $C['P_HARGUSH']; Transport = (Get-Model $C['T_KALHIDA']); TransportRef = (New-Ref $C['T_KALHIDA']); Plate = '80999HA'; FirstWeighing = (T '2026-10-25 22:10:00'); SecondWeighing = (T '2026-10-25 23:59:59'); Net = [decimal]5320.5 },
+  [ordered]@{ Org = $buxoro; Point = $C['P_VOBKENT']; Transport = $C['T_KAMAZ']; TransportRef = (New-Ref $C['T_KAMAZ']); Plate = '  '; FirstWeighing = $null; SecondWeighing = (T '2026-10-19 00:00:00'); Net = [decimal]1000 },
+  [ordered]@{ Org = $buxoro; Point = $C['P_HARGUSH']; Transport = $C['T_TRAKTOR']; TransportRef = (New-Ref $C['T_TRAKTOR']); Plate = $C['PLATE_CYR']; FirstWeighing = (T '2026-10-21 09:00:00'); SecondWeighing = (T '2026-10-21 10:15:00'); Net = [decimal]2000 },
+  [ordered]@{ Org = $buxoro; Point = $C['P_VOBKENT']; Transport = $C['T_GAZ']; TransportRef = (New-Ref $C['T_GAZ']); Plate = ' 80  A 123 BC '; FirstWeighing = (T '2026-10-22 11:00:00'); SecondWeighing = (T '2026-10-22 12:30:00'); Net = [decimal]3000 },
+  [ordered]@{ Org = $buxoro; Point = $C['P_VOBKENT']; Transport = (Get-Model $C['T_MTZ']); TransportRef = (New-Ref $C['T_MTZ']); Plate = '80 283 HA'; FirstWeighing = (T '2026-10-18 22:00:00'); SecondWeighing = (T '2026-10-18 23:59:59'); Net = [decimal]7000 },
+  [ordered]@{ Org = $buxoro; Point = $C['P_VOBKENT']; Transport = (Get-Model $C['T_MTZ']); TransportRef = (New-Ref $C['T_MTZ']); Plate = '80 283 HA'; FirstWeighing = (T '2026-10-25 23:30:00'); SecondWeighing = (T '2026-10-26 00:00:00'); Net = [decimal]7100 }
 )
 # Rows of the receiving document; PostedAt is the period field and is not
 # selected (the real query filters by the posting date, selects the gross

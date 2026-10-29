@@ -6,7 +6,8 @@
     прошлая полная неделя от сегодняшнего дня; -Week не понедельник -- отказ;
   * два запроса из tools/onec_export/*.json; строки -- в CSV (UTF-8 с BOM,
     «;», всё в кавычках) с колонками выгрузки соседнего чата; госномер вывоза
-    вырезан из конца названия транспорта; время -- «ГГГГ-ММ-ДД ЧЧ:ММ:СС»;
+    вырезан из конца названия транспорта, а где в названии его нет -- взят
+    из реквизита справочника «ГосНомер»; время -- «ГГГГ-ММ-ДД ЧЧ:ММ:СС»;
   * GPS-34/35 читают эти CSV тем же `read_trips`, что и xlsx;
   * файлы заменяются, только когда оба запроса ответили: упал запрос или
     старый файл открыт -- не тронут ни один; коды 0/1/2/3; пароль нигде;
@@ -60,6 +61,11 @@ class Specs(unittest.TestCase):
         self.assertIn('Документ.ВывозХлопкаСырцаИзПунктовПриемаНаЗавод_Шлюз', query)
         self.assertIn('НЕ Вывоз.ПометкаУдаления', query)
         self.assertIn('Вывоз.ВремяВторогоВзвешивания МЕЖДУ &Since И &Until', query)
+        # госномер -- реквизит справочника транспорта (разведка v3, 29.10)
+        self.assertIn('Вывоз.Транспорт.ГосНомер КАК Plate', query)
+        plate = [c for c in vyvoz['columns'] if c['header'] == 'Гос номер (из названия)']
+        self.assertEqual(plate, [{'plate_from': 'TransportRef', 'plate_attribute': 'Plate',
+                                  'header': 'Гос номер (из названия)'}])
         self.assertEqual(vyvoz['file'], VYVOZ)
         self.assertEqual(vyvoz['sum'], 'Net')
         headers = [column['header'] for column in vyvoz['columns']]
@@ -121,25 +127,36 @@ class ExportAgainstStandIn(unittest.TestCase):
     def test_the_week_goes_to_two_files(self):
         code, console = self.run_case('ok')
         self.assertEqual(code, 0, console)
-        self.assertIn('onec_export v2 | week 2026-10-19 .. 2026-10-25', console)
-        self.assertIn('vyvoz: 3 rows | sum 12940.5 | ', console)
+        self.assertIn('onec_export v3 | week 2026-10-19 .. 2026-10-25', console)
+        self.assertIn('vyvoz: 5 rows | sum 17940.5 | ', console)
+        self.assertIn('vyvoz plates: from the name 2 | from the GosNomer attribute 2 | none 1',
+                      console)
         self.assertIn('reestr: 2 rows | sum 7240 | ', console)
+        self.assertNotIn('reestr plates', console)
         self.assertIn('READ ONLY: nothing was written to 1C', console)
         vyvoz = self.rows(VYVOZ)
         self.assertEqual(vyvoz[0], ['Завод', 'Пункт приема', 'Транспорт (как в 1С)',
                                     'Гос номер (из названия)', 'Время первого взвешивания',
                                     'Время второго взвешивания', 'Вес нетто, кг',
-                                    'Транспорт (представление)'])
+                                    'Транспорт (представление)',
+                                    'Гос номер (реквизит справочника)'])
         # понедельник 00:00:00 и воскресенье 23:59:59 входят; 18.10 23:59:59 и
         # 26.10 00:00:00 -- нет. Название транспорта -- String() ссылки (с
-        # номером), номер -- из него; ПРЕДСТАВЛЕНИЕ() -- только модель
+        # номером), номер -- из него; ПРЕДСТАВЛЕНИЕ() -- только модель. Номер
+        # в названии сильнее реквизита (вторая строка); без номера в названии
+        # -- реквизит: по образцу номера или как есть; пустой -- пусто
         self.assertEqual(vyvoz[1:], [
             ['OOO "BUXORO AGROKLASTER"', 'Вобкент ПТМ', 'МТЗ-80-1 80 283 HA', '80 283 HA',
-             '2026-10-19 07:28:06', '2026-10-19 08:46:56', '6620', 'МТЗ-80-1'],
+             '2026-10-19 07:28:06', '2026-10-19 08:46:56', '6620', 'МТЗ-80-1', '80 283 HA'],
             ['OOO "BUXORO AGROKLASTER"', 'Харгуш ПТМ', 'МТЗ-80-1(калхида) 80 240 HA', '80 240 HA',
-             '2026-10-25 22:10:00', '2026-10-25 23:59:59', '5320.5', 'МТЗ-80-1(калхида)'],
+             '2026-10-25 22:10:00', '2026-10-25 23:59:59', '5320.5', 'МТЗ-80-1(калхида)',
+             '80999HA'],
             ['OOO "BUXORO AGROKLASTER"', 'Вобкент ПТМ', 'Камаз', '',
-             '', '2026-10-19 00:00:00', '1000', 'Камаз']])
+             '', '2026-10-19 00:00:00', '1000', 'Камаз', '  '],
+            ['OOO "BUXORO AGROKLASTER"', 'Харгуш ПТМ', 'Трактор', '80 123 НА',
+             '2026-10-21 09:00:00', '2026-10-21 10:15:00', '2000', 'Трактор', '80123НА'],
+            ['OOO "BUXORO AGROKLASTER"', 'Вобкент ПТМ', 'ГАЗ-53', '80 A 123 BC',
+             '2026-10-22 11:00:00', '2026-10-22 12:30:00', '3000', 'ГАЗ-53', ' 80  A 123 BC ']])
         reestr = self.rows(REESTR)
         self.assertEqual(reestr[0], ['Организация (завод)', 'Пункт приема', 'Транспорт',
                                      'Дата брутто', 'Масса физическая,кг', 'Дата документа',
@@ -160,7 +177,9 @@ class ExportAgainstStandIn(unittest.TestCase):
         self.assertEqual([(t['point'], t['plate'], t['time']) for t in trips], [
             ('Вобкент ПТМ', '80283HA', datetime(2026, 10, 19, 7, 28, 6)),
             ('Харгуш ПТМ', '80240HA', datetime(2026, 10, 25, 22, 10)),
-            ('Вобкент ПТМ', '', None)])
+            ('Вобкент ПТМ', '', None),
+            ('Харгуш ПТМ', '80123HA', datetime(2026, 10, 21, 9, 0)),
+            ('Вобкент ПТМ', '80A123BC', datetime(2026, 10, 22, 11, 0))])
         self.assertEqual(trips[1]['extra'], {'Вес нетто, кг': '5320.5'})
         trips = check.read_trips(os.path.join(self.out, REESTR), check.REESTR)
         # серия реестра переносится в конец, как у xlsx
@@ -178,7 +197,7 @@ class ExportAgainstStandIn(unittest.TestCase):
     def test_the_russian_query_type_is_the_fallback(self):
         code, console = self.run_case('russian-type')
         self.assertEqual(code, 0, console)
-        self.assertIn('vyvoz: 3 rows', console)
+        self.assertIn('vyvoz: 5 rows', console)
 
     def test_bad_input_is_code_two(self):
         for week, message in (('2026-10-20', '-Week is not a Monday'),
