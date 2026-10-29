@@ -63,6 +63,8 @@ PARAMS = [
      'Данные ритейлеров DJI; тест DJI 149 кг/га при 17,6 га/ч = 44 кг/мин.'),
     ('cycle_equiv_min', 'Минут полёта на один полный цикл батареи', 9.0, 'мин', 'ОЦЕНКА',
      'DJI: висение 6 мин при 101 кг (полный бак), 18 мин при 50 кг (пустой); вес падает по ходу вылета.'),
+    ('max_flight_min', 'Предельная длительность вылета при лёгкой загрузке', 10.0, 'мин', 'ОЦЕНКА',
+     'Висение 18 мин без груза; с запасом на возврат ~10-12 мин. Режет вылет при нормах ниже ~25 кг/га (семена).'),
     ('', 'БАТАРЕИ И ЭНЕРГИЯ', None, '', '', ''),
     ('battery_price_usd', 'Цена батареи T40 (DB1560, 30 000 мА·ч)', 1800, 'USD', 'ДОГАДКА',
      'Розница США 2 499 USD; поставки из Китая дешевле. Уточнить у поставщика.'),
@@ -157,6 +159,9 @@ def base_scenarios():
         ('Маржинальный 250 (пилот на окладе)', 250, {'m_pilot': 0.4}),
         ('Пессимистичный 150', 150, {'m_eff': 2.0 / 3.0, 'm_reload': 2.0, 'm_overhead': 4.0 / 3.0, 'm_payload': 40.0 / 45.0}),
         ('Оптимистичный 150', 150, {'m_eff': 1.5, 'm_reload': 2.0 / 3.0, 'm_overhead': 0.8, 'm_payload': 50.0 / 45.0}),
+        ('Аэросев саксаула 4 кг/га (бак ~12 кг по объёму)', 4, {'m_payload': 12.0 / 45.0}),
+        ('Сев люцерны 15 кг/га', 15, {}),
+        ('Подсев озимых 60 кг/га', 60, {}),
     ]
     # Чувствительность при 250 кг/га: по одному параметру, -20% / +20% (нагрузка -10/+10%).
     for key, label, _param in MULTS[:9]:
@@ -190,18 +195,25 @@ def compute(p, rate, mults):
     usd = p['usd_rate']
 
     r = {}
-    r['loads_per_ha'] = rate / payload
+    r['ha_per_load_weight'] = payload / rate
     r['spread_min_per_ha'] = 10000.0 / (swath * speed) / 60.0
-    r['spread_min_per_flight'] = r['spread_min_per_ha'] / r['loads_per_ha']
+    # [REASON]: при лёгких нормах (семена) 45 кг хватило бы на 15-20 минут
+    # разбрасывания, но батареи столько не держат: вылет режется по
+    # max_flight_min, и гектаров за вылет становится меньше, чем вмещает бак.
+    r['spread_min_per_flight'] = min(r['ha_per_load_weight'] * r['spread_min_per_ha'],
+                                     p['max_flight_min'] - overhead)
+    r['ha_per_flight'] = r['spread_min_per_flight'] / r['spread_min_per_ha']
+    r['loads_per_ha'] = 1.0 / r['ha_per_flight']
+    r['kg_per_flight'] = rate * r['ha_per_flight']
     r['flight_min'] = r['spread_min_per_flight'] + overhead
     r['cycle_min'] = r['flight_min'] + reload
     r['flights_per_hour'] = 60.0 / r['cycle_min']
-    r['kg_per_hour'] = r['flights_per_hour'] * payload
-    r['ha_per_hour'] = r['kg_per_hour'] / rate
+    r['kg_per_hour'] = r['flights_per_hour'] * r['kg_per_flight']
+    r['ha_per_hour'] = r['flights_per_hour'] * r['ha_per_flight']
     r['ha_per_day'] = r['ha_per_hour'] * eff_hours
     r['flights_per_day'] = r['flights_per_hour'] * eff_hours
     r['t_per_day'] = r['kg_per_hour'] * eff_hours / 1000.0
-    r['required_flow'] = payload / r['spread_min_per_flight']
+    r['required_flow'] = r['kg_per_flight'] / r['spread_min_per_flight']
     r['batt_fraction'] = r['flight_min'] / p['cycle_equiv_min']
     r['charges_per_day'] = r['flights_per_day'] * r['batt_fraction']
 
@@ -346,18 +358,21 @@ CALC_ROWS = [
     ('swath', 'Ширина захвата', 'м', '=swath_eff_m*{c}{r:m_swath}'),
     ('speed', 'Скорость', 'м/с', '=speed_ms*{c}{r:m_speed}'),
     ('__sec2', 'ПРОИЗВОДИТЕЛЬНОСТЬ', '', None),
-    ('loads_per_ha', 'Вылетов на гектар', 'шт', '={c}{r:rate}/{c}{r:payload}'),
+    ('ha_per_load_weight', 'Гектаров на одну загрузку по весу бака', 'га', '={c}{r:payload}/{c}{r:rate}'),
     ('spread_min_per_ha', 'Время разбрасывания на гектар (без накладных)', 'мин', '=10000/({c}{r:swath}*{c}{r:speed})/60'),
-    ('spread_min_per_flight', 'Время разбрасывания за вылет', 'мин', '={c}{r:spread_min_per_ha}/{c}{r:loads_per_ha}'),
+    ('spread_min_per_flight', 'Время разбрасывания за вылет (вес бака или предел батареи)', 'мин', '=MIN({c}{r:ha_per_load_weight}*{c}{r:spread_min_per_ha},max_flight_min-{c}{r:overhead})'),
+    ('ha_per_flight', 'Гектаров за вылет', 'га', '={c}{r:spread_min_per_flight}/{c}{r:spread_min_per_ha}'),
+    ('loads_per_ha', 'Вылетов на гектар', 'шт', '=1/{c}{r:ha_per_flight}'),
+    ('kg_per_flight', 'Внесено за вылет', 'кг', '={c}{r:rate}*{c}{r:ha_per_flight}'),
     ('flight_min', 'Длительность вылета', 'мин', '={c}{r:spread_min_per_flight}+{c}{r:overhead}'),
     ('cycle_min', 'Полный цикл (вылет + загрузка)', 'мин', '={c}{r:flight_min}+{c}{r:reload}'),
     ('flights_per_hour', 'Вылетов в час', 'шт', '=60/{c}{r:cycle_min}'),
-    ('kg_per_hour', 'Внесено удобрений в час', 'кг', '={c}{r:flights_per_hour}*{c}{r:payload}'),
-    ('ha_per_hour', 'Гектаров в час', 'га', '={c}{r:kg_per_hour}/{c}{r:rate}'),
+    ('kg_per_hour', 'Внесено удобрений в час', 'кг', '={c}{r:flights_per_hour}*{c}{r:kg_per_flight}'),
+    ('ha_per_hour', 'Гектаров в час', 'га', '={c}{r:flights_per_hour}*{c}{r:ha_per_flight}'),
     ('ha_per_day', 'Гектаров за рабочий день', 'га', '={c}{r:ha_per_hour}*{c}{r:eff_hours}'),
     ('flights_per_day', 'Вылетов за день', 'шт', '={c}{r:flights_per_hour}*{c}{r:eff_hours}'),
     ('t_per_day', 'Тонн за день', 'т', '={c}{r:kg_per_hour}*{c}{r:eff_hours}/1000'),
-    ('required_flow', 'Требуемая подача разбрасывателя', 'кг/мин', '={c}{r:payload}/{c}{r:spread_min_per_flight}'),
+    ('required_flow', 'Требуемая подача разбрасывателя', 'кг/мин', '={c}{r:kg_per_flight}/{c}{r:spread_min_per_flight}'),
     ('flow_check', 'Подача в пределах паспорта?', '', '=IF({c}{r:required_flow}<=max_flow_kg_min,"да","НЕТ: снизить скорость")'),
     ('batt_fraction', 'Доля цикла батареи за вылет', 'доля', '={c}{r:flight_min}/cycle_equiv_min'),
     ('charges_per_day', 'Полных зарядок батарей за день', 'шт', '={c}{r:flights_per_day}*{c}{r:batt_fraction}'),
@@ -390,7 +405,7 @@ CALC_ROWS = [
     ('energy_per_flight_min', 'Батарея, бензин, износ на минуту полёта', 'сум/мин', '=({c}{r:batt_price}*usd_rate/{c}{r:cycles}+battery_kwh/charge_eff*gen_l_per_kwh*{c}{r:petrol})/cycle_equiv_min+drone_wear_usd_h*usd_rate/60*(1+fert_wear_premium)'),
     ('c0_per_ha', 'Себестоимость: постоянная часть на гектар (C0)', 'сум/га', '={c}{r:spread_min_per_ha}*({c}{r:fixed_per_min}+{c}{r:energy_per_flight_min})'),
     ('c1_per_kg', 'Себестоимость: переменная часть на килограмм (c1)', 'сум/кг', '=(({c}{r:overhead}+{c}{r:reload})*{c}{r:fixed_per_min}+{c}{r:overhead}*{c}{r:energy_per_flight_min})/{c}{r:payload}'),
-    ('linearity_check', 'Контроль: C0 + c1 x норма - прямая себестоимость (должно быть 0)', 'сум', '={c}{r:c0_per_ha}+{c}{r:c1_per_kg}*{c}{r:rate}-{c}{r:direct_cost_per_ha}'),
+    ('linearity_check', 'Контроль: C0 + c1 x норма - прямая себестоимость (0, пока вылет ограничен весом бака, а не батареей)', 'сум', '={c}{r:c0_per_ha}+{c}{r:c1_per_kg}*{c}{r:rate}-{c}{r:direct_cost_per_ha}'),
     ('tariff_base_per_ha', 'ТАРИФ: ставка за гектар', 'сум/га', '={c}{r:c0_per_ha}/(1-overhead_pct-target_margin_pct)'),
     ('tariff_per_kg', 'ТАРИФ: ставка за килограмм удобрения', 'сум/кг', '={c}{r:c1_per_kg}/(1-overhead_pct-target_margin_pct)'),
     ('tariff_per_ton', 'ТАРИФ: ставка за тонну удобрения', 'сум/т', '={c}{r:tariff_per_kg}*1000'),
