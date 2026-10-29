@@ -34,21 +34,25 @@ $C['ORG_MIRZA'] = [regex]::Unescape('\u041c\u0438\u0440\u0437\u0430\u0447\u0443\
 function T([string]$text) { return [datetime]::ParseExact($text, 'yyyy-MM-dd HH:mm:ss', [System.Globalization.CultureInfo]::InvariantCulture) }
 
 $buxoro = 'OOO "BUXORO AGROKLASTER"'
+# A transport reference: PRESENTATION() in the query gives the model only,
+# String() of 1C gives the name with the plate (as on the server, 29.10).
+function New-Ref([string]$full) { return [pscustomobject]@{ Kind = 'ref'; Full = $full } }
+function Get-Model([string]$full) { return ($full -replace '\s*\d{2}\s*\d{3}\s*\S+$', '') }
 # Rows of the removal document; SecondWeighing is also the period field.
 $vyvozRows = @(
-  [ordered]@{ Org = $buxoro; Point = $C['P_VOBKENT']; Transport = $C['T_MTZ']; FirstWeighing = (T '2026-10-19 07:28:06'); SecondWeighing = (T '2026-10-19 08:46:56'); Net = [decimal]6620 },
-  [ordered]@{ Org = $buxoro; Point = $C['P_HARGUSH']; Transport = $C['T_KALHIDA']; FirstWeighing = (T '2026-10-25 22:10:00'); SecondWeighing = (T '2026-10-25 23:59:59'); Net = [decimal]5320.5 },
-  [ordered]@{ Org = $buxoro; Point = $C['P_VOBKENT']; Transport = $C['T_KAMAZ']; FirstWeighing = $null; SecondWeighing = (T '2026-10-19 00:00:00'); Net = [decimal]1000 },
-  [ordered]@{ Org = $buxoro; Point = $C['P_VOBKENT']; Transport = $C['T_MTZ']; FirstWeighing = (T '2026-10-18 22:00:00'); SecondWeighing = (T '2026-10-18 23:59:59'); Net = [decimal]7000 },
-  [ordered]@{ Org = $buxoro; Point = $C['P_VOBKENT']; Transport = $C['T_MTZ']; FirstWeighing = (T '2026-10-25 23:30:00'); SecondWeighing = (T '2026-10-26 00:00:00'); Net = [decimal]7100 }
+  [ordered]@{ Org = $buxoro; Point = $C['P_VOBKENT']; Transport = (Get-Model $C['T_MTZ']); TransportRef = (New-Ref $C['T_MTZ']); FirstWeighing = (T '2026-10-19 07:28:06'); SecondWeighing = (T '2026-10-19 08:46:56'); Net = [decimal]6620 },
+  [ordered]@{ Org = $buxoro; Point = $C['P_HARGUSH']; Transport = (Get-Model $C['T_KALHIDA']); TransportRef = (New-Ref $C['T_KALHIDA']); FirstWeighing = (T '2026-10-25 22:10:00'); SecondWeighing = (T '2026-10-25 23:59:59'); Net = [decimal]5320.5 },
+  [ordered]@{ Org = $buxoro; Point = $C['P_VOBKENT']; Transport = $C['T_KAMAZ']; TransportRef = (New-Ref $C['T_KAMAZ']); FirstWeighing = $null; SecondWeighing = (T '2026-10-19 00:00:00'); Net = [decimal]1000 },
+  [ordered]@{ Org = $buxoro; Point = $C['P_VOBKENT']; Transport = (Get-Model $C['T_MTZ']); TransportRef = (New-Ref $C['T_MTZ']); FirstWeighing = (T '2026-10-18 22:00:00'); SecondWeighing = (T '2026-10-18 23:59:59'); Net = [decimal]7000 },
+  [ordered]@{ Org = $buxoro; Point = $C['P_VOBKENT']; Transport = (Get-Model $C['T_MTZ']); TransportRef = (New-Ref $C['T_MTZ']); FirstWeighing = (T '2026-10-25 23:30:00'); SecondWeighing = (T '2026-10-26 00:00:00'); Net = [decimal]7100 }
 )
 # Rows of the receiving document; PostedAt is the period field and is not
 # selected (the real query filters by the posting date, selects the gross
 # weighing time).
 $reestrRows = @(
-  [ordered]@{ Org = $buxoro; Point = $C['P_KUMUSH']; Transport = '80 KA 368'; GrossWeighing = (T '2026-10-20 19:16:47'); Mass = [decimal]4840; PostedAt = (T '2026-10-20 19:16:47') },
-  [ordered]@{ Org = $C['ORG_MIRZA']; Point = $C['P_NARZI']; Transport = '80 HA 254'; GrossWeighing = (T '2026-10-25 20:26:10'); Mass = [decimal]2400; PostedAt = (T '2026-10-25 20:26:10') },
-  [ordered]@{ Org = $buxoro; Point = $C['P_KUMUSH']; Transport = '80 HA 101'; GrossWeighing = (T '2026-10-25 23:50:00'); Mass = [decimal]3000; PostedAt = (T '2026-10-26 00:00:01') }
+  [ordered]@{ Org = $buxoro; Point = $C['P_KUMUSH']; Transport = '80 KA 368'; GrossWeighing = (T '2026-10-20 19:16:47'); Mass = [decimal]4840; DocDate = (T '2026-10-20 19:20:00'); Harvest = '2026'; PostedAt = (T '2026-10-20 19:16:47') },
+  [ordered]@{ Org = $C['ORG_MIRZA']; Point = $C['P_NARZI']; Transport = '80 HA 254'; GrossWeighing = (T '2026-10-25 20:26:10'); Mass = [decimal]2400; DocDate = (T '2026-10-28 09:00:00'); Harvest = '2026'; PostedAt = (T '2026-10-25 20:26:10') },
+  [ordered]@{ Org = $buxoro; Point = $C['P_KUMUSH']; Transport = '80 HA 101'; GrossWeighing = (T '2026-10-25 23:50:00'); Mass = [decimal]3000; DocDate = (T '2026-10-26 00:00:01'); Harvest = '2026'; PostedAt = (T '2026-10-26 00:00:01') }
 )
 
 function New-Selection($rows) {
@@ -86,6 +90,7 @@ function New-FakeQuery {
 $script:failOn = ''
 $script:queryType = 'Query'
 $conn = [pscustomobject]@{}
+$conn | Add-Member -MemberType ScriptMethod -Name String -Value { param($value) return $value.Full }
 $conn | Add-Member -MemberType ScriptMethod -Name NewObject -Value {
   param($type)
   if ($type -ne $script:queryType) { throw ('Type is not defined (' + $type + ')') }

@@ -1,7 +1,7 @@
 {
   "file": "onec_vyvoz_po_brutto_nedelya.csv",
-  "about": "1C report 'Vyvoz na zavod - Vyvoz po date vzveshivaniya brutto' (VyvozNaZavodVyvozPoDateBrutto): the same document, the same deletion mark and the same period field as its schema (probe 29.10); no plant or region filter, as the weekly export was made.",
-  "query": "ВЫБРАТЬ РАЗРЕШЕННЫЕ\n\tПРЕДСТАВЛЕНИЕ(Вывоз.Организация) КАК Org,\n\tПРЕДСТАВЛЕНИЕ(Вывоз.ПунктПриема) КАК Point,\n\tПРЕДСТАВЛЕНИЕ(Вывоз.Транспорт) КАК Transport,\n\tВывоз.ВремяПервогоВзвешивания КАК FirstWeighing,\n\tВывоз.ВремяВторогоВзвешивания КАК SecondWeighing,\n\tВывоз.ВесНетто КАК Net\nИЗ\n\tДокумент.ВывозХлопкаСырцаИзПунктовПриемаНаЗавод_Шлюз КАК Вывоз\nГДЕ\n\tНЕ Вывоз.ПометкаУдаления\n\tИ Вывоз.ВремяВторогоВзвешивания МЕЖДУ &Since И &Until",
+  "about": "1C report 'Vyvoz na zavod - Vyvoz po date vzveshivaniya brutto' (VyvozNaZavodVyvozPoDateBrutto): the same document, the same deletion mark and the same period field as its schema (probe 29.10); no plant or region filter, as the weekly export was made. The transport name is taken by String() of the reference, as 1C forms and the report show it ('MTZ-80-1 80 283 HA'): PRESENTATION() in a query gives the model only (export 29.10), and the plate is cut from the String() name.",
+  "query": "ВЫБРАТЬ РАЗРЕШЕННЫЕ\n\tПРЕДСТАВЛЕНИЕ(Вывоз.Организация) КАК Org,\n\tПРЕДСТАВЛЕНИЕ(Вывоз.ПунктПриема) КАК Point,\n\tПРЕДСТАВЛЕНИЕ(Вывоз.Транспорт) КАК Transport,\n\tВывоз.Транспорт КАК TransportRef,\n\tВывоз.ВремяПервогоВзвешивания КАК FirstWeighing,\n\tВывоз.ВремяВторогоВзвешивания КАК SecondWeighing,\n\tВывоз.ВесНетто КАК Net\nИЗ\n\tДокумент.ВывозХлопкаСырцаИзПунктовПриемаНаЗавод_Шлюз КАК Вывоз\nГДЕ\n\tНЕ Вывоз.ПометкаУдаления\n\tИ Вывоз.ВремяВторогоВзвешивания МЕЖДУ &Since И &Until",
   "columns": [
     {
       "alias": "Org",
@@ -12,11 +12,12 @@
       "header": "Пункт приема"
     },
     {
-      "alias": "Transport",
+      "alias": "TransportRef",
+      "as_text": true,
       "header": "Транспорт (как в 1С)"
     },
     {
-      "plate_from": "Transport",
+      "plate_from": "TransportRef",
       "header": "Гос номер (из названия)"
     },
     {
@@ -30,6 +31,10 @@
     {
       "alias": "Net",
       "header": "Вес нетто, кг"
+    },
+    {
+      "alias": "Transport",
+      "header": "Транспорт (представление)"
     }
   ],
   "sum": "Net"

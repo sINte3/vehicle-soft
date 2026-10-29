@@ -56,6 +56,20 @@ $C['CONF'] = [regex]::Unescape('\u0423\u0437\u043f\u0430\u0445\u0442\u0430')
 $C['METADATA_RU'] = [regex]::Unescape('\u041c\u0435\u0442\u0430\u0434\u0430\u043d\u043d\u044b\u0435')
 $C['VERSION_RU'] = [regex]::Unescape('\u0412\u0435\u0440\u0441\u0438\u044f')
 $C['REPORTS_RU'] = [regex]::Unescape('\u041e\u0442\u0447\u0435\u0442\u044b')
+$C['VDOC'] = [regex]::Unescape('\u0412\u044b\u0432\u043e\u0437\u0425\u043b\u043e\u043f\u043a\u0430\u0421\u044b\u0440\u0446\u0430\u0418\u0437\u041f\u0443\u043d\u043a\u0442\u043e\u0432\u041f\u0440\u0438\u0435\u043c\u0430\u041d\u0430\u0417\u0430\u0432\u043e\u0434_\u0428\u043b\u044e\u0437')
+$C['VDOCS'] = [regex]::Unescape('\u0412\u044b\u0432\u043e\u0437 \u0445\u043b\u043e\u043f\u043a\u0430 \u0441\u044b\u0440\u0446\u0430 \u043d\u0430 \u0437\u0430\u0432\u043e\u0434')
+$C['PDOC'] = [regex]::Unescape('\u041f\u043e\u0441\u0442\u0443\u043f\u043b\u0435\u043d\u0438\u0435\u0425\u043b\u043e\u043f\u043a\u0430\u0421\u044b\u0440\u0446\u0430')
+$C['PDOCS'] = [regex]::Unescape('\u041f\u043e\u0441\u0442\u0443\u043f\u043b\u0435\u043d\u0438\u0435 \u0445\u043b\u043e\u043f\u043a\u0430 \u0441\u044b\u0440\u0446\u0430')
+$C['A_ORG'] = [regex]::Unescape('\u041e\u0440\u0433\u0430\u043d\u0438\u0437\u0430\u0446\u0438\u044f')
+$C['A_TR'] = [regex]::Unescape('\u0422\u0440\u0430\u043d\u0441\u043f\u043e\u0440\u0442')
+$C['A_TS'] = [regex]::Unescape('\u0422\u0440\u0430\u043d\u0441\u043f\u043e\u0440\u0442\u043d\u043e\u0435\u0421\u0440\u0435\u0434\u0441\u0442\u0432\u043e')
+$C['A_TSS'] = [regex]::Unescape('\u0422\u0440\u0430\u043d\u0441\u043f\u043e\u0440\u0442\u043d\u043e\u0435 \u0441\u0440\u0435\u0434\u0441\u0442\u0432\u043e')
+$C['CAT'] = [regex]::Unescape('\u0421\u043f\u0440\u0430\u0432\u043e\u0447\u043d\u0438\u043a.\u0422\u0440\u0430\u043d\u0441\u043f\u043e\u0440\u0442\u0425\u043b\u043e\u043f\u043a\u0430')
+$C['CATS'] = [regex]::Unescape('\u0422\u0440\u0430\u043d\u0441\u043f\u043e\u0440\u0442 \u0445\u043b\u043e\u043f\u043a\u0430')
+$C['CA_PLATE'] = [regex]::Unescape('\u0413\u043e\u0441\u041d\u043e\u043c\u0435\u0440')
+$C['CA_PLATES'] = [regex]::Unescape('\u0413\u043e\u0441 \u043d\u043e\u043c\u0435\u0440')
+$C['F_TR'] = [regex]::Unescape('\u0412\u044b\u0432\u043e\u0437\u0422\u0440\u0430\u043d\u0441\u043f\u043e\u0440\u0442')
+$C['PE'] = [regex]::Unescape('\u0412\u044b\u0432\u043e\u0437\u0422\u0440\u0430\u043d\u0441\u043f\u043e\u0440\u0442.\u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435 + " " + \u0412\u044b\u0432\u043e\u0437\u0422\u0440\u0430\u043d\u0441\u043f\u043e\u0440\u0442.\u0413\u043e\u0441\u041d\u043e\u043c\u0435\u0440')
 $C['REFUSED'] = [regex]::Unescape('\u0418\u0434\u0435\u043d\u0442\u0438\u0444\u0438\u043a\u0430\u0446\u0438\u044f \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f \u043d\u0435 \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u0430')
 
 # [REASON]: a 1C collection supports For Each over COM, so PowerShell
@@ -81,7 +95,23 @@ function New-PlainColl([object[]]$items) {
   $o = [pscustomobject]@{ Items = @($items) }
   $o | Add-Member -MemberType ScriptMethod -Name Count -Value { return @($this.Items).Count }
   $o | Add-Member -MemberType ScriptMethod -Name Get -Value { param($i) return @($this.Items)[$i] }
+  $o | Add-Member -MemberType ScriptMethod -Name Find -Value {
+    param($name)
+    foreach ($item in @($this.Items)) { if ($item.Name -eq $name) { return $item } }
+    return $null
+  }
   return $o
+}
+
+# A type description: String() gives 'S<kind>', Types() the types in it.
+function New-Type([string]$kind, [string]$target) {
+  $o = [pscustomobject]@{ Kind = $kind; Target = $target }
+  $o | Add-Member -MemberType ScriptMethod -Name Types -Value { return New-Coll @([pscustomobject]@{ Kind = $this.Target }) }
+  return $o
+}
+
+function New-Attribute([string]$name, [string]$synonym, $type) {
+  return [pscustomobject]@{ Name = $name; Synonym = $synonym; Type = $type }
 }
 
 function New-Named([string]$name, [string]$synonym) {
@@ -105,7 +135,8 @@ $typeDate = [pscustomobject]@{ Kind = 'date-type' }
 $period = [pscustomobject]@{ Kind = 'standard-period' }
 
 $querySet = [pscustomobject]@{ Name = $C['DS1']; Query = $C['Q1']
-  Fields = (New-Coll @([pscustomobject]@{ DataPath = $C['F1']; Field = $C['F1']; Title = $C['F1T'] })) }
+  Fields = (New-Coll @([pscustomobject]@{ DataPath = $C['F1']; Field = $C['F1']; Title = $C['F1T'] },
+    [pscustomobject]@{ DataPath = $C['F_TR']; Field = $C['F_TR']; Title = $C['A_TR']; PresentationExpression = $C['PE'] })) }
 $innerSet = [pscustomobject]@{ Name = $C['IN']; Query = $C['Q2']; Fields = (New-Coll @()) }
 $unionSet = [pscustomobject]@{ Name = $C['UN']; Items = (New-Coll @($innerSet)); Fields = (New-Coll @()) }
 $schema = [pscustomobject]@{
@@ -146,6 +177,19 @@ $managers[$C['R1']] = New-Manager $schema $C['TPL'] $false
 $managers[$C['R3']] = New-Manager $schema $C['TPL'] $false
 $managers[$C['R4']] = New-Manager $schema $C['TPL'] $true
 
+# The removal document points its transport to a catalog with a plate
+# attribute; the receiving document's transport is a string (no catalog).
+$catalog = [pscustomobject]@{ Synonym = $C['CATS']; DefaultPresentation = [pscustomobject]@{ Kind = 'as-description' }
+  CodeLength = 9; DescriptionLength = 50
+  Attributes = (New-Coll @((New-Attribute $C['CA_PLATE'] $C['CA_PLATES'] ([pscustomobject]@{ Kind = 'string-type' })))) }
+$catalog | Add-Member -MemberType ScriptMethod -Name FullName -Value { return $C['CAT'] }
+$vdoc = [pscustomobject]@{ Name = $C['VDOC']; Synonym = $C['VDOCS']
+  Attributes = (New-Coll @((New-Attribute $C['A_ORG'] $C['A_ORG'] (New-Type 'org-type' 'org')),
+    (New-Attribute $C['A_TR'] $C['A_TR'] (New-Type 'transport-ref' 'catalog-type')))) }
+$pdoc = [pscustomobject]@{ Name = $C['PDOC']; Synonym = $C['PDOCS']
+  Attributes = (New-Coll @((New-Attribute $C['A_TS'] $C['A_TSS'] (New-Type 'string-ref' 'string-type')))) }
+$findByType = { param($t) if ($t.Kind -eq 'catalog-type') { return $catalog } return $null }
+
 $metadata = [pscustomobject]@{
   Name = 'UzPaxta'; Synonym = $C['CONF']; Version = '1.0.5'
   Reports = (New-Coll $reports)
@@ -153,10 +197,11 @@ $metadata = [pscustomobject]@{
     (New-Subsystem $C['SS1'] $C['SS1S'] @((New-Full $C['C1']), (New-Full $C['C2'])) @(
       (New-Subsystem $C['SS2'] $C['SS2'] @((New-Full $C['C3'])) @()))),
     (New-Subsystem $C['SS3'] $C['SS3'] @((New-Full $C['C4'])) @())))
-  Documents = (New-PlainColl @((New-Named $C['DOC'] $C['DOCS'])))
+  Documents = (New-PlainColl @((New-Named $C['DOC'] $C['DOCS']), $vdoc, $pdoc))
   AccumulationRegisters = (New-Coll @((New-Named $C['AR'] $C['ARS'])))
   InformationRegisters = (New-Coll @())
 }
+$metadata | Add-Member -MemberType ScriptMethod -Name FindByType -Value $findByType
 
 $conn = [pscustomobject]@{ Metadata = $metadata; Reports = [pscustomobject]$managers }
 $conn | Add-Member -MemberType ScriptMethod -Name String -Value { param($value) return 'S<' + $value.Kind + '>' }
@@ -200,18 +245,21 @@ switch ($Scenario) {
       InformationRegisters = $metadata.InformationRegisters }
     $ru | Add-Member -NotePropertyName $C['VERSION_RU'] -NotePropertyValue '1.0.5'
     $ru | Add-Member -NotePropertyName $C['REPORTS_RU'] -NotePropertyValue $metadata.Reports
+    $ru | Add-Member -MemberType ScriptMethod -Name FindByType -Value $findByType
     $ruConn = [pscustomobject]@{ Reports = $conn.Reports }
     $ruConn | Add-Member -NotePropertyName $C['METADATA_RU'] -NotePropertyValue $ru
     $ruConn | Add-Member -MemberType ScriptMethod -Name String -Value { param($value) return 'S<' + $value.Kind + '>' }
     $script:conn = $ruConn
   }
   'partial' {
-    # No subsystems under either name: that part fails, the rest is read.
+    # No subsystems under either name and no receiving document: those two
+    # parts fail, the rest is read.
     $script:conn = [pscustomobject]@{ Reports = $conn.Reports
       Metadata = [pscustomobject]@{ Name = 'UzPaxta'; Synonym = $C['CONF']; Version = '1.0.5'
-        Reports = $metadata.Reports; Documents = $metadata.Documents
+        Reports = $metadata.Reports; Documents = (New-PlainColl @((New-Named $C['DOC'] $C['DOCS']), $vdoc))
         AccumulationRegisters = $metadata.AccumulationRegisters
         InformationRegisters = $metadata.InformationRegisters } }
+    $script:conn.Metadata | Add-Member -MemberType ScriptMethod -Name FindByType -Value $findByType
     $script:conn | Add-Member -MemberType ScriptMethod -Name String -Value { param($value) return 'S<' + $value.Kind + '>' }
   }
   default { throw ('unknown scenario ' + $Scenario) }

@@ -1,7 +1,7 @@
 {
   "file": "onec_pk17_reestr_nedelya.csv",
-  "about": "1C report 'Zagotovka - Reestr PK17 (jadval 7)' (ZagotovkaReestrPK17_J7): the same document, posted only, and the same period field (posting date) as its schema (probe 29.10); every organization in one pass, where the report takes one at a time.",
-  "query": "ВЫБРАТЬ\n\tПРЕДСТАВЛЕНИЕ(Поступление.Организация) КАК Org,\n\tПРЕДСТАВЛЕНИЕ(Поступление.ПунктПриема) КАК Point,\n\tПРЕДСТАВЛЕНИЕ(Поступление.ТранспортноеСредство) КАК Transport,\n\tПоступление.ВремяВзвешиванияБрутто КАК GrossWeighing,\n\tПоступление.ВесФизический КАК Mass\nИЗ\n\tДокумент.ПоступлениеХлопкаСырца КАК Поступление\nГДЕ\n\tПоступление.Проведен\n\tИ Поступление.ДатаПроводки МЕЖДУ &Since И &Until",
+  "about": "1C report 'Zagotovka - Reestr PK17 (jadval 7)' (ZagotovkaReestrPK17_J7): the same document, posted only, and the same period field (posting date) as its schema (probe 29.10); every organization in one pass, where the report takes one at a time. The document date and the harvest are written for diagnosis: the first export (29.10) had 5 rows more than the chat's file of 27.10.",
+  "query": "ВЫБРАТЬ\n\tПРЕДСТАВЛЕНИЕ(Поступление.Организация) КАК Org,\n\tПРЕДСТАВЛЕНИЕ(Поступление.ПунктПриема) КАК Point,\n\tПРЕДСТАВЛЕНИЕ(Поступление.ТранспортноеСредство) КАК Transport,\n\tПоступление.ВремяВзвешиванияБрутто КАК GrossWeighing,\n\tПоступление.ВесФизический КАК Mass,\n\tПоступление.Дата КАК DocDate,\n\tПРЕДСТАВЛЕНИЕ(Поступление.Урожай) КАК Harvest\nИЗ\n\tДокумент.ПоступлениеХлопкаСырца КАК Поступление\nГДЕ\n\tПоступление.Проведен\n\tИ Поступление.ДатаПроводки МЕЖДУ &Since И &Until",
   "columns": [
     {
       "alias": "Org",
@@ -22,6 +22,14 @@
     {
       "alias": "Mass",
       "header": "Масса физическая,кг"
+    },
+    {
+      "alias": "DocDate",
+      "header": "Дата документа"
+    },
+    {
+      "alias": "Harvest",
+      "header": "Урожай"
     }
   ],
   "sum": "Mass"

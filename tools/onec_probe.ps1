@@ -46,7 +46,7 @@ param(
   [switch]$LoadOnly
 )
 
-$ProbeVersion = 'onec_probe v2'
+$ProbeVersion = 'onec_probe v3'
 
 # [REASON]: the two reports are found by their synonyms -- "reestr" (the
 # PK-17 register, "jadval 7"), "vyvoz" (removal by gross weighing date),
@@ -57,6 +57,16 @@ $ReportPattern = '(?i)\u0440\u0435\u0435\u0441\u0442\u0440|\u0432\u044b\u0432\u0
 # (procurement), "pakhta" (cotton, Uzbek).
 $SubsystemPattern = '(?i)\u0445\u043b\u043e\u043f|\u0437\u0430\u0433\u043e\u0442\u043e\u0432|\u043f\u0430\u0445\u0442\u0430'
 $MaxDetailed = 30
+# [REASON]: the first export (29.10) found that PRESENTATION() of the
+# removal's transport gives the model only ("MTZ-80-1") where the report
+# shows "MTZ-80-1 80 283 HA": the plate lives in an attribute of the
+# transport catalog or in the report's presentation expression. Both
+# documents the export reads are described with their attributes, and each
+# transport attribute ("Transport" in its name) down to the catalog it
+# points to.
+$Documents = @([regex]::Unescape('\u0412\u044b\u0432\u043e\u0437\u0425\u043b\u043e\u043f\u043a\u0430\u0421\u044b\u0440\u0446\u0430\u0418\u0437\u041f\u0443\u043d\u043a\u0442\u043e\u0432\u041f\u0440\u0438\u0435\u043c\u0430\u041d\u0430\u0417\u0430\u0432\u043e\u0434_\u0428\u043b\u044e\u0437'),
+  [regex]::Unescape('\u041f\u043e\u0441\u0442\u0443\u043f\u043b\u0435\u043d\u0438\u0435\u0425\u043b\u043e\u043f\u043a\u0430\u0421\u044b\u0440\u0446\u0430'))
+$TransportMark = [regex]::Unescape('\u0422\u0440\u0430\u043d\u0441\u043f\u043e\u0440\u0442')
 
 # Credentials, the connection string, masking and the COM helpers are
 # shared with tools/onec_export.ps1.
@@ -145,8 +155,11 @@ function Add-DataSet($conn, $lines, $set, [string]$indent) {
   Add-Line $lines ('{0}D {1} | {2}' -f $indent, (Get-Prop $set 'Name'), $kind)
   $fields = Get-Items (Get-Field $set 'Fields')
   foreach ($f in $fields) {
-    Add-Line $lines ('{0}  F {1} | {2} | {3}' -f $indent, (Get-Prop $f 'DataPath'),
-      (Get-Field $f 'Field'), (Get-Text $conn (Get-Field $f 'Title')))
+    $line = '{0}  F {1} | {2} | {3}' -f $indent, (Get-Prop $f 'DataPath'),
+      (Get-Field $f 'Field'), (Get-Text $conn (Get-Field $f 'Title'))
+    $shown = Get-Text $conn (Get-Field $f 'PresentationExpression')
+    if ($shown) { $line += ' | presentation: ' + $shown }
+    Add-Line $lines $line
   }
   if ($null -ne $query) {
     Add-Line $lines ($indent + '  query:')
@@ -179,6 +192,32 @@ function Add-Report($conn, $lines, $meta, [string]$name, [string]$synonym) {
     Add-Schema $conn $lines $schema
   } catch {
     Add-Line $lines ('  schema not read: ' + (Hide-Secret $_.Exception.Message $script:Secret))
+  }
+}
+
+function Add-Document($conn, $lines, $metadata, [string]$name) {
+  $doc = Invoke-Method (Get-Prop $metadata 'Documents') 'Find' @($name)
+  if ($null -eq $doc) { throw ('1C has no document ' + $name) }
+  Add-Line $lines ('=== document {0} | {1}' -f $name, (Get-Text $conn (Get-Prop $doc 'Synonym')))
+  foreach ($a in (Get-Items (Get-Prop $doc 'Attributes'))) {
+    $attribute = [string](Get-Prop $a 'Name')
+    $type = Get-Prop $a 'Type'
+    Add-Line $lines ('  A {0} | {1} | {2}' -f $attribute, (Get-Text $conn (Get-Prop $a 'Synonym')),
+      (Get-Text $conn $type))
+    if ($attribute -notmatch $TransportMark) { continue }
+    foreach ($t in (Get-Items (Invoke-Method $type 'Types'))) {
+      $target = Invoke-Method $metadata 'FindByType' @($t)
+      if ($null -eq $target) { continue }
+      Add-Line $lines ('    -> {0} | {1} | presentation {2} | code length {3} | description length {4}' -f
+        (Invoke-Method $target 'FullName'), (Get-Text $conn (Get-Prop $target 'Synonym')),
+        (Get-Text $conn (Get-Field $target 'DefaultPresentation')),
+        (Get-Text $conn (Get-Field $target 'CodeLength')),
+        (Get-Text $conn (Get-Field $target 'DescriptionLength')))
+      foreach ($c in (Get-Items (Get-Field $target 'Attributes'))) {
+        Add-Line $lines ('      CA {0} | {1} | {2}' -f (Get-Prop $c 'Name'),
+          (Get-Text $conn (Get-Prop $c 'Synonym')), (Get-Text $conn (Get-Prop $c 'Type')))
+      }
+    }
   }
 }
 
@@ -235,6 +274,14 @@ function Invoke-Probe($conn, [string[]]$wanted) {
       Add-Report $conn $lines $entry[0] $entry[1] $entry[2]
     } catch {
       Add-Failure $lines ('report ' + $entry[1]) $_
+    }
+  }
+  foreach ($name in $Documents) {
+    try {
+      Add-Document $conn $lines $metadata $name
+    } catch {
+      Add-Line $lines ('=== document ' + $name)
+      Add-Failure $lines ('document ' + $name) $_
     }
   }
   Add-Line $lines '=== subsystems'
