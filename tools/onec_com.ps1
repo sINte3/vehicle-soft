@@ -1,7 +1,8 @@
-# tools/onec_com.ps1 -- what tools/onec_probe.ps1 and tools/onec_export.ps1
-# share: the credentials file, the 1C connection string, masking the
-# password, and reading 1C objects over late-bound COM (V83.COMConnector).
-# Dot-sourced by both; defines functions and two tables, runs nothing.
+# tools/onec_com.ps1 -- what tools/onec_probe.ps1, tools/onec_export.ps1 and
+# tools/onec_weekly.ps1 share: the credentials file, the 1C connection
+# string, masking the password, reading 1C objects over late-bound COM
+# (V83.COMConnector), and the export week. Dot-sourced by them; defines
+# functions and two tables, runs nothing.
 #
 # ASCII only (Windows PowerShell 5.1 reads a file without a BOM as ANSI):
 # the Russian member names are \u escapes.
@@ -46,6 +47,26 @@ function Read-OneCCredentials([string]$path) {
     }
   }
   return $values
+}
+
+# The export week: -Week (a Monday, YYYY-MM-DD) or the last full week
+# Monday..Sunday before today. The export and the weekly task both ask here,
+# so the folder the task names and the week the export takes are one.
+function Get-WeekStart([string]$week, [string]$today) {
+  $invariant = [System.Globalization.CultureInfo]::InvariantCulture
+  if ($week) {
+    try {
+      $start = [datetime]::ParseExact($week, 'yyyy-MM-dd', $invariant)
+    } catch {
+      throw ('-Week is YYYY-MM-DD: ' + $week)
+    }
+    if ($start.DayOfWeek -ne [System.DayOfWeek]::Monday) { throw ('-Week is not a Monday: ' + $week) }
+    return $start
+  }
+  $day = if ($today) { [datetime]::ParseExact($today, 'yyyy-MM-dd', $invariant) } else { (Get-Date).Date }
+  # Monday of this week, then one week back: the last full week.
+  $monday = $day.AddDays(-((([int]$day.DayOfWeek) + 6) % 7))
+  return $monday.AddDays(-7)
 }
 
 function ConvertTo-ConnectionString([string]$server, [string]$base, [string]$login, [string]$password) {
