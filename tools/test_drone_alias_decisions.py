@@ -472,6 +472,39 @@ class AliasDecisionsTest(unittest.TestCase):
         self.assertEqual(after[i], 'internal')
         self.assertEqual(before[:i] + before[i + 1:], after[:i] + after[i + 1:])
 
+    def test_set_type_on_an_alias_target_and_a_no_op_set_type_are_idempotent(self):
+        """[REASON]: release of 29.10.2026. The owner wants №137 and №155 internal;
+        №137 is also the ALIAS target of the «Заминлари» spellings, and its type on
+        production is not known in advance -- it may already be internal. So one
+        table must retype an ALIAS target in the same transaction AND accept a
+        SET_TYPE that changes nothing, and a second run must be ALREADY APPLIED.
+        Card 10 here plays №137 (ALIAS target, external -> internal); card 7 plays
+        a card already of the asked type, with May works that must not move."""
+        table = self.table(extra=[{'DECISION': 'SET_TYPE', 'TARGET_CARD_ID': '10', 'NEW_CARD_TYPE': 'internal',
+                                   'TARGET_CARD_NAME': 'Янги фх'},
+                                  {'DECISION': 'SET_TYPE', 'TARGET_CARD_ID': '7', 'NEW_CARD_TYPE': 'external',
+                                   'TARGET_CARD_NAME': 'Маълум фх'}])
+        cards_before, _aliases, works_before = self.directory_state()
+        rc, out = self.apply(table)
+        self.assertEqual(rc, 0, out)
+        cards, _aliases, works = self.directory_state()
+        self.assertEqual(works, works_before, 'SET_TYPE moves no work, May included')
+        before, after = {c[0]: c for c in cards_before}, {c[0]: c for c in cards}
+        self.assertEqual(after[7], before[7], 'a SET_TYPE to the type the card has changes nothing')
+        self.assertIn('internal', after[10])
+        self.assertEqual([v for v in after[10] if v != 'internal'], [v for v in before[10] if v != 'external'])
+        self.assertEqual(self.aliases()[self.key('Янги фх')], 10, 'the ALIAS still lands on the retyped card')
+        with open(self.receipt + '.diff.csv', encoding='utf-8-sig') as fh:
+            retyped = {r['card_id']: (r['type_before'], r['type_after'])
+                       for r in csv.DictReader(fh, delimiter=';') if r['action'] == 'SET_TYPE'}
+        self.assertEqual(retyped, {'7': ('external', 'external'), '10': ('external', 'internal')})
+        state = self.directory_state()
+        os.remove(self.receipt)
+        rc, out = self.apply(table)
+        self.assertEqual(rc, 0, out)
+        self.assertIn('RESULT: ALREADY APPLIED', out)
+        self.assertEqual(self.directory_state(), state)
+
     def test_set_type_with_a_wrong_name_is_refused(self):
         rc, out = self.apply(self.table(extra=[{'DECISION': 'SET_TYPE', 'TARGET_CARD_ID': '8',
                                                 'NEW_CARD_TYPE': 'internal', 'TARGET_CARD_NAME': 'Бошқа ном'}]))

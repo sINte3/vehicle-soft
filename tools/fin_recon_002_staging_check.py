@@ -28,12 +28,13 @@ offline on 22.10.2026 and what the owner decided on 27.10.2026:
      byte-identical) with --forbid-cards. While the table holds HOLD the
      --apply must be REFUSED and change nothing -- the rehearsal then stops
      before the import and ends HOLD_BLOCKED, never PASS. Without HOLD:
-     --apply on the copy, and the import must create no card of its own;
+     --apply on the copy, 137 and 155 are internal afterwards (SET_TYPE lines
+     of the table), and the import must create no card of its own;
   7. importer dry run of the two June books: 132 rows, nothing rejected,
      every operator resolved, no unknown header, nothing already present;
   8. importer apply on the same copy: every older row byte-identical, +132,
      May unchanged, the rows of the books land on 137 / 155 / the one new
-     «Ғиждувон ПТЗ» card / no card for the generic citizens exactly as the
+     internal «Ғиждувон ПТЗ» card / no card for the generic citizens exactly as the
      owner decided, none on the forbidden cards; a second apply adds 0.
 
 Writes only into --work (must not exist). The copy holds production data: keep
@@ -65,6 +66,8 @@ MAY = {'period': (190, 3499.45), 'calendar': (187, 3462.01)}
 JUNE_PERIOD_AFTER_IMPORT = (226, 3735.32)
 # The owner's canonical cards of 27.10.2026, checked by name, never by guess.
 CANONICAL = {137: 'Бухоро Агрокластер Заминлари МЧЖ', 155: 'Гарден Бухоро Агрокластер МЧЖ'}
+# Owner, 29.10.2026: the canonical cards and the one «Ғиждувон ПТЗ» card are internal.
+CANONICAL_TYPE = 'internal'
 PTZ_CARD_NAME = 'Ғиждувон ПТЗ'
 # June cut, both link migrations together: 21 empty links + the stored 997 to 137.
 LINK_DELTA = {'unstated': (-31, -900.30, -77095080.10), '137': (22, 782.60, 67016064.93),
@@ -349,6 +352,16 @@ def main(argv=None):
                       'decision table --apply with HOLD: REFUSED, the copy byte-identical')
         else:
             rep.check(rc == 0 and 'RESULT: APPLIED' in out, 'decision table --apply on the copy: APPLIED')
+            # [REASON]: owner, release of 29.10.2026 -- №137 and №155 are internal.
+            # The type is set by SET_TYPE lines of the table, not assumed from the
+            # backup: a table without them must fail here on a card still external.
+            con = sqlite3.connect(copy)
+            types = {cid: con.execute('SELECT customer_type FROM drone_customers WHERE id = ?', (cid,)).fetchone()
+                     for cid in sorted(CANONICAL)}
+            con.close()
+            rep.check(all(t is not None and t[0] == CANONICAL_TYPE for t in types.values()),
+                      'canonical cards %s are %s after the decision table (found %s)'
+                      % (sorted(CANONICAL), CANONICAL_TYPE, {c: t and t[0] for c, t in types.items()}))
 
     # 7. importer dry run
     imp = os.path.join(REPO, 'tools', 'import_drone_works.py')
@@ -408,6 +421,9 @@ def main(argv=None):
     rep.info('rows of the two books by card after the import: %s' % sorted(got.items(), key=lambda kv: str(kv[0])))
     if a.decisions:
         rep.check(len(ptz) == 1, 'exactly one card named %r after the decisions (found %s)' % (PTZ_CARD_NAME, ptz))
+        ptz_type = con.execute('SELECT customer_type FROM drone_customers WHERE id = ?', (ptz[0],)).fetchone()[0] \
+            if len(ptz) == 1 else None
+        rep.check(ptz_type == CANONICAL_TYPE, 'the %r card is %s (found %s)' % (PTZ_CARD_NAME, CANONICAL_TYPE, ptz_type))
         for key, want in sorted(EXPECT_ROUTES.items()):
             rep.check(got.get(key) == want, 'books -> %s: %s, owner decided %s' % (key, got.get(key), want))
         rep.check(not any(k.isdigit() and int(k) in forbid for k in got),
