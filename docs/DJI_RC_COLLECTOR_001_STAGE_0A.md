@@ -379,7 +379,7 @@ Protobuf без схемы; номера полей — из source map фрон
 | Дизайн-система | `python tools/check_design_system.py`; `python tools/test_check_design_system.py` | `OK: no design-system regressions`; `OK` |
 | Словарь | `python -m unittest tests.test_translations_integrity` | `OK` |
 | Существующие тесты задетых декодеров | `python -m unittest tests.test_dji_area_core`; `python -m unittest drone_collector.tests.test_route_decode`; `python tools/test_drone_route_probe.py` | 85 OK; 41 OK; 25 OK |
-| Полный прогон `python -m unittest discover -s tests` (`PYTHONUTF8=1`) | запущен в фоне, итог — в описании PR; на этой машине известны 9 отказов, существующих и на `origin/main` (журнал среды) | см. PR |
+| Полный прогон | `PYTHONUTF8=1 python -m unittest discover -s tests` (из Git Bash) | `Ran 3865 tests in 1434.936s`, `FAILED (failures=1, errors=8, skipped=200)`. Все 9 — известные на этой рабочей машине до этапа и воспроизводимые на `origin/main`: `tests.test_drone_operator_audit_001` ×7 (блокировка временного `.xlsx` в Windows), `tests.test_drone_works_sept2025_operator_link_001` ×1 (`UPDATE … LIMIT` в этой сборке SQLite), `tests.test_spare_parts_module.test_other_tables_are_sortable` ×1. Ни одного отказа в файлах этапа |
 
 Что проверки **доказывают**: инструмент не пишет в исходную папку
 (отпечаток дерева до и после совпадает), не распаковывает архивы, не
