@@ -641,6 +641,18 @@ jobs:
           GPS_RELEASE_POWERSHELL: pwsh
         run: python -m unittest tests.test_gps_release_v131
 
+      # Release v1.33 (docs/GPS_RELEASE_V133_RUNBOOK.md): the "time" verdicts
+      # on the reconciliation screen, no migration, production at c4b0396
+      # (v1.32). The blocks of v1.31 with new constants and the pinned-release
+      # lines of v1.32 (the release commit is fixed, later main is left out),
+      # against the same stand-ins, on pwsh 7 here and on Windows PowerShell
+      # 5.1 below; the suite checks what step 4 names against the templates
+      # and the code. Stdlib only.
+      - name: GPS release v1.33 runbook and blocks (pwsh 7)
+        env:
+          GPS_RELEASE_POWERSHELL: pwsh
+        run: python -m unittest tests.test_gps_release_v133
+
       # Release v1.32 (docs/FIN_RECON_002_RELEASE_V132_RUNBOOK.md): FIN-RECON-002,
       # two migrations and the June books in one window. The runbook's pins are
       # bound to the tools (table SHA, book SHAs, registry names, the strings a
@@ -845,6 +857,15 @@ jobs:
         env:
           GPS_RELEASE_POWERSHELL: powershell
         run: python -m unittest tests.test_gps_release_v131.ReleaseV131ToolFormats tests.test_gps_release_v131.ReleaseV131BlocksInPowerShell
+
+      # GPS release v1.33 (docs/GPS_RELEASE_V133_RUNBOOK.md): the same stop
+      # paths, the pinned release among them, on the interpreter the owner
+      # pastes into.
+      - name: GPS release v1.33 blocks on Windows PowerShell 5.1
+        shell: powershell
+        env:
+          GPS_RELEASE_POWERSHELL: powershell
+        run: python -m unittest tests.test_gps_release_v133.ReleaseV133ToolFormats tests.test_gps_release_v133.ReleaseV133BlocksInPowerShell
 
       # FIN-RECON-002 release v1.32: its blocks parsed by the interpreter the
       # owner pastes into, then step 3, the restore and the rollback executed
