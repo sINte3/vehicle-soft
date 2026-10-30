@@ -125,6 +125,11 @@ PARAMS = [
     ('liq_refill_min', 'Заправка раствора и смена батареи', 2.5, 'мин', 'ДОГАДКА', ''),
     ('liq_cycle_equiv_min', 'Минут полёта на цикл батареи (опрыскивание)', 10.0, 'мин', 'ОЦЕНКА',
      'DJI: 7 мин висения при 90 кг.'),
+    ('', 'ЕДИНЫЙ ТАРИФ (РЕШЕНИЕ ВЛАДЕЛЬЦА 30.10.2026)', None, '', '', ''),
+    ('unified_tariff_per_ton', 'Единый тариф за тонну внесённого удобрения', 1800000, 'сум/т', 'РЕШЕНИЕ',
+     'Один тариф для любого гранулированного удобрения при нормах от 100 кг/га; округление целевого 1 778 000.'),
+    ('min_order_t', 'Минимальный заказ', 2, 'т', 'РЕШЕНИЕ',
+     'За один выезд. Отсекает мелкие работы; 2 т = 10 га при 200 кг/га, выручка 3,6 млн сум.'),
     ('', 'СЕЗОН', None, '', '', ''),
     ('drones_in_winter', 'Бортов в зимней работе', 5, 'шт', 'РЕШЕНИЕ', 'Из 15 в парке.'),
     ('spreaders_owned', 'Разбрасывателей уже есть', 1, 'шт', 'ФАКТ', 'Один тестовый бак.'),
@@ -204,6 +209,7 @@ def compute(p, rate, mults):
     usd = p['usd_rate']
 
     r = {}
+    r['rate'] = float(rate)
     r['ha_per_load_weight'] = payload / rate
     # [REASON]: скорость над полем задаёт не мотор, а подача гранул: при 250 кг/га
     # и 7 м разбрасыватель на 30 кг/мин пропускает только 2,9 м/с (норматив
@@ -309,8 +315,7 @@ def compute_farmer(p, base):
     r = {}
     r['f_rate'] = rate
     r['f_fert_cost'] = rate / 1000.0 * p['nitrate_price_t']
-    kink = 10000.0 / (p['swath_eff_m'] * p['speed_ms']) / 60.0 * p['flow_kg_min']
-    r['f_service'] = max(base['tariff_per_ton'] * kink / 1000.0, base['tariff_per_ton'] * rate / 1000.0)
+    r['f_service'] = p['unified_tariff_per_ton'] * rate / 1000.0
     r['f_total_drone'] = r['f_fert_cost'] + r['f_service']
     r['f_total_ground'] = r['f_fert_cost'] + p['ground_spread_cost_ha']
     r['f_premium'] = r['f_service'] - p['ground_spread_cost_ha']
@@ -324,7 +329,7 @@ def compute_season(p, scen):
     r = {}
     r['s_ha_per_drone'] = scen['ha_per_day'] * p['days_per_season']
     r['s_ha_total'] = r['s_ha_per_drone'] * p['drones_in_winter']
-    r['s_revenue'] = r['s_ha_total'] * scen['target_tariff']
+    r['s_revenue'] = r['s_ha_total'] * scen['rate'] / 1000.0 * p['unified_tariff_per_ton']
     r['s_direct'] = r['s_ha_total'] * scen['direct_cost_per_ha']
     r['s_overhead'] = r['s_revenue'] * p['overhead_pct']
     r['s_spreaders_to_buy'] = max(0, p['drones_in_winter'] - p['spreaders_owned'])
@@ -601,7 +606,7 @@ def build_workbook(p):
     season_rows = [
         ('s_ha_per_drone', 'Гектаров за сезон на один борт', 'га', "='%s'!{c}%d*days_per_season" % (SHEET_CALC, rows_index['ha_per_day'])),
         ('s_ha_total', 'Гектаров за сезон, все борта', 'га', '={me}{r:s_ha_per_drone}*drones_in_winter'),
-        ('s_revenue', 'Выручка по целевому тарифу', 'сум', "={me}{r:s_ha_total}*'%s'!{c}%d" % (SHEET_CALC, rows_index['target_tariff'])),
+        ('s_revenue', 'Выручка по единому тарифу за тонну', 'сум', "={me}{r:s_ha_total}*{c_rate}/1000*unified_tariff_per_ton"),
         ('s_direct', 'Прямые затраты', 'сум', "={me}{r:s_ha_total}*'%s'!{c}%d" % (SHEET_CALC, rows_index['direct_cost_per_ha'])),
         ('s_overhead', 'Накладные', 'сум', '={me}{r:s_revenue}*overhead_pct'),
         ('s_spreaders_to_buy', 'Разбрасывателей докупить', 'шт', '=MAX(0,drones_in_winter-spreaders_owned)'),
@@ -616,7 +621,8 @@ def build_workbook(p):
         wss.cell(row=r, column=1, value=label)
         wss.cell(row=r, column=2, value=unit)
         for me, c in (('C', col150), ('D', col250)):
-            text = fml.replace('{c}', c).replace('{me}', me)
+            text = (fml.replace('{c_rate}', "'%s'!%s%d" % (SHEET_CALC, c, rows_index['rate']))
+                    .replace('{c}', c).replace('{me}', me))
             while '{r:' in text:
                 s = text.index('{r:')
                 e = text.index('}', s)
@@ -669,12 +675,11 @@ def build_workbook(p):
     wcm.cell(row=r0, column=1, value='Чтение: прямая себестоимость опрыскивания по этой модели должна лечь рядом с внутренней '
              'ставкой 75-86 тыс. сум/га. Если нет -- входы блока «Люди и транспорт» завышены или занижены.').alignment = WRAP
     r1 = r0 + 2
-    wcm.cell(row=r1, column=1, value='СТОРОНА ФЕРМЕРА: селитра 200 кг/га, тариф «за тонну» базы 250').font = HDR
+    wcm.cell(row=r1, column=1, value='СТОРОНА ФЕРМЕРА: селитра 200 кг/га, единый тариф за тонну').font = HDR
     farmer_rows = [
         ('f_rate', 'Норма внесения', 'кг/га', '=200'),
         ('f_fert_cost', 'Стоимость удобрения', 'сум/га', '={me}{r:f_rate}/1000*nitrate_price_t'),
-        ('f_service', 'Услуга дрона: ставка за тонну x норма, не ниже минимума за гектар', 'сум/га',
-         "=MAX('%s'!%s%d*10000/(swath_eff_m*speed_ms)/60*flow_kg_min/1000,'%s'!%s%d*{me}{r:f_rate}/1000)" % (SHEET_CALC, col250, rows_index['tariff_per_ton'], SHEET_CALC, col250, rows_index['tariff_per_ton'])),
+        ('f_service', 'Услуга дрона: единый тариф за тонну x норма', 'сум/га', '=unified_tariff_per_ton*{me}{r:f_rate}/1000'),
         ('f_total_drone', 'Итого подкормка дроном', 'сум/га', '={me}{r:f_fert_cost}+{me}{r:f_service}'),
         ('f_total_ground', 'Итого подкормка трактором/вручную', 'сум/га', '={me}{r:f_fert_cost}+ground_spread_cost_ha'),
         ('f_premium', 'Надбавка за дрон против наземной альтернативы', 'сум/га', '={me}{r:f_service}-ground_spread_cost_ha'),
@@ -705,32 +710,35 @@ def build_workbook(p):
 
     # ---- Тариф для КП ----
     wk = wb.create_sheet(SHEET_KP)
-    wk.append(['ТАРИФ ДЛЯ КП: ставка за тонну и минимум за гектар (из сценария «База 250», округление до 5 000 сум)', '', ''])
+    wk.append(['ТАРИФ ДЛЯ КП: единый тариф за тонну (решение владельца 30.10.2026)', '', ''])
     wk.cell(row=1, column=1).font = HDR
-    wk.append(['Ставка за тонну внесённого удобрения', 'сум/т',
-               "=ROUND('%s'!%s%d/5000,0)*5000" % (SHEET_CALC, col250, rows_index['tariff_per_ton'])])
-    wk.append(['Норма, ниже которой скорость ограничивает не подача, а предел скорости', 'кг/га',
+    wk.append(['Расчётный целевой тариф за тонну (сценарий «База 250»)', 'сум/т',
+               "='%s'!%s%d" % (SHEET_CALC, col250, rows_index['tariff_per_ton'])])
+    wk.append(['ЕДИНЫЙ ТАРИФ за тонну внесённого удобрения (округление, один для всех удобрений)', 'сум/т', '=unified_tariff_per_ton'])
+    wk.append(['Минимальный заказ за один выезд', 'т', '=min_order_t'])
+    wk.append(['Минимальный заказ в деньгах', 'сум', '=unified_tariff_per_ton*min_order_t'])
+    wk.append(['Норма, ниже которой гектар дешевле не становится (подача перестаёт ограничивать)', 'кг/га',
                '=10000/(swath_eff_m*speed_ms)/60*flow_kg_min'])
-    wk.append(['Минимальная цена гектара (тариф за тонну x эта норма)', 'сум/га', '=ROUND($C$2*$C$3/1000/5000,0)*5000'])
-    wk.cell(row=2, column=3).number_format = '#,##0'
-    wk.cell(row=3, column=3).number_format = '0'
-    wk.cell(row=4, column=3).number_format = '#,##0'
-    wk.cell(row=2, column=3).fill = KEY_FILL
-    wk.cell(row=4, column=3).fill = KEY_FILL
+    for rr in (2, 3, 5):
+        wk.cell(row=rr, column=3).number_format = '#,##0'
+    wk.cell(row=4, column=3).number_format = '0.0'
+    wk.cell(row=6, column=3).number_format = '0'
+    wk.cell(row=3, column=3).fill = KEY_FILL
+    wk.cell(row=5, column=3).fill = KEY_FILL
     wk.append([])
-    wk.append(['Норма, кг/га', 'Цена для фермера, сум/га', 'К тарифу опрыскивания, раз'])
-    wk.cell(row=6, column=1).font = HDR
-    wk.cell(row=6, column=2).font = HDR
-    wk.cell(row=6, column=3).font = HDR
+    wk.append(['Норма, кг/га', 'Цена для фермера, сум/га (справочно)', 'К тарифу опрыскивания, раз'])
+    for cc in (1, 2, 3):
+        wk.cell(row=8, column=cc).font = HDR
     for i, rate in enumerate((100, 150, 200, 250, 300, 400)):
-        r = 7 + i
+        r = 9 + i
         wk.cell(row=r, column=1, value=rate)
-        wk.cell(row=r, column=2, value='=MAX($C$4,$C$2*A%d/1000)' % r).number_format = '#,##0'
+        wk.cell(row=r, column=2, value='=$C$3*A%d/1000' % r).number_format = '#,##0'
         wk.cell(row=r, column=3, value='=B%d/liquid_tariff_external' % r).number_format = '0.00'
-    wk.cell(row=14, column=1, value='Почему «за тонну»: при нормах выше ~120 кг/га скорость над полем задаёт подача гранул '
+    wk.cell(row=16, column=1, value='Почему один тариф «за тонну»: при нормах выше ~120 кг/га скорость над полем задаёт подача гранул '
             '(норматив: 8-11 км/ч при 7 м), и время над гектаром растёт пропорционально норме, как и число вылетов. '
-            'Себестоимость гектара становится почти чисто пропорциональной килограммам -- строка C0 на листе «Расчёт» равна нулю, '
-            'а ставка за тонну одинакова для 150, 250 и 400 кг/га. Минимум за гектар защищает выезд на лёгких нормах.').alignment = WRAP
+            'Себестоимость гектара пропорциональна килограммам -- строка C0 на листе «Расчёт» равна нулю, '
+            'а ставка за тонну одинакова для 150, 250 и 400 кг/га. Один тариф не даёт оператору выбирать «ступень» в отчёте; '
+            'минимальный заказ отсекает мелкие работы. При нормах ниже 100 кг/га (семена) считать за гектар.').alignment = WRAP
     wk.column_dimensions['A'].width = 52
     wk.column_dimensions['B'].width = 26
     wk.column_dimensions['C'].width = 26
