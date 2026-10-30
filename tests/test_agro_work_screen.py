@@ -635,6 +635,28 @@ class TimeOnScreen(ScreenCase):
         # Гектарная заявка рядом -- по-прежнему в гектарах.
         self.assertIn('2.5', row_of(html, 'APP-TEST-001'))
 
+    def test_the_list_explains_the_time_method(self):
+        # [REASON]: с 29.10 вердикты «время» публикуются; пояснение списка
+        # называет их правило -- числа те же, что в коде (порог 30 минут,
+        # допуск В-2 по часам, пробег грузовика от 3 км).
+        from agro_work import reconcile
+        from gps import tolerance
+        self.assertEqual((reconcile.TIME_WORK_SECONDS, reconcile.TRUCK_WORK_KM),
+                         (1800, 3.0))
+        self.assertEqual(tolerance.TOLERANCE_HOURS_OK, (0.15, 0.5))
+        self.assertEqual(tolerance.TOLERANCE_HOURS_WARN, 0.25)
+        ru = self.get('/agro-work/applications', lang='ru').get_data(as_text=True)
+        self.assertIn('У заявок метода «время» вместо гектаров — часы с включённым '
+                      'зажиганием по GPS. Работа была — включено не меньше 30 минут '
+                      'за окно', ru)
+        self.assertIn('в допуске при расхождении не больше 15% или 0,5 ч, на грани '
+                      'до 25%', ru)
+        self.assertIn('решает пробег окна — от 3 км', ru)
+        uz = self.get('/agro-work/applications', lang='uz').get_data(as_text=True)
+        self.assertIn('«Вақт» усулидаги буюртмаларда гектар ўрнига — GPS бўйича ўт '
+                      'олдириш ёқилган соатлар.', uz)
+        self.assertNotIn('У заявок метода «время»', uz)
+
     def test_the_uzbek_list_says_hours_in_cyrillic(self):
         html = self.get('/agro-work/applications', lang='uz').get_data(
             as_text=True)
