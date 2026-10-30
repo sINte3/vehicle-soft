@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """tools/dji_rc_probe.py -- обследование файлов, снятых с пульта DJI. Только чтение.
 
-VS-DJI-RC-COLLECTOR-001, этап 0А (редакция 2 после ревизии от 30.10.2026).
+VS-DJI-RC-COLLECTOR-001, этап 0А (редакция 3 после двух ревизий от 30.10.2026).
 Инструмент для этапа 0Б: владелец или ответственный оператор копирует файлы
 с пульта (штатный экспорт, USB, папка, выбранная на пульте) в отдельную папку
 на компьютере, а этот скрипт описывает, ЧТО в этой папке лежит, -- не
@@ -46,12 +46,23 @@ protobuf (номера полей, wire types, счётчики -- без зна
 заменяется на `<redacted>`. В снимок по умолчанию копируются только файлы
 со статусом `NO_KNOWN_MARKER_IN_SCANNED_BYTES`.
 
-ДВА ОТЧЁТА ОПИСИ. `inventory.json` / `inventory.md` -- локальная опись с
-именами файлов, ключей и таблиц (хранится с ограниченным доступом);
-`inventory_transfer.json` / `inventory_transfer.md` -- отчёт для передачи:
-без имён файлов, путей, ключей JSON, имён записей ZIP и таблиц SQLite, без
-имён маркеров и без аппаратных идентификаторов -- только хеши, размеры,
-классы, флаги, статусы и числа.
+ДВА ОТЧЁТА У КАЖДОЙ КОМАНДЫ, КОТОРАЯ ПИШЕТ ОТЧЁТ. `inventory.json` /
+`inventory.md`, `match.json` / `match.md`, `extract_manifest.json` --
+локальные, с именами файлов, ключей, таблиц и локальными путями (хранятся с
+ограниченным доступом); `*_transfer.json` / `*_transfer.md` -- для
+передачи: по белому списку ключей, без имён файлов, путей, ключей JSON,
+имён записей ZIP и таблиц SQLite, без имён маркеров и аппаратных
+идентификаторов -- только номера, хеши, размеры, классы, флаги, статусы,
+`flight_id` и числа. Имя без маркера секрета тоже может раскрывать клиента
+или поле -- поэтому имена не попадают в отчёт для передачи вообще.
+
+СНИМОК ПРОВЕРЯЕТ СОХРАНЯЕМЫЕ БАЙТЫ. Источник проверяется до копирования
+(решает, копировать ли вообще), а статус проверки на маркеры в манифесте
+берётся с КОПИИ -- ровно тех байтов, что сохранены (`secret_scan_of =
+COPY`, `secret_scan_sha256`). Если байты между проверкой и копированием
+изменились, объект -- `UNSTABLE`; если сохранённые байты не проходят
+политику, копия удаляется из целевой папки и объект записывается как
+пропущенный. Пустой источник -- `EMPTY`, не `OK`.
 
 ЧТО ЭТОТ ИНСТРУМЕНТ НЕ УТВЕРЖДАЕТ. «Похоже на V4» означает «байты
 разбираются тем же декодером и несут те же номера полей» -- и ничего о
@@ -90,7 +101,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-PROBE_VERSION = 'dji-rc-probe-2'
+PROBE_VERSION = 'dji-rc-probe-3'
 # Тип происхождения всего, что описывают `inventory`, `probe` и `snapshot`
 # (ТЗ §0.6). Это заявление оператора о папке, не проверенный факт.
 ORIGIN = 'RC'
@@ -215,6 +226,22 @@ TRANSFER_OMITS = (
     'ZIP entry names', 'SQLite table names', 'route hardware_ids',
     'secret marker names', 'analysis error messages',
 )
+# Флаги, при которых объект считается описанным с ошибкой: опись тогда
+# PARTIAL, а не COMPLETE, даже если проверка на маркеры прошла.
+OBJECT_ERROR_FLAGS = frozenset(('ANALYSIS_ERROR', 'READ_ERROR',
+                                'SQLITE_READ_ERROR', 'CONTAINER_ERROR'))
+# Статусы кандидата вылета в `match` (ревизия 2, п. 6).
+NO_CANDIDATE = 'NO_CANDIDATE'
+SINGLE_CANDIDATE = 'SINGLE_CANDIDATE'
+AMBIGUOUS_CANDIDATES = 'AMBIGUOUS_CANDIDATES'
+EVIDENCE_IDENTICAL = 'IDENTICAL_BYTES'
+EVIDENCE_FRAMES = 'EQUAL_FRAMES'
+EVIDENCE_OVERLAP = 'WINDOW_OVERLAP'
+CANDIDATE_SET_NOTE = ('the dump holds only the flights that were requested; '
+                      'the true match may be a flight outside this set, and '
+                      'identical bytes or a single candidate prove neither '
+                      'origin nor the link -- see the survey plan, section 7.1')
+SHA256_HEX = re.compile(r'^[0-9a-f]{64}$')
 
 
 class ProbeError(Exception):
@@ -841,11 +868,19 @@ def _analyse_bytes(blob, depth, scan):
 
 
 def _scan_large_gzip(path, scan):
-    """Потоковая проверка содержимого большого GZIP без классификации."""
+    """Потоковая проверка содержимого большого GZIP без классификации.
+
+    Та же политика, что у малого GZIP в `_analyse_bytes`: вложенный
+    контейнер (ZIP/GZIP внутри) проверить нельзя, и это объявляется
+    `GZIP_NESTED_CONTAINER` -> `PARTIAL`, а не чистотой внутренних байтов.
+    """
     try:
         with open(path, 'rb') as raw, gzip.GzipFile(fileobj=raw) as handle:
+            head = handle.read(4)
+            if head.startswith(CONTAINER_MAGIC):
+                scan_add(scan, reason='GZIP_NESTED_CONTAINER')
             _sha, markers, read, truncated = stream_hash_and_scan(
-                handle, limit=CONTAINER_SCAN_MAX_BYTES)
+                _Chain(head, handle), limit=CONTAINER_SCAN_MAX_BYTES)
     except (OSError, EOFError, zlib.error, ValueError) as exc:
         scan_add(scan, reason='GZIP_ERROR:%s' % type(exc).__name__)
         return
@@ -1028,7 +1063,7 @@ def inventory(source_dir, device_label, deep_max_bytes=DEFAULT_DEEP_MAX_BYTES,
             flagged_secret += 1
         elif status in (SCAN_PARTIAL, SCAN_NOT_SCANNED):
             partial += 1
-        if 'ANALYSIS_ERROR' in entry['flags'] or 'READ_ERROR' in entry['flags']:
+        if set(entry['flags']) & OBJECT_ERROR_FLAGS:
             errors += 1
         shapes = [entry['details'].get('v4_shape'),
                   (entry['details'].get('gzip') or {}).get('v4_shape')]
@@ -1038,7 +1073,15 @@ def inventory(source_dir, device_label, deep_max_bytes=DEFAULT_DEEP_MAX_BYTES,
                   (entry['details'].get('gzip') or {}).get('route_shape')]
         if any(s and s.get('status') == 'ROUTE_LIKE' for s in shapes):
             route_like += 1
-    status = 'COMPLETE' if not (partial or errors) else 'PARTIAL'
+    # [REASON]: ошибка одного объекта (SQLite не читается, контейнер
+    # повреждён) -- это неполная опись, а не COMPLETE с нулём в итоге;
+    # пустая папка -- EMPTY, а не COMPLETE (ревизия 2, п. 7).
+    if not files:
+        status = 'EMPTY'
+    elif partial or errors:
+        status = 'PARTIAL'
+    else:
+        status = 'COMPLETE'
     return {
         'probe_version': PROBE_VERSION,
         'origin': ORIGIN,
@@ -1395,41 +1438,96 @@ def read_dump(path):
     return document
 
 
+def _valid_flight_id(value):
+    """int > 0 или строка из цифр; bool и прочее -- не идентификатор."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value > 0:
+        return value
+    if isinstance(value, str) and value.isdigit() and int(value) > 0:
+        return int(value)
+    return None
+
+
+def _validate_dump_item(item):
+    """(row, problems): строгая проверка полей одного элемента дампа.
+
+    [REASON]: сборщик пишет `flight_id`, `source_type`, `body_b64`, `sha256`,
+    `size_bytes` всегда (`source_item`). Элемент без поля или с полем
+    неверного типа -- повреждённый или чужой дамп; он называется
+    `INCOMPLETE:<поля>`, а не проверенным (ревизия 2, п. 5).
+    """
+    problems = []
+    row = {'flight_id': _valid_flight_id(item.get('flight_id')),
+           'source_type': item.get('source_type'),
+           'declared_sha256': item.get('sha256'),
+           'declared_size_bytes': item.get('size_bytes'),
+           'body': None, 'sha256': None, 'size_bytes': None, 'markers': []}
+    if row['flight_id'] is None:
+        problems.append('flight_id')
+    if not isinstance(row['source_type'], str) or not row['source_type']:
+        row['source_type'] = None
+        problems.append('source_type')
+    encoded = item.get('body_b64')
+    if not isinstance(encoded, str) or not encoded:
+        problems.append('body_b64')
+    else:
+        try:
+            body = base64.b64decode(encoded, validate=True)
+        except (ValueError, TypeError):
+            body = None
+            problems.append('body_b64')
+        if body is not None:
+            if not body:
+                problems.append('body_b64')
+            else:
+                row['body'] = body
+                row['sha256'] = hashlib.sha256(body).hexdigest()
+                row['size_bytes'] = len(body)
+                row['markers'] = find_secret_markers(body)
+    if not (isinstance(row['declared_sha256'], str)
+            and SHA256_HEX.match(row['declared_sha256'])):
+        problems.append('sha256')
+    if (isinstance(row['declared_size_bytes'], bool)
+            or not isinstance(row['declared_size_bytes'], int)
+            or row['declared_size_bytes'] < 0):
+        problems.append('size_bytes')
+    return row, problems
+
+
 def dump_items(document, source_type=None, flight_id=None):
-    """Элементы дампа с перепроверенным хешем тела. Тело не печатается."""
+    """Элементы дампа с полной проверкой полей и перепроверкой хеша тела.
+
+    Статусы: `OK` -- все поля есть и верного типа, хеш и размер тела
+    сошлись с заявленными, маркеров нет; `INCOMPLETE:<поля>` -- поля нет
+    или оно неверного типа (такой элемент показывается всегда, фильтр по
+    типу или ID к нему применить нельзя); `HASH_MISMATCH`, `SIZE_MISMATCH`,
+    `MARKER_FOUND`. Тело не печатается.
+    """
     rows = []
     for position, item in enumerate(document['sources']):
         if not isinstance(item, dict):
+            rows.append({'position': position, 'flight_id': None,
+                         'source_type': None, 'declared_sha256': None,
+                         'declared_size_bytes': None, 'sha256': None,
+                         'size_bytes': None, 'markers': [],
+                         'status': 'INCOMPLETE:not_an_object'})
             continue
-        row = {'position': position,
-               'flight_id': item.get('flight_id'),
-               'source_type': item.get('source_type'),
-               'declared_sha256': item.get('sha256'),
-               'declared_size_bytes': item.get('size_bytes')}
-        if source_type is not None and row['source_type'] != source_type:
+        row, problems = _validate_dump_item(item)
+        row['position'] = position
+        if source_type is not None and row['source_type'] is not None \
+                and row['source_type'] != source_type:
             continue
-        if flight_id is not None:
-            try:
-                if int(row['flight_id']) != int(flight_id):
-                    continue
-            except (TypeError, ValueError):
-                continue
-        try:
-            body = base64.b64decode(item.get('body_b64') or '', validate=True)
-        except (ValueError, TypeError) as exc:
-            row['status'] = 'BODY_UNDECODABLE:%s' % type(exc).__name__
-            rows.append(row)
+        if flight_id is not None and row['flight_id'] is not None \
+                and row['flight_id'] != int(flight_id):
             continue
-        row['body'] = body
-        row['sha256'] = hashlib.sha256(body).hexdigest()
-        row['size_bytes'] = len(body)
-        row['markers'] = find_secret_markers(body)
-        if row['markers']:
+        if problems:
+            row['status'] = 'INCOMPLETE:' + ','.join(problems)
+        elif row['markers']:
             row['status'] = 'MARKER_FOUND'
-        elif row['declared_sha256'] and row['declared_sha256'] != row['sha256']:
+        elif row['declared_sha256'] != row['sha256']:
             row['status'] = 'HASH_MISMATCH'
-        elif (row['declared_size_bytes'] is not None
-              and row['declared_size_bytes'] != row['size_bytes']):
+        elif row['declared_size_bytes'] != row['size_bytes']:
             row['status'] = 'SIZE_MISMATCH'
         else:
             row['status'] = 'OK'
@@ -1468,13 +1566,14 @@ def extract_from_dump(dump_path, out_dir, source_type='v4', flight_id=None):
             'declared_size_bytes', 'status') if k in row}
         record['sha256'] = row.get('sha256')
         record['size_bytes'] = row.get('size_bytes')
+        record['verified'] = False
         if row['status'] != 'OK':
             record['written'] = None
             manifest['totals']['refused'] += 1
             manifest['items'].append(record)
             continue
-        name = '%s_%s.bin' % (re.sub(r'[^A-Za-z0-9_-]+', '_', str(source_type)),
-                              re.sub(r'[^0-9A-Za-z_-]+', '_', str(row['flight_id'])))
+        name = '%s_%d.bin' % (re.sub(r'[^A-Za-z0-9_-]+', '_', row['source_type']),
+                              row['flight_id'])
         target = os.path.join(out_dir, name)
         if os.path.lexists(target):
             record['status'] = 'TARGET_EXISTS'
@@ -1490,43 +1589,141 @@ def extract_from_dump(dump_path, out_dir, source_type='v4', flight_id=None):
         if record['verified']:
             manifest['totals']['verified'] += 1
         manifest['items'].append(record)
-    manifest['status'] = ('OK' if manifest['totals']['refused'] == 0
-                          and manifest['totals']['verified']
-                          == manifest['totals']['written']
-                          else 'PARTIAL')
+    if not rows:
+        manifest['status'] = 'EMPTY'
+    elif (manifest['totals']['refused'] == 0
+          and manifest['totals']['verified'] == manifest['totals']['written']):
+        manifest['status'] = 'OK'
+    else:
+        manifest['status'] = 'PARTIAL'
     with open_new(os.path.join(out_dir, 'extract_manifest.json')) as handle:
         json.dump(manifest, handle, ensure_ascii=False, indent=1,
                   sort_keys=True)
+    with open_new(os.path.join(out_dir, 'extract_manifest_transfer.json')) as handle:
+        json.dump(extract_transfer_view(manifest), handle, ensure_ascii=False,
+                  indent=1, sort_keys=True)
     return manifest
 
 
+EXTRACT_TRANSFER_KEYS = ('probe_version', 'origin', 'dump_dry_run',
+                         'dump_nothing_was_queued', 'dump_capture_run_id',
+                         'requested_source_type', 'requested_flight_id',
+                         'status', 'totals')
+EXTRACT_ITEM_TRANSFER_KEYS = ('position', 'flight_id', 'source_type',
+                              'declared_sha256', 'declared_size_bytes',
+                              'sha256', 'size_bytes', 'status', 'verified',
+                              'written')
+
+
+def extract_transfer_view(manifest):
+    """Манифест извлечения для передачи: без локального пути дампа.
+
+    Белый список ключей; `written` -- имя вида `v4_<flight_id>.bin`,
+    составленное инструментом, не имя из источника.
+    """
+    out = {key: manifest[key] for key in EXTRACT_TRANSFER_KEYS if key in manifest}
+    out['report_kind'] = 'TRANSFER'
+    out['omitted_for_transfer'] = ['dump path']
+    out['items'] = [{key: item.get(key) for key in EXTRACT_ITEM_TRANSFER_KEYS}
+                    for item in manifest['items']]
+    return out
+
+
 # ─── Сопоставление описи с дампом ────────────────────────────────────────────
+
+def load_local_inventory(inventory_path):
+    """Локальная опись (с `relpath` и `source_dir`); отчёт для передачи
+    для сопоставления не годится, и это говорится прямо."""
+    if not os.path.isfile(inventory_path):
+        raise ProbeError('inventory not found: %s' % inventory_path)
+    with open(inventory_path, 'rb') as handle:
+        try:
+            report = json.loads(handle.read().decode('utf-8-sig'))
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise ProbeError('inventory is not JSON: %s' % type(exc).__name__)
+    if (not isinstance(report, dict) or report.get('report_kind') == 'TRANSFER'
+            or not isinstance(report.get('source_dir'), str)
+            or not isinstance(report.get('files'), list)):
+        raise ProbeError('match needs the LOCAL inventory.json (with relpath '
+                         'and source_dir), not the transfer report')
+    return report
+
+
+def _pair_score(pair):
+    """(уровень признака, кадры с равным t, равные биты, равные позиции,
+    перекрытие) -- чем больше, тем сильнее признак совпадения."""
+    if pair['identical_bytes']:
+        tier = 3
+    elif pair['frames_with_equal_t'] > 0:
+        tier = 2
+    elif (pair['overlap_ms'] or 0) > 0:
+        tier = 1
+    else:
+        tier = 0
+    return (tier, pair['frames_with_equal_t'],
+            pair['equal_t_frames_with_equal_area_bits'],
+            pair['equal_t_frames_with_equal_position'], pair['overlap_ms'] or 0)
+
+
+def _candidate(pairs):
+    """Кандидат по признакам совпадения, без выбора первого из равных.
+
+    `NO_CANDIDATE` -- ни у одной пары нет признака (ни одинаковых байтов,
+    ни кадров с равным временем, ни перекрытия окон); `SINGLE_CANDIDATE` --
+    ровно одна пара с наилучшим признаком; `AMBIGUOUS_CANDIDATES` --
+    несколько пар с равным наилучшим признаком, перечислены все
+    (ревизия 2, п. 6). Это неоднозначность между ВЫЛЕТАМИ; повторы
+    времени внутри одного V4 -- отдельное поле `pairing` пары.
+    """
+    scored = [(_pair_score(pair), pair) for pair in pairs]
+    best = max((score for score, _pair in scored), default=None)
+    if best is None or best[0] == 0:
+        return {'candidate_status': NO_CANDIDATE, 'candidate_evidence': None,
+                'candidate_cloud_flight_ids': [],
+                'candidate_cloud_flight_id': None,
+                'candidate_overlap_ms': None,
+                'candidate_identical_bytes': None}
+    evidence = {3: EVIDENCE_IDENTICAL, 2: EVIDENCE_FRAMES,
+                1: EVIDENCE_OVERLAP}[best[0]]
+    winners = [pair for score, pair in scored if score == best]
+    ids = [pair['cloud_flight_id'] for pair in winners]
+    if len(winners) == 1:
+        return {'candidate_status': SINGLE_CANDIDATE,
+                'candidate_evidence': evidence,
+                'candidate_cloud_flight_ids': ids,
+                'candidate_cloud_flight_id': ids[0],
+                'candidate_overlap_ms': winners[0]['overlap_ms'],
+                'candidate_identical_bytes': winners[0]['identical_bytes']}
+    return {'candidate_status': AMBIGUOUS_CANDIDATES,
+            'candidate_evidence': evidence,
+            'candidate_cloud_flight_ids': ids,
+            'candidate_cloud_flight_id': None,
+            'candidate_overlap_ms': None,
+            'candidate_identical_bytes': None}
+
 
 def match_inventory_with_dump(inventory_path, dump_path):
     """Каждый файл описи, похожий на V4, против каждого V4 дампа.
 
     Файл читается заново по `source_dir` + `relpath` локальной описи, и его
     текущий хеш обязан совпасть с хешем описи -- иначе он не сравнивается
-    (`FILE_CHANGED_SINCE_INVENTORY`). Лучший кандидат выбирается по
-    перекрытию окон и называется кандидатом, не связью.
+    (`FILE_CHANGED_SINCE_INVENTORY`). Кандидат -- по признакам совпадения
+    (`_candidate`); он называется кандидатом, не связью, и набор кандидатов
+    может быть неполным (в дампе только запрошенные вылеты).
     """
-    with open(inventory_path, 'rb') as handle:
-        try:
-            report = json.loads(handle.read().decode('utf-8-sig'))
-        except (ValueError, UnicodeDecodeError) as exc:
-            raise ProbeError('inventory is not JSON: %s' % type(exc).__name__)
-    if report.get('report_kind') == 'TRANSFER' or 'source_dir' not in report:
-        raise ProbeError('match needs the LOCAL inventory.json (with relpath '
-                         'and source_dir), not the transfer report')
+    report = load_local_inventory(inventory_path)
     document = read_dump(dump_path)
     cloud = [row for row in dump_items(document, 'v4')]
     out = {
         'probe_version': PROBE_VERSION,
         'inventory_path': os.path.abspath(inventory_path),
         'dump_path': os.path.abspath(dump_path),
+        'source_dir': report['source_dir'],
         'device_label': report.get('device_label'),
-        'identity_proof': 'NONE -- a window overlap names a CANDIDATE, '
-                          'not a link; V4 carries no flight id',
+        'identity_proof': 'NONE -- a window overlap or identical bytes name '
+                          'a CANDIDATE, not a link; V4 carries no flight id',
+        'candidate_set_may_be_incomplete': True,
+        'candidate_set_note': CANDIDATE_SET_NOTE,
         'cloud_bodies': [{k: row.get(k) for k in (
             'flight_id', 'status', 'sha256', 'size_bytes')} for row in cloud],
         'rc_files': [],
@@ -1561,7 +1758,7 @@ def match_inventory_with_dump(inventory_path, dump_path):
             row['status'] = 'FILE_CHANGED_SINCE_INVENTORY'
             out['rc_files'].append(row)
             continue
-        best = None
+        own_pairs = []
         for cloud_row in usable_cloud:
             result = compare_v4_blobs(blob, cloud_row['body'])
             comparison = result.get('comparison') or {}
@@ -1581,14 +1778,9 @@ def match_inventory_with_dump(inventory_path, dump_path):
                 'pairing': comparison.get('pairing'),
             }
             out['pairs'].append(pair)
-            key = (pair['identical_bytes'], pair['overlap_ms'] or 0,
-                   pair['frames_with_equal_t'])
-            if best is None or key > best[0]:
-                best = (key, pair)
+            own_pairs.append(pair)
         row['status'] = 'COMPARED' if usable_cloud else 'NO_USABLE_CLOUD_BODY'
-        row['candidate_cloud_flight_id'] = best[1]['cloud_flight_id'] if best else None
-        row['candidate_overlap_ms'] = best[1]['overlap_ms'] if best else None
-        row['candidate_identical_bytes'] = best[1]['identical_bytes'] if best else None
+        row.update(_candidate(own_pairs))
         out['rc_files'].append(row)
     out['totals'] = {
         'cloud_bodies': len(cloud),
@@ -1597,34 +1789,79 @@ def match_inventory_with_dump(inventory_path, dump_path):
         'rc_compared': sum(1 for r in out['rc_files'] if r['status'] == 'COMPARED'),
         'pairs': len(out['pairs']),
         'identical_pairs': sum(1 for p in out['pairs'] if p['identical_bytes']),
+        'single_candidates': sum(1 for r in out['rc_files']
+                                 if r.get('candidate_status') == SINGLE_CANDIDATE),
+        'ambiguous_candidates': sum(1 for r in out['rc_files']
+                                    if r.get('candidate_status') == AMBIGUOUS_CANDIDATES),
+        'no_candidate': sum(1 for r in out['rc_files']
+                            if r.get('candidate_status') == NO_CANDIDATE),
     }
     return out
 
 
-def render_match_markdown(result):
+MATCH_RC_TRANSFER_KEYS = ('index', 'sha256', 'status', 'candidate_status',
+                          'candidate_evidence', 'candidate_cloud_flight_ids',
+                          'candidate_cloud_flight_id', 'candidate_overlap_ms',
+                          'candidate_identical_bytes')
+
+
+def match_transfer_view(result):
+    """Сопоставление для передачи: без `relpath`, путей описи, дампа и
+    источника. Белый список ключей; пары несут только номера, хеши,
+    `flight_id` и числа."""
+    return {
+        'probe_version': result['probe_version'],
+        'report_kind': 'TRANSFER',
+        'omitted_for_transfer': ['file names (relpath)', 'inventory path',
+                                 'dump path', 'source directory'],
+        'device_label': result['device_label'],
+        'identity_proof': result['identity_proof'],
+        'candidate_set_may_be_incomplete': result['candidate_set_may_be_incomplete'],
+        'candidate_set_note': result['candidate_set_note'],
+        'totals': result['totals'],
+        'cloud_bodies': result['cloud_bodies'],
+        'rc_files': [{key: row.get(key) for key in MATCH_RC_TRANSFER_KEYS}
+                     for row in result['rc_files']],
+        'pairs': result['pairs'],
+    }
+
+
+def render_match_markdown(result, transfer=False):
     totals = result['totals']
     lines = [
-        '# Сопоставление файлов пульта с облачными V4 -- %s' % result['device_label'],
+        '# Сопоставление файлов пульта с облачными V4 -- %s%s' % (
+            result['device_label'], ' (отчёт для передачи)' if transfer else ''),
         '',
         'Облачных тел V4 в дампе: %d (пригодных %d); файлов пульта, похожих '
-        'на V4: %d, сравнено %d; пар: %d, из них с одинаковыми байтами: %d.'
+        'на V4: %d, сравнено %d; пар: %d, из них с одинаковыми байтами: %d. '
+        'Кандидатов: единственных %d, неоднозначных %d, без кандидата %d.'
         % (totals['cloud_bodies'], totals['cloud_bodies_usable'],
            totals['rc_v4_like'], totals['rc_compared'], totals['pairs'],
-           totals['identical_pairs']),
+           totals['identical_pairs'], totals['single_candidates'],
+           totals['ambiguous_candidates'], totals['no_candidate']),
         '',
-        '**Перекрытие окон называет кандидата, не связь.** V4 не несёт flight '
-        'id; одинаковые байты доказывают одинаковую копию, не подлинность DJI '
-        'и не факт распыления.',
+        '**Кандидат -- не связь.** V4 не несёт flight id; одинаковые байты '
+        'или перекрытие окон называют кандидата, не доказывают подлинность '
+        'DJI, принадлежность вылету и факт распыления. Набор кандидатов может '
+        'быть неполным: в дампе только запрошенные вылеты. Связь с вылетом '
+        'устанавливается по независимым основаниям (план, §7.1).',
         '',
-        '| Файл пульта (#, SHA-256) | Статус | Кандидат (dji_flight_id) | Перекрытие, мс | Байты совпали |',
-        '|---|---|---|---|---|',
+        '| Файл пульта (#, SHA-256) | %sСтатус | Кандидат | Признак | dji_flight_id | Перекрытие, мс | Байты совпали |'
+        % ('' if transfer else 'Имя | '),
+        '|---|---|---|---|---|---|---|' + ('' if transfer else '---|'),
     ]
     for row in result['rc_files']:
-        lines.append('| #%s `%s` | %s | %s | %s | %s |' % (
-            row.get('index'), (row.get('sha256') or '')[:16], row['status'],
-            row.get('candidate_cloud_flight_id', '—'),
-            row.get('candidate_overlap_ms', '—'),
-            row.get('candidate_identical_bytes', '—')))
+        ids = row.get('candidate_cloud_flight_ids') or []
+        lines.append('| #%s `%s` | %s%s | %s | %s | %s | %s | %s |' % (
+            row.get('index'), (row.get('sha256') or '')[:16],
+            '' if transfer else '`%s` | ' % row.get('relpath'),
+            row['status'], row.get('candidate_status') or '—',
+            row.get('candidate_evidence') or '—',
+            ', '.join(str(i) for i in ids) or '—',
+            '—' if row.get('candidate_overlap_ms') is None
+            else row['candidate_overlap_ms'],
+            '—' if row.get('candidate_identical_bytes') is None
+            else row['candidate_identical_bytes']))
     lines += ['', '| # | flight_id | Перекрытие, мс | Кадров с равным t | '
               'Равные биты счётчика | Равные позиции | Сопоставление | Байты |',
               '|---|---|---|---|---|---|---|---|']
@@ -1668,7 +1905,16 @@ def _stat_signature(stat):
 
 
 SNAPSHOT_STATUS_ORDER = ('VERIFY_FAILED', UNSTABLE, INCONCLUSIVE, 'PARTIAL',
-                         'OK')
+                         'EMPTY', 'OK')
+
+
+def _copy_allowed(status, include_flagged, include_unscanned):
+    """Политика снимка: что можно класть в целевую папку."""
+    if status == SCAN_CLEAN:
+        return True
+    if status == SCAN_MARKER_FOUND:
+        return include_flagged
+    return include_unscanned
 
 
 def snapshot(source_dir, target_dir, device_label, include_flagged=False,
@@ -1714,19 +1960,21 @@ def snapshot(source_dir, target_dir, device_label, include_flagged=False,
                    'skipped': 0, 'bytes': 0},
     }
     conditions = set()
+    seen_any = False
     for full in iter_files(source_dir):
+        seen_any = True
         rel = os.path.relpath(full, source_dir).replace('\\', '/')
-        probed = probe_file(full, deep_max_bytes, depth=1, now=now)
-        apply_name_policy(probed, rel)
-        scan = probed['secret_scan']
-        flags = set(probed['flags'])
-        if scan['status'] == SCAN_MARKER_FOUND and not include_flagged \
-                or scan['status'] in (SCAN_PARTIAL, SCAN_NOT_SCANNED) \
-                and not include_unscanned:
+        # 1. Предварительная проверка ИСТОЧНИКА: решает, копировать ли вообще
+        #    (секрет не должен попасть даже в изолированную папку).
+        pre = probe_file(full, deep_max_bytes, depth=1, now=now)
+        apply_name_policy(pre, rel)
+        pre_scan = pre['secret_scan']
+        if not _copy_allowed(pre_scan['status'], include_flagged,
+                             include_unscanned):
             manifest['skipped'].append({
-                'relpath': probed['relpath'], 'sha256': probed['sha256'],
-                'reason': scan['status'],
-                'scan_reasons': scan['reasons']})
+                'relpath': pre['relpath'], 'sha256': pre['sha256'],
+                'reason': pre_scan['status'],
+                'scan_reasons': pre_scan['reasons'], 'flags': []})
             manifest['totals']['skipped'] += 1
             conditions.add('PARTIAL')
             continue
@@ -1741,10 +1989,46 @@ def snapshot(source_dir, target_dir, device_label, include_flagged=False,
         after = _stat_signature(after_stat)
         source_sha_after = sha256_file(full)
         rehash_matches = source_sha_after == stream_sha
-        changed = before != after or not rehash_matches
+        # 2. Проверка КОПИИ -- ровно тех байтов, что сохранены. Статус
+        #    проверки на маркеры в манифесте относится к ним, а не к байтам,
+        #    прочитанным при предварительной проверке (ревизия 2, п. 2).
+        #    Копия лежит в изолированной папке и никем не меняется.
+        copy_probe = probe_file(target, deep_max_bytes, depth=1, now=now)
+        copy_scan = copy_probe['secret_scan']
+        # Флаги содержимого -- с копии; флаги контекста источника (WAL рядом,
+        # свежесть, маркер в имени) -- с предварительной проверки: у копии
+        # соседей ещё нет, а имя источника в целевой папке то же.
+        flags = set(copy_probe['flags']) | {
+            flag for flag in pre['flags']
+            if flag in ('SQLITE_WAL_OR_JOURNAL_PRESENT', 'RECENTLY_MODIFIED',
+                        'SECRET_MARKER_IN_NAME')}
+        scan_bound_to_copy = copy_probe['sha256'] == copied_sha
+        changed_after_prescan = pre['sha256'] != stream_sha
+        changed = (before != after or not rehash_matches
+                   or changed_after_prescan or not scan_bound_to_copy)
+        if changed_after_prescan:
+            flags.add('SOURCE_CHANGED_AFTER_SCAN')
+        if changed:
+            flags.add('SOURCE_CHANGED_DURING_SNAPSHOT')
+        if not _copy_allowed(copy_scan['status'], include_flagged,
+                             include_unscanned):
+            # Сохранённые байты не прошли политику: копия из целевой папки
+            # удаляется (это наш собственный файл, не источник), объект
+            # записывается как пропущенный и нестабильный.
+            os.remove(target)
+            manifest['skipped'].append({
+                'relpath': pre['relpath'], 'sha256': copied_sha,
+                'prescan_sha256': pre['sha256'],
+                'reason': copy_scan['status'],
+                'scan_reasons': copy_scan['reasons'],
+                'stability': UNSTABLE if changed else INCONCLUSIVE,
+                'flags': sorted(flags)})
+            manifest['totals']['skipped'] += 1
+            conditions.add('PARTIAL')
+            conditions.add(UNSTABLE if changed else INCONCLUSIVE)
+            continue
         if changed:
             stability = UNSTABLE
-            flags.add('SOURCE_CHANGED_DURING_SNAPSHOT')
         elif ('RECENTLY_MODIFIED' in flags
               or max(0.0, now - after_stat.st_mtime) < RECENTLY_MODIFIED_S
               or 'SQLITE_WAL_OR_JOURNAL_PRESENT' in flags):
@@ -1752,19 +2036,23 @@ def snapshot(source_dir, target_dir, device_label, include_flagged=False,
         else:
             stability = STABLE
         manifest['files'].append({
-            'relpath': probed['relpath'],
+            'relpath': pre['relpath'],
             'size_bytes': before['size'],
             'mtime_utc': utc_iso(before['mtime_ns'] / 1e9),
             'sha256': stream_sha,
             'copy_sha256': copied_sha,
             'verified': verified,
+            'prescan_sha256': pre['sha256'],
             'source_sha256_after_copy': source_sha_after,
             'source_rehash_matches': rehash_matches,
             'source_stat_before': before,
             'source_stat_after': after,
             'stability': stability,
-            'secret_scan_status': scan['status'],
-            'kind': probed['kind'],
+            'secret_scan_status': copy_scan['status'],
+            'secret_scan_reasons': copy_scan['reasons'],
+            'secret_scan_sha256': copy_probe['sha256'],
+            'secret_scan_of': 'COPY',
+            'kind': copy_probe['kind'],
             'flags': sorted(flags),
         })
         manifest['totals']['copied'] += 1
@@ -1775,6 +2063,8 @@ def snapshot(source_dir, target_dir, device_label, include_flagged=False,
             conditions.add('VERIFY_FAILED')
         if stability != STABLE:
             conditions.add(stability)
+    if not seen_any:
+        conditions.add('EMPTY')
     manifest['conditions'] = sorted(conditions)
     manifest['status'] = next((s for s in SNAPSHOT_STATUS_ORDER
                                if s in conditions), 'OK')
@@ -1919,8 +2209,8 @@ def cmd_compare_v4(args):
 
 def _snapshot_exit(status):
     return {'VERIFY_FAILED': EXIT_VERIFY_FAILED, UNSTABLE: EXIT_UNSTABLE,
-            INCONCLUSIVE: EXIT_UNSTABLE, 'PARTIAL': EXIT_PARTIAL}.get(
-                status, EXIT_OK)
+            INCONCLUSIVE: EXIT_UNSTABLE, 'PARTIAL': EXIT_PARTIAL,
+            'EMPTY': EXIT_NOTHING}.get(status, EXIT_OK)
 
 
 def cmd_snapshot(args):
@@ -1941,6 +2231,9 @@ def cmd_snapshot(args):
             totals['stable'], totals['unstable'], totals['inconclusive'],
             totals['skipped'], totals['bytes']))
     say('manifest: %s' % os.path.join(args.target, 'manifest.json'))
+    if manifest['status'] == 'EMPTY':
+        say('NOTE: the source directory holds no regular files -- nothing '
+            'was copied; this is EMPTY, not a verified snapshot')
     if totals['skipped']:
         reasons = {}
         for item in manifest['skipped']:
@@ -1972,7 +2265,13 @@ def cmd_extract_dump(args):
             say('%d %s %s %s %s %s' % (
                 row['position'], row['flight_id'], row['source_type'],
                 row.get('size_bytes'), row.get('sha256'), row['status']))
-        say('items=%d' % len(rows))
+        say('items=%d ok=%d' % (len(rows),
+                                sum(1 for r in rows if r['status'] == 'OK')))
+        if any(r['status'] == 'MARKER_FOUND' for r in rows):
+            return EXIT_SECRET_FOUND
+        if any(r['status'] != 'OK' for r in rows):
+            say('WARNING: some items are not verified (INCOMPLETE / mismatch)')
+            return EXIT_VERIFY_FAILED
         return EXIT_OK if rows else EXIT_NOTHING
     manifest = extract_from_dump(args.dump, args.out, args.source_type,
                                  args.flight_id)
@@ -1987,17 +2286,19 @@ def cmd_extract_dump(args):
         say('flight_id=%s type=%s status=%s sha256=%s written=%s' % (
             item.get('flight_id'), item.get('source_type'), item['status'],
             item.get('sha256'), item.get('written')))
-    say('manifest: %s' % os.path.join(args.out, 'extract_manifest.json'))
+    say('manifest (local): %s' % os.path.join(args.out, 'extract_manifest.json'))
+    say('manifest (transfer): %s'
+        % os.path.join(args.out, 'extract_manifest_transfer.json'))
     if any(i['status'] == 'MARKER_FOUND' for i in manifest['items']):
         say('WARNING: a body carries a secret marker and was NOT written')
         return EXIT_SECRET_FOUND
-    if any(i['status'] in ('HASH_MISMATCH', 'SIZE_MISMATCH')
-           or i.get('verified') is False for i in manifest['items']):
+    if any(i['status'] != 'OK' or not i.get('verified')
+           for i in manifest['items']):
+        say('WARNING: some items were refused (INCOMPLETE / mismatch) or '
+            'not verified')
         return EXIT_VERIFY_FAILED
     if not totals['matched']:
         return EXIT_NOTHING
-    if manifest['status'] != 'OK':
-        return EXIT_PARTIAL
     return EXIT_OK
 
 
@@ -2006,27 +2307,42 @@ def cmd_match(args):
         if not os.path.isfile(path):
             say('ERROR: file not found')
             return EXIT_NO_INPUT
-    guard_output_dir(args.out, inputs=[args.inventory, args.dump])
+    # [REASON]: папка исследуемых файлов известна только из локальной описи;
+    # без неё `--out` внутрь источника прошёл бы проверку (ревизия 2, п. 1).
+    report = load_local_inventory(args.inventory)
+    guard_output_dir(args.out, inputs=[args.inventory, args.dump],
+                     source_dirs=[report['source_dir']])
     result = match_inventory_with_dump(args.inventory, args.dump)
     os.makedirs(args.out, exist_ok=True)
+    transfer = match_transfer_view(result)
     _write_json_new(os.path.join(args.out, 'match.json'), result)
     with open_new(os.path.join(args.out, 'match.md')) as handle:
         handle.write(render_match_markdown(result))
+    _write_json_new(os.path.join(args.out, 'match_transfer.json'), transfer)
+    with open_new(os.path.join(args.out, 'match_transfer.md')) as handle:
+        handle.write(render_match_markdown(transfer, transfer=True))
     totals = result['totals']
     say('cloud_bodies=%d usable=%d rc_v4_like=%d compared=%d pairs=%d '
-        'identical_pairs=%d' % (
+        'identical_pairs=%d single=%d ambiguous=%d none=%d' % (
             totals['cloud_bodies'], totals['cloud_bodies_usable'],
             totals['rc_v4_like'], totals['rc_compared'], totals['pairs'],
-            totals['identical_pairs']))
+            totals['identical_pairs'], totals['single_candidates'],
+            totals['ambiguous_candidates'], totals['no_candidate']))
     for row in result['rc_files']:
-        say('rc #%s sha256=%s status=%s candidate=%s overlap_ms=%s '
-            'identical=%s' % (
+        say('rc #%s sha256=%s status=%s candidate=%s evidence=%s ids=%s '
+            'overlap_ms=%s identical=%s' % (
                 row.get('index'), (row.get('sha256') or '')[:16],
-                row['status'], row.get('candidate_cloud_flight_id'),
+                row['status'], row.get('candidate_status'),
+                row.get('candidate_evidence'),
+                ','.join(str(i) for i in row.get('candidate_cloud_flight_ids') or [])
+                or '-',
                 row.get('candidate_overlap_ms'),
                 row.get('candidate_identical_bytes')))
-    say('written: %s' % os.path.join(args.out, 'match.json'))
+    say('written (local, names): %s' % os.path.join(args.out, 'match.json'))
+    say('written (transfer, no names): %s'
+        % os.path.join(args.out, 'match_transfer.json'))
     say('identity: %s' % result['identity_proof'])
+    say('candidate set: %s' % CANDIDATE_SET_NOTE)
     if not totals['rc_v4_like'] or not totals['cloud_bodies_usable']:
         return EXIT_NOTHING
     if totals['rc_compared'] != totals['rc_v4_like']:

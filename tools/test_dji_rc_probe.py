@@ -21,6 +21,7 @@ protobuf-помощниками, что в `tests/test_dji_area_core.py`, по �
 
 import base64
 import contextlib
+import glob
 import gzip
 import hashlib
 import io
@@ -1572,13 +1573,20 @@ class ReviewDumpExtraction(ProbeCase):
         dump = self._dump([(673501214, 'v4', body), (673501214, 'card', b'{}'),
                            (673501215, 'v4', v4_series(2), '0' * 64)])
         code, text = run_main(['extract-dump', dump, '--list'])
-        self.assertEqual(code, probe.EXIT_OK)
+        # Список с непроверенным элементом -- код 5, чтобы это было видно
+        # до извлечения (ревизия 2, п. 5).
+        self.assertEqual(code, probe.EXIT_VERIFY_FAILED)
         self.assertIn('673501214 v4 %d %s OK' % (
             len(body), hashlib.sha256(body).hexdigest()), text)
         self.assertIn('673501215 v4', text)
         self.assertIn('HASH_MISMATCH', text)
         self.assertNotIn(base64.b64encode(body).decode('ascii'), text)
         self.assertTrue(all(ord(ch) < 128 for ch in text))
+        # Положительный контроль: список без изъянов -- код 0.
+        clean = self._dump([(673501214, 'v4', body)])
+        code, text = run_main(['extract-dump', clean, '--list'])
+        self.assertEqual(code, probe.EXIT_OK, text)
+        self.assertIn('items=1 ok=1', text)
 
     def test_extract_writes_only_verified_bodies_as_new_files(self):
         body = v4_series(3)
@@ -1589,7 +1597,8 @@ class ReviewDumpExtraction(ProbeCase):
                                '--flight-id', '673501214'])
         self.assertEqual(code, probe.EXIT_OK, text)
         self.assertEqual(sorted(os.listdir(out)),
-                         ['extract_manifest.json', 'v4_673501214.bin'])
+                         ['extract_manifest.json',
+                          'extract_manifest_transfer.json', 'v4_673501214.bin'])
         with open(os.path.join(out, 'v4_673501214.bin'), 'rb') as handle:
             self.assertEqual(handle.read(), body)
         manifest = read_json(os.path.join(out, 'extract_manifest.json'))
@@ -1607,7 +1616,8 @@ class ReviewDumpExtraction(ProbeCase):
         code, _text = run_main(['extract-dump', dump, '--out', out2])
         self.assertEqual(code, probe.EXIT_OK)
         self.assertEqual(sorted(os.listdir(out2)),
-                         ['extract_manifest.json', 'v4_673501214.bin',
+                         ['extract_manifest.json',
+                          'extract_manifest_transfer.json', 'v4_673501214.bin',
                           'v4_673501215.bin'])
 
     def test_hash_mismatch_and_marker_refuse_the_body(self):
@@ -1616,7 +1626,8 @@ class ReviewDumpExtraction(ProbeCase):
         out = os.path.join(self.root, 'cloud')
         code, text = run_main(['extract-dump', dump, '--out', out])
         self.assertEqual(code, probe.EXIT_VERIFY_FAILED, text)
-        self.assertEqual(os.listdir(out), ['extract_manifest.json'])
+        self.assertEqual(sorted(os.listdir(out)),
+                         ['extract_manifest.json', 'extract_manifest_transfer.json'])
         manifest = read_json(os.path.join(out, 'extract_manifest.json'))
         self.assertEqual([i['status'] for i in manifest['items']],
                          ['HASH_MISMATCH', 'SIZE_MISMATCH'])
@@ -1624,7 +1635,8 @@ class ReviewDumpExtraction(ProbeCase):
         out2 = os.path.join(self.root, 'cloud2')
         code, text = run_main(['extract-dump', leaky, '--out', out2])
         self.assertEqual(code, probe.EXIT_SECRET_FOUND, text)
-        self.assertEqual(os.listdir(out2), ['extract_manifest.json'])
+        self.assertEqual(sorted(os.listdir(out2)),
+                         ['extract_manifest.json', 'extract_manifest_transfer.json'])
         self.assertNotIn(SECRET, read_text(os.path.join(out2,
                                                         'extract_manifest.json')))
         self.assertNotIn(SECRET, text)
@@ -1664,16 +1676,29 @@ class ReviewDumpExtraction(ProbeCase):
         result = read_json(os.path.join(out, 'match.json'))
         self.assertEqual(result['totals'], {
             'cloud_bodies': 2, 'cloud_bodies_usable': 2, 'rc_v4_like': 2,
-            'rc_compared': 2, 'pairs': 4, 'identical_pairs': 1})
+            'rc_compared': 2, 'pairs': 4, 'identical_pairs': 1,
+            'single_candidates': 1, 'ambiguous_candidates': 0,
+            'no_candidate': 1})
         by_name = {r['relpath']: r for r in result['rc_files']}
+        self.assertEqual(by_name['rc_same.bin']['candidate_status'],
+                         'SINGLE_CANDIDATE')
+        self.assertEqual(by_name['rc_same.bin']['candidate_evidence'],
+                         'IDENTICAL_BYTES')
         self.assertEqual(by_name['rc_same.bin']['candidate_cloud_flight_id'],
                          673501214)
         self.assertTrue(by_name['rc_same.bin']['candidate_identical_bytes'])
-        self.assertEqual(by_name['rc_other.bin']['candidate_overlap_ms'], 0)
-        self.assertFalse(by_name['rc_other.bin']['candidate_identical_bytes'])
+        # Без перекрытия и равных кадров кандидата нет -- не «первый лучший».
+        self.assertEqual(by_name['rc_other.bin']['candidate_status'],
+                         'NO_CANDIDATE')
+        self.assertIsNone(by_name['rc_other.bin']['candidate_cloud_flight_id'])
+        self.assertIsNone(by_name['rc_other.bin']['candidate_overlap_ms'])
         self.assertIn('NONE', result['identity_proof'])
+        self.assertTrue(result['candidate_set_may_be_incomplete'])
         md = read_text(os.path.join(out, 'match.md'))
-        self.assertIn('кандидата, не связь', md)
+        self.assertIn('Кандидат -- не связь', md)
+        self.assertIn('rc_same.bin', md)
+        self.assertNotIn('rc_same.bin',
+                         read_text(os.path.join(out, 'match_transfer.md')))
         self.assertNotIn('39.123456', md + json.dumps(result))
         self.assertTrue(all(ord(ch) < 128 for ch in text))
         # Файл, изменённый после описи, не сравнивается.
@@ -1763,6 +1788,545 @@ class ReviewCorruptContainers(ProbeCase):
         self.assertEqual(report['status'], 'PARTIAL')
         self.assertEqual(report['totals']['analysis_errors'], 2)
         self.assertNotIn(SECRET, json.dumps(report))
+
+
+# ─── Повторная ревизия, п. 1: match не пишет в папку исследуемых файлов ──────
+
+class Review2MatchSourceGuard(ProbeCase):
+
+    def _prepare(self):
+        age(write(self.path('private-client-field.bin'), v4_series(3)))
+        report = probe.inventory(self.src, 'RC-01')
+        inv = write(os.path.join(self.root, 'reports', 'inventory.json'),
+                    json.dumps(report))
+        dump = write(os.path.join(self.root, 'cloud', 'sources_dry_run_x.json'),
+                     json.dumps(dump_document([(101, 'v4', v4_series(3))])))
+        return inv, dump
+
+    def test_out_inside_the_inventoried_source_is_refused_before_anything_is_created(self):
+        inv, dump = self._prepare()
+        before = tree_fingerprint(self.src)
+        for target in (self.path('analysis'), self.path('deep', 'er'), self.src):
+            code, text = run_main(['match', inv, dump, '--out', target])
+            self.assertEqual(code, probe.EXIT_PRECONDITION, target)
+            self.assertIn('ERROR', text)
+        self.assertEqual(sorted(os.listdir(self.src)),
+                         ['private-client-field.bin'])
+        self.assertEqual(tree_fingerprint(self.src), before)
+        inside = self.path('inside')
+        os.makedirs(inside)
+        link = os.path.join(self.root, 'link')
+        if make_dir_link(inside, link) is not None:
+            for target in (link, os.path.join(link, 'x')):
+                code, _text = run_main(['match', inv, dump, '--out', target])
+                self.assertEqual(code, probe.EXIT_PRECONDITION, target)
+            self.assertEqual(os.listdir(inside), [])
+        # Положительный контроль: внешняя папка принимается.
+        out = os.path.join(self.root, 'match')
+        code, text = run_main(['match', inv, dump, '--out', out])
+        self.assertEqual(code, probe.EXIT_OK, text)
+        self.assertTrue(os.path.exists(os.path.join(out, 'match.json')))
+        self.assertEqual(tree_fingerprint(self.src), before)
+
+    def test_every_output_of_every_command_is_refused_inside_every_source(self):
+        """Единая проверка: `--out` / `--json` каждой команды внутри каждой
+        из её исходных папок (источник, папка входа, папка описанных файлов)
+        -- отказ до создания чего-либо."""
+        inv, dump = self._prepare()
+        a = self.path('private-client-field.bin')
+        before = tree_fingerprint(self.src)
+        attempts = [
+            ['inventory', self.src, '--out', self.path('o'), '--device-label', 'RC'],
+            ['probe', a, '--json', self.path('o.json')],
+            ['compare-v4', a, a, '--json', self.path('o.json')],
+            ['snapshot', self.src, self.path('o'), '--device-label', 'RC'],
+            ['extract-dump', dump, '--out', os.path.join(os.path.dirname(dump), 'o')],
+            ['match', inv, dump, '--out', self.path('o')],
+            ['match', inv, dump, '--out', os.path.join(os.path.dirname(inv), 'o')],
+            ['match', inv, dump, '--out', os.path.join(os.path.dirname(dump), 'o')],
+        ]
+        for argv in attempts:
+            code, _text = run_main(argv)
+            self.assertEqual(code, probe.EXIT_PRECONDITION, argv)
+        self.assertEqual(tree_fingerprint(self.src), before)
+        self.assertEqual(sorted(os.listdir(self.src)),
+                         ['private-client-field.bin'])
+        self.assertEqual(os.listdir(os.path.dirname(dump)),
+                         ['sources_dry_run_x.json'])
+        self.assertEqual(os.listdir(os.path.dirname(inv)), ['inventory.json'])
+
+
+# ─── Повторная ревизия, п. 2: проверка именно сохраняемых байтов ─────────────
+
+class Review2SnapshotBoundToSavedBytes(ProbeCase):
+
+    def test_the_review_scenario_secret_appears_after_the_clean_scan(self):
+        source = age(write(self.path('file.bin'), b'clean initial synthetic'))
+        original = probe.probe_file
+
+        def change_after_clean_scan(path, *args, **kwargs):
+            result = original(path, *args, **kwargs)
+            age(write(source, ('password=' + SECRET).encode()))
+            return result
+
+        target = os.path.join(self.root, 'snapshot')
+        with patch.object(probe, 'probe_file', side_effect=change_after_clean_scan):
+            manifest = probe.snapshot(self.src, target, 'RC-01')
+        self.assertFalse(os.path.exists(os.path.join(target, 'file.bin')))
+        self.assertEqual(os.listdir(target), ['manifest.json'])
+        self.assertEqual(manifest['files'], [])
+        self.assertEqual(len(manifest['skipped']), 1)
+        skipped = manifest['skipped'][0]
+        self.assertEqual(skipped['reason'], 'MARKER_FOUND')
+        self.assertEqual(skipped['stability'], 'UNSTABLE')
+        self.assertIn('SOURCE_CHANGED_AFTER_SCAN', skipped['flags'])
+        self.assertEqual(skipped['sha256'], hashlib.sha256(
+            ('password=' + SECRET).encode()).hexdigest())
+        self.assertNotEqual(skipped['prescan_sha256'], skipped['sha256'])
+        self.assertEqual(manifest['status'], 'UNSTABLE')
+        self.assertIn('PARTIAL', manifest['conditions'])
+        self.assertNotIn(SECRET, json.dumps(manifest))
+
+    def test_clean_change_between_scan_and_copy_is_unstable_and_bound_to_the_copy(self):
+        source = age(write(self.path('file.bin'), b'first clean synthetic'))
+        original = probe.probe_file
+        calls = []
+
+        def change_after_the_first_scan(path, *args, **kwargs):
+            result = original(path, *args, **kwargs)
+            calls.append(path)
+            if len(calls) == 1:
+                age(write(source, b'second clean synthetic'))
+            return result
+
+        with patch.object(probe, 'probe_file',
+                          side_effect=change_after_the_first_scan):
+            manifest = probe.snapshot(self.src, os.path.join(self.root, 'snap'),
+                                      'RC-01')
+        entry = manifest['files'][0]
+        second = hashlib.sha256(b'second clean synthetic').hexdigest()
+        self.assertEqual(entry['stability'], 'UNSTABLE')
+        self.assertIn('SOURCE_CHANGED_AFTER_SCAN', entry['flags'])
+        self.assertEqual(entry['secret_scan_of'], 'COPY')
+        self.assertEqual(entry['secret_scan_sha256'], second)
+        self.assertEqual(entry['copy_sha256'], second)
+        self.assertEqual(entry['sha256'], second)
+        self.assertNotEqual(entry['prescan_sha256'], second)
+        self.assertEqual(entry['secret_scan_status'], probe.SCAN_CLEAN)
+        self.assertEqual(manifest['status'], 'UNSTABLE')
+
+    def test_with_include_flagged_the_recorded_status_is_the_copy_status(self):
+        """Отрицательный контроль привязки: если статус брался бы с
+        предварительной проверки, скопированный с `--include-flagged` файл,
+        получивший маркер после проверки, значился бы чистым."""
+        source = age(write(self.path('file.bin'), b'clean initial synthetic'))
+        original = probe.probe_file
+        calls = []
+
+        def change_after_the_first_scan(path, *args, **kwargs):
+            result = original(path, *args, **kwargs)
+            calls.append(path)
+            if len(calls) == 1:
+                age(write(source, ('password=' + SECRET).encode()))
+            return result
+
+        target = os.path.join(self.root, 'snap')
+        with patch.object(probe, 'probe_file',
+                          side_effect=change_after_the_first_scan):
+            manifest = probe.snapshot(self.src, target, 'RC-01',
+                                      include_flagged=True)
+        self.assertEqual(manifest['skipped'], [])
+        entry = manifest['files'][0]
+        self.assertEqual(entry['secret_scan_status'], 'MARKER_FOUND')
+        self.assertEqual(entry['secret_scan_of'], 'COPY')
+        self.assertEqual(entry['secret_scan_sha256'], entry['copy_sha256'])
+        self.assertIn('SECRET_MARKER', entry['flags'])
+        self.assertEqual(entry['stability'], 'UNSTABLE')
+        self.assertIn('SOURCE_CHANGED_AFTER_SCAN', entry['flags'])
+        self.assertEqual(manifest['status'], 'UNSTABLE')
+        self.assertNotIn(SECRET, json.dumps(manifest))
+
+    def test_unchanged_source_binds_the_scan_to_the_saved_bytes(self):
+        age(write(self.path('file.bin'), v4_series(3)))
+        manifest = probe.snapshot(self.src, os.path.join(self.root, 'snap'),
+                                  'RC-01')
+        entry = manifest['files'][0]
+        self.assertEqual(entry['stability'], 'STABLE')
+        self.assertEqual(entry['secret_scan_of'], 'COPY')
+        self.assertEqual(entry['secret_scan_sha256'], entry['copy_sha256'])
+        self.assertEqual(entry['prescan_sha256'], entry['sha256'])
+        self.assertEqual(entry['secret_scan_status'], probe.SCAN_CLEAN)
+        self.assertEqual(manifest['status'], 'OK')
+
+    def test_marker_present_from_the_start_never_reaches_the_target(self):
+        age(write(self.path('leak.txt'), 'password=' + SECRET))
+        target = os.path.join(self.root, 'snap')
+        manifest = probe.snapshot(self.src, target, 'RC-01')
+        self.assertEqual(os.listdir(target), ['manifest.json'])
+        self.assertEqual(manifest['skipped'][0]['reason'], 'MARKER_FOUND')
+        self.assertEqual(manifest['status'], 'PARTIAL')
+
+
+# ─── Повторная ревизия, п. 3: вложенный контейнер в GZIP любого размера ──────
+
+class Review2NestedContainers(ProbeCase):
+
+    def _nested_gzip(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr('payload.bin', ('password=' + SECRET).encode())
+        return gzip.compress(buf.getvalue())
+
+    def test_small_and_large_branches_agree_on_a_nested_zip(self):
+        blob = self._nested_gzip()
+        age(write(self.path('nested.gz'), blob))
+        # Предел ровно размер файла -- глубокий разбор; на байт меньше и 1 --
+        # большая ветка. Статус обязан совпасть.
+        for limit in (len(blob), len(blob) - 1, 1):
+            inv = probe.inventory(self.src, 'RC-01', deep_max_bytes=limit)
+            entry = inv['files'][0]
+            self.assertEqual(entry['deep_analysis'], limit >= len(blob), limit)
+            self.assertIn('GZIP_NESTED_CONTAINER', entry['secret_scan']['reasons'],
+                          limit)
+            self.assertIn(entry['secret_scan']['status'],
+                          ('PARTIAL', 'MARKER_FOUND'), limit)
+            target = os.path.join(self.root, 'snap_%d' % limit)
+            manifest = probe.snapshot(self.src, target, 'RC-01',
+                                      deep_max_bytes=limit)
+            self.assertFalse(os.path.exists(os.path.join(target, 'nested.gz')),
+                             limit)
+            self.assertEqual(manifest['skipped'][0]['reason'],
+                             entry['secret_scan']['status'], limit)
+            self.assertNotEqual(manifest['status'], 'OK', limit)
+        # Положительный контроль: обычный GZIP чист на обеих ветках.
+        plain = gzip.compress(bytes(range(256)) * 20)
+        age(write(self.path('plain.gz'), plain))
+        for limit in (len(plain), 1):
+            inv = probe.inventory(self.src, 'RC-01', deep_max_bytes=limit)
+            by_name = {f['relpath']: f for f in inv['files']}
+            self.assertEqual(by_name['plain.gz']['secret_scan']['status'],
+                             probe.SCAN_CLEAN, limit)
+            self.assertEqual(by_name['plain.gz']['secret_scan']['reasons'], [])
+
+    def test_the_review_scenario_large_branch(self):
+        age(write(self.path('nested.gz'), self._nested_gzip()))
+        target = os.path.join(self.root, 'snapshot')
+        manifest = probe.snapshot(self.src, target, 'RC-01', deep_max_bytes=1)
+        self.assertFalse(os.path.exists(os.path.join(target, 'nested.gz')))
+        self.assertEqual(manifest['files'], [])
+        self.assertNotEqual(manifest['status'], 'OK')
+        self.assertIn('GZIP_NESTED_CONTAINER',
+                      manifest['skipped'][0]['scan_reasons'])
+        # Отрицательный контроль того же файла: и в большой ветке его
+        # содержимое, не считая вложенного архива, проверено потоком.
+        inv = probe.inventory(self.src, 'RC-01', deep_max_bytes=1)
+        self.assertGreater(inv['files'][0]['secret_scan']['container_bytes_scanned'], 0)
+
+
+# ─── Повторная ревизия, п. 4: отчёты для передачи без имён и путей ───────────
+
+class Review2TransferBundles(ProbeCase):
+
+    def test_transfer_files_carry_no_source_names_or_local_paths(self):
+        client = 'ClientNameFarm-Field7'
+        src = os.path.join(self.root, 'raw-' + client)
+        os.makedirs(src)
+        body = v4_series(3)
+        age(write(os.path.join(src, client + '-flight.bin'), body))
+        age(write(os.path.join(src, 'notes-' + client + '.json'),
+                  json.dumps({'owner_' + client: 1})))
+        out = os.path.join(self.root, 'probe-' + client)
+        code, _text = run_main(['inventory', src, '--out', out,
+                                '--device-label', 'RC-01'])
+        self.assertEqual(code, probe.EXIT_OK)
+        dump = write(os.path.join(self.root, 'dump-' + client,
+                                  'sources_dry_run_x.json'),
+                     json.dumps(dump_document([(101, 'v4', body)])))
+        extract = os.path.join(self.root, 'extract-' + client)
+        self.assertEqual(run_main(['extract-dump', dump, '--out', extract])[0],
+                         probe.EXIT_OK)
+        match = os.path.join(self.root, 'match-' + client)
+        self.assertEqual(run_main(['match', os.path.join(out, 'inventory.json'),
+                                   dump, '--out', match])[0], probe.EXIT_OK)
+        transfer = sorted(glob.glob(os.path.join(self.root, '**', '*_transfer.*'),
+                                    recursive=True))
+        self.assertEqual(sorted(os.path.basename(p) for p in transfer),
+                         ['extract_manifest_transfer.json',
+                          'inventory_transfer.json', 'inventory_transfer.md',
+                          'match_transfer.json', 'match_transfer.md'])
+        needles = (client, self.root, self.root.replace('\\', '\\\\'),
+                   self.root.replace('\\', '/'), 'raw-', 'flight.bin',
+                   'notes-', 'owner_')
+        for path in transfer:
+            text = read_text(path)
+            for needle in needles:
+                self.assertNotIn(needle, text, (os.path.basename(path), needle))
+        # Положительный контроль: локальные версии имена и пути несут.
+        for name in ('inventory.json', 'inventory.md'):
+            self.assertIn(client, read_text(os.path.join(out, name)))
+        self.assertIn(client, read_text(os.path.join(match, 'match.json')))
+        self.assertIn(client, read_text(os.path.join(match, 'match.md')))
+        self.assertIn(client,
+                      read_text(os.path.join(extract, 'extract_manifest.json')))
+        document = read_json(os.path.join(match, 'match_transfer.json'))
+        self.assertEqual(document['report_kind'], 'TRANSFER')
+        for row in document['rc_files']:
+            self.assertEqual(sorted(row), sorted(probe.MATCH_RC_TRANSFER_KEYS))
+        for key in ('inventory_path', 'dump_path', 'source_dir'):
+            self.assertNotIn(key, document)
+        manifest = read_json(os.path.join(extract,
+                                          'extract_manifest_transfer.json'))
+        self.assertNotIn('dump_path', manifest)
+        self.assertEqual(manifest['report_kind'], 'TRANSFER')
+        self.assertEqual(manifest['items'][0]['written'], 'v4_101.bin')
+
+
+# ─── Повторная ревизия, п. 5: поля дампа проверяются, а не подразумеваются ───
+
+_MISSING = object()
+
+
+class Review2DumpValidation(ProbeCase):
+
+    def _item(self, **overrides):
+        body = v4_series(3)
+        item = {'flight_id': 101, 'source_type': 'v4',
+                'body_b64': base64.b64encode(body).decode('ascii'),
+                'sha256': hashlib.sha256(body).hexdigest(),
+                'size_bytes': len(body)}
+        for key, value in overrides.items():
+            if value is _MISSING:
+                item.pop(key, None)
+            else:
+                item[key] = value
+        return item
+
+    def _dump(self, items, name='sources_dry_run_run.json'):
+        return write(os.path.join(self.root, 'collector', name),
+                     json.dumps({'dry_run': True, 'nothing_was_queued': True,
+                                 'sources': items}))
+
+    def test_complete_item_is_ok_and_each_missing_field_is_incomplete(self):
+        rows = probe.dump_items({'sources': [self._item()]})
+        self.assertEqual(rows[0]['status'], 'OK')
+        rows = probe.dump_items({'sources': [self._item(flight_id='101')]})
+        self.assertEqual(rows[0]['status'], 'OK')
+        self.assertEqual(rows[0]['flight_id'], 101)
+        for field in ('flight_id', 'source_type', 'body_b64', 'sha256',
+                      'size_bytes'):
+            rows = probe.dump_items({'sources': [self._item(**{field: _MISSING})]})
+            self.assertEqual(rows[0]['status'], 'INCOMPLETE:' + field, field)
+        rows = probe.dump_items({'sources': [{'source_type': 'v4'}]})
+        self.assertEqual(rows[0]['status'],
+                         'INCOMPLETE:flight_id,body_b64,sha256,size_bytes')
+        rows = probe.dump_items({'sources': ['not an object']})
+        self.assertEqual(rows[0]['status'], 'INCOMPLETE:not_an_object')
+
+    def test_wrong_types_and_values_are_not_verified(self):
+        cases = {
+            'INCOMPLETE:flight_id': [dict(flight_id=True), dict(flight_id=0),
+                                     dict(flight_id=-5), dict(flight_id='x1'),
+                                     dict(flight_id=1.5)],
+            'INCOMPLETE:source_type': [dict(source_type=''), dict(source_type=4)],
+            'INCOMPLETE:body_b64': [dict(body_b64=''), dict(body_b64='not base64!!'),
+                                    dict(body_b64=12),
+                                    dict(body_b64=base64.b64encode(b'').decode('ascii'))],
+            'INCOMPLETE:sha256': [dict(sha256='abc'), dict(sha256='A' * 64),
+                                  dict(sha256=12)],
+            'INCOMPLETE:size_bytes': [dict(size_bytes='12'), dict(size_bytes=True),
+                                      dict(size_bytes=-1)],
+            'HASH_MISMATCH': [dict(sha256='0' * 64)],
+            'SIZE_MISMATCH': [dict(size_bytes=999)],
+        }
+        for expected, variants in cases.items():
+            for overrides in variants:
+                rows = probe.dump_items({'sources': [self._item(**overrides)]})
+                self.assertEqual(rows[0]['status'], expected, overrides)
+                self.assertNotEqual(rows[0]['status'], 'OK')
+
+    def test_the_review_scenarios_refuse_extraction(self):
+        no_hash = self._dump([self._item(sha256=_MISSING, size_bytes=_MISSING)])
+        out = os.path.join(self.root, 'extract')
+        code, text = run_main(['extract-dump', no_hash, '--out', out])
+        self.assertEqual(code, probe.EXIT_VERIFY_FAILED, text)
+        self.assertEqual(sorted(os.listdir(out)),
+                         ['extract_manifest.json', 'extract_manifest_transfer.json'])
+        manifest = read_json(os.path.join(out, 'extract_manifest.json'))
+        self.assertEqual(manifest['items'][0]['status'],
+                         'INCOMPLETE:sha256,size_bytes')
+        self.assertFalse(manifest['items'][0]['verified'])
+        self.assertIsNone(manifest['items'][0]['written'])
+        self.assertEqual(manifest['status'], 'PARTIAL')
+        no_id = self._dump([{'source_type': 'v4'}], 'sources_dry_run_2.json')
+        out2 = os.path.join(self.root, 'extract2')
+        code, text = run_main(['extract-dump', no_id, '--out', out2])
+        self.assertEqual(code, probe.EXIT_VERIFY_FAILED, text)
+        self.assertEqual(sorted(os.listdir(out2)),
+                         ['extract_manifest.json', 'extract_manifest_transfer.json'])
+        self.assertIn('INCOMPLETE', text)
+        # Фильтр по ID не скрывает элемент без ID: он показан как INCOMPLETE.
+        code, text = run_main(['extract-dump', no_id, '--list', '--flight-id', '202'])
+        self.assertEqual(code, probe.EXIT_VERIFY_FAILED)
+        self.assertIn('INCOMPLETE:flight_id', text)
+        # Положительный контроль: полный элемент -- извлечён и проверен.
+        good = self._dump([self._item()], 'sources_dry_run_3.json')
+        out3 = os.path.join(self.root, 'extract3')
+        code, text = run_main(['extract-dump', good, '--out', out3])
+        self.assertEqual(code, probe.EXIT_OK, text)
+        manifest = read_json(os.path.join(out3, 'extract_manifest.json'))
+        self.assertEqual(manifest['items'][0]['status'], 'OK')
+        self.assertTrue(manifest['items'][0]['verified'])
+        self.assertEqual(manifest['items'][0]['written'], 'v4_101.bin')
+
+
+# ─── Повторная ревизия, п. 6: кандидат вылета без «первого лучшего» ──────────
+
+class Review2Candidates(ProbeCase):
+
+    def _match(self, rc_body, clouds):
+        age(write(self.path('rc.bin'), rc_body))
+        report = probe.inventory(self.src, 'RC-01')
+        inv = write(os.path.join(self.root, 'reports', 'inventory.json'),
+                    json.dumps(report))
+        dump = write(os.path.join(self.root, 'cloud', 'dump.json'),
+                     json.dumps(dump_document(clouds)))
+        return probe.match_inventory_with_dump(inv, dump)
+
+    def test_no_overlap_and_no_equal_frames_means_no_candidate(self):
+        result = self._match(v4_series(3), [
+            (303, 'v4', v4_series(3, start_ms=START_MS + 3600 * 1000))])
+        row = result['rc_files'][0]
+        self.assertEqual(row['candidate_status'], 'NO_CANDIDATE')
+        self.assertIsNone(row['candidate_cloud_flight_id'])
+        self.assertEqual(row['candidate_cloud_flight_ids'], [])
+        self.assertIsNone(row['candidate_evidence'])
+        self.assertIsNone(row['candidate_overlap_ms'])
+        self.assertEqual(result['totals']['no_candidate'], 1)
+
+    def test_two_identical_bodies_are_ambiguous_not_the_first(self):
+        body = v4_series(3)
+        result = self._match(body, [(101, 'v4', body), (202, 'v4', body)])
+        row = result['rc_files'][0]
+        self.assertEqual(len(result['pairs']), 2)
+        self.assertTrue(all(p['identical_bytes'] for p in result['pairs']))
+        self.assertEqual(row['candidate_status'], 'AMBIGUOUS_CANDIDATES')
+        self.assertEqual(row['candidate_cloud_flight_ids'], [101, 202])
+        self.assertIsNone(row['candidate_cloud_flight_id'])
+        self.assertEqual(row['candidate_evidence'], 'IDENTICAL_BYTES')
+        self.assertEqual(result['totals']['ambiguous_candidates'], 1)
+
+    def test_single_candidate_by_identical_bytes_outranks_overlap(self):
+        body = v4_series(4)
+        result = self._match(body, [
+            (101, 'v4', body),
+            (202, 'v4', v4_series(4, start_ms=START_MS + 2000)),
+            (303, 'v4', v4_series(4, start_ms=START_MS + 3600 * 1000))])
+        row = result['rc_files'][0]
+        self.assertEqual(row['candidate_status'], 'SINGLE_CANDIDATE')
+        self.assertEqual(row['candidate_evidence'], 'IDENTICAL_BYTES')
+        self.assertEqual(row['candidate_cloud_flight_id'], 101)
+        self.assertEqual(row['candidate_cloud_flight_ids'], [101])
+        self.assertTrue(row['candidate_identical_bytes'])
+        self.assertEqual(row['candidate_overlap_ms'], 3000)
+
+    def test_equal_frames_and_window_overlap_tiers(self):
+        body = v4_series(4)
+        row = self._match(body, [
+            (202, 'v4', v4_series(4, start_ms=START_MS + 2000))])['rc_files'][0]
+        self.assertEqual(row['candidate_status'], 'SINGLE_CANDIDATE')
+        self.assertEqual(row['candidate_evidence'], 'EQUAL_FRAMES')
+        self.assertEqual(row['candidate_overlap_ms'], 1000)
+        self.assertFalse(row['candidate_identical_bytes'])
+        row = self._match(body, [
+            (404, 'v4', v4_series(2, start_ms=START_MS + 500))])['rc_files'][0]
+        self.assertEqual(row['candidate_status'], 'SINGLE_CANDIDATE')
+        self.assertEqual(row['candidate_evidence'], 'WINDOW_OVERLAP')
+        self.assertEqual(row['candidate_overlap_ms'], 1000)
+        row = self._match(body, [
+            (404, 'v4', v4_series(2, start_ms=START_MS + 500)),
+            (505, 'v4', v4_series(2, start_ms=START_MS + 500,
+                                  area_values=[1.0, 2.0]))])['rc_files'][0]
+        self.assertEqual(row['candidate_status'], 'AMBIGUOUS_CANDIDATES')
+        self.assertEqual(row['candidate_cloud_flight_ids'], [404, 505])
+        self.assertEqual(row['candidate_evidence'], 'WINDOW_OVERLAP')
+
+    def test_flight_ambiguity_and_frame_time_ambiguity_are_separate(self):
+        dup = v4_bytes([frame(START_MS, area=1.0), frame(START_MS, area=1.0),
+                        frame(START_MS + 1000, area=1.01)], count=3)
+        result = self._match(dup, [(101, 'v4', dup)])
+        row = result['rc_files'][0]
+        self.assertEqual(row['candidate_status'], 'SINGLE_CANDIDATE')
+        self.assertEqual(result['pairs'][0]['pairing'], 'AMBIGUOUS_DUPLICATE_T')
+        self.assertTrue(result['candidate_set_may_be_incomplete'])
+        self.assertIn('outside this set', result['candidate_set_note'])
+
+
+# ─── Повторная ревизия, п. 7: общий статус при пустых и повреждённых данных ──
+
+class Review2OverallStatus(ProbeCase):
+
+    def test_empty_source_is_empty_not_ok(self):
+        target = os.path.join(self.root, 'snap')
+        code, text = run_main(['snapshot', self.src, target,
+                               '--device-label', 'RC-01'])
+        self.assertEqual(code, probe.EXIT_NOTHING, text)
+        manifest = read_json(os.path.join(target, 'manifest.json'))
+        self.assertEqual(manifest['status'], 'EMPTY')
+        self.assertEqual(manifest['conditions'], ['EMPTY'])
+        self.assertEqual(manifest['totals']['copied'], 0)
+        self.assertIn('EMPTY', text)
+        code, text = run_main(['inventory', self.src, '--out', self.out,
+                               '--device-label', 'RC-01'])
+        self.assertEqual(code, probe.EXIT_NOTHING, text)
+        self.assertEqual(read_json(os.path.join(self.out, 'inventory.json'))['status'],
+                         'EMPTY')
+        # Положительный контроль: один состаренный файл -- OK / COMPLETE, код 0.
+        age(write(self.path('v4.bin'), v4_series(3)))
+        code, _text = run_main(['snapshot', self.src, os.path.join(self.root, 'snap2'),
+                                '--device-label', 'RC-01'])
+        self.assertEqual(code, probe.EXIT_OK)
+        code, _text = run_main(['inventory', self.src, '--out',
+                                os.path.join(self.root, 'probe2'),
+                                '--device-label', 'RC-01'])
+        self.assertEqual(code, probe.EXIT_OK)
+
+    def test_damaged_sqlite_makes_the_inventory_partial_and_keeps_the_object_error(self):
+        write(self.path('damaged.db'), b'SQLite format 3\x00' + bytes(1024))
+        make_sqlite(self.path('good.db'))
+        code, text = run_main(['inventory', self.src, '--out', self.out,
+                               '--device-label', 'RC-01'])
+        self.assertEqual(code, probe.EXIT_PARTIAL, text)
+        report = read_json(os.path.join(self.out, 'inventory.json'))
+        self.assertEqual(report['status'], 'PARTIAL')
+        self.assertEqual(report['totals']['analysis_errors'], 1)
+        by_name = {f['relpath']: f for f in report['files']}
+        self.assertEqual(by_name['damaged.db']['details']['sqlite']['status'],
+                         'ERROR')
+        self.assertIsNotNone(by_name['damaged.db']['details']['sqlite']['error'])
+        self.assertIn('SQLITE_READ_ERROR', by_name['damaged.db']['flags'])
+        self.assertEqual(by_name['good.db']['details']['sqlite']['status'], 'OK')
+        self.assertIn('PARTIAL', text)
+        # Положительный контроль: без повреждённой базы -- COMPLETE, код 0.
+        os.remove(self.path('damaged.db'))
+        code, _text = run_main(['inventory', self.src, '--out',
+                                os.path.join(self.root, 'probe2'),
+                                '--device-label', 'RC-01'])
+        self.assertEqual(code, probe.EXIT_OK)
+        self.assertEqual(read_json(os.path.join(self.root, 'probe2',
+                                                'inventory.json'))['status'],
+                         'COMPLETE')
+
+    def test_corrupt_zip_is_partial_with_the_object_error_kept(self):
+        write(self.path('bad.zip'), b'PK\x03\x04' + b'\x00' * 40)
+        age(write(self.path('fine.bin'), v4_series(2)))
+        report = probe.inventory(self.src, 'RC-01')
+        self.assertEqual(report['status'], 'PARTIAL')
+        by_name = {f['relpath']: f for f in report['files']}
+        self.assertIn('CONTAINER_ERROR', by_name['bad.zip']['flags'])
+        self.assertIsNotNone(by_name['bad.zip']['details']['zip']['error'])
+        self.assertEqual(by_name['fine.bin']['details']['v4_shape']['status'],
+                         'V4_LIKE')
+        self.assertEqual(report['totals']['analysis_errors'], 1)
 
 
 _ORIGINAL_GZIP_INNER = probe.gzip_inner
