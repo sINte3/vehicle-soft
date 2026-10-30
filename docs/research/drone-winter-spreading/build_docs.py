@@ -1,27 +1,32 @@
 # -*- coding: utf-8 -*-
-"""Печать PDF-документов по исследованию зимнего разбрасывания удобрений.
+"""Печать документов по исследованию зимнего разбрасывания удобрений: PDF и Word.
 
 Запуск (из корня репозитория):
 
     python docs/research/drone-winter-spreading/build_docs.py
 
-Пишет в docs/research/drone-winter-spreading/pdf/ восемь файлов -- по два
-языка (ru -- русский, uz -- узбекский кириллицей) на четыре документа:
-подробная калькуляция, краткая калькуляция, коммерческое предложение и
-справка для руководства по госпрограммам. Все числа берутся из модели
-build_model.py (единый тариф и минимальный заказ -- из её параметров), так
-что после пилота достаточно поправить параметры и перепечатать.
+Пишет в docs/research/drone-winter-spreading/pdf/ и .../docx/ по десять файлов:
+два языка (ru -- русский, uz -- узбекский кириллицей) на пять документов --
+подробная калькуляция, краткая калькуляция, коммерческое предложение,
+справка для руководства по госпрограммам и форма акта выполненных работ.
+Один и тот же текст описан один раз «блоками» и печатается двумя
+рисовальщиками: reportlab (PDF) и python-docx (Word). Числа берутся из
+модели build_model.py, так что после пилота достаточно поправить параметры
+и перепечатать.
 
-После печати скрипт сам проверяет каждый PDF: шрифт встроен (FontFile2),
-текст извлекается, узбекские буквы на месте. Вывод в консоль только ASCII.
+После печати скрипт проверяет каждый PDF (шрифт встроен, текст извлекается,
+узбекские буквы на месте) и каждый .docx (открывается заново, абзацы и таблицы
+на месте). Файлы Word в репозиторий не кладутся -- .gitignore проекта
+исключает *.docx; их передают вложением. Вывод в консоль только ASCII.
 
-Зависимости: reportlab (уже в requirements.txt проекта), pypdf для проверки
-(если его нет -- проверка пропускается с сообщением). Шрифты DejaVu Sans
-ищутся в системной папке и рядом с spare_parts_pdf.py.
+Зависимости: reportlab и python-docx (оба уже в окружении проекта), pypdf для
+проверки PDF (если нет -- пропускается с сообщением). Шрифт PDF -- DejaVu Sans
+из системной папки; в Word -- Arial (есть на любой машине с Word).
 """
 from __future__ import annotations
 
 import os
+import re
 import sys
 
 from reportlab.lib import colors
@@ -31,11 +36,11 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import (KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table,
-                                TableStyle)
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT_DIR = os.path.join(HERE, 'pdf')
+PDF_DIR = os.path.join(HERE, 'pdf')
+DOCX_DIR = os.path.join(HERE, 'docx')
 sys.path.insert(0, HERE)
 import build_model as bm  # noqa: E402
 
@@ -55,17 +60,44 @@ def register_fonts():
 
 register_fonts()
 
-BASE = ParagraphStyle('base', fontName='DejaVuSans', fontSize=10, leading=14, alignment=TA_LEFT)
-SMALL = ParagraphStyle('small', parent=BASE, fontSize=8.5, leading=11.5, textColor=colors.HexColor('#444444'))
-H1 = ParagraphStyle('h1', parent=BASE, fontName='DejaVuSans-Bold', fontSize=16, leading=20, spaceAfter=4 * mm)
-H2 = ParagraphStyle('h2', parent=BASE, fontName='DejaVuSans-Bold', fontSize=12, leading=16, spaceBefore=4 * mm, spaceAfter=2 * mm)
-CELL = ParagraphStyle('cell', parent=BASE, fontSize=9, leading=12)
-CELL_B = ParagraphStyle('cellb', parent=CELL, fontName='DejaVuSans-Bold')
-BIG = ParagraphStyle('big', parent=BASE, fontName='DejaVuSans-Bold', fontSize=13, leading=18)
+
+# ---------------------------------------------------------------------------
+# Блоки: единое описание документа для обоих рисовальщиков
+# ---------------------------------------------------------------------------
+def H1(t):
+    return ('h1', t)
 
 
-def P(text, style=BASE):
-    return Paragraph(text, style)
+def H2(t):
+    return ('h2', t)
+
+
+def P(t):
+    return ('p', t)
+
+
+def SMALL(t):
+    return ('small', t)
+
+
+def BIG(t):
+    return ('big', t)
+
+
+def BUL(items):
+    return ('bullets', list(items))
+
+
+def TBL(rows, widths_mm, header=True, bold_last=False, font=9):
+    return ('table', rows, widths_mm, {'header': header, 'bold_last': bold_last, 'font': font})
+
+
+def SP(h=3):
+    return ('spacer', h)
+
+
+def PB():
+    return ('pagebreak',)
 
 
 def fmt(n, digits=0):
@@ -80,35 +112,12 @@ def k(n):
     return fmt(round(n / 1000.0) * 1000)
 
 
-def table(rows, col_widths, header=True, bold_last=False, font_size=9):
-    data = []
-    for i, row in enumerate(rows):
-        style = CELL_B if (header and i == 0) or (bold_last and i == len(rows) - 1) else CELL
-        data.append([P(str(c), style) if not isinstance(c, Paragraph) else c for c in row])
-    t = Table(data, colWidths=col_widths, repeatRows=1 if header else 0)
-    ts = [('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#999999')),
-          ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-          ('LEFTPADDING', (0, 0), (-1, -1), 4), ('RIGHTPADDING', (0, 0), (-1, -1), 4),
-          ('TOPPADDING', (0, 0), (-1, -1), 3), ('BOTTOMPADDING', (0, 0), (-1, -1), 3)]
-    if header:
-        ts.append(('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#E8EEF7')))
-    if bold_last:
-        ts.append(('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#F3F3F3')))
-    t.setStyle(TableStyle(ts))
-    return t
-
-
-def bullets(items, style=BASE):
-    return [P('•  ' + it, style) for it in items]
-
-
 # ---------------------------------------------------------------------------
 # Числа из модели
 # ---------------------------------------------------------------------------
 def numbers():
     p = bm.params_dict()
-    n = {}
-    n['p'] = p
+    n = {'p': p}
     b = bm.compute(p, 250, {})
     n['b'] = b
     n['b150'] = bm.compute(p, 150, {})
@@ -118,10 +127,10 @@ def numbers():
     n['liq'] = bm.compute_liquid(p)
     n['farmer'] = bm.compute_farmer(p, b)
     n['season'] = bm.compute_season(p, b)
+    n['tariffs'] = bm.compute_tariff_table(p, b, n['season'])
     n['unified'] = p['unified_tariff_per_ton']
     n['min_t'] = p['min_order_t']
     n['usd'] = p['usd_rate']
-    # расходы дня
     n['pilot'] = p['pilot_day']
     n['helpers'] = p['helpers_count'] * p['helper_day']
     n['vehicle_fuel'] = p['vehicle_km'] * p['diesel_l_100km'] / 100.0 * p['diesel_price']
@@ -145,7 +154,7 @@ def numbers():
     n['rev_day'] = b['t_per_day'] * n['unified']
     n['overhead_day'] = n['rev_day'] * p['overhead_pct']
     n['profit_day'] = n['rev_day'] - n['total_day'] - n['overhead_day']
-    # что если
+
     def per_t(**m):
         return bm.compute(p, 250, m)['c1_per_kg'] * 1000.0
     n['wi_eff2'] = per_t(m_eff=2.0 / 3.0)
@@ -154,11 +163,11 @@ def numbers():
     n['wi_flow37'] = per_t(m_flow=37.0 / 30.0)
     n['wi_reload3'] = per_t(m_reload=2.0)
     n['wi_payload50'] = per_t(m_payload=50.0 / 45.0)
-    n['wi_pess'] = bm.compute(p, 250, {'m_eff': 2.0 / 3.0, 'm_reload': 2.0, 'm_overhead': 4.0 / 3.0, 'm_payload': 40.0 / 45.0})['c1_per_kg'] * 1000.0
-    n['wi_opt'] = bm.compute(p, 250, {'m_eff': 1.5, 'm_reload': 2.0 / 3.0, 'm_overhead': 0.8, 'm_payload': 50.0 / 45.0})['c1_per_kg'] * 1000.0
-    s = n['season']
-    n['season_t'] = s['s_ha_total'] * 250 / 1000.0
+    n['wi_pess'] = per_t(m_eff=2.0 / 3.0, m_reload=2.0, m_overhead=4.0 / 3.0, m_payload=40.0 / 45.0)
+    n['wi_opt'] = per_t(m_eff=1.5, m_reload=2.0 / 3.0, m_overhead=0.8, m_payload=50.0 / 45.0)
+    n['season_t'] = n['season']['s_ha_total'] * 250 / 1000.0
     n['vat_price'] = n['unified'] * 1.12
+    n['spray_profit_day'] = n['liq']['liq_margin_external'] * n['liq']['liq_ha_per_day']
     return n
 
 
@@ -169,18 +178,16 @@ def calc_detailed(lang, n):
     p, b = n['p'], n['b']
     ru = lang == 'ru'
     f = []
-    f.append(P('Сколько стоит разбросать удобрение дроном. Подробная калькуляция' if ru else
-               'Ўғитни дрон билан сепиш қанчага тушади. Батафсил ҳисоб-китоб', H1))
+    f.append(H1('Сколько стоит разбросать удобрение дроном. Подробная калькуляция' if ru else
+                'Ўғитни дрон билан сепиш қанчага тушади. Батафсил ҳисоб-китоб'))
     f.append(P(('Расчёт на 30.10.2026, до пробных полётов. Дрон DJI Agras T40 с баком-разбрасывателем. '
                 'Калькуляция отвечает на три вопроса: сколько дрон успевает за день, сколько нам стоит этот день '
                 'и какая цена покрывает расходы и даёт прибыль. В конце — что надо перепроверить в поле.') if ru else
                ('Ҳисоб 30.10.2026 ҳолатига, синов парвозларидан олдин. Дрон — сепиш баки ўрнатилган DJI Agras T40. '
                 'Ҳисоб-китоб учта саволга жавоб беради: дрон бир кунда қанча иш қилади, бу кун бизга қанчага тушади '
-                'ва қандай нарх харажатларни қоплаб, фойда беради. Охирида — далада нимани қайта текшириш керак.'), BASE))
-    f.append(Spacer(1, 3 * mm))
-
-    # 1. Исходные данные
-    f.append(P('1. Исходные данные' if ru else '1. Дастлабки маълумотлар', H2))
+                'ва қандай нарх харажатларни қоплаб, фойда беради. Охирида — далада нимани қайта текшириш керак.')))
+    f.append(SP())
+    f.append(H2('1. Исходные данные' if ru else '1. Дастлабки маълумотлар'))
     rows = [[('Что' if ru else 'Нима'), ('Сколько' if ru else 'Қанча'), ('Откуда' if ru else 'Қаердан')],
             [('Загрузка бака за один вылет' if ru else 'Бир парвозда бакка юкланадиган ўғит'), '%s кг' % fmt(p['payload_kg']),
              ('Бак 70 л, до 50 кг по паспорту; берём 45 кг с запасом' if ru else 'Бак 70 л, паспорт бўйича 50 кг гача; эҳтиёт учун 45 кг олинди')],
@@ -197,10 +204,9 @@ def calc_detailed(lang, n):
             [('Рабочих дней за сезон' if ru else 'Мавсумдаги иш кунлари'), '%s' % fmt(p['days_per_season']),
              ('Февраль — середина марта, минус выходные и непогода' if ru else 'Февраль — март ўрталари, дам олиш ва ёмон об-ҳаво чиқариб ташланган')],
             [('Курс доллара' if ru else 'Доллар курси'), '%s сум' % fmt(p['usd_rate']), ('ЦБ, конец октября 2026' if ru else 'Марказий банк, 2026 йил октябрь охири')]]
-    f.append(table(rows, [60 * mm, 32 * mm, 83 * mm]))
+    f.append(TBL(rows, [60, 32, 83]))
 
-    # 2. Сколько успевает
-    f.append(P('2. Сколько дрон успевает за день' if ru else '2. Дрон бир кунда қанча иш қилади', H2))
+    f.append(H2('2. Сколько дрон успевает за день' if ru else '2. Дрон бир кунда қанча иш қилади'))
     items_ru = [
         'Один вылет: разбрасывание %s кг при %s кг/мин — %s мин; взлёт, подлёт, посадка — %s мин; засыпка нового мешка и смена батареи — %s мин. Полный круг — <b>%s мин</b>.'
         % (fmt(p['payload_kg']), fmt(p['flow_kg_min']), fmt(b['spread_min_per_flight'], 1), fmt(p['overhead_min'], 1), fmt(p['reload_min'], 1), fmt(b['cycle_min'], 1)),
@@ -219,10 +225,9 @@ def calc_detailed(lang, n):
         % (fmt(b['ha_per_day'], 1), fmt(n['b150']['ha_per_day'], 1)),
         '250 кг/га меъёрда дала устидаги тезлик %s км/соат чиқади — жадвалингиздагидек (8–11 км/соат). Доналар узатилиши бундан тезроқ ишлашга йўл қўймайди.' % fmt(b['speed_eff'] * 3.6, 0),
     ]
-    f.extend(bullets(items_ru if ru else items_uz))
+    f.append(BUL(items_ru if ru else items_uz))
 
-    # 3. Расходы дня
-    f.append(P('3. Расходы за один рабочий день одного дрона' if ru else '3. Бир дроннинг бир иш кунидаги харажатлари', H2))
+    f.append(H2('3. Расходы за один рабочий день одного дрона' if ru else '3. Бир дроннинг бир иш кунидаги харажатлари'))
     rows = [[('Статья' if ru else 'Харажат'), ('Сум' if ru else 'Сўм'), ('Как посчитано' if ru else 'Қандай ҳисобланган')],
             [('Пилот' if ru else 'Учувчи (оператор)'), k(n['pilot']), ('Оплата за день работы' if ru else 'Бир иш куни учун ҳақ')],
             [('Два помощника на засыпке' if ru else 'Қоп тўкишда икки ёрдамчи'), k(n['helpers']),
@@ -231,8 +236,8 @@ def calc_detailed(lang, n):
             [('Машина сопровождения' if ru else 'Ҳамроҳ машина'), k(n['vehicle']),
              ('%s км в день: дизель %s л × %s = %s, износ %s сум/км = %s' % (fmt(p['vehicle_km']), fmt(p['vehicle_km'] * p['diesel_l_100km'] / 100), fmt(p['diesel_price']), fmt(n['vehicle_fuel']), fmt(p['vehicle_wear_km']), fmt(n['vehicle_wear'])) if ru else
               'Кунига %s км: дизель %s л × %s = %s, ейилиш %s сўм/км = %s' % (fmt(p['vehicle_km']), fmt(p['vehicle_km'] * p['diesel_l_100km'] / 100), fmt(p['diesel_price']), fmt(n['vehicle_fuel']), fmt(p['vehicle_wear_km']), fmt(n['vehicle_wear'])))],
-            [('Питание и проживание экипажа' if ru else 'Экипаж овқати ва турар жойи'), fmt(n['per_diem']), ''],
-            [('Прочее: генератор, связь, промывка техники' if ru else 'Бошқа: генератор, алоқа, техникани ювиш'), fmt(n['other']), ''],
+            [('Питание и проживание экипажа' if ru else 'Экипаж овқати ва турар жойи'), k(n['per_diem']), ''],
+            [('Прочее: генератор, связь, промывка техники' if ru else 'Бошқа: генератор, алоқа, техникани ювиш'), k(n['other']), ''],
             [('Износ батарей' if ru else 'Батареяларнинг ейилиши'), k(n['batt_day']),
              ('Батарея %s $ = %s сум на %s зарядок = %s за полную зарядку; за день %s полных зарядок' % (fmt(p['battery_price_usd']), fmt(p['battery_price_usd'] * p['usd_rate']), fmt(p['battery_cycles']), fmt(n['batt_full_charge']), fmt(b['charges_per_day'], 1)) if ru else
               'Батарея %s $ = %s сўм, %s марта зарядланади = бир тўлиқ зарядка %s; кунига %s тўлиқ зарядка' % (fmt(p['battery_price_usd']), fmt(p['battery_price_usd'] * p['usd_rate']), fmt(p['battery_cycles']), fmt(n['batt_full_charge']), fmt(b['charges_per_day'], 1)))],
@@ -245,15 +250,14 @@ def calc_detailed(lang, n):
              ('%s $ = %s сум на %s сезона по %s дней' % (fmt(p['spreader_price_usd']), fmt(p['spreader_price_usd'] * p['usd_rate']), fmt(p['spreader_life_seasons']), fmt(p['days_per_season'])) if ru else
               '%s $ = %s сўм, %s мавсум × %s кун' % (fmt(p['spreader_price_usd']), fmt(p['spreader_price_usd'] * p['usd_rate']), fmt(p['spreader_life_seasons']), fmt(p['days_per_season'])))],
             [('<b>Итого за день</b>' if ru else '<b>Кунлик жами</b>'), '<b>≈ %s</b>' % k(n['total_day']), '']]
-    f.append(table(rows, [52 * mm, 24 * mm, 99 * mm], bold_last=True))
-    f.append(Spacer(1, 2 * mm))
-    f.append(P(('Чего здесь нет: амортизации самого дрона. Парк куплен для летней работы и окупается летом; зимой считаем только то, что '
-                'тратится из-за зимней работы. Если захотите отнести на зиму часть стоимости дрона, себестоимость тонны вырастет примерно на пятую часть.') if ru else
-               ('Бу ерда нима йўқ: дроннинг ўз амортизацияси. Парк ёзги иш учун олинган ва ёзда ўзини қоплайди; қишда фақат қишки иш туфайли '
-                'кетадиган харажатларни ҳисоблаймиз. Агар дрон нархининг бир қисмини қишга ўтказмоқчи бўлсангиз, тонна таннархи тахминан бешдан бирга ошади.'), SMALL))
+    f.append(TBL(rows, [52, 24, 99], bold_last=True))
+    f.append(SP(2))
+    f.append(SMALL(('Чего здесь нет: амортизации самого дрона. Парк куплен для летней работы и окупается летом; зимой считаем только то, что '
+                    'тратится из-за зимней работы. Если захотите отнести на зиму часть стоимости дрона, себестоимость тонны вырастет примерно на пятую часть.') if ru else
+                   ('Бу ерда нима йўқ: дроннинг ўз амортизацияси. Парк ёзги иш учун олинган ва ёзда ўзини қоплайди; қишда фақат қишки иш туфайли '
+                    'кетадиган харажатларни ҳисоблаймиз. Агар дрон нархининг бир қисмини қишга ўтказмоқчи бўлсангиз, тонна таннархи тахминан бешдан бирга ошади.')))
 
-    # 4. Себестоимость
-    f.append(P('4. Себестоимость' if ru else '4. Таннарх', H2))
+    f.append(H2('4. Себестоимость' if ru else '4. Таннарх'))
     items_ru = [
         'Расходы дня делим на тонны дня: %s / %s т = <b>около %s сум за тонну</b>, или %s сум за килограмм.' % (k(n['total_day']), fmt(b['t_per_day'], 1), k(n['direct_t']), fmt(b['c1_per_kg'])),
         'На гектар (справочно): при 150 кг/га — %s, при 200 — %s, при 250 — %s, при 400 — %s сум.' % (k(n['b150']['direct_cost_per_ha']), k(n['b200']['direct_cost_per_ha']), k(b['direct_cost_per_ha']), k(n['b400']['direct_cost_per_ha'])),
@@ -266,48 +270,65 @@ def calc_detailed(lang, n):
         'Солиштириш учун: пуркаш шу харажат схемасида бизга гектарига тахминан %s сўмга тушади, нархи %s. 250 кг/га меъёрда сепиш гектарига %s баравар қиммат — чунки дрон дала устида узоқроқ туради ва янги қоп учун тўрт-беш баравар кўп қўнади.'
         % (k(n['liq']['liq_direct_per_ha']), fmt(p['liquid_tariff_external']), fmt(b['direct_cost_per_ha'] / n['liq']['liq_direct_per_ha'], 1)),
     ]
-    f.extend(bullets(items_ru if ru else items_uz))
+    f.append(BUL(items_ru if ru else items_uz))
 
-    # 5. Цена
-    f.append(P('5. Цена для фермера' if ru else '5. Фермер учун нарх', H2))
+    f.append(H2('5. Цена для фермера' if ru else '5. Фермер учун нарх'))
     items_ru = [
         'К себестоимости добавляем расходы конторы (диспетчер, бухгалтерия, страховка) — %s %% от выручки, и прибыль — %s %% от выручки.' % (fmt(p['overhead_pct'] * 100), fmt(p['target_margin_pct'] * 100)),
         'Цена = себестоимость / (1 − 0,%s − 0,%s) = %s / 0,%s = %s сум за тонну. Округляем: <b>%s сум за тонну</b> — одна цена для селитры, карбамида и аммофоса.'
         % (fmt(p['overhead_pct'] * 100), fmt(p['target_margin_pct'] * 100), k(n['direct_t']), fmt((1 - p['overhead_pct'] - p['target_margin_pct']) * 100), k(n['target_t']), fmt(n['unified'])),
-        'Что остаётся с тонны: выручка %s − себестоимость %s − расходы конторы %s = <b>прибыль %s сум (%s %%)</b>.' % (fmt(n['unified']), k(n['direct_t']), fmt(n['overhead_t']), k(n['profit_t']), fmt(n['profit_t_pct'], 0)),
-        'В день один дрон: выручка %s, расходы %s, конторе %s, прибыль около %s сум.' % (fmt(n['rev_day']), k(n['total_day']), fmt(n['overhead_day']), k(n['profit_day'])),
+        'Что остаётся с тонны: выручка %s − себестоимость %s − расходы конторы %s = <b>прибыль %s сум (%s %%)</b>. Важно не путать: %s сум за килограмм — это уже цена с прибылью, а себестоимость — %s.'
+        % (fmt(n['unified']), k(n['direct_t']), fmt(n['overhead_t']), k(n['profit_t']), fmt(n['profit_t_pct'], 0), fmt(n['target_t'] / 1000), fmt(b['c1_per_kg'])),
+        'В день один дрон: выручка %s, расходы %s, конторе %s, прибыль около %s сум. Для сравнения, день опрыскивания летом приносит около %s сум прибыли — втрое больше.' % (fmt(n['rev_day']), k(n['total_day']), fmt(n['overhead_day']), k(n['profit_day']), k(n['spray_profit_day'])),
         'Минимальный заказ — %s тонны (%s сум). Меньше брать невыгодно: один день экипажа стоит %s сум, а мелкий заказ ещё и съедает день переездом.' % (fmt(n['min_t']), fmt(n['unified'] * n['min_t']), fmt(b['crew_day'])),
     ]
     items_uz = [
         'Таннархга идора харажатлари (диспетчер, бухгалтерия, суғурта) — тушумнинг %s %% и ва фойда — тушумнинг %s %% и қўшилади.' % (fmt(p['overhead_pct'] * 100), fmt(p['target_margin_pct'] * 100)),
         'Нарх = таннарх / (1 − 0,%s − 0,%s) = %s / 0,%s = бир тонна %s сўм. Яхлитлаймиз: <b>бир тонна %s сўм</b> — селитра, карбамид ва аммофос учун бир хил нарх.'
         % (fmt(p['overhead_pct'] * 100), fmt(p['target_margin_pct'] * 100), k(n['direct_t']), fmt((1 - p['overhead_pct'] - p['target_margin_pct']) * 100), k(n['target_t']), fmt(n['unified'])),
-        'Бир тоннадан қоладигани: тушум %s − таннарх %s − идора харажати %s = <b>фойда %s сўм (%s %%)</b>.' % (fmt(n['unified']), k(n['direct_t']), fmt(n['overhead_t']), k(n['profit_t']), fmt(n['profit_t_pct'], 0)),
-        'Бир дрон бир кунда: тушум %s, харажат %s, идорага %s, фойда тахминан %s сўм.' % (fmt(n['rev_day']), k(n['total_day']), fmt(n['overhead_day']), k(n['profit_day'])),
+        'Бир тоннадан қоладигани: тушум %s − таннарх %s − идора харажати %s = <b>фойда %s сўм (%s %%)</b>. Адаштирмаслик керак: килограммига %s сўм — бу фойда қўшилган нарх, таннарх эса %s.'
+        % (fmt(n['unified']), k(n['direct_t']), fmt(n['overhead_t']), k(n['profit_t']), fmt(n['profit_t_pct'], 0), fmt(n['target_t'] / 1000), fmt(b['c1_per_kg'])),
+        'Бир дрон бир кунда: тушум %s, харажат %s, идорага %s, фойда тахминан %s сўм. Солиштириш учун, ёзда бир кун пуркаш тахминан %s сўм фойда беради — уч баравар кўп.' % (fmt(n['rev_day']), k(n['total_day']), fmt(n['overhead_day']), k(n['profit_day']), k(n['spray_profit_day'])),
         'Энг кам буюртма — %s тонна (%s сўм). Камига бориш фойдасиз: экипажнинг бир куни %s сўм туради, майда буюртма эса кунни йўлга сарфлайди.' % (fmt(n['min_t']), fmt(n['unified'] * n['min_t']), fmt(b['crew_day'])),
     ]
-    f.extend(bullets(items_ru if ru else items_uz))
-    f.append(Spacer(1, 2 * mm))
+    f.append(BUL(items_ru if ru else items_uz))
+    f.append(SP(2))
     rows = [[('Норма, кг/га' if ru else 'Меъёр, кг/га'), ('Цена гектара при %s сум/т' % fmt(n['unified']) if ru else 'Гектар нархи, %s сўм/т бўлганда' % fmt(n['unified'])),
              ('Себестоимость гектара' if ru else 'Гектар таннархи'), ('Остаётся нам после расходов конторы' if ru else 'Идора харажатидан кейин бизга қоладигани')]]
     for rate, bb in ((100, n['b100']), (150, n['b150']), (200, n['b200']), (250, b), (400, n['b400'])):
         price = n['unified'] * rate / 1000.0
         rows.append([str(rate), fmt(price), k(bb['direct_cost_per_ha']), '%s (%s %%)' % (k(price - bb['direct_cost_per_ha'] - price * p['overhead_pct']), fmt((price - bb['direct_cost_per_ha'] - price * p['overhead_pct']) / price * 100, 0))])
-    f.append(table(rows, [28 * mm, 52 * mm, 42 * mm, 53 * mm]))
-    f.append(Spacer(1, 2 * mm))
+    f.append(TBL(rows, [28, 52, 42, 53]))
+    f.append(SP(2))
     f.append(P(('Почему одна цена за тонну, а не за гектар. Дрон за день вносит одинаковые тонны при любой норме, значит и расходы у нас '
                 'идут на тонны. Если брать за гектар, то при 400 кг/га мы разоримся, а при 100 кг/га фермер переплатит. Одна цена за тонну — '
                 'честно для обоих, понятно фермеру (он знает, сколько мешков привёз) и не оставляет оператору выбора, по какой «ступени» отчитаться.') if ru else
                ('Нега гектарга эмас, тоннага бир нарх. Дрон бир кунда ҳар қандай меъёрда бир хил тонна сепади, демак бизнинг харажат ҳам тоннага кетади. '
                 'Гектарга олсак, 400 кг/га меъёрда биз зарар кўрамиз, 100 кг/га меъёрда фермер ортиқча тўлайди. Тоннага бир нарх — икки тараф учун ҳам адолатли, '
-                'фермерга тушунарли (қанча қоп олиб келганини билади) ва операторга ҳисоботда қайси «поғона»ни танлашга йўл қолдирмайди.'), BASE))
-    f.append(P(('Налоги в расчёте не выделены. Если цена для фермера указывается с НДС 12 %%, то с НДС это %s сум за тонну; если без — '
-                'уточните у бухгалтерии, как это считается по опрыскиванию сейчас.' % fmt(n['vat_price'])) if ru else
-               ('Солиқлар ҳисобда алоҳида кўрсатилмаган. Агар фермер учун нарх ҚҚС 12 %% билан кўрсатилса, ҚҚС билан бир тонна %s сўм бўлади; '
-                'ҚҚСсиз бўлса — ҳозир пуркашда қандай ҳисобланишини бухгалтериядан аниқланг.' % fmt(n['vat_price'])), SMALL))
+                'фермерга тушунарли (қанча қоп олиб келганини билади) ва операторга ҳисоботда қайси «поғона»ни танлашга йўл қолдирмайди.')))
+    f.append(SMALL(('Налоги в расчёте не выделены. Если цена для фермера указывается с НДС 12 %%, то с НДС это %s сум за тонну; если без — '
+                    'уточните у бухгалтерии, как это считается по опрыскиванию сейчас.' % fmt(n['vat_price'])) if ru else
+                   ('Солиқлар ҳисобда алоҳида кўрсатилмаган. Агар фермер учун нарх ҚҚС 12 %% билан кўрсатилса, ҚҚС билан бир тонна %s сўм бўлади; '
+                    'ҚҚСсиз бўлса — ҳозир пуркашда қандай ҳисобланишини бухгалтериядан аниқланг.' % fmt(n['vat_price']))))
 
-    # 6. Сезон
-    f.append(P('6. Что даёт сезон' if ru else '6. Мавсум нима беради', H2))
+    f.append(H2('6. Не маловат ли тариф: что даёт тонна при разных ценах' if ru else '6. Тариф камлик қилмайдими: турли нархларда тонна нима беради'))
+    rows = [[('Тариф, сум/т' if ru else 'Тариф, сўм/т'), ('Прибыль с тонны' if ru else 'Тоннадан фойда'), ('Маржа' if ru else 'Маржа'),
+             ('Цена гектара при 200 кг/га' if ru else '200 кг/га меъёрда гектар нархи'), ('Дороже трактора, раз' if ru else 'Трактордан қиммат, баравар'),
+             ('Прибыль за сезон, 5 дронов, до разовых' if ru else 'Мавсум фойдаси, 5 дрон, бир марталиксиз'), ('После разовых' if ru else 'Бир марталикдан кейин')]]
+    for t in n['tariffs']:
+        rows.append([fmt(t['tariff']), k(t['profit']), '%s %%' % fmt(t['margin'] * 100, 0), fmt(t['price_ha_200']), fmt(t['ratio_ground'], 1), k(t['season_profit']), k(t['after_one_time'])])
+    f.append(TBL(rows, [24, 24, 16, 28, 24, 32, 27]))
+    f.append(SP(2))
+    f.append(P(('Чтение. Каждые 200 000 сум к тарифу — это плюс 180 000 прибыли с тонны и плюс 49 млн за сезон, потому что расходы не меняются. '
+                'Но цена гектара при этом уходит от трактора (около 100 000 сум/га по нашей оценке) всё дальше: при 2,2 млн/т дрон дороже трактора в 4,4 раза. '
+                'Насколько фермеры готовы платить — не знаем; это проверяется пробными договорами, а не расчётом. Поэтому 1,8 млн — стартовая цена на пробный сезон, '
+                'а правило после пробных полётов такое: если измеренная себестоимость тонны выше 1,3 млн, поднимать до 2,0 млн или отказываться от подкормки.') if ru else
+               ('Ўқиш. Тарифга ҳар 200 000 сўм қўшилиши — тоннадан 180 000 ва мавсумга 49 млн ортиқ фойда, чунки харажат ўзгармайди. '
+                'Лекин гектар нархи трактордан (бизнинг баҳомизча гектарига тахминан 100 000 сўм) тобора узоқлашади: 2,2 млн/т бўлса, дрон трактордан 4,4 баравар қиммат. '
+                'Фермерлар қанча тўлашга тайёр — билмаймиз; бу ҳисоб билан эмас, синов шартномалари билан текширилади. Шунинг учун 1,8 млн — синов мавсуми учун бошланғич нарх, '
+                'синов парвозларидан кейинги қоида эса: ўлчанган тонна таннархи 1,3 млндан юқори чиқса, 2,0 млнга кўтариш ёки озиқлантиришдан воз кечиш.')))
+
+    f.append(H2('7. Что даёт сезон' if ru else '7. Мавсум нима беради'))
     s = n['season']
     rows = [[('Показатель' if ru else 'Кўрсаткич'), ('Сум' if ru else 'Сўм'), ('Как посчитано' if ru else 'Қандай ҳисобланган')],
             [('Внесено за сезон' if ru else 'Мавсумда сепилган ўғит'), '%s т' % fmt(n['season_t']), ('5 дронов × %s дней × %s т' % (fmt(p['days_per_season']), fmt(b['t_per_day'], 1)) if ru else '5 дрон × %s кун × %s т' % (fmt(p['days_per_season']), fmt(b['t_per_day'], 1)))],
@@ -318,15 +339,14 @@ def calc_detailed(lang, n):
              ('4 бака по %s $ = %s + обучение и оснастка %s' % (fmt(p['spreader_price_usd']), fmt(4 * p['spreader_price_usd'] * p['usd_rate']), fmt(p['season_one_time_other'])) if ru else
               '4 бак × %s $ = %s + ўқитиш ва жиҳозлаш %s' % (fmt(p['spreader_price_usd']), fmt(4 * p['spreader_price_usd'] * p['usd_rate']), fmt(p['season_one_time_other'])))],
             [('<b>Остаётся за сезон</b>' if ru else '<b>Мавсум якунида қоладигани</b>'), '<b>≈ %s</b>' % k(s['s_result']), ('около %s $' % fmt(s['s_result_usd']) if ru else 'тахминан %s $' % fmt(s['s_result_usd']))]]
-    f.append(table(rows, [52 * mm, 34 * mm, 89 * mm], bold_last=True))
-    f.append(Spacer(1, 2 * mm))
+    f.append(TBL(rows, [52, 34, 89], bold_last=True))
+    f.append(SP(2))
     f.append(P(('Это немного: один летний месяц опрыскивания даёт около 1,4 млрд сум выручки. Зимняя работа нужна, чтобы техника и люди не стояли, '
                 'а не чтобы заработать. Во второй сезон без разовых расходов остаётся около %s млн.' % fmt(s['s_margin_before_one_time'] / 1e6, 0)) if ru else
                ('Бу кўп эмас: ёзги бир ой пуркаш тахминан 1,4 млрд сўм тушум беради. Қишки иш техника ва одамлар бекор турмаслиги учун керак, '
-                'катта фойда учун эмас. Иккинчи мавсумда бир марталик харажатларсиз тахминан %s млн қолади.' % fmt(s['s_margin_before_one_time'] / 1e6, 0)), BASE))
+                'катта фойда учун эмас. Иккинчи мавсумда бир марталик харажатларсиз тахминан %s млн қолади.' % fmt(s['s_margin_before_one_time'] / 1e6, 0))))
 
-    # 7. От чего цена может уехать
-    f.append(P('7. От чего себестоимость тонны может уехать' if ru else '7. Тонна таннархи нимадан ўзгариши мумкин', H2))
+    f.append(H2('8. От чего себестоимость тонны может уехать' if ru else '8. Тонна таннархи нимадан ўзгариши мумкин'))
     rows = [[('Если…' if ru else 'Агар…'), ('Себестоимость тонны' if ru else 'Тонна таннархи'), ('Вместо' if ru else 'Ўрнига')],
             [('чистой работы не 3, а 2 часа в день' if ru else 'соф иш куни 3 эмас, 2 соат бўлса'), k(n['wi_eff2']), k(n['direct_t'])],
             [('чистой работы 4 часа' if ru else 'соф иш 4 соат бўлса'), k(n['wi_eff4']), k(n['direct_t'])],
@@ -336,13 +356,12 @@ def calc_detailed(lang, n):
             [('в бак грузим 50 кг вместо 45' if ru else 'бакка 45 эмас, 50 кг юкласак'), k(n['wi_payload50']), k(n['direct_t'])],
             [('всё плохо сразу: 2 часа, засыпка 3 мин, бак 40 кг' if ru else 'ҳаммаси ёмон: 2 соат, тўкиш 3 мин, бак 40 кг'), k(n['wi_pess']), k(n['direct_t'])],
             [('всё хорошо сразу: 4,5 часа, засыпка 1 мин, бак 50 кг' if ru else 'ҳаммаси яхши: 4,5 соат, тўкиш 1 мин, бак 50 кг'), k(n['wi_opt']), k(n['direct_t'])]]
-    f.append(table(rows, [95 * mm, 40 * mm, 40 * mm]))
-    f.append(Spacer(1, 2 * mm))
+    f.append(TBL(rows, [95, 40, 40]))
+    f.append(SP(2))
     f.append(P(('Сильнее всего на цену влияют часы работы в день и подача гранул. Цены батарей и бензина меняют её на один-два процента.') if ru else
-               ('Нархга энг кўп кунлик иш соати ва доналар узатилиши таъсир қилади. Батарея ва бензин нархи уни бир-икки фоизгина ўзгартиради.'), BASE))
+               ('Нархга энг кўп кунлик иш соати ва доналар узатилиши таъсир қилади. Батарея ва бензин нархи уни бир-икки фоизгина ўзгартиради.')))
 
-    # 8. Что проверить
-    f.append(P('8. Что проверить пробными полётами (2–3 дня, один дрон, своё поле)' if ru else '8. Синов парвозларида нимани текшириш (2–3 кун, бир дрон, ўз даламиз)', H2))
+    f.append(H2('9. Что проверить пробными полётами (2–3 дня, один дрон, своё поле)' if ru else '9. Синов парвозларида нимани текшириш (2–3 кун, бир дрон, ўз даламиз)'))
     items_ru = [
         'Подача: сколько килограммов за минуту уходит из бака при рабочей заслонке — отдельно карбамид и селитра.',
         'Время круга по секундомеру: разбрасывание, взлёт-посадка, засыпка и смена батареи.',
@@ -361,7 +380,7 @@ def calc_detailed(lang, n):
         'Ювишдан кейин — моторларда коррозия ва чанг излари йўқми.',
         'Кейин model.xlsx китобидаги рақамларни (сариқ катаклар) тўғрилаб, бу ҳужжатларни қайта чоп этиш.',
     ]
-    f.extend(bullets(items_ru if ru else items_uz))
+    f.append(BUL(items_ru if ru else items_uz))
     return f
 
 
@@ -372,52 +391,54 @@ def calc_short(lang, n):
     p, b, s = n['p'], n['b'], n['season']
     ru = lang == 'ru'
     f = []
-    f.append(P('Разбрасывание удобрений дроном — краткая калькуляция' if ru else 'Ўғитни дрон билан сепиш — қисқача ҳисоб-китоб', H1))
-    f.append(P(('DJI Agras T40 с баком-разбрасывателем. Расчёт на 30.10.2026, до пробных полётов.' if ru else
-               'Сепиш баки ўрнатилган DJI Agras T40. Ҳисоб 30.10.2026 ҳолатига, синов парвозларидан олдин.'), SMALL))
-    f.append(Spacer(1, 3 * mm))
-    f.append(P('За один день один дрон' if ru else 'Бир дрон бир кунда', H2))
+    f.append(H1('Разбрасывание удобрений дроном — краткая калькуляция' if ru else 'Ўғитни дрон билан сепиш — қисқача ҳисоб-китоб'))
+    f.append(SMALL(('DJI Agras T40 с баком-разбрасывателем. Расчёт на 30.10.2026, до пробных полётов.' if ru else
+                    'Сепиш баки ўрнатилган DJI Agras T40. Ҳисоб 30.10.2026 ҳолатига, синов парвозларидан олдин.')))
+    f.append(SP())
+    f.append(H2('За один день один дрон' if ru else 'Бир дрон бир кунда'))
     rows = [[('Вылетов' if ru else 'Парвозлар'), ('Внесено' if ru else 'Сепилган ўғит'), ('Это гектаров при 250 кг/га' if ru else '250 кг/га меъёрда бу гектар'), ('При 150 кг/га' if ru else '150 кг/га меъёрда')],
             [fmt(b['flights_per_day']), '%s т' % fmt(b['t_per_day'], 1), '%s га' % fmt(b['ha_per_day'], 1), '%s га' % fmt(n['b150']['ha_per_day'], 1)]]
-    f.append(table(rows, [35 * mm, 40 * mm, 55 * mm, 45 * mm]))
-    f.append(P(('Один круг — %s минуты: %s мин разбрасывание, %s мин взлёт и посадка, %s мин засыпка и смена батареи. Чистой работы %s часа в день.'
-                % (fmt(b['cycle_min'], 1), fmt(b['spread_min_per_flight'], 1), fmt(p['overhead_min'], 1), fmt(p['reload_min'], 1), fmt(p['eff_hours_per_day']))) if ru else
-               ('Бир айланма — %s минут: %s мин сепиш, %s мин кўтарилиш ва қўниш, %s мин қоп тўкиш ва батарея алмаштириш. Кунига %s соат соф иш.'
-                % (fmt(b['cycle_min'], 1), fmt(b['spread_min_per_flight'], 1), fmt(p['overhead_min'], 1), fmt(p['reload_min'], 1), fmt(p['eff_hours_per_day']))), SMALL))
+    f.append(TBL(rows, [35, 40, 55, 45]))
+    f.append(SMALL(('Один круг — %s минуты: %s мин разбрасывание, %s мин взлёт и посадка, %s мин засыпка и смена батареи. Чистой работы %s часа в день.'
+                    % (fmt(b['cycle_min'], 1), fmt(b['spread_min_per_flight'], 1), fmt(p['overhead_min'], 1), fmt(p['reload_min'], 1), fmt(p['eff_hours_per_day']))) if ru else
+                   ('Бир айланма — %s минут: %s мин сепиш, %s мин кўтарилиш ва қўниш, %s мин қоп тўкиш ва батарея алмаштириш. Кунига %s соат соф иш.'
+                    % (fmt(b['cycle_min'], 1), fmt(b['spread_min_per_flight'], 1), fmt(p['overhead_min'], 1), fmt(p['reload_min'], 1), fmt(p['eff_hours_per_day'])))))
 
-    f.append(P('Расходы за день' if ru else 'Кунлик харажатлар', H2))
+    f.append(H2('Расходы за день' if ru else 'Кунлик харажатлар'))
     rows = [[('Статья' if ru else 'Харажат'), ('Сум' if ru else 'Сўм')],
             [('Пилот и два помощника' if ru else 'Учувчи ва икки ёрдамчи'), k(n['pilot'] + n['helpers'])],
             [('Машина, питание, прочее' if ru else 'Машина, овқат, бошқа'), k(n['vehicle'] + n['per_diem'] + n['other'])],
             [('Батареи, бензин генератора, износ дрона' if ru else 'Батареялар, генератор бензини, дрон ейилиши'), k(n['batt_day'] + n['fuel_day'] + n['wear_day'])],
             [('Бак-разбрасыватель (на замену)' if ru else 'Сепиш баки (янгисига)'), k(n['spreader_day'])],
             [('<b>Итого</b>' if ru else '<b>Жами</b>'), '<b>≈ %s</b>' % k(n['total_day'])]]
-    f.append(table(rows, [110 * mm, 65 * mm], bold_last=True))
+    f.append(TBL(rows, [110, 65], bold_last=True))
 
-    f.append(P('Себестоимость и цена' if ru else 'Таннарх ва нарх', H2))
+    f.append(H2('Себестоимость и цена' if ru else 'Таннарх ва нарх'))
     rows = [['', ('За тонну' if ru else 'Бир тонна'), ('За кг' if ru else 'Бир кг')],
             [('Себестоимость (расходы дня / тонны дня)' if ru else 'Таннарх (кунлик харажат / кунлик тонна)'), k(n['direct_t']), fmt(b['c1_per_kg'])],
             [('+ расходы конторы 10 % и прибыль 25 % от выручки' if ru else '+ идора харажати 10 % ва фойда 25 % (тушумдан)'), k(n['target_t']), fmt(n['target_t'] / 1000)],
             [('<b>Единая цена для фермера (округлённо)</b>' if ru else '<b>Фермер учун ягона нарх (яхлитланган)</b>'), '<b>%s</b>' % fmt(n['unified']), '<b>%s</b>' % fmt(n['unified'] / 1000)],
             [('Прибыль с тонны после расходов конторы' if ru else 'Идора харажатидан кейин бир тоннадан фойда'), '%s (%s %%)' % (k(n['profit_t']), fmt(n['profit_t_pct'], 0)), fmt(n['profit_t'] / 1000)]]
-    f.append(table(rows, [105 * mm, 40 * mm, 30 * mm]))
-    f.append(Spacer(1, 2 * mm))
+    f.append(TBL(rows, [105, 40, 30]))
+    f.append(SP(2))
     rows = [[('Норма, кг/га' if ru else 'Меъёр, кг/га'), '150', '200', '250', '400'],
             [('Цена гектара, сум' if ru else 'Гектар нархи, сўм'), fmt(n['unified'] * 0.15), fmt(n['unified'] * 0.2), fmt(n['unified'] * 0.25), fmt(n['unified'] * 0.4)],
             [('Себестоимость гектара' if ru else 'Гектар таннархи'), k(n['b150']['direct_cost_per_ha']), k(n['b200']['direct_cost_per_ha']), k(b['direct_cost_per_ha']), k(n['b400']['direct_cost_per_ha'])]]
-    f.append(table(rows, [55 * mm, 30 * mm, 30 * mm, 30 * mm, 30 * mm]))
-    f.append(P(('Минимальный заказ — %s тонны (%s сум). Налоги в расчёте не выделены.' % (fmt(n['min_t']), fmt(n['unified'] * n['min_t']))) if ru else
-               ('Энг кам буюртма — %s тонна (%s сўм). Солиқлар ҳисобда алоҳида кўрсатилмаган.' % (fmt(n['min_t']), fmt(n['unified'] * n['min_t']))), SMALL))
+    f.append(TBL(rows, [55, 30, 30, 30, 30]))
+    f.append(SMALL(('Минимальный заказ — %s тонны (%s сум). Налоги в расчёте не выделены. При тарифе 2,0 млн/т прибыль с тонны %s (%s %%), при 2,2 млн — %s (%s %%); цена гектара при 200 кг/га тогда 400 000 и 440 000.'
+                    % (fmt(n['min_t']), fmt(n['unified'] * n['min_t']), k(n['tariffs'][2]['profit']), fmt(n['tariffs'][2]['margin'] * 100, 0), k(n['tariffs'][3]['profit']), fmt(n['tariffs'][3]['margin'] * 100, 0))) if ru else
+                   ('Энг кам буюртма — %s тонна (%s сўм). Солиқлар ҳисобда алоҳида кўрсатилмаган. Тариф 2,0 млн/т бўлса тоннадан фойда %s (%s %%), 2,2 млн бўлса — %s (%s %%); 200 кг/га меъёрда гектар нархи шунда 400 000 ва 440 000.'
+                    % (fmt(n['min_t']), fmt(n['unified'] * n['min_t']), k(n['tariffs'][2]['profit']), fmt(n['tariffs'][2]['margin'] * 100, 0), k(n['tariffs'][3]['profit']), fmt(n['tariffs'][3]['margin'] * 100, 0)))))
 
-    f.append(P('Сезон: 5 дронов, %s дней' % fmt(p['days_per_season']) if ru else 'Мавсум: 5 дрон, %s кун' % fmt(p['days_per_season']), H2))
+    f.append(H2('Сезон: 5 дронов, %s дней' % fmt(p['days_per_season']) if ru else 'Мавсум: 5 дрон, %s кун' % fmt(p['days_per_season'])))
     rows = [[('Внесено' if ru else 'Сепилган'), ('Выручка' if ru else 'Тушум'), ('Все расходы' if ru else 'Барча харажат'), ('Разовые: 4 бака, обучение' if ru else 'Бир марталик: 4 бак, ўқитиш'), ('Остаётся' if ru else 'Қоладигани')],
             ['%s т' % fmt(n['season_t']), k(s['s_revenue']), k(s['s_direct'] + s['s_overhead']), k(s['s_one_time']), '<b>≈ %s</b>' % k(s['s_result'])]]
-    f.append(table(rows, [28 * mm, 36 * mm, 36 * mm, 42 * mm, 33 * mm]))
-    f.append(P(('Для сравнения: летний месяц опрыскивания — около 1,4 млрд сум выручки. Зимняя работа — чтобы не стоять, а не чтобы заработать.') if ru else
-               ('Солиштириш учун: ёзги бир ой пуркаш — тахминан 1,4 млрд сўм тушум. Қишки иш бекор турмаслик учун, катта фойда учун эмас.'), SMALL))
+    f.append(TBL(rows, [28, 36, 36, 42, 33]))
+    f.append(SMALL(('Для сравнения: летний месяц опрыскивания — около 1,4 млрд сум выручки. Зимняя работа — чтобы не стоять, а не чтобы заработать.') if ru else
+                   ('Солиштириш учун: ёзги бир ой пуркаш — тахминан 1,4 млрд сўм тушум. Қишки иш бекор турмаслик учун, катта фойда учун эмас.')))
 
-    f.append(P('Что сильнее всего меняет цену' if ru else 'Нархни энг кўп нима ўзгартиради', H2))
-    f.extend(bullets([
+    f.append(H2('Что сильнее всего меняет цену' if ru else 'Нархни энг кўп нима ўзгартиради'))
+    f.append(BUL([
         ('Часы работы в день: 2 часа вместо 3 — себестоимость тонны %s вместо %s.' % (k(n['wi_eff2']), k(n['direct_t']))) if ru else
         ('Кунлик иш соати: 3 эмас, 2 соат бўлса — тонна таннархи %s ўрнига %s.' % (k(n['direct_t']), k(n['wi_eff2']))),
         ('Подача гранул: карбамид 26 кг/мин — %s; селитра 37 кг/мин — %s.' % (k(n['wi_flow26']), k(n['wi_flow37']))) if ru else
@@ -435,17 +456,17 @@ def kp(lang, n):
     p = n['p']
     ru = lang == 'ru'
     f = []
-    f.append(P('Коммерческое предложение' if ru else 'Тижорий таклиф', H1))
+    f.append(H1('Коммерческое предложение' if ru else 'Тижорий таклиф'))
     f.append(P(('<b>Подкормка озимой пшеницы гранулированными удобрениями с агродрона DJI Agras T40</b><br/>Сезон: февраль — март 2027. Бухарская область.') if ru else
-               ('<b>Кузги буғдойни DJI Agras T40 агродрони билан донадор ўғитлар билан озиқлантириш</b><br/>Мавсум: 2027 йил февраль — март. Бухоро вилояти.'), BASE))
-    f.append(Spacer(1, 3 * mm))
-    f.append(P('Что мы делаем' if ru else 'Биз нима қиламиз', H2))
+               ('<b>Кузги буғдойни DJI Agras T40 агродрони билан донадор ўғитлар билан озиқлантириш</b><br/>Мавсум: 2027 йил февраль — март. Бухоро вилояти.')))
+    f.append(SP())
+    f.append(H2('Что мы делаем' if ru else 'Биз нима қиламиз'))
     f.append(P(('Вносим селитру, карбамид или аммофос по вашим посевам озимой пшеницы дроном с системой разбрасывания. Норму (кг/га) и удобрение '
                 'задаёт ваш агроном — дрон вносит ровно столько, сколько задано, с шагом проходов 7 метров и контролем веса в баке.') if ru else
                ('Сизнинг кузги буғдой майдонларингизга селитра, карбамид ёки аммофосни сепиш тизимли дрон билан берамиз. Меъёрни (кг/га) ва ўғит турини '
-                'сизнинг агрономингиз белгилайди — дрон айнан белгиланган миқдорни 7 метрлик қатор қадами ва бак тарозиси назорати билан сепади.'), BASE))
-    f.append(P('Почему дроном' if ru else 'Нега дрон билан', H2))
-    f.extend(bullets([
+                'сизнинг агрономингиз белгилайди — дрон айнан белгиланган миқдорни 7 метрлик қатор қадами ва бак тарозиси назорати билан сепади.')))
+    f.append(H2('Почему дроном' if ru else 'Нега дрон билан'))
+    f.append(BUL([
         '<b>Вовремя.</b> Работаем по влажной и талой почве в феврале–марте, когда трактор режет колею или не может войти в поле.' if ru else
         '<b>Ўз вақтида.</b> Февраль–мартда нам ва эриган тупроқда, трактор из қолдирган ёки далага кира олмаган пайтда ишлаймиз.',
         '<b>Без потерь посевов.</b> Нет колеи, нет вытоптанных полос.' if ru else
@@ -455,27 +476,27 @@ def kp(lang, n):
         '<b>Прозрачно.</b> По каждому полю — отчёт: дата, гектары, килограммы, карта вылетов.' if ru else
         '<b>Очиқ ҳисоб.</b> Ҳар бир дала бўйича ҳисобот: сана, гектар, килограмм, парвозлар харитаси.',
     ]))
-    f.append(P('Цена' if ru else 'Нарх', H2))
-    f.append(P(('<b>%s сум за тонну внесённого удобрения.</b> Одна цена для любого гранулированного удобрения. Без стоимости удобрения — его закупаете вы.'
-                % fmt(n['unified'])) if ru else
-               ('<b>Сепилган ҳар бир тонна ўғит учун %s сўм.</b> Ҳар қандай донадор ўғит учун бир хил нарх. Ўғит нархи кирмайди — ўғитни ўзингиз оласиз.'
-                % fmt(n['unified'])), BIG))
-    f.append(Spacer(1, 2 * mm))
-    rows = [[('Если норма' if ru else 'Агар меъёр'), ('150 кг/га'), ('200 кг/га'), ('250 кг/га')],
-            [('то гектар стоит' if ru else 'гектар нархи'), '%s сум' % fmt(n['unified'] * 0.15) if ru else '%s сўм' % fmt(n['unified'] * 0.15),
-             '%s сум' % fmt(n['unified'] * 0.2) if ru else '%s сўм' % fmt(n['unified'] * 0.2), '%s сум' % fmt(n['unified'] * 0.25) if ru else '%s сўм' % fmt(n['unified'] * 0.25)]]
-    f.append(table(rows, [45 * mm, 43 * mm, 43 * mm, 44 * mm]))
-    f.append(Spacer(1, 2 * mm))
-    f.extend(bullets([
+    f.append(H2('Цена' if ru else 'Нарх'))
+    f.append(BIG(('<b>%s сум за тонну внесённого удобрения.</b> Одна цена для любого гранулированного удобрения. Без стоимости удобрения — его закупаете вы.'
+                  % fmt(n['unified'])) if ru else
+                 ('<b>Сепилган ҳар бир тонна ўғит учун %s сўм.</b> Ҳар қандай донадор ўғит учун бир хил нарх. Ўғит нархи кирмайди — ўғитни ўзингиз оласиз.'
+                  % fmt(n['unified']))))
+    f.append(SP(2))
+    rows = [[('Если норма' if ru else 'Агар меъёр'), '150 кг/га', '200 кг/га', '250 кг/га'],
+            [('то гектар стоит' if ru else 'гектар нархи'),
+             ('%s сум' if ru else '%s сўм') % fmt(n['unified'] * 0.15), ('%s сум' if ru else '%s сўм') % fmt(n['unified'] * 0.2), ('%s сум' if ru else '%s сўм') % fmt(n['unified'] * 0.25)]]
+    f.append(TBL(rows, [45, 43, 43, 44]))
+    f.append(SP(2))
+    f.append(BUL([
         ('Минимальный заказ — %s тонны удобрения за один выезд (это 10 га при 200 кг/га).' % fmt(n['min_t'])) if ru else
         ('Энг кам буюртма — бир чиқишда %s тонна ўғит (200 кг/га меъёрда бу 10 га).' % fmt(n['min_t'])),
-        'Считаем по мешкам, принятым на поле: пересчитываем вместе при приёмке и по окончании, подписываем акт. Вес по датчику дрона и карта вылетов прилагаются к акту.' if ru else
-        'Ҳисоб далада қабул қилинган қоплар бўйича: қабулда ва иш тугагач биргаликда санаймиз, далолатнома имзолаймиз. Дрон датчиги бўйича вазн ва парвозлар харитаси далолатномага илова қилинади.',
+        'Считаем по мешкам, принятым на поле: пересчитываем вместе при приёмке и по окончании, подписываем акт выполненных работ. Вес по датчику дрона и карта вылетов прилагаются к акту.' if ru else
+        'Ҳисоб далада қабул қилинган қоплар бўйича: қабулда ва иш тугагач биргаликда санаймиз, бажарилган ишлар далолатномасини имзолаймиз. Дрон датчиги бўйича вазн ва парвозлар харитаси далолатномага илова қилинади.',
         'Оплата — наличными, перечислением или по справке с печатью, по договорённости.' if ru else
         'Тўлов — нақд, ўтказма ёки муҳрли маълумотнома бўйича, келишув асосида.',
     ]))
-    f.append(P('Условия' if ru else 'Шартлар', H2))
-    f.extend(bullets([
+    f.append(H2('Условия' if ru else 'Шартлар'))
+    f.append(BUL([
         'Удобрение вы привозите к краю поля в мешках: сухое, гранулированное (гранулы 1–5 мм), без слежавшихся комков. Сырое и пылящее удобрение к внесению не берём.' if ru else
         'Ўғитни дала четига қопларда сиз олиб келасиз: қуруқ, донадор (дона 1–5 мм), қотиб қолган бўлаксиз. Нам ва чангийдиган ўғитни сепишга олмаймиз.',
         'Работаем в светлое время при температуре выше 0 °C, ветре до 6 м/с и без дождя. В непогоду переносим на ближайший день.' if ru else
@@ -487,18 +508,18 @@ def kp(lang, n):
         'Заявки принимаем с 1 декабря 2026, очередь — по дате заявки.' if ru else
         'Буюртмалар 2026 йил 1 декабрдан қабул қилинади, навбат — буюртма санаси бўйича.',
     ]))
-    f.append(P('Также для озимой пшеницы' if ru else 'Кузги буғдой учун яна', H2))
+    f.append(H2('Также для озимой пшеницы' if ru else 'Кузги буғдой учун яна'))
     f.append(P(('Опрыскивание дроном (гербициды, жидкие подкормки) в ноябре и феврале–марте — <b>%s сум за гектар</b>, препарат ваш.' % fmt(p['liquid_tariff_external'])) if ru else
-               ('Дрон билан пуркаш (гербицидлар, суюқ озиқлантириш) ноябрда ва февраль–мартда — <b>гектарига %s сўм</b>, препарат сизники.' % fmt(p['liquid_tariff_external'])), BASE))
-    f.append(Spacer(1, 4 * mm))
-    f.append(P('Как заказать' if ru else 'Қандай буюртма бериш', H2))
+               ('Дрон билан пуркаш (гербицидлар, суюқ озиқлантириш) ноябрда ва февраль–мартда — <b>гектарига %s сўм</b>, препарат сизники.' % fmt(p['liquid_tariff_external']))))
+    f.append(SP(4))
+    f.append(H2('Как заказать' if ru else 'Қандай буюртма бериш'))
     f.append(P(('Позвоните или напишите, назовите поле, площадь, удобрение и норму. Мы назовём день и приедем на осмотр.<br/><br/>'
                 'Организация: ____________________________<br/>Ответственный: ____________________________<br/>Телефон: ____________________________<br/>Telegram: ____________________________') if ru else
                ('Қўнғироқ қилинг ёки ёзинг: далани, майдонни, ўғит турини ва меъёрни айтинг. Биз кунни айтамиз ва кўриб чиқишга келамиз.<br/><br/>'
-                'Ташкилот: ____________________________<br/>Масъул шахс: ____________________________<br/>Телефон: ____________________________<br/>Telegram: ____________________________'), BASE))
-    f.append(Spacer(1, 3 * mm))
-    f.append(P(('Цены действуют на сезон февраль — март 2027 и уточняются после пробных полётов.' if ru else
-               'Нархлар 2027 йил февраль — март мавсумига амал қилади ва синов парвозларидан кейин аниқлаштирилади.'), SMALL))
+                'Ташкилот: ____________________________<br/>Масъул шахс: ____________________________<br/>Телефон: ____________________________<br/>Telegram: ____________________________')))
+    f.append(SP())
+    f.append(SMALL(('Цены действуют на сезон февраль — март 2027 и уточняются после пробных полётов.' if ru else
+                    'Нархлар 2027 йил февраль — март мавсумига амал қилади ва синов парвозларидан кейин аниқлаштирилади.')))
     return f
 
 
@@ -508,14 +529,14 @@ def kp(lang, n):
 def gov_brief(lang, n):
     ru = lang == 'ru'
     f = []
-    f.append(P('Госпрограммы, под которые можно продать зимнюю работу дронов' if ru else 'Дронларнинг қишки ишини сотиш мумкин бўлган давлат дастурлари', H1))
-    f.append(P(('Справка для руководства. 30.10.2026. Собрано по открытым источникам: сайты госорганов, lex.uz, новости. Телефоны и номера документов '
-                'перед обращением сверить — страницы читались в пересказе, не напрямую.') if ru else
-               ('Раҳбарият учун маълумотнома. 30.10.2026. Очиқ манбалардан тўпланган: давлат органлари сайтлари, lex.uz, янгиликлар. Телефон ва ҳужжат '
-                'рақамларини мурожаатдан олдин текшириш керак — саҳифалар бевосита эмас, баён орқали ўқилган.'), SMALL))
-    f.append(Spacer(1, 3 * mm))
-    f.append(P('Главное' if ru else 'Асосийси', H2))
-    f.extend(bullets([
+    f.append(H1('Госпрограммы, под которые можно продать зимнюю работу дронов' if ru else 'Дронларнинг қишки ишини сотиш мумкин бўлган давлат дастурлари'))
+    f.append(SMALL(('Справка для руководства. 30.10.2026. Собрано по открытым источникам: сайты госорганов, lex.uz, новости. Телефоны и номера документов '
+                    'перед обращением сверить — страницы читались в пересказе, не напрямую.') if ru else
+                   ('Раҳбарият учун маълумотнома. 30.10.2026. Очиқ манбалардан тўпланган: давлат органлари сайтлари, lex.uz, янгиликлар. Телефон ва ҳужжат '
+                    'рақамларини мурожаатдан олдин текшириш керак — саҳифалар бевосита эмас, баён орқали ўқилган.')))
+    f.append(SP())
+    f.append(H2('Главное' if ru else 'Асосийси'))
+    f.append(BUL([
         '<b>Пастбища.</b> Постановление Президента ПП-322 от 31.10.2025 запустило программу восстановления пастбищ. В её описании прямо названы «высев семян дронами» и семеноводство пустынных растений. Цели: 620 тыс. га в 2026, ещё 3,7 млн га в 2027; 627 тыс. га отдают махаллям на 49 лет; 63 млн долларов от Азиатского банка развития. Ведёт Минсельхоз.' if ru else
         '<b>Яйловлар.</b> Президентнинг 31.10.2025 йилдаги ПҚ-322 қарори яйловларни тиклаш дастурини бошлади. Унинг таърифида «уруғни дронлар билан сепиш» ва чўл ўсимликлари уруғчилиги тўғридан-тўғри айтилган. Мақсад: 2026 йилда 620 минг га, 2027 йилда яна 3,7 млн га; 627 минг га маҳаллаларга 49 йилга берилади; Осиё тараққиёт банкидан 63 млн доллар. Қишлоқ хўжалиги вазирлиги олиб боради.',
         '<b>Леса и «Яшил макон».</b> Агентство по лесам и зелёным зонам, борьбе с опустыниванием (бывшее лесное агентство) и Бухарское гослесхозяйство. В области заложено 58 тыс. га защитных лесов в пустыне; проект «Яшил белбоғ» — 250 тыс. га в Кызылкуме и Каракумах, первая очередь 109 тыс. га вдоль Аму-Бухарского канала. Осенний сезон посадок в Бухаре — с 5 ноября (указ УП-206 от 23.09.2026).' if ru else
@@ -527,7 +548,7 @@ def gov_brief(lang, n):
         '<b>Защита растений.</b> Агентство по карантину и защите растений с марта ведёт обработки против саранчи (план 2026 — 651,8 тыс. га по стране, Бухара в списке). Цены госзаказа низкие; возможен субподряд на труднодоступных песках.' if ru else
         '<b>Ўсимликлар ҳимояси.</b> Ўсимликлар карантини ва ҳимояси агентлиги мартдан чигирткага қарши ишлов беради (2026 йил режаси — мамлакат бўйича 651,8 минг га, Бухоро рўйхатда). Давлат буюртмаси нархлари паст; қийин етиб бориладиган қумларда субпудрат мумкин.',
     ]))
-    f.append(P('Таблица программ' if ru else 'Дастурлар жадвали', H2))
+    f.append(H2('Таблица программ' if ru else 'Дастурлар жадвали'))
     if ru:
         rows = [['Программа и документ', 'Кто отвечает', 'Что там для нас', 'Куда обращаться'],
                 ['Восстановление пастбищ. ПП-322 от 31.10.2025; презентация Президенту 13.10.2026', 'Минсельхоз, хокимияты, махалли; база данных пастбищ — институт «Уздаверлойиха»; деньги АБР', 'Посев семян изеня, саксаула, черкеза дроном на участках махаллей и пользователей пастбищ. Сезон ноябрь–март', 'Областное управление сельского хозяйства Бухары (тел. 65 225-13-45 по справочнику); Бухарский центр семеноводства пустынно-пастбищных растений; институт «Уздаверлойиха»'],
@@ -548,9 +569,9 @@ def gov_brief(lang, n):
                 ['Аграр соҳани давлат қўллаб-қувватлаши. 28.04.2026 йилдаги ВМҚ-206', 'Вазирлик; Аграр соҳада тўловлар агентлиги', 'Техника, кўчат, шпалера, автопилотга субсидиялар; дронлар тўғридан-тўғри айтилмаган — сўраш керак', 'Аграр соҳада тўловлар агентлиги'],
                 ['Ўсимликлар ҳимояси: чигиртка, 2026 режаси — 651,8 минг га', 'Ўсимликлар карантини ва ҳимояси агентлиги, Бухоро бошқармаси (ФВВ билан)', 'Март–майда қум ва ноқулай жойларда ишлов бериш субпудрати', 'Агентликнинг Бухоро бошқармаси — ҳокимлик орқали; давлат харидлари портали'],
                 ['Парвоз қоидалари. 15.11.2022 йилдаги ВМҚ-658; дронлар тўғрисида янги фармон 2026 йил ёзига кутилган эди', 'Ўзавиация, Рақамли технологиялар вазирлиги, Мудофаа, Транспорт вазирликлари', 'Йиллик рухсатномалар чўл, ўрмон хўжаликлари ва давлат органлари учун ишларни қамраб олишини текшириш', 'Ўзавиация']]
-    f.append(table(rows, [44 * mm, 40 * mm, 48 * mm, 43 * mm], font_size=8))
-    f.append(P('Что нужно подготовить' if ru else 'Нимани тайёрлаш керак', H2))
-    f.extend(bullets([
+    f.append(TBL(rows, [44, 40, 48, 43], font=8))
+    f.append(H2('Что нужно подготовить' if ru else 'Нимани тайёрлаш керак'))
+    f.append(BUL([
         'Профиль исполнителя: 15 дронов T40, бак-разбрасыватель, экипажи; статистика сезона из нашей программы учёта (гектары и вылеты по месяцам); действующие разрешения на полёты.' if ru else
         'Ижрочи профили: 15 та T40 дрон, сепиш баки, экипажлар; ҳисоб дастуримиздан мавсум статистикаси (ойлар бўйича гектар ва парвозлар); амалдаги парвоз рухсатномалари.',
         'Предложение показательного посева 20–50 га за свой счёт с отчётом по карте полётов — снимает вопрос «а вы умеете?» без конкурса.' if ru else
@@ -562,8 +583,8 @@ def gov_brief(lang, n):
         'Проверка семян в баке: течёт ли лёгкое семя саксаула и изеня через малую заслонку, нужно ли дражирование.' if ru else
         'Уруғни бакда синаш: саксовул ва изеннинг енгил уруғи кичик тўсиқдан ўтадими, дражирлаш керакми.',
     ]))
-    f.append(P('Первые шаги' if ru else 'Биринчи қадамлар', H2))
-    f.extend(bullets([
+    f.append(H2('Первые шаги' if ru else 'Биринчи қадамлар'))
+    f.append(BUL([
         'Ноябрь: звонок в Агентство по лесам (1010) и в хокимият за контактом Бухарского гослесхозяйства; письма с предложением пилота в гослесхозяйство, облуправление сельского хозяйства и в проект ФАО (Жондор).' if ru else
         'Ноябрь: Ўрмон агентлигига (1010) ва ҳокимликка Бухоро давлат ўрмон хўжалиги алоқаси учун қўнғироқ; ўрмон хўжалигига, вилоят қишлоқ хўжалиги бошқармасига ва ФАО лойиҳасига (Жондор) синов таклифи билан хатлар.',
         'Ноябрь: пробные полёты на своём поле, тест семян в баке, регистрация на Агропортале и портале госзакупок.' if ru else
@@ -573,8 +594,8 @@ def gov_brief(lang, n):
         'Декабрь–январь: договоры на февраль–март; заявки на лоты лесхозов и программы пастбищ.' if ru else
         'Декабрь–январь: февраль–март учун шартномалар; ўрмон хўжаликлари ва яйлов дастури лотларига аризалар.',
     ]))
-    f.append(P('Риски' if ru else 'Хавфлар', H2))
-    f.extend(bullets([
+    f.append(H2('Риски' if ru else 'Хавфлар'))
+    f.append(BUL([
         'Госзаказ платит по сметным нормам, а не по нашей калькуляции, и платит медленно. Прежде чем входить в лот, узнать ставку сметы.' if ru else
         'Давлат буюртмаси бизнинг ҳисобимиз бўйича эмас, смета нормалари бўйича ва секин тўлайди. Лотга киришдан олдин смета ставкасини аниқлаш керак.',
         'У Минсельхоза свой парк: 100+ дронов и мобильные группы в областях. Предлагать субподряд, а не конкуренцию.' if ru else
@@ -588,31 +609,313 @@ def gov_brief(lang, n):
 
 
 # ---------------------------------------------------------------------------
+# Документ 5: форма акта выполненных работ
+# ---------------------------------------------------------------------------
+def act(lang, n):
+    ru = lang == 'ru'
+    f = []
+    f.append(H1('АКТ выполненных работ агродроном' if ru else 'АГРОДРОН БИЛАН БАЖАРИЛГАН ИШЛАР ДАЛОЛАТНОМАСИ'))
+    f.append(P(('№ __________ от «____» ______________ 20____ г.<br/>Место составления (район, хозяйство): ______________________________________________') if ru else
+               ('№ __________ «____» ______________ 20____ й.<br/>Тузилган жойи (туман, хўжалик): ______________________________________________')))
+    f.append(SP(2))
+    f.append(H2('1. Стороны' if ru else '1. Тарафлар'))
+    rows = [[('Исполнитель (организация)' if ru else 'Ижрочи (ташкилот)'), ''],
+            [('Оператор дрона (ФИО)' if ru else 'Дрон оператори (Ф.И.Ш.)'), ''],
+            [('Борт № / серийный номер' if ru else 'Дрон № / серия рақами'), ''],
+            [('Бак-разбрасыватель №' if ru else 'Сепиш баки №'), ''],
+            [('Заказчик (хозяйство)' if ru else 'Буюртмачи (хўжалик)'), ''],
+            [('Представитель заказчика (ФИО, должность, телефон)' if ru else 'Буюртмачи вакили (Ф.И.Ш., лавозими, телефон)'), '']]
+    f.append(TBL(rows, [75, 100], header=False, font=9.5))
+    f.append(H2('2. Поле и задание' if ru else '2. Дала ва топшириқ'))
+    rows = [[('Поле (название или № контура)' if ru else 'Дала (номи ёки контур №)'), ''],
+            [('Район, массив' if ru else 'Туман, массив'), ''],
+            [('Площадь по документам, га' if ru else 'Ҳужжат бўйича майдон, га'), ''],
+            [('Культура' if ru else 'Экин'), ''],
+            [('Вид работы' if ru else 'Иш тури'), ('☐ разбрасывание удобрений     ☐ опрыскивание' if ru else '☐ ўғит сепиш     ☐ пуркаш')],
+            [('Удобрение / препарат' if ru else 'Ўғит / препарат'), ''],
+            [('Норма по заданию агронома' if ru else 'Агроном топшириғи бўйича меъёр'), ('__________ кг/га (л/га)' if ru else '__________ кг/га (л/га)')]]
+    f.append(TBL(rows, [75, 100], header=False, font=9.5))
+    f.append(H2('3. Приёмка удобрения от заказчика (разбрасывание)' if ru else '3. Буюртмачидан ўғитни қабул қилиш (сепиш)'))
+    rows = [[('Принято мешков, шт' if ru else 'Қабул қилинган қоп, дона'), ('Вес мешка, кг' if ru else 'Қоп вазни, кг'), ('Принято всего, кг' if ru else 'Жами қабул қилинган, кг'),
+             ('Возвращено мешков, шт' if ru else 'Қайтарилган қоп, дона'), ('Остаток в последнем мешке, кг' if ru else 'Охирги қопдаги қолдиқ, кг'), ('<b>Внесено по мешкам, кг</b>' if ru else '<b>Қоплар бўйича сепилган, кг</b>')],
+            ['', '', '', '', '', '']]
+    f.append(TBL(rows, [28, 24, 28, 30, 32, 33], font=8.5))
+    f.append(SMALL(('Мешки пересчитываются в присутствии обеих сторон до начала и после окончания работы. Внесено = принято − возвращено − остаток.' if ru else
+                    'Қоплар иш бошланишидан олдин ва тугагандан кейин икки тараф иштирокида саналади. Сепилган = қабул қилинган − қайтарилган − қолдиқ.')))
+    f.append(H2('4. Приёмка препарата от заказчика (опрыскивание)' if ru else '4. Буюртмачидан препаратни қабул қилиш (пуркаш)'))
+    rows = [[('Препарат' if ru else 'Препарат'), ('Принято, л (кг)' if ru else 'Қабул қилинган, л (кг)'), ('Возвращено, л (кг)' if ru else 'Қайтарилган, л (кг)'),
+             ('Израсходовано, л (кг)' if ru else 'Сарфланган, л (кг)'), ('Воды, л' if ru else 'Сув, л'), ('Раствора всего, л' if ru else 'Жами эритма, л')],
+            ['', '', '', '', '', '']]
+    f.append(TBL(rows, [40, 27, 27, 29, 24, 28], font=8.5))
+    f.append(H2('5. Данные дрона (заполняет оператор по журналу полётов)' if ru else '5. Дрон маълумотлари (оператор парвоз журнали бўйича тўлдиради)'))
+    rows = [[('Начало работы (время)' if ru else 'Иш бошланган вақт'), ''],
+            [('Окончание работы (время)' if ru else 'Иш тугаган вақт'), ''],
+            [('Вылетов, шт' if ru else 'Парвозлар, дона'), ''],
+            [('Внесено по датчику дрона, кг (раствора, л)' if ru else 'Дрон датчиги бўйича сепилган, кг (эритма, л)'), ''],
+            [('Обработано по карте вылетов, га' if ru else 'Парвоз харитаси бўйича ишлов берилган, га'), ''],
+            [('Фактическая норма, кг/га (л/га)' if ru else 'Амалдаги меъёр, кг/га (л/га)'), ''],
+            [('Погода: температура, °C; ветер, м/с' if ru else 'Об-ҳаво: ҳарорат, °C; шамол, м/с'), ''],
+            [('Перерывы и их причины' if ru else 'Танаффуслар ва сабаблари'), '']]
+    f.append(TBL(rows, [75, 100], header=False, font=9.5))
+    f.append(H2('6. Сверка' if ru else '6. Солиштириш'))
+    rows = [[('Показатель' if ru else 'Кўрсаткич'), ('По акту (мешки / площадь по документам)' if ru else 'Далолатнома бўйича (қоплар / ҳужжатдаги майдон)'), ('По дрону' if ru else 'Дрон бўйича'), ('Расхождение, %' if ru else 'Фарқ, %')],
+            [('Внесено, кг (раствора, л)' if ru else 'Сепилган, кг (эритма, л)'), '', '', ''],
+            [('Обработано, га' if ru else 'Ишлов берилган, га'), '', '', '']]
+    f.append(TBL(rows, [50, 55, 40, 30]))
+    f.append(SMALL(('Допустимо: по килограммам до 5 %, по гектарам до 10 %. Больше — разбор в конторе до оплаты.' if ru else
+                    'Йўл қўйилади: килограмм бўйича 5 % гача, гектар бўйича 10 % гача. Ундан кўп бўлса — тўловдан олдин идорада кўриб чиқилади.')))
+    f.append(H2('7. Качество и замечания' if ru else '7. Сифат ва эътирозлар'))
+    f.append(P(('Работа выполнена по всей площади: ☐ да   ☐ нет — где нет: ______________________________________<br/>'
+                'Претензии заказчика: ☐ нет   ☐ есть: __________________________________________________________') if ru else
+               ('Иш бутун майдонда бажарилди: ☐ ҳа   ☐ йўқ — қаерда йўқ: ______________________________________<br/>'
+                'Буюртмачи эътирозлари: ☐ йўқ   ☐ бор: __________________________________________________________')))
+    f.append(H2('8. К оплате' if ru else '8. Тўловга'))
+    rows = [[('Разбрасывание' if ru else 'Сепиш'), ('________ т × ____________ сум/т = ____________________ сум' if ru else '________ т × ____________ сўм/т = ____________________ сўм')],
+            [('Опрыскивание' if ru else 'Пуркаш'), ('________ га × ____________ сум/га = ____________________ сум' if ru else '________ га × ____________ сўм/га = ____________________ сўм')],
+            [('Форма оплаты' if ru else 'Тўлов шакли'), ('☐ наличные   ☐ перечисление   ☐ справка' if ru else '☐ нақд   ☐ ўтказма   ☐ маълумотнома')]]
+    f.append(TBL(rows, [40, 135], header=False, font=9.5))
+    f.append(H2('9. Подписи' if ru else '9. Имзолар'))
+    rows = [[('Исполнитель (оператор)' if ru else 'Ижрочи (оператор)'), ('Заказчик' if ru else 'Буюртмачи')],
+            [('ФИО: ______________________________' if ru else 'Ф.И.Ш.: ______________________________'), ('ФИО: ______________________________' if ru else 'Ф.И.Ш.: ______________________________')],
+            [('Подпись: ___________________________' if ru else 'Имзо: ___________________________'), ('Подпись: ______________________ М.П.' if ru else 'Имзо: ______________________ М.Ў.')],
+            [('Дата: ______________________________' if ru else 'Сана: ______________________________'), ('Дата: ______________________________' if ru else 'Сана: ______________________________')]]
+    f.append(TBL(rows, [87, 88], font=9.5))
+    f.append(H2('10. Отметка конторы (заполняет диспетчер)' if ru else '10. Идора белгиси (диспетчер тўлдиради)'))
+    rows = [[('Данные дрона получены в программе учёта' if ru else 'Дрон маълумотлари ҳисоб дастурида олинди'), ('☐ да   ☐ нет' if ru else '☐ ҳа   ☐ йўқ')],
+            [('Расхождение по килограммам, %' if ru else 'Килограмм бўйича фарқ, %'), ''],
+            [('Расхождение по гектарам, %' if ru else 'Гектар бўйича фарқ, %'), ''],
+            [('Итог' if ru else 'Хулоса'), ('☐ в норме   ☐ требует разбора' if ru else '☐ меъёрда   ☐ кўриб чиқиш керак')],
+            [('Диспетчер (ФИО, подпись, дата)' if ru else 'Диспетчер (Ф.И.Ш., имзо, сана)'), '']]
+    f.append(TBL(rows, [75, 100], header=False, font=9.5))
+    f.append(SP(2))
+    f.append(SMALL(('Акт составляется в двух экземплярах: один — заказчику, один — в контору исполнителя в день выполнения работы. Без акта работа к оплате оператору не принимается.' if ru else
+                    'Далолатнома икки нусхада тузилади: бири — буюртмачига, бири — иш бажарилган куни ижрочи идорасига. Далолатномасиз иш операторга тўловга қабул қилинмайди.')))
+    return f
+
+
+DOCS = [('calc_detailed', calc_detailed), ('calc_short', calc_short), ('kp', kp), ('gov_brief', gov_brief), ('act', act)]
+
+
+# ---------------------------------------------------------------------------
+# Рисовальщик 1: PDF (reportlab)
+# ---------------------------------------------------------------------------
+_BASE = ParagraphStyle('base', fontName='DejaVuSans', fontSize=10, leading=14, alignment=TA_LEFT)
+_SMALL = ParagraphStyle('small', parent=_BASE, fontSize=8.5, leading=11.5, textColor=colors.HexColor('#444444'))
+_H1 = ParagraphStyle('h1', parent=_BASE, fontName='DejaVuSans-Bold', fontSize=16, leading=20, spaceAfter=4 * mm)
+_H2 = ParagraphStyle('h2', parent=_BASE, fontName='DejaVuSans-Bold', fontSize=12, leading=16, spaceBefore=4 * mm, spaceAfter=2 * mm)
+_BIG = ParagraphStyle('big', parent=_BASE, fontName='DejaVuSans-Bold', fontSize=13, leading=18)
+
+
+def _cell_style(size, bold):
+    return ParagraphStyle('c%s%s' % (size, bold), parent=_BASE, fontName='DejaVuSans-Bold' if bold else 'DejaVuSans', fontSize=size, leading=size * 1.33)
+
+
+def _pdf_table(rows, widths_mm, opts):
+    header, bold_last, size = opts['header'], opts['bold_last'], opts['font']
+    data = []
+    for i, row in enumerate(rows):
+        bold = (header and i == 0) or (bold_last and i == len(rows) - 1)
+        data.append([Paragraph(str(c), _cell_style(size, bold)) for c in row])
+    t = Table(data, colWidths=[w * mm for w in widths_mm], repeatRows=1 if header else 0)
+    ts = [('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#999999')),
+          ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+          ('LEFTPADDING', (0, 0), (-1, -1), 4), ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+          ('TOPPADDING', (0, 0), (-1, -1), 3), ('BOTTOMPADDING', (0, 0), (-1, -1), 3)]
+    if header:
+        ts.append(('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#E8EEF7')))
+    if bold_last:
+        ts.append(('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#F3F3F3')))
+    t.setStyle(TableStyle(ts))
+    return t
+
+
+def render_pdf(blocks, path, title):
+    flow = []
+    for blk in blocks:
+        kind = blk[0]
+        if kind == 'h1':
+            flow.append(Paragraph(blk[1], _H1))
+        elif kind == 'h2':
+            flow.append(Paragraph(blk[1], _H2))
+        elif kind == 'p':
+            flow.append(Paragraph(blk[1], _BASE))
+        elif kind == 'small':
+            flow.append(Paragraph(blk[1], _SMALL))
+        elif kind == 'big':
+            flow.append(Paragraph(blk[1], _BIG))
+        elif kind == 'bullets':
+            flow.extend(Paragraph('•  ' + it, _BASE) for it in blk[1])
+        elif kind == 'table':
+            flow.append(_pdf_table(blk[1], blk[2], blk[3]))
+        elif kind == 'spacer':
+            flow.append(Spacer(1, blk[1] * mm))
+        elif kind == 'pagebreak':
+            flow.append(PageBreak())
+    doc = SimpleDocTemplate(path, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm, topMargin=16 * mm, bottomMargin=16 * mm,
+                            title=title, author='Buxoro Agroklaster')
+    doc.build(flow)
+
+
+# ---------------------------------------------------------------------------
+# Рисовальщик 2: Word (python-docx)
+# ---------------------------------------------------------------------------
+_MARKUP = re.compile(r'(<b>|</b>|<br/>)')
+
+
+def _docx_runs(paragraph, text, size_pt, bold_all=False, color=None, font_name='Arial'):
+    """Разбирает <b>..</b> и <br/> из текста блока в runs абзаца Word."""
+    from docx.shared import Pt, RGBColor
+    bold = bold_all
+    for piece in _MARKUP.split(text):
+        if piece == '<b>':
+            bold = True
+        elif piece == '</b>':
+            bold = bold_all
+        elif piece == '<br/>':
+            paragraph.add_run().add_break()
+        elif piece:
+            run = paragraph.add_run(piece)
+            run.bold = bold
+            run.font.size = Pt(size_pt)
+            run.font.name = font_name
+            if color:
+                run.font.color.rgb = RGBColor.from_string(color)
+
+
+def _docx_shade(cell, fill):
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    tc_pr = cell._tc.get_or_add_tcPr()
+    shd = OxmlElement('w:shd')
+    shd.set(qn('w:val'), 'clear')
+    shd.set(qn('w:color'), 'auto')
+    shd.set(qn('w:fill'), fill)
+    tc_pr.append(shd)
+
+
+def _docx_strip_theme_fonts(style, font_name):
+    from docx.oxml.ns import qn
+    style.font.name = font_name
+    rpr = style.element.get_or_add_rPr()
+    rfonts = rpr.find(qn('w:rFonts'))
+    if rfonts is not None:
+        for attr in ('w:asciiTheme', 'w:hAnsiTheme', 'w:eastAsiaTheme', 'w:cstheme'):
+            rfonts.attrib.pop(qn(attr), None)
+        rfonts.set(qn('w:eastAsia'), font_name)
+        rfonts.set(qn('w:cs'), font_name)
+
+
+def render_docx(blocks, path, title):
+    from docx import Document
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from docx.shared import Mm, Pt, RGBColor
+
+    doc = Document()
+    doc.core_properties.title = title
+    doc.core_properties.author = 'Buxoro Agroklaster'
+    sec = doc.sections[0]
+    sec.page_width, sec.page_height = Mm(210), Mm(297)
+    sec.left_margin = sec.right_margin = Mm(18)
+    sec.top_margin = sec.bottom_margin = Mm(16)
+    normal = doc.styles['Normal']
+    _docx_strip_theme_fonts(normal, 'Arial')
+    normal.font.size = Pt(10.5)
+    normal.paragraph_format.space_after = Pt(4)
+    for name, size in (('Heading 1', 15), ('Heading 2', 12), ('List Bullet', 10.5)):
+        st = doc.styles[name]
+        _docx_strip_theme_fonts(st, 'Arial')
+        st.font.size = Pt(size)
+        st.font.color.rgb = RGBColor(0, 0, 0)
+        if name.startswith('Heading'):
+            st.font.bold = True
+    doc.styles['Heading 1'].paragraph_format.space_before = Pt(6)
+    doc.styles['Heading 1'].paragraph_format.space_after = Pt(8)
+    doc.styles['Heading 2'].paragraph_format.space_before = Pt(10)
+    doc.styles['Heading 2'].paragraph_format.space_after = Pt(4)
+
+    for blk in blocks:
+        kind = blk[0]
+        if kind in ('h1', 'h2'):
+            para = doc.add_paragraph(style='Heading 1' if kind == 'h1' else 'Heading 2')
+            _docx_runs(para, blk[1], 15 if kind == 'h1' else 12, bold_all=True, color='000000')
+        elif kind == 'p':
+            _docx_runs(doc.add_paragraph(), blk[1], 10.5)
+        elif kind == 'small':
+            _docx_runs(doc.add_paragraph(), blk[1], 8.5, color='444444')
+        elif kind == 'big':
+            _docx_runs(doc.add_paragraph(), blk[1], 13, bold_all=True)
+        elif kind == 'bullets':
+            for it in blk[1]:
+                _docx_runs(doc.add_paragraph(style='List Bullet'), it, 10.5)
+        elif kind == 'table':
+            rows, widths_mm, opts = blk[1], blk[2], blk[3]
+            table = doc.add_table(rows=len(rows), cols=len(widths_mm))
+            table.style = 'Table Grid'
+            table.alignment = WD_TABLE_ALIGNMENT.LEFT
+            table.autofit = False
+            for j, w in enumerate(widths_mm):
+                table.columns[j].width = Mm(w)
+            for i, row in enumerate(rows):
+                is_header = opts['header'] and i == 0
+                is_last = opts['bold_last'] and i == len(rows) - 1
+                if is_header:
+                    tr_pr = table.rows[i]._tr.get_or_add_trPr()
+                    el = OxmlElement('w:tblHeader')
+                    el.set(qn('w:val'), 'true')
+                    tr_pr.append(el)
+                for j, text in enumerate(row):
+                    cell = table.cell(i, j)
+                    cell.width = Mm(widths_mm[j])
+                    para = cell.paragraphs[0]
+                    para.paragraph_format.space_after = Pt(0)
+                    _docx_runs(para, str(text), opts['font'], bold_all=is_header or is_last)
+                    if is_header:
+                        _docx_shade(cell, 'E8EEF7')
+                    elif is_last:
+                        _docx_shade(cell, 'F3F3F3')
+            doc.add_paragraph().paragraph_format.space_after = Pt(2)
+        elif kind == 'spacer':
+            doc.add_paragraph().paragraph_format.space_after = Pt(blk[1] * 2)
+        elif kind == 'pagebreak':
+            doc.add_page_break()
+    doc.save(path)
+
+
+# ---------------------------------------------------------------------------
 # Печать и проверка
 # ---------------------------------------------------------------------------
-DOCS = [('calc_detailed', calc_detailed), ('calc_short', calc_short), ('kp', kp), ('gov_brief', gov_brief)]
+TITLES = {'calc_detailed': ('Подробная калькуляция', 'Батафсил ҳисоб-китоб'),
+          'calc_short': ('Краткая калькуляция', 'Қисқача ҳисоб-китоб'),
+          'kp': ('Коммерческое предложение', 'Тижорий таклиф'),
+          'gov_brief': ('Справка по госпрограммам', 'Давлат дастурлари бўйича маълумотнома'),
+          'act': ('Акт выполненных работ', 'Бажарилган ишлар далолатномаси')}
 
 
 def build_all():
-    os.makedirs(OUT_DIR, exist_ok=True)
+    os.makedirs(PDF_DIR, exist_ok=True)
+    os.makedirs(DOCX_DIR, exist_ok=True)
     n = numbers()
-    written = []
+    pdfs, docxs = [], []
     for name, fn in DOCS:
-        for lang in ('ru', 'uz'):
-            path = os.path.join(OUT_DIR, '%s_%s.pdf' % (name, lang))
-            doc = SimpleDocTemplate(path, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm,
-                                    topMargin=16 * mm, bottomMargin=16 * mm,
-                                    title='%s_%s' % (name, lang), author='Buxoro Agroklaster')
-            doc.build(fn(lang, n))
-            written.append(path)
-    return written
+        for li, lang in enumerate(('ru', 'uz')):
+            blocks = fn(lang, n)
+            title = TITLES[name][li]
+            pdf_path = os.path.join(PDF_DIR, '%s_%s.pdf' % (name, lang))
+            docx_path = os.path.join(DOCX_DIR, '%s_%s.docx' % (name, lang))
+            render_pdf(blocks, pdf_path, title)
+            render_docx(blocks, docx_path, title)
+            pdfs.append(pdf_path)
+            docxs.append(docx_path)
+    return pdfs, docxs
 
 
-def verify(paths):
+def verify_pdfs(paths):
     try:
         from pypdf import PdfReader
     except Exception:
-        print('VERIFY: pypdf not available, skipped')
+        print('VERIFY PDF: pypdf not available, skipped')
         return 0
     bad = 0
     for path in paths:
@@ -622,19 +925,37 @@ def verify(paths):
         text = ''.join((pg.extract_text() or '') for pg in reader.pages)
         uz = path.endswith('_uz.pdf')
         glyphs_ok = (not uz) or all(ch in text for ch in 'ўғқҳ')
-        # слово «сум/сўм» обязано быть в калькуляциях и КП; справка по программам считает в долларах
         needs_sum = not os.path.basename(path).startswith('gov_brief')
         sum_ok = (not needs_sum) or (('сўм' in text) if uz else ('сум' in text))
         ok = emb and glyphs_ok and sum_ok and len(reader.pages) >= 1
         bad += 0 if ok else 1
         print('%s: pages=%d fonts_embedded=%s uz_glyphs=%s text=%d chars %s' % (
             os.path.basename(path), len(reader.pages), emb, glyphs_ok, len(text), 'OK' if ok else 'FAIL'))
-    print('VERIFY: %d file(s), %d failed' % (len(paths), bad))
+    print('VERIFY PDF: %d file(s), %d failed' % (len(paths), bad))
+    return 1 if bad else 0
+
+
+def verify_docx(paths):
+    from docx import Document
+    bad = 0
+    for path in paths:
+        doc = Document(path)
+        text = '\n'.join(p.text for p in doc.paragraphs)
+        for t in doc.tables:
+            for row in t.rows:
+                text += '\n' + ' '.join(c.text for c in row.cells)
+        uz = path.endswith('_uz.docx')
+        glyphs_ok = (not uz) or all(ch in text for ch in 'ўғқҳ')
+        ok = glyphs_ok and len(doc.paragraphs) > 5 and len(doc.tables) >= 1
+        bad += 0 if ok else 1
+        print('%s: paragraphs=%d tables=%d uz_glyphs=%s %s' % (os.path.basename(path), len(doc.paragraphs), len(doc.tables), glyphs_ok, 'OK' if ok else 'FAIL'))
+    print('VERIFY DOCX: %d file(s), %d failed' % (len(paths), bad))
     return 1 if bad else 0
 
 
 if __name__ == '__main__':
-    files = build_all()
-    for f_ in files:
+    pdfs, docxs = build_all()
+    for f_ in pdfs + docxs:
         print('written: %s' % f_)
-    sys.exit(verify(files))
+    rc = verify_pdfs(pdfs) | verify_docx(docxs)
+    sys.exit(rc)

@@ -325,6 +325,21 @@ def compute_farmer(p, base):
     return r
 
 
+def compute_tariff_table(p, scen, season):
+    """Прибыль с тонны и за сезон при разных тарифах (лист «Тариф для КП», строки 20-23)."""
+    out = []
+    for tariff in (1600000, 1800000, 2000000, 2200000):
+        cost_t = scen['c1_per_kg'] * 1000.0
+        overhead = tariff * p['overhead_pct']
+        profit = tariff - cost_t - overhead
+        season_profit = profit * scen['t_per_day'] * p['days_per_season'] * p['drones_in_winter']
+        out.append({'tariff': tariff, 'cost_t': cost_t, 'overhead': overhead, 'profit': profit,
+                    'margin': profit / tariff, 'price_ha_200': tariff * 0.2,
+                    'ratio_ground': tariff * 0.2 / p['ground_spread_cost_ha'],
+                    'season_profit': season_profit, 'after_one_time': season_profit - season['s_one_time']})
+    return out
+
+
 def compute_season(p, scen):
     r = {}
     r['s_ha_per_drone'] = scen['ha_per_day'] * p['days_per_season']
@@ -734,6 +749,32 @@ def build_workbook(p):
         wk.cell(row=r, column=1, value=rate)
         wk.cell(row=r, column=2, value='=$C$3*A%d/1000' % r).number_format = '#,##0'
         wk.cell(row=r, column=3, value='=B%d/liquid_tariff_external' % r).number_format = '0.00'
+    # Сравнение тарифов: что даёт тонна и сезон при разных ценах
+    wk.cell(row=18, column=1, value='ЧТО ДАЁТ ТАРИФ: прибыль с тонны и за сезон (база 250 кг/га, 5 бортов)').font = HDR
+    heads = ['Тариф, сум/т', 'Себестоимость тонны', 'Накладные 10 %', 'Прибыль с тонны', 'Маржа, %',
+             'Цена гектара при 200 кг/га', 'К наземной альтернативе, раз', 'Прибыль за сезон до разовых', 'После разовых расходов']
+    for cc, h in enumerate(heads, start=1):
+        wk.cell(row=19, column=cc, value=h).font = HDR
+    c1_ref = "'%s'!%s%d" % (SHEET_CALC, col250, rows_index['c1_per_kg'])
+    tpd_ref = "'%s'!%s%d" % (SHEET_CALC, col250, rows_index['t_per_day'])
+    one_time_ref = "'%s'!D%d" % (SHEET_SEASON, s_index['s_one_time'])
+    for i, tariff in enumerate((1600000, 1800000, 2000000, 2200000)):
+        r = 20 + i
+        wk.cell(row=r, column=1, value=tariff).number_format = '#,##0'
+        wk.cell(row=r, column=1).fill = INPUT_FILL
+        wk.cell(row=r, column=2, value='=%s*1000' % c1_ref).number_format = '#,##0'
+        wk.cell(row=r, column=3, value='=A%d*overhead_pct' % r).number_format = '#,##0'
+        wk.cell(row=r, column=4, value='=A%d-B%d-C%d' % (r, r, r)).number_format = '#,##0'
+        wk.cell(row=r, column=5, value='=D%d/A%d' % (r, r)).number_format = '0.0%'
+        wk.cell(row=r, column=6, value='=A%d*200/1000' % r).number_format = '#,##0'
+        wk.cell(row=r, column=7, value='=F%d/ground_spread_cost_ha' % r).number_format = '0.0'
+        wk.cell(row=r, column=8, value='=D%d*%s*days_per_season*drones_in_winter' % (r, tpd_ref)).number_format = '#,##0'
+        wk.cell(row=r, column=9, value='=H%d-%s' % (r, one_time_ref)).number_format = '#,##0'
+    wk.cell(row=25, column=1, value='Чтение: 1 778 сум/кг -- это расчётная цена, а не себестоимость; себестоимость 1 155. '
+            'При 1 800 000 за тонну прибыль после накладных ~465 сум/кг (26 %). Поднятие тарифа увеличивает прибыль почти один к одному, '
+            'но цена гектара уходит от наземной альтернативы (ДОГАДКА 100 000 сум/га) всё дальше.').alignment = WRAP
+    for cl, w in (('D', 18), ('E', 10), ('F', 20), ('G', 20), ('H', 24), ('I', 22)):
+        wk.column_dimensions[cl].width = w
     wk.cell(row=16, column=1, value='Почему один тариф «за тонну»: при нормах выше ~120 кг/га скорость над полем задаёт подача гранул '
             '(норматив: 8-11 км/ч при 7 м), и время над гектаром растёт пропорционально норме, как и число вылетов. '
             'Себестоимость гектара пропорциональна килограммам -- строка C0 на листе «Расчёт» равна нулю, '
@@ -834,6 +875,20 @@ def verify(path, p, scenarios, rows_index, s_index, l_index, f_index):
         if not isinstance(got, (int, float)) or abs(got - val) > tol * max(1.0, abs(val)):
             mismatches += 1
             errors.append('farmer %s: excel=%r python=%r' % (key, got, val))
+    # Тариф для КП: сравнение тарифов
+    wk = wb[SHEET_KP]
+    base_scen = compute(p, scenarios[3][1], scenarios[3][2])
+    season_base = compute_season(p, base_scen)
+    cols = {'tariff': 1, 'cost_t': 2, 'overhead': 3, 'profit': 4, 'margin': 5, 'price_ha_200': 6,
+            'ratio_ground': 7, 'season_profit': 8, 'after_one_time': 9}
+    for i, exp in enumerate(compute_tariff_table(p, base_scen, season_base)):
+        for key, col in cols.items():
+            got = wk.cell(row=20 + i, column=col).value
+            val = exp[key]
+            checked += 1
+            if not isinstance(got, (int, float)) or abs(got - val) > tol * max(1.0, abs(val)):
+                mismatches += 1
+                errors.append('tariff[%d] %s: excel=%r python=%r' % (i, key, got, val))
     # Ошибки формул в любой ячейке
     for ws in wb.worksheets:
         for row in ws.iter_rows():
