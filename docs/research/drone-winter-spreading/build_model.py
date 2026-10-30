@@ -47,10 +47,10 @@ PARAMS = [
     ('', 'ТЕХНИКА И ФИЗИКА ПОЛЁТА', None, '', '', ''),
     ('payload_kg', 'Полезная нагрузка за вылет', 45, 'кг', 'ОЦЕНКА',
      'Владелец: 40-50 кг. Паспорт DJI: бак 70 л, до 50 кг.'),
-    ('swath_eff_m', 'Эффективная ширина захвата', 6.0, 'м', 'ДОГАДКА',
-     'Паспорт DJI: 7 м. Минус перекрытие проходов и кромки.'),
-    ('speed_ms', 'Рабочая скорость над полем', 6.0, 'м/с', 'ОЦЕНКА',
-     'Тестовые параметры DJI для 1,5 т/ч: 7 м/с, высота 3 м.'),
+    ('swath_eff_m', 'Ширина захвата (шаг проходов)', 7.0, 'м', 'ФАКТ',
+     'Нормативная таблица владельца (30.10.2026): ширина разбрасывания 7 м, высота 3 м.'),
+    ('speed_ms', 'Предельная скорость над полем', 6.0, 'м/с', 'ОЦЕНКА',
+     'Фактическая скорость задаётся подачей гранул (см. flow_kg_min); норматив опрыскивания 22-36 км/ч. Для гранул 6 м/с = 21,6 км/ч -- потолок.'),
     ('overhead_min', 'Накладное время вылета (взлёт, подлёт, посадка)', 1.5, 'мин', 'ДОГАДКА',
      'Станция у кромки поля, подлёт до 300 м. Проверить пилотом.'),
     ('reload_min', 'Загрузка бака и смена батареи', 1.5, 'мин', 'ДОГАДКА',
@@ -59,8 +59,8 @@ PARAMS = [
      'Сентябрь: ~7 000 га / 15 бортов / ~25 дней при 1,0-1,25 га за вылет -> ~3 ч чистого налёта в день.'),
     ('days_per_season', 'Рабочих дней за зимний сезон на борт', 30, 'дн', 'ДОГАДКА',
      'Окно подкормки ~1.02-20.03 (48 дней) минус выходные и погода.'),
-    ('max_flow_kg_min', 'Максимальная подача разбрасывателя', 90, 'кг/мин', 'ОЦЕНКА',
-     'Данные ритейлеров DJI; тест DJI 149 кг/га при 17,6 га/ч = 44 кг/мин.'),
+    ('flow_kg_min', 'Рабочая подача гранул разбрасывателем', 30, 'кг/мин', 'ОЦЕНКА',
+     'Из нормативной таблицы: карбамид/аммофос 200 кг/га при 11 км/ч и 7 м = 26 кг/мин; селитра 400 кг/га при 8 км/ч = 37 кг/мин. Тест DJI 149 кг/га при 7 м/с = 44. Ритейлеры пишут до 90 -- для крупных гранул.'),
     ('cycle_equiv_min', 'Минут полёта на один полный цикл батареи', 9.0, 'мин', 'ОЦЕНКА',
      'DJI: висение 6 мин при 101 кг (полный бак), 18 мин при 50 кг (пустой); вес падает по ходу вылета.'),
     ('max_flight_min', 'Предельная длительность вылета при лёгкой загрузке', 10.0, 'мин', 'ОЦЕНКА',
@@ -144,7 +144,12 @@ MULTS = [
     ('m_days', 'рабочих дней в сезоне', 'days_per_season'),
     ('m_swath', 'ширина захвата', 'swath_eff_m'),
     ('m_speed', 'скорость', 'speed_ms'),
+    ('m_flow', 'подача гранул', 'flow_kg_min'),
 ]
+
+# Входы, по которым строится лист «Чувствительность» (все при 250 кг/га).
+SENSITIVITY_KEYS = ['m_eff', 'm_reload', 'm_overhead', 'm_payload', 'm_flow', 'm_batt', 'm_pilot',
+                    'm_petrol', 'm_cycles', 'm_days']
 
 
 def base_scenarios():
@@ -159,12 +164,15 @@ def base_scenarios():
         ('Маржинальный 250 (пилот на окладе)', 250, {'m_pilot': 0.4}),
         ('Пессимистичный 150', 150, {'m_eff': 2.0 / 3.0, 'm_reload': 2.0, 'm_overhead': 4.0 / 3.0, 'm_payload': 40.0 / 45.0}),
         ('Оптимистичный 150', 150, {'m_eff': 1.5, 'm_reload': 2.0 / 3.0, 'm_overhead': 0.8, 'm_payload': 50.0 / 45.0}),
+        ('Норматив: селитра 400 кг/га', 400, {}),
         ('Аэросев саксаула 4 кг/га (бак ~12 кг по объёму)', 4, {'m_payload': 12.0 / 45.0}),
         ('Сев люцерны 15 кг/га', 15, {}),
         ('Подсев озимых 60 кг/га', 60, {}),
     ]
     # Чувствительность при 250 кг/га: по одному параметру, -20% / +20% (нагрузка -10/+10%).
-    for key, label, _param in MULTS[:9]:
+    labels = {k: l for k, l, _p in MULTS}
+    for key in SENSITIVITY_KEYS:
+        label = labels[key]
         lo, hi = (0.9, 1.1) if key == 'm_payload' else (0.8, 1.2)
         sc.append(('Чувств. 250: %s x%.2f' % (label, lo), 250, {key: lo}))
         sc.append(('Чувств. 250: %s x%.2f' % (label, hi), 250, {key: hi}))
@@ -192,11 +200,18 @@ def compute(p, rate, mults):
     days = p['days_per_season'] * m['m_days']
     swath = p['swath_eff_m'] * m['m_swath']
     speed = p['speed_ms'] * m['m_speed']
+    flow = p['flow_kg_min'] * m['m_flow']
     usd = p['usd_rate']
 
     r = {}
     r['ha_per_load_weight'] = payload / rate
-    r['spread_min_per_ha'] = 10000.0 / (swath * speed) / 60.0
+    # [REASON]: скорость над полем задаёт не мотор, а подача гранул: при 250 кг/га
+    # и 7 м разбрасыватель на 30 кг/мин пропускает только 2,9 м/с (норматив
+    # владельца: 8-11 км/ч). Выше ~120 кг/га время над гектаром растёт
+    # пропорционально норме, и себестоимость становится почти чисто «за тонну».
+    r['speed_eff'] = min(speed, flow * 10000.0 / (rate * swath * 60.0))
+    r['flow_limited'] = r['speed_eff'] < speed - 1e-12
+    r['spread_min_per_ha'] = 10000.0 / (swath * r['speed_eff']) / 60.0
     # [REASON]: при лёгких нормах (семена) 45 кг хватило бы на 15-20 минут
     # разбрасывания, но батареи столько не держат: вылет режется по
     # max_flight_min, и гектаров за вылет становится меньше, чем вмещает бак.
@@ -213,7 +228,7 @@ def compute(p, rate, mults):
     r['ha_per_day'] = r['ha_per_hour'] * eff_hours
     r['flights_per_day'] = r['flights_per_hour'] * eff_hours
     r['t_per_day'] = r['kg_per_hour'] * eff_hours / 1000.0
-    r['required_flow'] = r['kg_per_flight'] / r['spread_min_per_flight']
+    r['actual_flow'] = r['kg_per_flight'] / r['spread_min_per_flight']
     r['batt_fraction'] = r['flight_min'] / p['cycle_equiv_min']
     r['charges_per_day'] = r['flights_per_day'] * r['batt_fraction']
 
@@ -251,8 +266,14 @@ def compute(p, rate, mults):
                                    + p['battery_kwh'] / p['charge_eff'] * p['gen_l_per_kwh'] * petrol)
                                   / p['cycle_equiv_min']
                                   + p['drone_wear_usd_h'] * usd / 60.0 * (1 + p['fert_wear_premium']))
-    r['c0_per_ha'] = r['spread_min_per_ha'] * (r['fixed_per_min'] + r['energy_per_flight_min'])
-    r['c1_per_kg'] = ((overhead + reload) * r['fixed_per_min'] + overhead * r['energy_per_flight_min']) / payload
+    if r['flow_limited']:
+        # время над гектаром = норма / подача -> постоянной части нет, всё «за килограмм»
+        r['c0_per_ha'] = 0.0
+        r['c1_per_kg'] = (r['fixed_per_min'] * (1.0 / flow + (overhead + reload) / payload)
+                          + r['energy_per_flight_min'] * (1.0 / flow + overhead / payload))
+    else:
+        r['c0_per_ha'] = r['spread_min_per_ha'] * (r['fixed_per_min'] + r['energy_per_flight_min'])
+        r['c1_per_kg'] = ((overhead + reload) * r['fixed_per_min'] + overhead * r['energy_per_flight_min']) / payload
     r['linearity_check'] = r['c0_per_ha'] + r['c1_per_kg'] * rate - r['direct_cost_per_ha']
     r['tariff_base_per_ha'] = r['c0_per_ha'] / (1 - oh - mg)
     r['tariff_per_kg'] = r['c1_per_kg'] / (1 - oh - mg)
@@ -288,7 +309,8 @@ def compute_farmer(p, base):
     r = {}
     r['f_rate'] = rate
     r['f_fert_cost'] = rate / 1000.0 * p['nitrate_price_t']
-    r['f_service'] = base['tariff_base_per_ha'] + base['tariff_per_kg'] * rate
+    kink = 10000.0 / (p['swath_eff_m'] * p['speed_ms']) / 60.0 * p['flow_kg_min']
+    r['f_service'] = max(base['tariff_per_ton'] * kink / 1000.0, base['tariff_per_ton'] * rate / 1000.0)
     r['f_total_drone'] = r['f_fert_cost'] + r['f_service']
     r['f_total_ground'] = r['f_fert_cost'] + p['ground_spread_cost_ha']
     r['f_premium'] = r['f_service'] - p['ground_spread_cost_ha']
@@ -345,6 +367,7 @@ CALC_ROWS = [
     ('m_days', 'Множитель: рабочих дней в сезоне', 'x', None),
     ('m_swath', 'Множитель: ширина захвата', 'x', None),
     ('m_speed', 'Множитель: скорость', 'x', None),
+    ('m_flow', 'Множитель: подача гранул', 'x', None),
     ('__sec1', 'ДЕЙСТВУЮЩИЕ ВХОДЫ СЦЕНАРИЯ', '', None),
     ('payload', 'Полезная нагрузка', 'кг', '=payload_kg*{c}{r:m_payload}'),
     ('eff_hours', 'Эффективное лётное время', 'ч/день', '=eff_hours_per_day*{c}{r:m_eff}'),
@@ -356,10 +379,13 @@ CALC_ROWS = [
     ('cycles', 'Ресурс батареи', 'циклов', '=battery_cycles*{c}{r:m_cycles}'),
     ('days', 'Рабочих дней в сезоне', 'дн', '=days_per_season*{c}{r:m_days}'),
     ('swath', 'Ширина захвата', 'м', '=swath_eff_m*{c}{r:m_swath}'),
-    ('speed', 'Скорость', 'м/с', '=speed_ms*{c}{r:m_speed}'),
+    ('speed', 'Предельная скорость', 'м/с', '=speed_ms*{c}{r:m_speed}'),
+    ('flow', 'Рабочая подача гранул', 'кг/мин', '=flow_kg_min*{c}{r:m_flow}'),
     ('__sec2', 'ПРОИЗВОДИТЕЛЬНОСТЬ', '', None),
     ('ha_per_load_weight', 'Гектаров на одну загрузку по весу бака', 'га', '={c}{r:payload}/{c}{r:rate}'),
-    ('spread_min_per_ha', 'Время разбрасывания на гектар (без накладных)', 'мин', '=10000/({c}{r:swath}*{c}{r:speed})/60'),
+    ('speed_eff', 'Скорость над полем (меньшее из предела и подачи)', 'м/с', '=MIN({c}{r:speed},{c}{r:flow}*10000/({c}{r:rate}*{c}{r:swath}*60))'),
+    ('limit_mode', 'Что ограничивает скорость', '', '=IF({c}{r:speed_eff}<{c}{r:speed}-0.000000000001,"подача гранул","предел скорости")'),
+    ('spread_min_per_ha', 'Время разбрасывания на гектар (без накладных)', 'мин', '=10000/({c}{r:swath}*{c}{r:speed_eff})/60'),
     ('spread_min_per_flight', 'Время разбрасывания за вылет (вес бака или предел батареи)', 'мин', '=MIN({c}{r:ha_per_load_weight}*{c}{r:spread_min_per_ha},max_flight_min-{c}{r:overhead})'),
     ('ha_per_flight', 'Гектаров за вылет', 'га', '={c}{r:spread_min_per_flight}/{c}{r:spread_min_per_ha}'),
     ('loads_per_ha', 'Вылетов на гектар', 'шт', '=1/{c}{r:ha_per_flight}'),
@@ -372,8 +398,7 @@ CALC_ROWS = [
     ('ha_per_day', 'Гектаров за рабочий день', 'га', '={c}{r:ha_per_hour}*{c}{r:eff_hours}'),
     ('flights_per_day', 'Вылетов за день', 'шт', '={c}{r:flights_per_hour}*{c}{r:eff_hours}'),
     ('t_per_day', 'Тонн за день', 'т', '={c}{r:kg_per_hour}*{c}{r:eff_hours}/1000'),
-    ('required_flow', 'Требуемая подача разбрасывателя', 'кг/мин', '={c}{r:kg_per_flight}/{c}{r:spread_min_per_flight}'),
-    ('flow_check', 'Подача в пределах паспорта?', '', '=IF({c}{r:required_flow}<=max_flow_kg_min,"да","НЕТ: снизить скорость")'),
+    ('actual_flow', 'Фактическая подача', 'кг/мин', '={c}{r:kg_per_flight}/{c}{r:spread_min_per_flight}'),
     ('batt_fraction', 'Доля цикла батареи за вылет', 'доля', '={c}{r:flight_min}/cycle_equiv_min'),
     ('charges_per_day', 'Полных зарядок батарей за день', 'шт', '={c}{r:flights_per_day}*{c}{r:batt_fraction}'),
     ('__sec3', 'ЗАТРАТЫ НА ОДИН ВЫЛЕТ', '', None),
@@ -403,9 +428,9 @@ CALC_ROWS = [
     ('__sec6', 'ДВУХСТАВОЧНЫЙ ТАРИФ: ГЕКТАР + ТОННА', '', None),
     ('fixed_per_min', 'Постоянные затраты на минуту лётного времени', 'сум/мин', '=({c}{r:crew_day}+{c}{r:spreader_per_day}+{c}{r:drone_dep_per_day})/({c}{r:eff_hours}*60)'),
     ('energy_per_flight_min', 'Батарея, бензин, износ на минуту полёта', 'сум/мин', '=({c}{r:batt_price}*usd_rate/{c}{r:cycles}+battery_kwh/charge_eff*gen_l_per_kwh*{c}{r:petrol})/cycle_equiv_min+drone_wear_usd_h*usd_rate/60*(1+fert_wear_premium)'),
-    ('c0_per_ha', 'Себестоимость: постоянная часть на гектар (C0)', 'сум/га', '={c}{r:spread_min_per_ha}*({c}{r:fixed_per_min}+{c}{r:energy_per_flight_min})'),
-    ('c1_per_kg', 'Себестоимость: переменная часть на килограмм (c1)', 'сум/кг', '=(({c}{r:overhead}+{c}{r:reload})*{c}{r:fixed_per_min}+{c}{r:overhead}*{c}{r:energy_per_flight_min})/{c}{r:payload}'),
-    ('linearity_check', 'Контроль: C0 + c1 x норма - прямая себестоимость (0, пока вылет ограничен весом бака, а не батареей)', 'сум', '={c}{r:c0_per_ha}+{c}{r:c1_per_kg}*{c}{r:rate}-{c}{r:direct_cost_per_ha}'),
+    ('c0_per_ha', 'Себестоимость: постоянная часть на гектар (C0; 0, если скорость режет подача)', 'сум/га', '=IF({c}{r:limit_mode}="подача гранул",0,{c}{r:spread_min_per_ha}*({c}{r:fixed_per_min}+{c}{r:energy_per_flight_min}))'),
+    ('c1_per_kg', 'Себестоимость: переменная часть на килограмм (c1)', 'сум/кг', '=IF({c}{r:limit_mode}="подача гранул",{c}{r:fixed_per_min}*(1/{c}{r:flow}+({c}{r:overhead}+{c}{r:reload})/{c}{r:payload})+{c}{r:energy_per_flight_min}*(1/{c}{r:flow}+{c}{r:overhead}/{c}{r:payload}),(({c}{r:overhead}+{c}{r:reload})*{c}{r:fixed_per_min}+{c}{r:overhead}*{c}{r:energy_per_flight_min})/{c}{r:payload})'),
+    ('linearity_check', 'Контроль: C0 + c1 x норма - прямая себестоимость (0, пока вылет ограничен весом бака или подачей, а не батареей)', 'сум', '={c}{r:c0_per_ha}+{c}{r:c1_per_kg}*{c}{r:rate}-{c}{r:direct_cost_per_ha}'),
     ('tariff_base_per_ha', 'ТАРИФ: ставка за гектар', 'сум/га', '={c}{r:c0_per_ha}/(1-overhead_pct-target_margin_pct)'),
     ('tariff_per_kg', 'ТАРИФ: ставка за килограмм удобрения', 'сум/кг', '={c}{r:c1_per_kg}/(1-overhead_pct-target_margin_pct)'),
     ('tariff_per_ton', 'ТАРИФ: ставка за тонну удобрения', 'сум/т', '={c}{r:tariff_per_kg}*1000'),
@@ -429,6 +454,8 @@ SOURCES = [
     ('ФАКТ', 'Курс ЦБ РУз 29.10.2026: 11 965-12 004 сум/USD', 'Kursiv.media, Repost.uz'),
     ('ФАКТ', 'Аммиачная селитра UZEX, авг. 2026: 3 813,2 -> 3 766,5 тыс. сум/т', 'Yuz.uz (биржевой обзор)'),
     ('ФАКТ', 'Внутренняя ставка опрыскивания 75 040-86 000 сум/га; внешняя 200 000 сум/га; 1,0-1,25 га за вылет; 27-41 л/га; сентябрь 2026 ~7 071 га RAW по 15 бортам', 'Репозиторий: docs/tracks/drones.md (DRONE-MONEY-001, DRONE-OCT2025-PRICE-001, UAT 30.09.2026)'),
+    ('ФАКТ', 'Нормативная таблица владельца (30.10.2026): опрыскивание 40 л/2 га при 36 км/ч, 6,5 м, 2 м или 20 л/2 га при 22 км/ч, 7 м, 3 м, 200 000 сум; разбрасывание 50 кг: карбамид/аммофос 0,25 га при 11 км/ч, селитра 0,125 га при 8 км/ч, ширина 7 м, высота 3 м', 'Файл владельца, лист «Лист1»'),
+    ('ФАКТ', 'Март 2026 -- первая работа сезона: 1 340 га, 11 бортов; в феврале работ не было', 'Владелец, 30.10.2026'),
     ('ФАКТ', 'Селитра -- наиболее коррозионно-активное удобрение; следы селитры ускоряют коррозию в 2,5 раза', 'РГАУ-МСХА, Агроинженерия 2026; Тамбов 2018'),
     ('ОЦЕНКА', 'Весенняя подкормка озимой пшеницы: Беларусь 120-200 кг/га селитры (оптимум 180); Украина 30-60 кг д.в./га; РФ 65-75 кг д.в./га первой подкормкой; Узбекистан (Хорезм) оптимум 120-180 кг N/га за сезон в зависимости от N почвы; фон N180P90K60 в Кашкадарье', 'Горки 2006-08; Зернові культури 2020; Новомосковск; UNESCO/ZEF Khorezm 2005-07; AGRIS Кашкадарья'),
     ('ОЦЕНКА', 'Первая весенняя подкормка в Узбекистане -- по талой почве аммиачной селитрой (Карши, 2025); три срока подкормок', 'vestnik.nauka.kz (аннотация)'),
@@ -642,12 +669,12 @@ def build_workbook(p):
     wcm.cell(row=r0, column=1, value='Чтение: прямая себестоимость опрыскивания по этой модели должна лечь рядом с внутренней '
              'ставкой 75-86 тыс. сум/га. Если нет -- входы блока «Люди и транспорт» завышены или занижены.').alignment = WRAP
     r1 = r0 + 2
-    wcm.cell(row=r1, column=1, value='СТОРОНА ФЕРМЕРА: селитра 200 кг/га, двухставочный тариф базы 250').font = HDR
+    wcm.cell(row=r1, column=1, value='СТОРОНА ФЕРМЕРА: селитра 200 кг/га, тариф «за тонну» базы 250').font = HDR
     farmer_rows = [
         ('f_rate', 'Норма внесения', 'кг/га', '=200'),
         ('f_fert_cost', 'Стоимость удобрения', 'сум/га', '={me}{r:f_rate}/1000*nitrate_price_t'),
-        ('f_service', 'Услуга дрона: ставка за га + ставка за кг x норма', 'сум/га',
-         "='%s'!%s%d+'%s'!%s%d*{me}{r:f_rate}" % (SHEET_CALC, col250, rows_index['tariff_base_per_ha'], SHEET_CALC, col250, rows_index['tariff_per_kg'])),
+        ('f_service', 'Услуга дрона: ставка за тонну x норма, не ниже минимума за гектар', 'сум/га',
+         "=MAX('%s'!%s%d*10000/(swath_eff_m*speed_ms)/60*flow_kg_min/1000,'%s'!%s%d*{me}{r:f_rate}/1000)" % (SHEET_CALC, col250, rows_index['tariff_per_ton'], SHEET_CALC, col250, rows_index['tariff_per_ton'])),
         ('f_total_drone', 'Итого подкормка дроном', 'сум/га', '={me}{r:f_fert_cost}+{me}{r:f_service}'),
         ('f_total_ground', 'Итого подкормка трактором/вручную', 'сум/га', '={me}{r:f_fert_cost}+ground_spread_cost_ha'),
         ('f_premium', 'Надбавка за дрон против наземной альтернативы', 'сум/га', '={me}{r:f_service}-ground_spread_cost_ha'),
@@ -678,29 +705,32 @@ def build_workbook(p):
 
     # ---- Тариф для КП ----
     wk = wb.create_sheet(SHEET_KP)
-    wk.append(['ТАРИФ ДЛЯ КП (из сценария «База 250», округление до 5 000 сум)', '', ''])
+    wk.append(['ТАРИФ ДЛЯ КП: ставка за тонну и минимум за гектар (из сценария «База 250», округление до 5 000 сум)', '', ''])
     wk.cell(row=1, column=1).font = HDR
-    wk.append(['Ставка за гектар (выезд, облёт поля)', 'сум/га',
-               "=ROUND('%s'!%s%d/5000,0)*5000" % (SHEET_CALC, col250, rows_index['tariff_base_per_ha'])])
     wk.append(['Ставка за тонну внесённого удобрения', 'сум/т',
                "=ROUND('%s'!%s%d/5000,0)*5000" % (SHEET_CALC, col250, rows_index['tariff_per_ton'])])
+    wk.append(['Норма, ниже которой скорость ограничивает не подача, а предел скорости', 'кг/га',
+               '=10000/(swath_eff_m*speed_ms)/60*flow_kg_min'])
+    wk.append(['Минимальная цена гектара (тариф за тонну x эта норма)', 'сум/га', '=ROUND($C$2*$C$3/1000/5000,0)*5000'])
     wk.cell(row=2, column=3).number_format = '#,##0'
-    wk.cell(row=3, column=3).number_format = '#,##0'
+    wk.cell(row=3, column=3).number_format = '0'
+    wk.cell(row=4, column=3).number_format = '#,##0'
     wk.cell(row=2, column=3).fill = KEY_FILL
-    wk.cell(row=3, column=3).fill = KEY_FILL
+    wk.cell(row=4, column=3).fill = KEY_FILL
     wk.append([])
     wk.append(['Норма, кг/га', 'Цена для фермера, сум/га', 'К тарифу опрыскивания, раз'])
-    wk.cell(row=5, column=1).font = HDR
-    wk.cell(row=5, column=2).font = HDR
-    wk.cell(row=5, column=3).font = HDR
-    for i, rate in enumerate((100, 150, 200, 250, 300)):
-        r = 6 + i
+    wk.cell(row=6, column=1).font = HDR
+    wk.cell(row=6, column=2).font = HDR
+    wk.cell(row=6, column=3).font = HDR
+    for i, rate in enumerate((100, 150, 200, 250, 300, 400)):
+        r = 7 + i
         wk.cell(row=r, column=1, value=rate)
-        wk.cell(row=r, column=2, value='=$C$2+$C$3*A%d/1000' % r).number_format = '#,##0'
+        wk.cell(row=r, column=2, value='=MAX($C$4,$C$2*A%d/1000)' % r).number_format = '#,##0'
         wk.cell(row=r, column=3, value='=B%d/liquid_tariff_external' % r).number_format = '0.00'
-    wk.cell(row=12, column=1, value='Почему две ставки: время над гектаром почти не зависит от нормы, а число вылетов '
-            'растёт с ней линейно. Один тариф «за гектар» либо разоряет нас при 250 кг/га, либо отпугивает фермера при 100 кг/га. '
-            'Проверка в книге: строка «Контроль линейности» на листе «Расчёт» равна нулю.').alignment = WRAP
+    wk.cell(row=14, column=1, value='Почему «за тонну»: при нормах выше ~120 кг/га скорость над полем задаёт подача гранул '
+            '(норматив: 8-11 км/ч при 7 м), и время над гектаром растёт пропорционально норме, как и число вылетов. '
+            'Себестоимость гектара становится почти чисто пропорциональной килограммам -- строка C0 на листе «Расчёт» равна нулю, '
+            'а ставка за тонну одинакова для 150, 250 и 400 кг/га. Минимум за гектар защищает выезд на лёгких нормах.').alignment = WRAP
     wk.column_dimensions['A'].width = 52
     wk.column_dimensions['B'].width = 26
     wk.column_dimensions['C'].width = 26
@@ -755,19 +785,19 @@ def verify(path, p, scenarios, rows_index, s_index, l_index, f_index):
         exp = compute(p, rate, mults)
         col = 3 + j
         for key, val in exp.items():
-            if key not in rows_index:
+            if key not in rows_index or isinstance(val, bool):
                 continue
             got = wc.cell(row=rows_index[key], column=col).value
             checked += 1
             if not isinstance(got, (int, float)) or abs(got - val) > tol * max(1.0, abs(val)):
                 mismatches += 1
                 errors.append('calc[%d] %s: excel=%r python=%r' % (j, key, got, val))
-        got = wc.cell(row=rows_index['flow_check'], column=col).value
+        got = wc.cell(row=rows_index['limit_mode'], column=col).value
         checked += 1
-        want = 'да' if exp['required_flow'] <= p['max_flow_kg_min'] else 'НЕТ: снизить скорость'
+        want = 'подача гранул' if exp['flow_limited'] else 'предел скорости'
         if got != want:
             mismatches += 1
-            errors.append('calc[%d] flow_check: excel=%r python=%r' % (j, got, want))
+            errors.append('calc[%d] limit_mode: excel=%r python=%r' % (j, got, want))
     # Сезон
     wss = wb[SHEET_SEASON]
     for me, idx in (('C', 1), ('D', 3)):
