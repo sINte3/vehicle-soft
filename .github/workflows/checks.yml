@@ -133,6 +133,13 @@ jobs:
       - name: Route semantics probe self-test (observations, never verdicts)
         run: python tools/test_drone_route_semantics_probe.py
 
+      # VS-DJI-RC-COLLECTOR-001, stage 0A. Stdlib only, synthetic bodies. The
+      # probe must never write into its source directory, never print a
+      # coordinate or an unknown value, and must tell an omitted V4 field
+      # from a zero -- all three are cheap to break and silent when broken.
+      - name: DJI RC probe self-test (read-only, presence vs zero, secrets)
+        run: python tools/test_dji_rc_probe.py
+
       # The first-live-run runbook is a set of ready-to-paste PowerShell
       # commands, and pasted they will be. Twice already it named something
       # that does not exist on the server -- a repository path, then a python
