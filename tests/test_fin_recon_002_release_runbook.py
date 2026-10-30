@@ -89,7 +89,16 @@ class ReleaseV132Runbook(unittest.TestCase):
 
     def test_the_baseline_is_production(self):
         self.assertEqual(const('Шаг 3', 'baseline'), BASELINE)
-        self.assertIn('Production baseline | `%s`' % BASELINE, read('docs', 'RELEASE_GATE.md'))
+        # The historical v1.32 runbook starts from v1.31, while the live gate
+        # moves forward after deployment. Check gate versus release log, not
+        # gate versus the old, immutable runbook pre-release baseline.
+        gate = read('docs', 'RELEASE_GATE.md')
+        deployed = read('docs', 'DEPLOYED.md')
+        gate_base = re.search(r'(?m)^\| Production baseline \| `([0-9a-f]{7,40})`', gate)
+        deployed_base = re.search(r'(?m)^\| production \| `([0-9a-f]{7,40})`', deployed)
+        self.assertIsNotNone(gate_base)
+        self.assertIsNotNone(deployed_base)
+        self.assertEqual(gate_base.group(1)[:7], deployed_base.group(1)[:7])
         self.assertEqual(const('Шаг 3', 'runbookTest'), RUNBOOK_TEST)
         self.assertTrue(os.path.isfile(os.path.join(REPO_ROOT, *RUNBOOK_TEST.split('/'))))
 
