@@ -115,7 +115,9 @@ function git {
   switch ($a[0]) {
     'fetch' { $global:LASTEXITCODE = [int]$s.FetchCode; return }
     'rev-parse' {
-      if ($a -contains 'origin/main') { return [string]$s.Release }
+      # Main: the tip of main when the release is pinned to an earlier commit
+      # (v1.33). Without it main is the release, as in v1.20-v1.31.
+      if ($a -contains 'origin/main') { if ($s.Main) { return [string]$s.Main }; return [string]$s.Release }
       if ($a -contains '--short') { return $global:state.Head.Substring(0, 7) }
       return $global:state.Head
     }
