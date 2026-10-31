@@ -5,17 +5,26 @@
 организовал доступ к согласованному пульту (ТЗ v1.1, §0.7, §6). Выполняет
 владелец с ответственным оператором; облачная сессия к устройству и
 внутренней сети доступа не имеет и не заявляет. Отчёт этапа 0А и карта
-компонентов — `docs/DJI_RC_COLLECTOR_001_STAGE_0A.md`. Редакция 3 — после
-двух ревизий от 30.10.2026 (инструмент `dji-rc-probe-3`).
+компонентов — `docs/DJI_RC_COLLECTOR_001_STAGE_0A.md`. Редакция 4 — после
+двух ревизий от 30.10.2026 и правки плана от 31.10.2026 (инструмент
+`dji-rc-probe-3`, в правке не менялся).
 
 Выбранные здесь имена — реальные, а не плейсхолдеры: папка обследования
 `C:\VehicleSoft_RC_Survey`, ярлык первого обследуемого пульта `RC-01`,
 репозиторий на рабочей машине `C:\vehicle-soft`, ветка
 `claude/vs-dji-rc-collector-stage-0a-bf38d3`. Если инвентарный ярлык
 пульта в холдинге другой, он подставляется **во все** команды одинаково.
-Единственное переменное значение — метка прогона `$stamp`: она задаётся
-одной командой в начале (§1) и живёт в том же окне PowerShell; все
-последующие команды используют её как есть.
+Переменные окна PowerShell — две. Метка прогона `$stamp` задаётся одной
+командой в начале (§1) и живёт в том же окне; все последующие команды
+используют её как есть. Папка сборщика `$collectorRepo` (§4.2б) задаётся
+предположением из README сборщика и **проверяется** до первого
+использования: ни одна команда плана не называет непроверенный путь
+сборщика фактом.
+
+Команды §1, §3, §4.1, §4.2а–г и §6 прогнаны на синтетике на рабочей
+машине владельца 31.10.2026 в PowerShell 7.6 и Windows PowerShell 5.1
+(сборщик — заглушкой с теми же аргументами и кодами выхода; настоящий
+сборщик, его машина и пульт не проверялись) — отчёт 0А, §1в.
 
 ---
 
@@ -45,10 +54,12 @@
   его судьбу решает владелец отдельно. **Отсутствие известного маркера не
   доказывает отсутствие секретов**: статус `NO_KNOWN_MARKER_IN_SCANNED_BYTES`
   — это ровно то, что написано, и не больше.
-- Инструмент ничего не перезаписывает: каждый прогон описи, снимка,
-  извлечения и сопоставления идёт в **новую** папку с меткой `$stamp`.
-  Прежние отчёты остаются как есть. Ни одна команда не пишет в папку
-  исследуемых файлов, в папку любого входа и в папку, названную
+- Ничего не перезаписывается — ни инструментом, ни руками. Каждый прогон
+  копирования, описи, снимка, извлечения и сопоставления идёт в **свою**
+  папку с меткой `$stamp`; копии с пульта — в `raw_<stamp>`, поэтому файл
+  с тем же именем, снятый повторно, ложится рядом с прежней копией, а не
+  поверх неё. Прежние папки остаются как есть. Ни одна команда не пишет в
+  папку исследуемых файлов, в папку любого входа и в папку, названную
   `source_dir` локальной описи, — ни напрямую, ни через ссылку.
 - У каждой команды, которая пишет отчёт, два файла: локальный
   (`inventory.*`, `match.*`, `extract_manifest.json` — с именами файлов и
@@ -79,45 +90,66 @@
 | Согласованный пульт (ярлык `RC-01`) и борт, с которым он реально работал; несколько завершённых вылетов в SmartFarm за последние дни | владелец |
 | Ответственный оператор на время обследования; день на земле (≈ 2–3 часа без полётов) | владелец |
 | Рабочая машина Windows с чекаутом `C:\vehicle-soft` и Python 3.14 (`C:\Program Files\Python314\python.exe`): оба пути проверены на рабочей машине владельца 30.10.2026 (`Test-Path`); инструмент есть в чекауте только на ветке этапа или после её мержа в `main` | владелец |
+| Машина сборщика — та, где задача планировщика `DroneCollectorDaily` и сохранённая сессия DJI (`docs/tracks/drones.md`, DRONE-SCHEDULE-001); может совпадать с рабочей машиной. Нужна только для §4.2б; её путь к сборщику план не знает и проверяет на месте | владелец |
 | Контрольная ведомость вылетов (§7.1) — заполняется оператором **до** просмотра файлов пульта | оператор |
-| Кабель USB-C; при наличии — пустая microSD (для штатного экспорта, если приложение экспортирует на карту) | оператор |
+| Кабель USB-C; при наличии — пустая microSD (для штатного экспорта, если приложение экспортирует на карту); при двух машинах — флешка или общая папка для `ids_<stamp>.txt` и дампа | оператор |
 | DJI Assistant 2 for MG на рабочей машине (по руководству T40/T20P — подключение пульта по USB-C и выбор журналов для экспорта) — установить заранее, если владелец решает проверять §3.2б | владелец |
 | Часы: сверить часы рабочей машины и пульта с реальным временем до начала и записать расхождение | оператор |
 
-Папки на рабочей машине (команды ниже создают базовые; папки прогонов
-создаёт сам инструмент):
+Папки на рабочей машине. Папка с `<stamp>` принадлежит **одному** прогону:
 
 ```
-C:\VehicleSoft_RC_Survey\RC-01\raw\usb\            копия того, что видно по USB
-C:\VehicleSoft_RC_Survey\RC-01\raw\app_export\     штатный экспорт DJI Agras
-C:\VehicleSoft_RC_Survey\RC-01\raw\assistant\      экспорт DJI Assistant 2 for MG
-C:\VehicleSoft_RC_Survey\RC-01\probe\usb_<stamp>\  описи (локальная и для передачи)
-C:\VehicleSoft_RC_Survey\RC-01\probe\match_<stamp>\ сопоставление с облаком
-C:\VehicleSoft_RC_Survey\RC-01\snapshot_<stamp>\   снимок с манифестом хешей
-C:\VehicleSoft_RC_Survey\RC-01\cloud_dump\         копия дампа сборщика (если сборщик на другой машине)
-C:\VehicleSoft_RC_Survey\RC-01\cloud_v4\extract_<stamp>\ извлечённые облачные тела V4
+C:\VehicleSoft_RC_Survey\RC-01\raw_<stamp>\usb\                копия того, что видно по USB — только этот прогон
+C:\VehicleSoft_RC_Survey\RC-01\raw_<stamp>\app_export\         штатный экспорт DJI Agras — только этот прогон
+C:\VehicleSoft_RC_Survey\RC-01\raw_<stamp>\assistant\          экспорт DJI Assistant 2 for MG — только этот прогон
+C:\VehicleSoft_RC_Survey\RC-01\probe\usb_<stamp>\              опись USB (локальная и для передачи)
+C:\VehicleSoft_RC_Survey\RC-01\probe\app_export_<stamp>\       опись экспорта Agras
+C:\VehicleSoft_RC_Survey\RC-01\probe\assistant_<stamp>\        опись экспорта Assistant
+C:\VehicleSoft_RC_Survey\RC-01\probe\match_usb_<stamp>\        сопоставление описи USB с облаком
+C:\VehicleSoft_RC_Survey\RC-01\probe\match_app_export_<stamp>\ то же для экспорта Agras
+C:\VehicleSoft_RC_Survey\RC-01\probe\match_assistant_<stamp>\  то же для экспорта Assistant
+C:\VehicleSoft_RC_Survey\RC-01\probe\passport.md               паспорт пульта (§2), один на пульт
+C:\VehicleSoft_RC_Survey\RC-01\snapshot_<stamp>\               снимок raw_<stamp> с манифестом хешей
+C:\VehicleSoft_RC_Survey\RC-01\cloud_v4\ids_<stamp>.txt        список вылетов для сборщика (§4.2а)
+C:\VehicleSoft_RC_Survey\RC-01\cloud_dump\<stamp>\             ровно один дамп сборщика этого прогона (§4.2в)
+C:\VehicleSoft_RC_Survey\RC-01\cloud_v4\extract_<stamp>\       извлечённые облачные тела V4
+C:\VehicleSoft_RC_Survey\RC-01\transfer_<stamp>\               сборка для передачи: ровно то, что уходит в архив (§6)
+C:\VehicleSoft_RC_Survey\RC-01_probe_report_<stamp>.zip        архив для владельца и куратора
 ```
 
-Дамп и извлечённые тела лежат в **разных** папках намеренно: инструмент
-отказывается писать в папку любого своего входа, и извлечение в папку,
-где лежит сам дамп, не выполнится (проверено прогоном плана на синтетике).
+Папки прогона создаются **без** `-Force`: если такая уже есть, команда
+отказывает («already exists») — это защита прежних копий, не сбой; задать
+новую метку и повторить. Повторный прогон (§5) идёт в новые папки: файл
+с тем же именем, снятый повторно, ложится в `raw_<новая метка>` рядом с
+прежней копией, не поверх неё. Перетаскивание в пустую папку прогона
+о замене не спрашивает — в ней ничего нет. Дамп и извлечённые тела лежат
+в разных папках намеренно: инструмент отказывается писать в папку любого
+своего входа.
 
-Все команды плана выполняются **в одном окне PowerShell**, по одной, с
-ожиданием результата. Первая команда окна задаёт метку прогона; если окно
-закрыли — открыть новое и задать метку заново той же командой (получится
-новый прогон, прежние папки не трогаются):
+Все команды плана на рабочей машине выполняются **в одном окне
+PowerShell**, по одной, с ожиданием результата (Windows PowerShell 5.1 и
+PowerShell 7 — одинаково). Первая команда окна задаёт метку прогона; если
+окно закрыли — открыть новое и задать метку заново той же командой
+(получится новый прогон, прежние папки не трогаются):
 
 ```powershell
 $stamp = Get-Date -Format yyyyMMdd_HHmmss
 ```
 ```powershell
-New-Item -ItemType Directory -Force C:\VehicleSoft_RC_Survey\RC-01\raw\usb
+$stamp
+```
+
+Значение метки записать в паспорт (§2): по ней связываются все папки,
+отчёты и архив прогона.
+
+```powershell
+New-Item -ItemType Directory C:\VehicleSoft_RC_Survey\RC-01\raw_$stamp\usb
 ```
 ```powershell
-New-Item -ItemType Directory -Force C:\VehicleSoft_RC_Survey\RC-01\raw\app_export
+New-Item -ItemType Directory C:\VehicleSoft_RC_Survey\RC-01\raw_$stamp\app_export
 ```
 ```powershell
-New-Item -ItemType Directory -Force C:\VehicleSoft_RC_Survey\RC-01\raw\assistant
+New-Item -ItemType Directory C:\VehicleSoft_RC_Survey\RC-01\raw_$stamp\assistant
 ```
 ```powershell
 New-Item -ItemType Directory -Force C:\VehicleSoft_RC_Survey\RC-01\probe
@@ -128,6 +160,10 @@ New-Item -ItemType Directory -Force C:\VehicleSoft_RC_Survey\RC-01\cloud_v4
 ```powershell
 New-Item -ItemType Directory -Force C:\VehicleSoft_RC_Survey\RC-01\cloud_dump
 ```
+
+Три первые команды печатают созданные папки; `-Force` у трёх последних
+допустим, потому что это общие папки всех прогонов, и в них самих ничего
+не пишется — только в их подпапки с меткой.
 
 Проверка, что среда та, что ожидается, и инструмент на месте (ничего не
 читает с пульта):
@@ -163,6 +199,8 @@ Get-Date -Format "yyyy-MM-dd HH:mm:ss K"
 
 Заполняется с экрана пульта и записывается в `C:\VehicleSoft_RC_Survey\RC-01\probe\passport.md`
 (произвольный текст; серийные номера допустимы, пароли и токены — нет).
+Паспорт один на пульт; каждый прогон дописывает в него свой раздел с
+меткой `$stamp`, временем, кодами выхода команд и хешами из §4.2.
 
 | Поле | Где смотреть (общая логика Android; названия пунктов на прошивке могут отличаться) | Значение |
 |---|---|---|
@@ -180,6 +218,7 @@ Get-Date -Format "yyyy-MM-dd HH:mm:ss K"
 | Настройка «Установка из неизвестных источников» | Настройки → Безопасность / Приложения; **только посмотреть, не менять** | |
 | Есть ли файловый менеджер и системный выбор папки | только посмотреть | |
 | Папки верхнего уровня по USB: имена и размеры | Проводник Windows, свойства папок; **без копирования** | |
+| Метка прогона `$stamp`, коды выхода команд, хеши `ids_<stamp>.txt` и дампа | окно PowerShell (§1, §4.2) | |
 
 ---
 
@@ -195,18 +234,20 @@ Get-Date -Format "yyyy-MM-dd HH:mm:ss K"
    приложения, какие расширения файлов встречаются в папках DJI. Если
    Проводник показывает пустое устройство или ошибку доступа — записать это
    как результат, не искать обход.
-3. Копировать **перетаскиванием** в `C:\VehicleSoft_RC_Survey\RC-01\raw\usb\`
-   только то, что относится к задаче: папки `DJI*` и `Android\data\dji.*`,
-   если они видны. `Download` и `Documents` целиком **не копировать**: если
-   папки DJI не нашлись или опись (п. 4) ничего похожего на V4 и маршрут не
-   показала, владелец выбирает из `Download`/`Documents` отдельные файлы по
-   именам и расширениям из паспорта (журналы, экспорт, `.db`, `.bin`,
-   `.json`, архивы) с учётом объёма и возможных личных данных. Файлы на
-   пульте не удалять.
-4. Опись (ничего не пишет в `raw`; папка вывода новая):
+3. Копировать **перетаскиванием** в папку этого прогона
+   `C:\VehicleSoft_RC_Survey\RC-01\raw_<stamp>\usb\` (она пуста; значение
+   `<stamp>` — то, что напечатала вторая команда §1) только то, что
+   относится к задаче: папки `DJI*` и `Android\data\dji.*`, если они видны.
+   `Download` и `Documents` целиком **не копировать**: если папки DJI не
+   нашлись или опись (п. 4) ничего похожего на V4 и маршрут не показала,
+   владелец выбирает из `Download`/`Documents` отдельные файлы по именам и
+   расширениям из паспорта (журналы, экспорт, `.db`, `.bin`, `.json`,
+   архивы) с учётом объёма и возможных личных данных. Файлы на пульте не
+   удалять.
+4. Опись (ничего не пишет в `raw_<stamp>`; папка вывода новая):
 
 ```powershell
-& "C:\Program Files\Python314\python.exe" C:\vehicle-soft\tools\dji_rc_probe.py inventory C:\VehicleSoft_RC_Survey\RC-01\raw\usb --out C:\VehicleSoft_RC_Survey\RC-01\probe\usb_$stamp --device-label RC-01
+& "C:\Program Files\Python314\python.exe" C:\vehicle-soft\tools\dji_rc_probe.py inventory C:\VehicleSoft_RC_Survey\RC-01\raw_$stamp\usb --out C:\VehicleSoft_RC_Survey\RC-01\probe\usb_$stamp --device-label RC-01
 ```
 
 Коды выхода: `0` — опись готова и полна (`COMPLETE`); `1` — файлов нет
@@ -219,7 +260,8 @@ Get-Date -Format "yyyy-MM-dd HH:mm:ss K"
 контейнер, вложенный архив, зашифрованная запись; либо объект не
 прочитан — SQLite с заголовком, но не читается, повреждённый ZIP, ошибка
 разбора) — это результат, не ошибка оператора; причины у каждого объекта
-в `secret_scan.reasons` и флагах.
+в `secret_scan.reasons` и флагах. В строке `v4_like=` вывода — число
+файлов, похожих на V4; от него зависит §4.2.
 
 В папке `probe\usb_<stamp>\` появляются четыре файла: `inventory.json` и
 `inventory.md` — **локальная** опись с именами файлов, ключей и таблиц
@@ -231,24 +273,27 @@ Get-Date -Format "yyyy-MM-dd HH:mm:ss K"
 
 **а) DJI Agras.** На пульте найти в приложении экспорт или «поделиться»
 для записей полётов / журналов (если есть). Экспортировать на microSD или в
-общую папку, затем перенести по USB в `raw\app_export\`. Записать: есть ли
-такая функция, сколько действий требует, куда пишет, какие файлы получились.
-Если функции нет — это результат.
+общую папку, затем перенести по USB в `raw_<stamp>\app_export\`. Записать:
+есть ли такая функция, сколько действий требует, куда пишет, какие файлы
+получились. Если функции нет — это результат.
 
 **б) DJI Assistant 2 for MG.** Только если владелец решил его ставить.
 Подключить пульт по USB-C, в DJI Assistant открыть раздел журналов, выбрать
-журналы пульта и экспортировать в `raw\assistant\`. Если программа
-предлагает журналы борта — экспортировать их в подпапку `raw\assistant\aircraft\`.
-Записать: требуется ли вход в аккаунт DJI, какие файлы и расширения
-получились, их размеры, сколько времени занял экспорт.
+журналы пульта и экспортировать в `raw_<stamp>\assistant\`. Если
+программа предлагает журналы борта — экспортировать их в подпапку
+`raw_<stamp>\assistant\aircraft\`. Записать: требуется ли вход в аккаунт
+DJI, какие файлы и расширения получились, их размеры, сколько времени
+занял экспорт.
 
-Опись каждой папки (те же коды выхода, что в §3.1):
+Опись каждой папки (те же коды выхода, что в §3.1) — выполнять **обе**,
+даже если папка осталась пустой: `EMPTY` (код 1) фиксирует, что способ не
+дал файлов или не проверялся, а что именно — пишется в паспорт:
 
 ```powershell
-& "C:\Program Files\Python314\python.exe" C:\vehicle-soft\tools\dji_rc_probe.py inventory C:\VehicleSoft_RC_Survey\RC-01\raw\app_export --out C:\VehicleSoft_RC_Survey\RC-01\probe\app_export_$stamp --device-label RC-01
+& "C:\Program Files\Python314\python.exe" C:\vehicle-soft\tools\dji_rc_probe.py inventory C:\VehicleSoft_RC_Survey\RC-01\raw_$stamp\app_export --out C:\VehicleSoft_RC_Survey\RC-01\probe\app_export_$stamp --device-label RC-01
 ```
 ```powershell
-& "C:\Program Files\Python314\python.exe" C:\vehicle-soft\tools\dji_rc_probe.py inventory C:\VehicleSoft_RC_Survey\RC-01\raw\assistant --out C:\VehicleSoft_RC_Survey\RC-01\probe\assistant_$stamp --device-label RC-01
+& "C:\Program Files\Python314\python.exe" C:\vehicle-soft\tools\dji_rc_probe.py inventory C:\VehicleSoft_RC_Survey\RC-01\raw_$stamp\assistant --out C:\VehicleSoft_RC_Survey\RC-01\probe\assistant_$stamp --device-label RC-01
 ```
 
 ### 3.3. Обычное приложение (без установки на этом шаге)
@@ -295,8 +340,10 @@ SHA-256 с копией, снятой по USB.
 
 ### 4.1. Снимок в изолированную папку с проверкой хешей и стабильности
 
+Снимается вся папка прогона `raw_<stamp>` (все три способа разом):
+
 ```powershell
-& "C:\Program Files\Python314\python.exe" C:\vehicle-soft\tools\dji_rc_probe.py snapshot C:\VehicleSoft_RC_Survey\RC-01\raw C:\VehicleSoft_RC_Survey\RC-01\snapshot_$stamp --device-label RC-01
+& "C:\Program Files\Python314\python.exe" C:\vehicle-soft\tools\dji_rc_probe.py snapshot C:\VehicleSoft_RC_Survey\RC-01\raw_$stamp C:\VehicleSoft_RC_Survey\RC-01\snapshot_$stamp --device-label RC-01
 ```
 
 Манифест — `C:\VehicleSoft_RC_Survey\RC-01\snapshot_<stamp>\manifest.json`:
@@ -324,53 +371,262 @@ SHA-256 с копией, снятой по USB.
 | `UNSTABLE` / `7` | источник изменился во время снимка (`SOURCE_CHANGED_DURING_SNAPSHOT`) | копия — не законченный объект; подождать, новая метка, повторить |
 | `VERIFY_FAILED` / `5` | копия не совпала с прочитанным потоком | не пересылать; повторить в новую папку; если повторяется — записать как результат |
 
-### 4.2. Если опись показала файлы, похожие на V4 (`v4_like > 0`)
+### 4.2. Если хотя бы одна опись показала файлы, похожие на V4 (`v4_like > 0`)
 
-1. Выписать из `inventory.md` окна этих файлов (`t_first_ms`, `t_last_ms`)
-   и найти в кабинете SmartFarm вылеты этого борта за тот же день; записать
-   их `dji_flight_id` в `C:\VehicleSoft_RC_Survey\RC-01\cloud_v4\ids.txt`
-   (по одному в строке). Это данные из кабинета, их план назвать не может.
-2. На машине сборщика (там, где сохранена сессия DJI) выполнить
-   **существующий** адресный захват облачных источников этих вылетов в
-   режиме сухого прогона. Сухой прогон ничего не отправляет и **ничего не
-   кладёт в очередь**: он пишет один JSON-дамп с телами в `body_b64`
-   (`nothing_was_queued: true`) в папку `drone_collector\out\` чекаута.
-   Путь к venv сборщика на этой машине не проверен (на рабочей машине
-   владельца его нет) — сначала проверка:
+Четыре шага на двух машинах. §4.2а, §4.2в и §4.2г — рабочая машина, то же
+окно PowerShell, что §1 (`$stamp` задан). §4.2б — **машина сборщика**:
+если это другая машина — отдельное окно там, под той учётной записью, под
+которой работает `DroneCollectorDaily` (README сборщика: Chromium стоит в
+профиле пользователя, и задача от `LocalSystem` его не видит); если
+сборщик живёт на рабочей машине — то же окно, что и всё остальное, а
+«передача» ниже — копирование между папками одной машины.
 
-```powershell
-Test-Path C:\vehicle-soft\drone_collector\.venv\Scripts\python.exe
-```
+#### 4.2а. Рабочая машина: список вылетов для сборщика
 
-   Если `False` — остановиться и назвать фактический путь к Python
-   сборщика; дальше не идти. Если `True`:
+1. Выписать из `inventory.md` окна файлов, похожих на V4 (`t_first_ms`,
+   `t_last_ms`), и найти в кабинете SmartFarm вылеты этого борта за тот же
+   день. Это данные из кабинета, их план назвать не может.
+2. Записать их `dji_flight_id` в файл этого прогона — по одному в строке,
+   только цифры, без комментариев и пустых строк в середине:
 
 ```powershell
-Set-Location C:\vehicle-soft
-```
-```powershell
-drone_collector\.venv\Scripts\python.exe -m drone_collector.main --sources --ids-file C:\VehicleSoft_RC_Survey\RC-01\cloud_v4\ids.txt --dry-run
+notepad C:\VehicleSoft_RC_Survey\RC-01\cloud_v4\ids_$stamp.txt
 ```
 
-   Режим, его коды выхода и место, куда ложится дамп, описаны в
-   `drone_collector/README.md`, раздел «Collect the immutable DJI sources»
-   (выполняется в день, свободный от ежедневного цикла; площадку не
-   трогать). Если машина сборщика — не рабочая машина, скопировать новейший
-   файл `sources_dry_run_*.json` в `C:\VehicleSoft_RC_Survey\RC-01\cloud_dump\`
-   на рабочую машину (не в `cloud_v4\`: туда пойдёт извлечение, а в папку
-   своего входа инструмент не пишет). Команда ниже берёт **новейший** дамп
-   из папки сборщика (на рабочей машине — после копирования заменить
-   `C:\vehicle-soft\drone_collector\out` на `C:\VehicleSoft_RC_Survey\RC-01\cloud_dump`
-   в одной этой команде):
+3. Проверить файл до передачи — три команды:
 
 ```powershell
-$dump = Get-ChildItem C:\vehicle-soft\drone_collector\out\sources_dry_run_*.json | Sort-Object LastWriteTime | Select-Object -Last 1
+Get-Content C:\VehicleSoft_RC_Survey\RC-01\cloud_v4\ids_$stamp.txt | Where-Object { $_.Trim() -ne '' -and $_.Trim() -notmatch '^[0-9]+$' }
 ```
 ```powershell
-$dump.FullName
+(Get-Content C:\VehicleSoft_RC_Survey\RC-01\cloud_v4\ids_$stamp.txt | Where-Object { $_.Trim() -ne '' } | Measure-Object).Count
+```
+```powershell
+(Get-FileHash C:\VehicleSoft_RC_Survey\RC-01\cloud_v4\ids_$stamp.txt -Algorithm SHA256).Hash
 ```
 
-3. Проверить дамп и извлечь тела V4 с проверкой заявленного хеша и размера
+   Первая должна напечатать **ничего**: любая напечатанная строка — не
+   номер вылета, и сборщик откажет от всего файла (код 1). Вторая — число
+   вылетов, третья — SHA-256 файла; оба записать в паспорт: на машине
+   сборщика они сверяются знак в знак.
+4. Если машина сборщика другая — скопировать `ids_<stamp>.txt` на флешку
+   или в общую папку (имя файла не менять).
+
+#### 4.2б. Машина сборщика: сухой прогон
+
+1. **Где сборщик.** `drone_collector/README.md` («Install») ставит сборщик
+   в `C:\transport-report`. Этот путь на машине сборщика сессией **не
+   проверен** (на рабочей машине владельца его нет) и ниже служит только
+   предположением, которое проверяют две следующие команды:
+
+```powershell
+$collectorRepo = "C:\transport-report"
+```
+```powershell
+Test-Path (Join-Path $collectorRepo "drone_collector\main.py")
+```
+```powershell
+Test-Path (Join-Path $collectorRepo "drone_collector\.venv\Scripts\python.exe")
+```
+
+   Оба `True` — путь подтверждён. Любой `False` — предположение неверно;
+   фактическое место показывает задача планировщика:
+
+```powershell
+Get-ScheduledTask -TaskName DroneCollectorDaily | Select-Object -ExpandProperty Actions | Format-List Execute, Arguments, WorkingDirectory
+```
+
+   Папка чекаута — та, в которой лежит `drone_collector\` (она видна в
+   `WorkingDirectory`, `Execute` или `Arguments`). Задать `$collectorRepo`
+   этой папкой той же командой, что выше, и повторить обе `Test-Path`.
+   Пока обе не дали `True`, дальше не идти. Если задачи
+   `DroneCollectorDaily` на машине нет — это не машина сборщика;
+   остановиться и спросить владельца.
+
+2. **Ежедневный цикл не должен идти.** Сборщик держит блокировку на время
+   любого запуска, и сухой прогон, встретив её, ждёт и завершается кодом
+   `24`. Перед запуском:
+
+```powershell
+(Get-ScheduledTask -TaskName DroneCollectorDaily).State
+```
+
+   `Ready` — свободно. `Running` — дождаться `Ready`, задачу **не
+   останавливать**. Сухой прогон выполняется в день и час, свободные от
+   ежедневного цикла (около 06:00); площадку и production он не трогает:
+   ничего не ставит в очередь и никуда не отправляет.
+
+3. **Принять и сверить `ids_<stamp>.txt`.** Положить файл в
+   `C:\VehicleSoft_RC_Survey\RC-01\cloud_v4\` на машине сборщика (на одной
+   машине он уже там):
+
+```powershell
+New-Item -ItemType Directory -Force C:\VehicleSoft_RC_Survey\RC-01\cloud_v4
+```
+```powershell
+$ids = Get-ChildItem C:\VehicleSoft_RC_Survey\RC-01\cloud_v4\ids_*.txt | Sort-Object Name | Select-Object -Last 1
+```
+```powershell
+$ids.FullName
+```
+```powershell
+(Get-FileHash $ids.FullName -Algorithm SHA256).Hash
+```
+
+   Имя обязано нести метку **этого** прогона, хеш — совпадать с записанным
+   в §4.2а знак в знак. Не совпало — файл не тот или повреждён при
+   переносе: не запускать, скопировать заново.
+
+4. **Сухой прогон.** Существующий адресный захват облачных источников в
+   режиме сухого прогона (`drone_collector/README.md`, «Collect the
+   immutable DJI sources»): ничего не отправляет и **ничего не кладёт в
+   очередь**, пишет один JSON-дамп с телами в `body_b64`
+   (`nothing_was_queued: true`) в `drone_collector\out\` чекаута.
+   `$before` запоминается, чтобы потом выбрать дамп **именно этого**
+   запуска:
+
+```powershell
+Set-Location $collectorRepo
+```
+```powershell
+$before = Get-Date
+```
+```powershell
+& (Join-Path $collectorRepo "drone_collector\.venv\Scripts\python.exe") -m drone_collector.main --sources --ids-file $ids.FullName --dry-run
+```
+```powershell
+$LASTEXITCODE
+```
+
+   Коды выхода сухого прогона (`drone_collector/main.py`, README):
+   `0` — дамп записан, в журнале строка `Dry run: N item(s) of M flight(s)
+   written to …`; **это не значит, что захвачены все вылеты** — сухой
+   прогон возвращает `0` и при неполном захвате, полнота проверяется в
+   п. 6. `1` — конфигурация или неожиданная ошибка: нет Playwright в этом
+   venv, в файле `ids` нечисловая строка, traceback — в
+   `drone_collector\logs\`. `2` — нет сохранённой сессии DJI или она
+   истекла: сессию сохраняет **владелец** по README (`--save-session`,
+   вход вручную), план этого не делает. `24` — другой запуск сборщика
+   держит блокировку: дождаться его конца, не останавливать, повторить
+   с п. 2. `4`, `7` — браузер или регион (таблица кодов README).
+   Любой код, кроме `0`, — дампа этого запуска **нет** (п. 5 покажет
+   `0`). Повторять не более двух раз; если не помогло — записать код и
+   последние строки журнала (без ссылок и токенов) в паспорт, закрыть
+   §4.2 на этом прогоне как «облачные тела не получены» и сопоставление
+   не делать.
+
+5. **Выбрать дамп именно этого запуска** — не «новейший файл», а файл,
+   появившийся после `$before`, и ровно один:
+
+```powershell
+$dumps = @(Get-ChildItem (Join-Path $collectorRepo "drone_collector\out\sources_dry_run_*.json") | Where-Object { $_.LastWriteTime -gt $before })
+```
+```powershell
+$dumps.Count
+```
+```powershell
+$dumps.FullName
+```
+
+   `1` — дамп этого запуска; его путь совпадает с путём из строки `Dry
+   run: … written to` журнала. `0` — запуск ничего не записал (см. код
+   выхода п. 4). `2` и больше — пока шёл запуск, дамп писал кто-то ещё
+   (ежедневный цикл, второе окно): не выбирать ни один, дождаться
+   окончания постороннего запуска, повторить с п. 2.
+
+```powershell
+$dump = $dumps[0]
+```
+
+6. **Проверить результат сухого прогона** — что это дамп, что он сухой и
+   что захват полон:
+
+```powershell
+$doc = Get-Content $dump.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+```
+```powershell
+$doc.dry_run; $doc.nothing_was_queued; $doc.capture_run_id; $doc.count
+```
+```powershell
+$doc.flights | Select-Object flight_id, status, v4_url_present, error_type | Format-Table -AutoSize
+```
+```powershell
+$requested = Get-Content $ids.FullName | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
+```
+```powershell
+$captured = $doc.flights | Where-Object { $_.status -eq 'V4' } | ForEach-Object { "$($_.flight_id)" }
+```
+```powershell
+Compare-Object $requested $captured
+```
+
+   Ожидается `True`, `True`, идентификатор вида `sources:ids-file:<UTC>`,
+   число элементов (до четырёх на вылет: `card`, `route`, `airlines`,
+   `v4`); таблица — по строке на вылет; `Compare-Object` печатает
+   **ничего** — у каждого запрошенного вылета есть тело V4 в дампе.
+   Статусы вылета (`drone_collector/sources.py`): `V4` — тело V4
+   захвачено; `NO_V4_URL` — дескриптор DJI говорит, что V4 у этого вылета
+   нет (захват полон, сравнивать для него нечего — это результат, не
+   сбой); `NO_V4` — ожидание истекло; `V4_FAILED` — хранилище отказало
+   или обработчик упал; `PAGE_ERROR` — страница записи не открылась.
+   Три последних — **неполный захват**. Строка `Compare-Object` с `<=`
+   называет запрошенный вылет без V4 — смотреть его статус в таблице:
+   `NO_V4_URL` записать в паспорт как вывод DJI; `NO_V4`, `V4_FAILED`,
+   `PAGE_ERROR` — повторить сухой прогон один раз с п. 2 (новый
+   `$before`; сухой прогон очереди не ведёт, поэтому посещает все вылеты
+   заново и пишет новый дамп). Повторилось — дамп оставить, номера
+   незахваченных вылетов записать в паспорт, а сопоставление §4.2г
+   считать выполненным на **неполном** наборе (отчёт `match` так и
+   говорит: `candidate_set_may_be_incomplete`). Строка с `=>` — в дампе
+   вылет, которого не запрашивали: файл не тот, остановиться. `count`
+   равен `0` или таблица пуста — пустой дамп: как код, отличный от `0`,
+   в п. 4.
+
+7. **Хеш и передача.** Записать в паспорт:
+
+```powershell
+(Get-FileHash $dump.FullName -Algorithm SHA256).Hash
+```
+
+   Если машина сборщика другая — скопировать файл `$dump.FullName` (один
+   файл, имя не менять) на флешку или в общую папку. На одной машине
+   ничего копировать не нужно: §4.2в берёт его командой.
+
+#### 4.2в. Рабочая машина: приём дампа, проверка, извлечение тел V4
+
+1. Папка дампа этого прогона — новая и содержит ровно один файл:
+
+```powershell
+New-Item -ItemType Directory C:\VehicleSoft_RC_Survey\RC-01\cloud_dump\$stamp
+```
+
+   На одной машине — скопировать командой (`$dump` задан в §4.2б):
+
+```powershell
+Copy-Item $dump.FullName C:\VehicleSoft_RC_Survey\RC-01\cloud_dump\$stamp\
+```
+
+   При двух машинах — положить принесённый файл в эту папку Проводником.
+   Затем — на любой из машин — выбрать и сверить:
+
+```powershell
+$dumps = @(Get-ChildItem C:\VehicleSoft_RC_Survey\RC-01\cloud_dump\$stamp\sources_dry_run_*.json)
+```
+```powershell
+$dumps.Count
+```
+```powershell
+$dump = $dumps[0]
+```
+```powershell
+(Get-FileHash $dump.FullName -Algorithm SHA256).Hash
+```
+
+   `Count` обязан быть `1`, хеш — совпадать с записанным в §4.2б п. 7
+   знак в знак; иначе копия повреждена или это не тот файл — скопировать
+   заново, в папку ничего больше не класть.
+
+2. Проверить дамп и извлечь тела V4 с проверкой заявленного хеша и размера
    каждого тела (записывается только тело, у которого хеш и размер сошлись
    и маркеров нет; папка новая; тела — облачные, `origin = CLOUD_DRY_RUN_DUMP`):
 
@@ -390,37 +646,51 @@ $dump.FullName
    извлечения. Манифесты в папке извлечения — `extract_manifest.json`
    (локальный, с путём дампа) и `extract_manifest_transfer.json` (для
    передачи).
-4. Сопоставить **каждый** файл пульта, похожий на V4, с **каждым** облачным
-   V4 дампа — без выбора имён файлов и ID вручную:
+
+#### 4.2г. Рабочая машина: сопоставление — по каждому способу отдельно
+
+Сопоставить **каждый** файл пульта, похожий на V4, с **каждым** облачным
+V4 дампа — без выбора имён файлов и ID вручную. У каждого способа доступа
+своя папка результата, поэтому в одном прогоне проверяются все три;
+команда выполняется для каждой описи этого прогона, которая существует
+(что не описывалось в §3, то не сопоставляется):
 
 ```powershell
-& "C:\Program Files\Python314\python.exe" C:\vehicle-soft\tools\dji_rc_probe.py match C:\VehicleSoft_RC_Survey\RC-01\probe\usb_$stamp\inventory.json $dump.FullName --out C:\VehicleSoft_RC_Survey\RC-01\probe\match_$stamp
+& "C:\Program Files\Python314\python.exe" C:\vehicle-soft\tools\dji_rc_probe.py match C:\VehicleSoft_RC_Survey\RC-01\probe\usb_$stamp\inventory.json $dump.FullName --out C:\VehicleSoft_RC_Survey\RC-01\probe\match_usb_$stamp
+```
+```powershell
+& "C:\Program Files\Python314\python.exe" C:\vehicle-soft\tools\dji_rc_probe.py match C:\VehicleSoft_RC_Survey\RC-01\probe\app_export_$stamp\inventory.json $dump.FullName --out C:\VehicleSoft_RC_Survey\RC-01\probe\match_app_export_$stamp
+```
+```powershell
+& "C:\Program Files\Python314\python.exe" C:\vehicle-soft\tools\dji_rc_probe.py match C:\VehicleSoft_RC_Survey\RC-01\probe\assistant_$stamp\inventory.json $dump.FullName --out C:\VehicleSoft_RC_Survey\RC-01\probe\match_assistant_$stamp
 ```
 
-   (для описи штатного экспорта — та же команда с `app_export_$stamp` или
-   `assistant_$stamp` вместо `usb_$stamp`; `match` берёт файлы по локальной
-   описи и сверяет их текущий хеш с хешем описи — изменённый файл не
-   сравнивается, `FILE_CHANGED_SINCE_INVENTORY`).
+Коды выхода: `0` — все файлы описи, похожие на V4, сравнены; `1` — в
+описи нет файлов, похожих на V4 (в том числе опись `EMPTY`), отчёт
+«сравнивать нечего» всё равно записан — это результат, он остаётся;
+`6` — часть файлов изменилась после описи и не сравнивалась
+(`FILE_CHANGED_SINCE_INVENTORY`: `match` берёт файлы по локальной описи и
+сверяет их текущий хеш с хешем описи); `4` — папка вывода уже есть или
+лежит внутри папки исследуемых файлов.
 
-   Результат — `match.json` и `match.md` (локальные, с именами файлов) и
-   `match_transfer.json` и `match_transfer.md` (для передачи, без имён и
-   путей): для каждой пары совпали ли байты (`identical_bytes`),
-   перекрытие окон, число сопоставленных кадров, сколько из них с
-   одинаковыми битами счётчика и позицией, однозначно ли сопоставление
-   кадров (`pairing`; при повторяющихся метках времени внутри V4 —
-   `AMBIGUOUS_DUPLICATE_T`); для каждого файла — `candidate_status`:
-   `NO_CANDIDATE` (ни одинаковых байтов, ни кадров с равным временем, ни
-   перекрытия окон — кандидата нет, ID не называется),
-   `SINGLE_CANDIDATE` (ровно одна пара с наилучшим признаком:
-   `IDENTICAL_BYTES`, иначе `EQUAL_FRAMES`, иначе `WINDOW_OVERLAP`) или
-   `AMBIGUOUS_CANDIDATES` (несколько пар с равным наилучшим признаком —
-   перечислены все, единственный ID не выбирается). **Кандидат — не
-   связь**: V4 не несёт flight id; совпадение окон не доказывает тот же
-   вылет; совпадение байтов доказывает одинаковую копию, не подлинность
-   DJI, не принадлежность вылету и не факт распыления; набор кандидатов
-   **может быть неполным** — в дампе только запрошенные вылеты, и
-   настоящий вылет может оказаться вне набора. Связь с вылетом
-   устанавливается по §7.1, а не по этой таблице.
+Результат в каждой папке — `match.json` и `match.md` (локальные, с
+именами файлов) и `match_transfer.json` и `match_transfer.md` (для
+передачи, без имён и путей): для каждой пары совпали ли байты
+(`identical_bytes`), перекрытие окон, число сопоставленных кадров, сколько
+из них с одинаковыми битами счётчика и позицией, однозначно ли
+сопоставление кадров (`pairing`; при повторяющихся метках времени внутри
+V4 — `AMBIGUOUS_DUPLICATE_T`); для каждого файла — `candidate_status`:
+`NO_CANDIDATE` (ни одинаковых байтов, ни кадров с равным временем, ни
+перекрытия окон — кандидата нет, ID не называется), `SINGLE_CANDIDATE`
+(ровно одна пара с наилучшим признаком: `IDENTICAL_BYTES`, иначе
+`EQUAL_FRAMES`, иначе `WINDOW_OVERLAP`) или `AMBIGUOUS_CANDIDATES`
+(несколько пар с равным наилучшим признаком — перечислены все,
+единственный ID не выбирается). **Кандидат — не связь**: V4 не несёт
+flight id; совпадение окон не доказывает тот же вылет; совпадение байтов
+доказывает одинаковую копию, не подлинность DJI, не принадлежность вылету
+и не факт распыления; набор кандидатов **может быть неполным** — в дампе
+только запрошенные вылеты, и настоящий вылет может оказаться вне набора.
+Связь с вылетом устанавливается по §7.1, а не по этой таблице.
 
 ### 4.3. Если ничего похожего на V4 и маршрут не нашлось
 
@@ -428,7 +698,9 @@ $dump.FullName
 строк SQLite, число ключей JSON, число записей архивов (в отчёте для
 передачи), имена — в локальной описи. Это материал для ручного разбора
 формата на синтетике в следующем инкременте — не повод называть формат
-известным. Итог — `WAITING_SAMPLE`.
+известным. §4.2 не выполняется: папок `match_*` и `extract_*` у прогона
+нет, и §6 собирает архив из описей и паспорта без изменения команд. Итог —
+`WAITING_SAMPLE`.
 
 ---
 
@@ -450,29 +722,61 @@ $dump.FullName
 | … | не менее 10 переключений или наблюдаемых интервалов работы/неработы, пауза и возобновление, перелёт, изменение параметров | |
 | | посадка | |
 
-После посадки, на земле: **новая метка прогона** (та же команда, что в §1:
-`$stamp = Get-Date -Format yyyyMMdd_HHmmss`), затем §3.1–3.2 для новых
-файлов, §4.1 снимок в новую папку, после синхронизации с SmartFarm — §4.2
-сопоставление. Прежние папки не трогаются: две версии файла — два объекта
-с двумя хешами. Для каждого значения источника определить: команда, сигнал
-датчика, расчёт DJI, измерение, неизвестно. Спорные случаи к успешным не
-относить.
+После посадки, на земле — **новый прогон**: новая метка (та же команда,
+что в §1: `$stamp = Get-Date -Format yyyyMMdd_HHmmss`), три команды §1,
+создающие `raw_$stamp\usb`, `raw_$stamp\app_export`,
+`raw_$stamp\assistant`, затем §3.1–3.2 для новых файлов — копии ложатся в
+новую `raw_<stamp>`, файл с тем же именем оказывается рядом с прежней
+копией, не поверх неё; §4.1 снимок в новую папку; после синхронизации с
+SmartFarm — §4.2 с новым `ids_<stamp>.txt`, новой `cloud_dump\<stamp>\`
+и новыми папками сопоставления. Прежние папки не трогаются: две версии
+файла — два объекта с двумя хешами в двух описях. Для каждого значения
+источника определить: команда, сигнал датчика, расчёт DJI, измерение,
+неизвестно. Спорные случаи к успешным не относить.
 
 ---
 
 ## 6. Что отправить владельцу и куратору
 
 Только отчёты **для передачи** (`*_transfer.*`) и паспорт — без имён
-файлов, локальных путей, ключей, таблиц и тел:
+файлов, локальных путей, ключей, таблиц и тел. Сборка идёт через папку
+`transfer_<stamp>`, в которой оказывается ровно то, что уйдёт в архив, по
+**всем** прогонам папки `RC-01` (`probe\` и `cloud_v4\`): каждый файл
+получает префикс папки, из которой взят, — способ доступа и метка
+прогона (`usb_<stamp>__inventory_transfer.json`,
+`match_app_export_<stamp>__match_transfer.md`,
+`extract_<stamp>__extract_manifest_transfer.json`), поэтому три способа и
+повторный прогон в одном архиве различимы. Если V4 не найден и §4.2 не
+выполнялся, папок `match_*` и `extract_*` нет — в сборку попадают описи и
+паспорт, команды те же.
 
 ```powershell
-Compress-Archive -Path C:\VehicleSoft_RC_Survey\RC-01\probe\*\inventory_transfer.*, C:\VehicleSoft_RC_Survey\RC-01\probe\match_*\match_transfer.*, C:\VehicleSoft_RC_Survey\RC-01\cloud_v4\extract_*\extract_manifest_transfer.json, C:\VehicleSoft_RC_Survey\RC-01\probe\passport.md -DestinationPath C:\VehicleSoft_RC_Survey\RC-01_probe_report_$stamp.zip
+New-Item -ItemType Directory C:\VehicleSoft_RC_Survey\RC-01\transfer_$stamp
+```
+```powershell
+Get-ChildItem C:\VehicleSoft_RC_Survey\RC-01\probe, C:\VehicleSoft_RC_Survey\RC-01\cloud_v4 -Recurse -File -Filter *_transfer.* | ForEach-Object { Copy-Item $_.FullName (Join-Path C:\VehicleSoft_RC_Survey\RC-01\transfer_$stamp ($_.Directory.Name + '__' + $_.Name)) }
+```
+```powershell
+Copy-Item C:\VehicleSoft_RC_Survey\RC-01\probe\passport.md C:\VehicleSoft_RC_Survey\RC-01\transfer_$stamp\passport.md
+```
+```powershell
+Get-ChildItem C:\VehicleSoft_RC_Survey\RC-01\transfer_$stamp -File | ForEach-Object { '{0}  {1,10}  {2}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash, $_.Length, $_.Name } | Set-Content C:\VehicleSoft_RC_Survey\RC-01\transfer_$stamp\index.txt
+```
+```powershell
+Get-Content C:\VehicleSoft_RC_Survey\RC-01\transfer_$stamp\index.txt
 ```
 
-Перед отправкой — проверить состав архива: в нём должны быть только
-файлы с `_transfer` в имени и `passport.md` (проверено на рабочей машине
-30.10.2026 на синтетической папке: ровно `inventory_transfer.json`,
-`match_transfer.md`, `extract_manifest_transfer.json`, `passport.md`):
+`index.txt` — опись архива: SHA-256, размер и имя каждого файла; по
+префиксу имени видно способ и прогон. Просмотреть его: каждая строка —
+`*_transfer.*` или `passport.md`. Папки `raw_*`, `snapshot_*`,
+`cloud_dump\` сборка не читает вовсе; из `cloud_v4\extract_*` берутся
+только манифесты для передачи, тела `*.bin` — нет.
+
+```powershell
+Compress-Archive -Path C:\VehicleSoft_RC_Survey\RC-01\transfer_$stamp\* -DestinationPath C:\VehicleSoft_RC_Survey\RC-01_probe_report_$stamp.zip
+```
+
+Перед отправкой — проверить состав архива, а не папки:
 
 ```powershell
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -484,18 +788,27 @@ $archive = [System.IO.Compression.ZipFile]::OpenRead("C:\VehicleSoft_RC_Survey\R
 $archive.Entries.FullName
 ```
 ```powershell
+$archive.Entries.FullName | Where-Object { $_ -notlike '*_transfer.*' -and $_ -ne 'passport.md' -and $_ -ne 'index.txt' }
+```
+```powershell
 $archive.Dispose()
 ```
 
-Не отправлять: `raw\`, `snapshot_*\`, тела из `cloud_v4\extract_*\`,
-локальные отчёты `inventory.json`, `inventory.md`, `match.json`,
-`match.md`, `extract_manifest.json` (они несут имена файлов и локальные
-пути — остаются на рабочей машине с ограниченным доступом; владелец может
-приложить их отдельным решением после просмотра), файлы с пометкой
-`MARKER_FOUND`. Отчёт для передачи безопасен ровно в том смысле, что не
-содержит имён, путей, ключей и строк данных; полную безопасность
-произвольных данных он не гарантирует — паспорт и ведомость просматривает
-владелец.
+Третья команда перечисляет состав; четвёртая обязана напечатать
+**ничего** — любая напечатанная строка означает посторонний файл: архив
+не отправлять, выяснить, откуда файл, задать новую метку и собрать
+заново (в `transfer_<stamp>` и архиве лежат только копии, исходные
+папки не трогаются).
+
+Не отправлять: `raw_*\`, `snapshot_*\`, `cloud_dump\`, тела из
+`cloud_v4\extract_*\`, локальные отчёты `inventory.json`,
+`inventory.md`, `match.json`, `match.md`, `extract_manifest.json` (они
+несут имена файлов и локальные пути — остаются на рабочей машине с
+ограниченным доступом; владелец может приложить их отдельным решением
+после просмотра), файлы с пометкой `MARKER_FOUND`. Отчёт для передачи
+безопасен ровно в том смысле, что не содержит имён, путей, ключей и строк
+данных; полную безопасность произвольных данных он не гарантирует —
+паспорт и ведомость просматривает владелец.
 Если в описи есть `MARKER_FOUND` — сообщить об этом фактом (номер файла и
 SHA-256 из `inventory_transfer.md`), решение о дальнейшем — за владельцем
 (ТЗ §0.6).
@@ -575,14 +888,26 @@ SHA-256 из `inventory_transfer.md`), решение о дальнейшем �
 
 | Ситуация | Действие |
 |---|---|
+| `New-Item` для `raw_$stamp\…`, `cloud_dump\$stamp` или `transfer_$stamp` отказал: «already exists» | метка уже использована — прежние копии защищены; задать новую метку командой §1 и повторить; ничего не удалять |
 | В описи `MARKER_FOUND` (код `3`) | файл не пересылать, в снимок не включать; факт — в отчёт номером и хешем; дальше — решение владельца |
-| Опись или снимок `EMPTY` (код `1`) | в папке нет файлов; это не результат обследования — проверить путь и копирование |
+| Опись или снимок `EMPTY` (код `1`) | в папке нет файлов; для `raw_$stamp\usb` — проверить путь и копирование; для `app_export`/`assistant` — способ не дал файлов или не проверялся, записать какое именно |
 | В описи `PARTIAL` (код `6`, флаги `SECRET_SCAN_PARTIAL`, `CONTAINER_ERROR`, `SQLITE_READ_ERROR`, `ANALYSIS_ERROR`) | проверка на маркеры неполна или объект не прочитан — это сказано прямо; такой файл в снимок по умолчанию не входит; причины — в `secret_scan.reasons` и деталях объекта |
 | Снимок: в `skipped` объект с `SOURCE_CHANGED_AFTER_SCAN` | байты изменились между проверкой источника и копированием; копия удалена из целевой папки; подождать, новая метка, повторить |
+| Проверка `ids_<stamp>.txt` напечатала строку | это не номер вылета; исправить файл в Блокноте, повторить три проверки §4.2а; сборщик с такой строкой откажет от всего файла |
+| Хеш `ids_<stamp>.txt` или дампа на второй машине не совпал | файл не тот или повреждён при переносе; не запускать и не извлекать; скопировать заново |
+| Сухой прогон: код `2` | сессии DJI нет или истекла; сохраняет владелец по README (`--save-session`); план этого шага не делает |
+| Сухой прогон: код `24` | идёт другой запуск сборщика (ежедневный цикл); дождаться `Ready`, не останавливать, повторить |
+| Сухой прогон: код `1`, `4`, `7` | конфигурация, браузер, регион — причина в `drone_collector\logs\`; повторить не более двух раз; затем код и последние строки журнала (без ссылок и токенов) в паспорт, §4.2 закрыть как «облачные тела не получены» |
+| `$dumps.Count` равен `0` после кода `0` | дампа нет там, где его ищут: сверить путь из строки `Dry run: … written to` журнала с `$collectorRepo\drone_collector\out\` |
+| `$dumps.Count` равен `2` и больше | во время запуска дамп писал кто-то ещё; ни один не выбирать; дождаться окончания, повторить с §4.2б п. 2 |
+| `Compare-Object` напечатал строку с `<=` | запрошенный вылет без V4: `NO_V4_URL` — вывод DJI, записать; `NO_V4`/`V4_FAILED`/`PAGE_ERROR` — неполный захват, повторить сухой прогон один раз; повторилось — записать номера, сопоставление на неполном наборе |
+| `Compare-Object` напечатал строку с `=>` | в дампе вылет, которого не запрашивали — не тот файл; остановиться |
 | `extract-dump` показывает `INCOMPLETE:<поля>` | в дампе нет поля или оно неверного типа — дамп повреждён или это не дамп сборщика; тело не извлекается; повторить сухой прогон |
-| `match`: `NO_CANDIDATE` | ни одинаковых байтов, ни равных кадров, ни перекрытия — кандидата нет; возможно, нужный вылет не был запрошен (`ids.txt`) |
+| `match`: `NO_CANDIDATE` | ни одинаковых байтов, ни равных кадров, ни перекрытия — кандидата нет; возможно, нужный вылет не был запрошен (`ids_<stamp>.txt`) |
 | `match`: `AMBIGUOUS_CANDIDATES` | несколько облачных тел с равным признаком — единственный ID не выбирается; связь только по §7.1 |
+| `match`: код `1` | в этой описи нет файлов, похожих на V4; отчёт «сравнивать нечего» записан; это результат способа, не сбой |
 | Код `4`, «already exists» или «must lie outside» | папка вывода уже содержит отчёт или лежит внутри источника / папки входа; задать новую метку `$stamp` и повторить; ничего не удалять |
+| Четвёртая команда проверки архива §6 напечатала строку | в архиве посторонний файл (не `*_transfer.*`, не `passport.md`, не `index.txt`); не отправлять; выяснить источник, новая метка, собрать заново |
 | Файл помечен `RECENTLY_MODIFIED`, снимок `INCONCLUSIVE` (код `7`) | подождать ≥ 60 с без изменений размера и времени, новая метка, повторить снимок в новую папку; обе версии сохранить как разные объекты |
 | Снимок `UNSTABLE` (`SOURCE_CHANGED_DURING_SNAPSHOT`) | источник менялся во время копирования; копия — не законченный объект; подождать, новая метка, повторить |
 | `SQLITE_WAL_OR_JOURNAL_PRESENT` | копия базы без WAL неконсистентна; `stability = INCONCLUSIVE`; искать штатный экспорт |
