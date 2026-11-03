@@ -1,0 +1,9 @@
+keys, union of all registries : 328
+xml reader rows               : 328  5144.66 ha  book amount 775357370.99
+  xml cash     : 236 rows 2887.73 ha
+  xml transfer : 92 rows 2256.93 ha
+importer accepted             : 328  5144.66 ha  amount 775357370.99
+registry 328                  : 328  5144.66 ha  charge 775357370.99
+named 19                      : 19  189.25 ha
+previous registry             : 328  5144.66 ha
+exceptions                    : 0

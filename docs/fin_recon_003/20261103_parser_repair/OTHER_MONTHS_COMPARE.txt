@@ -1,0 +1,63 @@
+FIN-RECON-003 parser repair, 03.11.2026. Old importer 28dc0d3 (production)
+vs new 1079d41 on real books of other months (2025-10, 2026-03..06),
+read-only, isolated synthetic DB. Script: %WORK%\compare_months.py.
+Book SHA-256 below; the July books are compared separately.
+
+books: 35 (the forbidden «01.07.2026 Июль.xlsx» excluded, never opened)
+old 28dc0d3 : rows 1110  ha 18569.75  amount 2961097481.71
+new 1079d41 : rows 1111  ha 18576.75  amount 2962497481.71
+old rejections 0 / new rejections 4
+duplicates old 8 / new 8; quarantined old 1 / new 1
+rows only in OLD: 0
+rows only in NEW: 1
+  Сервис Дрон Маълумот (2).xlsx!свод ичи (Беҳзод)!36  Зухал Агро фх  7.00 ha  date 2025-09-29  amount 1400000.0  counter_missing True
+common rows with a changed field: 0
+new UNPARSED_CANDIDATE: 0
+new book-total checks: 103, MISMATCH 1
+  Сервис Дрон маълумот МАЙ.xlsx!свод ичи (Шахзод)!24 «Жами сумма:» book 293.00 block 348.40 sheet 548.10
+new rejections not in old:
+  Имомов Бехзод Пешку ПТЗ.xlsx!свод ичи !15 area out of range (12220.00) |  | Доллар | 12220 | 28106000 |  |  |  |  |  | 
+  Имомов Бехзод Пешку ПТЗ.xlsx!свод ичи !22 note in the area column (no farm, no row number) |  |  | Кеча топширган | 36191000 | 9720000 | 9337000 |  |  |  | 
+  Шофиркон ПТЗ Дрон маълумот.xlsx!свод ичи (фАРРУХ)!39 area out of range (12400.00) |  | 850$ | 12400 | 10540000 |  |  |  |  |  | 
+  Шофиркон ПТЗ Дрон маълумот.xlsx!свод ичи (фАРРУХ)!40 area out of range (12000.00) |  | 100$ | 12000 | 1200000 |  |  |  |  |  | 
+new pending payer rows: 0; generic old 33 / new 33
+new bridge: {"candidates": 1035, "parsed": 1030, "parsed_no_number": 1, "svodka_rows": 90, "duplicates": 8, "quarantined": 1, "rows": 1111, "balanced": true}
+new row classes: {"job": 1029, "job_no_number": 1, "wage": 1, "rejected": 4, "unparsed": 0, "totals": 131, "header": 90, "block_marker": 108, "empty_numbered": 0, "no_job_data": 44, "above_header": 104}
+new apply gate: []
+
+book sha256:
+a018880d9ead790dccb7c63ed76730ff9a917bb8f77fc2f146b3e69d3ae5db04  ++АПРЕЛЬ DRONE.xlsx
+3034f321e6d74cadd6bbb4fabe5e7808f7b47af373949ac451f9adbadc3b3d43  ++Май DRONE.xlsx
+0524f22e95dd51afdfd27e061ae9c174146477b606f0d04fc8e5f8f0d9e1f49d  Агрокластер Дрон маълумот МАЙ.xlsx
+5f98cf4ed12ef35f43aaf48ff12ebd64558f65a35140fc30ff2a34f1025d3591  Агрокластер Дрон маълумот Март.xlsx
+d7219b7fe9cbbf1eb1073754eb6c012cb90e551a33de436abf0f86d14c6acd8f  Агрокластер_Дрон_маълумот_АПРЕЛЬ.xlsx
+dcac31230eb6f796850b5b8c9651269218c99a0378b3eb4320fb4e0bb309bcd7  Гарден Агрокластер Дрон Октябрь.xlsx
+f2adfb6a3067085ff003dbf09f1fc7dd350d979bc156617777257683574deb1e  Гарден Дрон маълумот Апрель.xlsx
+02c1bddff81cb9f05a1cda712b1c1445f7cf0f2408240cbc575a06c45be9f39f  Гарден Дрон маълумот Май.xlsx
+d880856084673ec7884e54f2cc060a88b07aed1c4f680e948ed2db00de9b5bb5  Гарден Дрон маълумот Март.xlsx
+f51af5faa9dd51ff5b1050760913909fc9e1a3b2d8f4e4a2533eb09098e3b93c  Гарден_Агрокластер_Дрон_маълумот.xlsx
+b435bc56a7cd5917907bc446c652fe160919ba65aa686c5cc3ce21d2bcfb307c  Дрон Ғиждувон ПТЗ Апрель.xlsx
+3d9ad76cfdd901548225e41045c58973eb43937c0a910afd992854dab5afebb2  Дрон Ғиждувон ПТЗ Июнь.xlsx
+236ce438449231a6b1edf0861f3d792cadee1a4cf0914677369d13d8f6b1484d  Дрон Ғиждувон ПТЗ МАЙ.xlsx
+1a937a60a8f8a05cbe4f1149b35a1679e1e222fcdbe17e7889fe86c688a1e9d6  Дрон_маълумот_Достон_АКА_АГРОКЛАСТЕР.xlsx
+1ea47101fb37a66a953b7fbc1683acaf05514c453d43f10a933741cf0b44f955  Имомов Бехзод Пешку ПТЗ Апрель.xlsx
+199f1c4deb8484e9a09d86e89a3590a504257cabeef58070cdae405761745038  Имомов Бехзод Пешку ПТЗ.xlsx
+9f98c27859aa877279bee3c071b57ff00688c4db66de5e4de77f39e2e0636675  Когон ПТЗ Дрон маълумот (2).xlsx
+deba2ec15fac3a5b6ce9bd0798851eed7d1e034a07400b04c7b4cb8110189a58  Когон ПТЗ Дрон маълумот.xlsx
+648aafd24996648d72941b801bc1b9c588781b193b5119bfbcafb5d87c205b43  Когон ПТЗ Шохрух Хамроев Апрель.xlsx
+be4009742211afd8a0916f5ded5f820acaa515aeee8cfebef95215d5856d89c5  Когон ПТЗ Шохрух Хамроев МАРТ.xlsx
+fcbdfa1a0f4d5856e37f6dfc956e2207cec103a5ea22e95c074a87576f8a3d53  МАРТ DRONE.xlsx
+0000b0e0fbd53043315da07c2abcf68a0e67f654abc46c61febf12fdb9e61333  Обший_сумма_Дрон_маълумот_ОКТЯБРЬ.xlsx
+64b7bfb4096ad2f609999b337643e450768ee641f1c326d2f23d7ae915e6ffaf  Обший_сумма_Дрон_маълумот_Сентябрь.xlsx
+079ccf3685a322ec0b296b6ffb7ea21c43f0ef314f51f1d43863752ba81e3fd3  Сервис Дрон Маълумот (2).xlsx
+9f3c4d42ceb0bdec6591ff82c99d64524565ba25f0f4ebf8e42acca01707ad95  Сервис Дрон Маълумот.xlsx
+ffbf4bd175af02072adc8aefdd84b66adaf2014ddd5aad30b4a391ed591cbb16  Сервис Дрон маълумот АПРЕЛЬ.xlsx
+9e0d19f154ebe7a7082c4ef489b8b0eb7bbb8468df4e916b691983878ea01d3b  Сервис Дрон маълумот МАЙ.xlsx
+60a9d5c85c95a1fe97701298ed3d86eaf748f1612dc2e05c615eac6f4c6585cc  Список операторов.xlsx
+e6256ecfd564c25984ef72506ecb3bcec60cf5030e6293b58372027353ef5b8a  Шофиркон ПТЗ Дрон Октябрь.xlsx
+f4a6591453268d686722321bac1f84942aa7e8e3b0a976bad9a61d5db3a74215  Шофиркон ПТЗ Дрон маълумот Июнь.xlsx
+a85fa611a5e2cb47e70aa351e851022420155b3541b6d945c176c1157c04f3f8  Шофиркон ПТЗ Дрон маълумот.xlsx
+4881d6f91e3a4be9a81dad240a023f29eb7a4263523683eb4f5d0b98d139fb1e  Шофиркон_ПТЗ_Дрон_маълумот_АПРЕЛЬ.xlsx
+0700c377e43399e4cf24a8b5b5860f75575c12c4ff8cf08f1b995b5298854bd3  Ғиждувон ПТЗ Дрон маълумот Март.xlsx
+36098eb6256d93ad69e43dbe564b49ff57506193827b16a1184336643a930ba0  Ғиждувон ПТЗ Дрон маълумот.xlsx
+2706c74df76f2dd2a8d9af8e56618f4f3047fd906f6397c3f65bc2ec45ba7527  Ғиждувон_ПТЗ_Дрон_маълумот_Октябрь.xlsx
