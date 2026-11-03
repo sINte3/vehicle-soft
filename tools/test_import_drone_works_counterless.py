@@ -240,6 +240,26 @@ class FailClosedParseTests(unittest.TestCase):
         self.assertEqual([r[1] for r in report.rejections],
                          ['area out of range (12220.00)'])
 
+    def test_a_note_in_the_area_column_is_listed_not_blocking(self):
+        # «Имомов Бехзод Пешку ПТЗ.xlsx»: a cash note under the totals.
+        rows, report = parse([
+            ('Нақд (Июль ойи)',), HEADER,
+            job(1, 'Бор фх', 4.0, 200000, 2),
+            (None, 'Жами сумма:', 4.0),
+            (None, None, 'Кеча топширган', 36191000, 9720000),
+        ])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(report.unparsed, [])
+        self.assertEqual([(r[0], r[1]) for r in report.rejections],
+                         [(5, 'note in the area column (no farm, no row '
+                              'number)')])
+        # With a farm next to it the same word is a job nobody can read.
+        _rows, report = parse([
+            ('Нақд (Июль ойи)',), HEADER,
+            (None, 'Сўзли фх', 'ўн уч', 200000, None, None, None, d(4)),
+        ])
+        self.assertEqual(len(report.unparsed), 1)
+
     def test_a_repeated_header_remaps_the_columns(self):
         moved = ('№', 'Дрон ишлаган сана', 'ФХ номи', 'Майдон (га)',
                  'Хизмат кўрсатиш суммаси', 'Жами сумма')

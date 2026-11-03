@@ -759,8 +759,9 @@ def has_work_data(cells, mapping):
     is hectares for somebody, so the signs are the farm and the area; a price,
     an amount or a date alone is not one -- trap (b)'s «Доллар | 12220» puts
     its number in the date column of the fixture and is not a job. The area
-    column counts with ANY value, text included (a word typed where the
-    hectares belong is a job the parser cannot read, not junk).
+    column counts with ANY value, text included: next to a farm or a «№» a
+    word where the hectares belong is a job the parser cannot read; alone it
+    is a note, and parse_sheet() lists it under its own name.
     """
     if _farm_name(cells, mapping):
         return True
@@ -1171,6 +1172,18 @@ def parse_sheet(ws, file_name, sheet_name, period_month, subdivision,
                 classify('rejected')
                 report.rejections.append(
                     (excel_row, 'area out of range (%.2f)' % area, cells))
+                continue
+            if (counter is None and area is None
+                    and not _farm_name(cells, mapping)):
+                # [REASON]: words in the area column and nothing else of a
+                # job -- no farm, no «№». In «Имомов Бехзод Пешку ПТЗ.xlsx»
+                # it is «Кеча топширган» (cash handed over), under the
+                # totals. Named and listed like trap (b)'s «Доллар | 12220»,
+                # not a blocker: there is no job in it to lose.
+                classify('rejected')
+                report.rejections.append(
+                    (excel_row, 'note in the area column (no farm, no row '
+                     'number)', cells))
                 continue
             if counter is not None:
                 area_text = _text(_cell_at(cells, mapping.get('area')))
