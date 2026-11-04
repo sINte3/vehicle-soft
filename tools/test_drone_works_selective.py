@@ -356,6 +356,27 @@ class SelectiveImportTests(unittest.TestCase):
                     'ORIGINAL_JULY_BOOK_BYTES_REQUIRE_ALLOWLIST' in line
                     for line in imp.apply_blockers(result)))
 
+    def test_late_duplicate_is_error_not_partial_success(self):
+        a = dict(row(), drone_operator_id=14, drone_customer_id=155,
+                 payer_unidentified=False)
+        r = run_result([a])
+        con = sqlite3.connect(':memory:')
+        try:
+            con.execute('CREATE TABLE drone_works (id INTEGER PRIMARY KEY, '
+                        'source_file TEXT, source_sheet TEXT, source_row INTEGER)')
+            con.execute('INSERT INTO drone_works '
+                        '(source_file, source_sheet, source_row) VALUES (?,?,?)',
+                        (a['source_file'], a['source_sheet'], a['source_row']))
+            con.commit()
+            with self.assertRaisesRegex(imp.ImportPreconditionError,
+                                        'SELECTED_WORK_ALREADY_IN_DB_DURING_APPLY'):
+                imp.apply_rows(con, r, 'late-duplicate', approved_rows=approved([a]))
+            con.rollback()
+            self.assertEqual(con.execute(
+                'SELECT COUNT(*) FROM drone_works').fetchone()[0], 1)
+        finally:
+            con.close()
+
     def test_allowlist_only_covers_exact_july_five_books(self):
         other = dict(row(), source_file='SomeOtherBook.xlsx')
         with self.assertRaisesRegex(sel.SelectionError,
