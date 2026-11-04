@@ -296,6 +296,66 @@ class SelectiveImportTests(unittest.TestCase):
         finally:
             con.close()
 
+    def test_original_july_filename_with_false_manifest_month_is_held(self):
+        r = run_result([dict(row(), period_month='2026-06')])
+        con = sqlite3.connect(':memory:')
+        try:
+            with self.assertRaisesRegex(imp.ImportPreconditionError,
+                                        'JULY_ALLOWLIST_REQUIRED'):
+                imp.apply_rows(con, r, 'wrong-month')
+            self.assertFalse(con.in_transaction)
+        finally:
+            con.close()
+
+    def test_renamed_original_xlsx_hash_is_held_before_begin(self):
+        # Same original workbook bytes, fake filename and false month.
+        renamed = dict(row(), source_file='NewName.xlsx',
+                       period_month='2026-06')
+        r = run_result([renamed])
+        r.source_book_hashes['NewName.xlsx'] = next(
+            iter(sel.JULY_BOOK_SHA256.values()))
+        con = sqlite3.connect(':memory:')
+        try:
+            with self.assertRaisesRegex(
+                    imp.ImportPreconditionError,
+                    'ORIGINAL_JULY_BOOK_BYTES_REQUIRE_ALLOWLIST'):
+                imp.apply_rows(con, r, 'renamed-original-book')
+            self.assertFalse(con.in_transaction)
+        finally:
+            con.close()
+
+    def test_allowlist_with_false_manifest_month_is_rejected(self):
+        mismonth = dict(row(), period_month='2026-06')
+        with self.assertRaisesRegex(sel.SelectionError,
+                                    'NON_JULY_SOURCE_IN_ALLOWLIST'):
+            sel.verify_apply_preconditions(
+                run_result([mismonth]), approved([mismonth]))
+
+    def test_collect_records_actual_workbook_digest_not_just_filename(self):
+        from openpyxl import Workbook
+        with tempfile.TemporaryDirectory() as d:
+            filename = 'MislabeledJune.xlsx'
+            path = os.path.join(d, filename)
+            wb = Workbook()
+            wb.active.title = 'OTHER SHEET'
+            wb.active.cell(1, 1).value = 'No real jobs in this fixture'
+            wb.save(path)
+            expected = hashlib.sha256(open(path, 'rb').read()).hexdigest()
+            class DirectoryStub:
+                def subdivision_for_file(self, file_name):
+                    return None
+            result = imp.collect(d, {filename: '2026-06'}, [filename],
+                                 DirectoryStub(), None)
+            self.assertEqual(result.source_book_hashes[filename], expected)
+            self.assertEqual(result.rows, [])
+            # If this file is one of the pinned originals, even its
+            # deliberate rename/mislabeling must be held by shared gate.
+            with mock.patch.dict(sel.JULY_BOOK_SHA256,
+                                 {'OriginalJuly.xlsx': expected}, clear=True):
+                self.assertTrue(any(
+                    'ORIGINAL_JULY_BOOK_BYTES_REQUIRE_ALLOWLIST' in line
+                    for line in imp.apply_blockers(result)))
+
     def test_allowlist_only_covers_exact_july_five_books(self):
         other = dict(row(), source_file='SomeOtherBook.xlsx')
         with self.assertRaisesRegex(sel.SelectionError,
