@@ -2150,6 +2150,15 @@ def apply_rows(con, result, batch, approved_rows=None):
                     (row['source_file'], row['source_sheet'],
                      row['source_row']))
         if cur.fetchone():
+            # An approved subset is exact: a concurrent/late provenance
+            # collision must refuse the batch, not report a partial
+            # successful import. The caller rolls back the transaction.
+            if approved_rows is not None:
+                raise ImportPreconditionError(
+                    'ERROR SELECTED_WORK_ALREADY_IN_DB_DURING_APPLY: '
+                    '%s!%s!%d. Nothing written.' %
+                    (row['source_file'], row['source_sheet'],
+                     row['source_row']))
             skipped += 1
             continue
         cur.execute(
