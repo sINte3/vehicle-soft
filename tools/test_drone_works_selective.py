@@ -193,15 +193,19 @@ class SelectiveImportTests(unittest.TestCase):
         try:
             self.assertFalse(con.in_transaction)
             with self.assertRaisesRegex(imp.ImportPreconditionError,
-                                        'JULY_ALLOWLIST_REQUIRED'):
+                                        'JULY_2026_WORK_REQUIRES_ALLOWLIST'):
                 imp.apply_rows(con, r, 'test')
             self.assertFalse(con.in_transaction)
         finally:
             con.close()
 
     def test_unrelated_old_import_not_blocked_by_july_guard(self):
-        r = run_result([dict(row(), source_file='Older.xlsx',
-                             period_month='2026-06')])
+        r = run_result([dict(
+            row(), source_file='Older.xlsx',
+            period_month='2026-06',
+            work_date_from=datetime.date(2026, 6, 11),
+            work_date_to=datetime.date(2026, 6, 11),
+            date_raw='2026-06-11')])
         self.assertFalse(imp.apply_blockers(r))
 
     def test_approved_list_must_match_all_rows_before_begin(self):
@@ -310,7 +314,7 @@ class SelectiveImportTests(unittest.TestCase):
         con = sqlite3.connect(':memory:')
         try:
             with self.assertRaisesRegex(imp.ImportPreconditionError,
-                                        'JULY_ALLOWLIST_REQUIRED'):
+                                        'JULY_2026_WORK_REQUIRES_ALLOWLIST'):
                 imp.apply_rows(con, r, 'wrong-month')
             self.assertFalse(con.in_transaction)
         finally:
@@ -393,6 +397,7 @@ class SelectiveImportTests(unittest.TestCase):
         import zipfile
         from tools import drone_works_fixtures as fx
         from drone_works_upload import run_import
+        from tools import import_drone_works as web_imp
 
         with tempfile.TemporaryDirectory() as folder:
             name = 'ResavedElsewhere.xlsx'
@@ -452,7 +457,7 @@ class SelectiveImportTests(unittest.TestCase):
                 self.assertIn('JULY_2026_WORK_REQUIRES_ALLOWLIST',
                               out.getvalue())
                 with self.assertRaisesRegex(
-                        imp.ImportPreconditionError,
+                        web_imp.ImportPreconditionError,
                         'JULY_2026_WORK_REQUIRES_ALLOWLIST'):
                     run_import(
                         db, directory, [{'name': name}], '2026-07', True,
