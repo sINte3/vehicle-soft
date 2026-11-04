@@ -25,6 +25,7 @@
   python -m unittest tests.test_gps_fact_screen -v
 """
 import json
+import os
 import re
 import unittest
 
@@ -36,6 +37,13 @@ from models import (Equipment, GpsDailyAggregate, GpsWorkPolygon, Organization, 
 
 import migrate_gps_daily_001 as gps_mig
 import gps_routes
+from tests.test_agro_work_runbook import released
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Production до третьего шага «для человека» (v1.34, 04.11.2026): правила
+# экрана там -- в карточке над фильтрами.
+BEFORE_DAY_FOR_PEOPLE = 'a73d756dcb67c06388e58bc7c4a0a1ac64e59e34'
+RULE_START = 'Сколько машина обработала за сутки — посчитано по её собственному треку'
 
 DAY = date(2026, 7, 27)
 
@@ -111,8 +119,9 @@ class FactScreen(unittest.TestCase):
             db.session.add(_site())
             db.session.commit()
         html = self._get()
-        self.assertIn('8.772', html)
-        self.assertIn('317.4', html)
+        # 04.11.2026: гектары -- до сотых, как итог суток и подпись на карте;
+        # минуты -- «5 ч 17 мин», как время в движении (8.772 га, 317.4 мин).
+        self.assertIn('<div><b>8.77</b> га · 5 ч 17 мин</div>', html)
         self.assertIn('<polygon', html)
         self.assertIn('без геозоны', html)
 
@@ -140,18 +149,21 @@ class FactScreen(unittest.TestCase):
             db.session.commit()
         html = self._get()
         self.assertIn('Редкая запись', html)
-        self.assertIn('301.0', html)
+        self.assertIn('точка раз в 301 с', html)
         self.assertNotIn('<polygon', html)
 
     def test_an_unfinished_collection_shows_the_reason_and_the_hint(self):
         # GPS-11: коллектор не дошёл до конца суток -- причина словами,
-        # подсказка про --catch-up, и никаких гектаров и полигонов
+        # обещание, что расчёт повторится сам, и никаких гектаров и полигонов.
+        # Команды запуска на экране нет (04.11.2026): она нужна
+        # администратору, и она в ранбуке, а не в сообщении людям.
         with app.app_context():
             db.session.add(_aggregate(reason='sbor_nepolnyy'))
             db.session.commit()
         html = self._get()
         self.assertIn('Сбор точек за эти сутки не завершён', html)
-        self.assertIn('--catch-up', html)
+        self.assertIn('и расчёт повторится сам. ', html)
+        self.assertNotIn('--catch-up', html)
         self.assertNotIn('<polygon', html)
 
     def test_looked_and_found_nothing_differs_from_did_not_look(self):
@@ -178,7 +190,7 @@ class FactScreen(unittest.TestCase):
             db.session.add(_site(wialon_id=9002))
             db.session.commit()
         html = self._get()
-        self.assertIn('8.772', html)
+        self.assertIn('<b>8.77</b> га', html)
         # Выбор машины -- поле с подсказками (09.10.2026): открытая машина --
         # в скрытом поле `unit` и отмечена в списке подсказок.
         selected = re.search(r'<input type="hidden" name="unit" value="(\d+)"', html)
@@ -231,7 +243,7 @@ class FactScreen(unittest.TestCase):
         self.assertIn('Спецтехника — гектары не считаются', html)
         self.assertIn('поменяйте ей категорию', html)
         self.assertIn('12.3', html)                # след на месте
-        self.assertIn('1598 / 990', html)
+        self.assertIn('точек 1598, из них в работе 990', html)
         self.assertNotIn('0.77', html)             # гектаров нет
         self.assertNotIn('<polygon', html)
         self.assertNotIn('Участки за сутки', html)
@@ -319,6 +331,218 @@ class FactScreen(unittest.TestCase):
             db.session.commit()
         html = self._get('/gps/fact?date=2026-07-27&unit=1001')
         self.assertIn('Движения нет', html)
+
+
+class DayForPeople(unittest.TestCase):
+    """Решение владельца 04.11.2026, третий шаг: «Работа за день» для человека.
+
+    Вместо карточки с абзацем правил -- одна строка; итог суток -- пять чисел
+    над картой, запись трека -- одной строкой словами; на виду нет ни номера
+    объекта Wialon, ни кода «razryvy=3», ни путей к файлам ключей; правила --
+    дословно, один раз, свёрнуто внизу. Расчёт и маршрут не менялись: те же
+    числа, на новом месте.
+    """
+
+    setUp = FactScreen.setUp
+    _client = FactScreen._client
+    _get = FactScreen._get
+
+    def _day(self, *sites, **aggregate):
+        with app.app_context():
+            db.session.add(_aggregate(**aggregate))
+            db.session.add_all(sites)
+            db.session.commit()
+        return self._get()
+
+    @staticmethod
+    def _rules(html):
+        start = html.index('<details class="gps-fact-rules">\n  <summary>Как считается')
+        return html[start:html.index('</details>', start)]
+
+    def test_no_wall_of_text_above_the_numbers(self):
+        html = self._day(_site())
+        self.assertNotIn('vs-hero', html)
+        lead = html.index('<p class="gps-fact-lead">')
+        self.assertLess(lead, html.index('data-gps-fact-filters'))
+        self.assertIn('Отметьте каждый участок: работа это или проезд.', html)
+        # Ни абзаца правил, ни строки метода выше итога суток и карты.
+        above = html[:html.index('class="gps-fact-day"')]
+        self.assertNotIn(RULE_START, above)
+        self.assertNotIn('Метод: ', above)
+
+    def test_the_rules_are_kept_word_for_word_once_at_the_bottom(self):
+        html = self._day(_site())
+        rules = self._rules(html)
+        self.assertEqual(html.count(RULE_START), 1)
+        self.assertIn(RULE_START, rules)
+        self.assertEqual(html.count('Версия метода: '), 1)
+        self.assertIn('Версия метода: adaptive-alpha-2026-08-12.', rules)
+        # «Как считается» -- после карты и участков, не между ними.
+        self.assertGreater(html.index(rules), html.index('</section>'))
+
+    def test_the_rules_are_the_production_text(self):
+        # Дословно -- значит, выражение шаблона то же, что было в карточке на
+        # production, по обоим языкам, и строка метода та же.
+        before = released(self, BEFORE_DAY_FOR_PEOPLE, 'templates', 'gps', 'fact.html')
+        with open(os.path.join(REPO_ROOT, 'templates', 'gps', 'fact.html'),
+                  encoding='utf-8') as fh:
+            after = fh.read()
+        rule = re.search(r'<div class="vs-hero-sub">(\{\{ .*? \}\})</div>', before).group(1)
+        method = re.search(r'<div class="vs-help vs-mb">\n  (\{\{ \'Метод: .*?\.)\n</div>',
+                           before, re.S).group(1)
+        rules = after[after.index('<details class="gps-fact-rules">\n  <summary>{{ \'Как считается\''):]
+        self.assertIn('<p>%s</p>' % rule, rules)
+        self.assertIn('<p>%s</p>' % method, rules)
+
+    def test_the_day_is_summed_up_above_the_map(self):
+        html = self._day(_site(), track_km=32.14)
+        day = html[html.index('class="gps-fact-day"'):html.index('class="gps-fact-split')]
+        labels = re.findall(r'<span class="gps-fact-fig-label">([^<]+)</span>', day)
+        self.assertEqual(labels, ['Обработано, га', 'Участков', 'В движении',
+                                  'Первое и последнее движение',
+                                  'Пробег по треку, км'])
+        values = re.findall(r'<span class="gps-fact-fig-value">([^<]+)</span>', day)
+        self.assertEqual(values[0], '8.77')
+        self.assertEqual(values[1], '1')
+        self.assertEqual(values[4], '32.1')
+        self.assertIn('Запись трека:', day)
+        self.assertIn('точек 1598, из них в работе 990', day)
+        self.assertNotIn('vs-stat', html)          # одиннадцати плиток нет
+
+    def test_a_reason_follows_the_summary_it_refers_to(self):
+        # «След трека выше измерен и верен»: показатели теперь и правда выше.
+        html = self._day(reason='spetstekhnika')
+        self.assertLess(html.index('class="gps-fact-day"'),
+                        html.index('Спецтехника — гектары не считаются'))
+        self.assertIn('<span class="gps-fact-fig-value">—</span>', html)
+
+    def test_a_named_machine_shows_no_wialon_object_number(self):
+        with app.app_context():
+            db.session.add(VialonMapping(vialon_name='МТЗ 261 EA', wialon_id=3464))
+            db.session.commit()
+        html = self._day(_site())
+        head = html[html.index('class="gps-fact-head"'):html.index('class="gps-fact-day"')]
+        self.assertIn('МТЗ 261 EA', head)
+        self.assertNotIn('Wialon', head)
+        self.assertNotIn('3464', head.split('href=')[0])
+
+    def test_the_track_quality_is_words_not_a_code(self):
+        html = self._day(_site(quality_flag='razryvy=3;pryzhki=2'),
+                         motion_gaps=3, gps_jumps=2)
+        self.assertNotIn('razryvy', html)
+        self.assertNotIn('pryzhki', html)
+        self.assertIn('молчаний на ходу <b class="is-marked">3</b>', html)
+        self.assertIn('прыжков координат <b class="is-marked">2</b>', html)
+
+    def test_a_clean_track_is_not_marked(self):
+        """Отрицательный контроль к тесту выше: без разрывов цвета нет."""
+        html = self._day(_site())
+        self.assertIn('молчаний на ходу <b>0</b>', html)
+        self.assertIn('прыжков координат <b>0</b>', html)
+        self.assertNotIn('is-marked', html)
+        self.assertNotIn('чисто', html)
+
+    def test_the_summary_counts_the_sites_without_an_answer(self):
+        html = self._day(_site(), _site(number=2, operator_label='работа'))
+        self.assertIn('<span class="gps-fact-fig-note is-open">без ответа: 1</span>', html)
+        with app.app_context():
+            for row in GpsWorkPolygon.query:
+                row.operator_label = 'проезд'
+            db.session.commit()
+        html = self._get()
+        self.assertIn('<span class="gps-fact-fig-note">все отвечены</span>', html)
+        self.assertNotIn('gps-fact-fig-note is-open', html)
+
+    def test_work_time_is_hours_and_minutes(self):
+        html = self._day(_site(minutes=317.4), _site(number=2, minutes=44.6, area=0.5),
+                         _site(number=3, minutes=60.0, area=1.0))
+        self.assertIn('<div><b>8.77</b> га · 5 ч 17 мин</div>', html)
+        self.assertIn('<div><b>0.50</b> га · 45 мин</div>', html)
+        self.assertIn('<div><b>1.00</b> га · 1 ч 00 мин</div>', html)
+
+    def test_one_time_is_written_one_way(self):
+        self.assertEqual(gps_routes.duration(317.4), '5 ч 17 мин')
+        self.assertEqual(gps_routes.duration(44.6), '45 мин')
+        self.assertEqual(gps_routes.duration(60.0), '1 ч 00 мин')
+        self.assertEqual(gps_routes.duration(None), '0 мин')
+        self.assertEqual(gps_routes.duration(317.4, is_ru=False), '5 соат 17 дақ')
+        # Подпись участка на карте -- то же время, что в таблице участков.
+        html = self._day(_site())
+        data = json.loads(re.search(r'id="gps-fact-map">(.*?)</script>', html, re.S).group(1))
+        titles = [layer['title'] for layer in data['layers'] if layer['kind'] == 'area']
+        self.assertEqual(titles, ['№1 · 8.77 га · 5 ч 17 мин'])
+        self.assertIn('<div><b>8.77</b> га · 5 ч 17 мин</div>', html)
+
+    def test_the_suggestion_speaks_the_language_of_the_screen(self):
+        html = self._day(_site(suggested='проезд'))
+        self.assertIn('программа предлагает: проезд', html)
+        with app.app_context():
+            User.query.get(self.admin_id).language = 'uz'
+            db.session.commit()
+        html = self._get()
+        self.assertIn('дастур таклифи: ўтиш', html)
+        self.assertNotIn('проезд</span>', html)
+
+    def test_answer_buttons_look_like_buttons(self):
+        # Прежде неотвеченные кнопки были «призрачными» -- читались как текст.
+        html = self._day(_site(), _site(number=2, operator_label='работа'))
+        classes = re.findall(r'value="(работа|проезд)"\s+class="([^"]+)"', html)
+        self.assertEqual(classes, [
+            ('работа', 'vs-btn vs-btn-sm'), ('проезд', 'vs-btn vs-btn-sm'),
+            ('работа', 'vs-btn vs-btn-sm vs-btn-success'),
+            ('проезд', 'vs-btn vs-btn-sm')])
+
+    def test_the_satellite_how_to_is_folded_for_the_admin(self):
+        html = self._day(_site())
+        self.assertIn('<div class="vs-soft vs-mt-sm">Спутниковая подложка не '
+                      'подключена — показана карта OpenStreetMap.</div>', html)
+        start = html.index('<summary>Подключение спутниковых снимков</summary>')
+        how_to = html[start:html.index('</details>', start)]
+        self.assertIn('esri_api_key.txt', how_to)
+        self.assertEqual(html.count('esri_api_key.txt'), how_to.count('esri_api_key.txt'))
+
+    def test_an_employee_sees_the_plain_line_without_the_how_to(self):
+        """Отрицательный контроль: пути к файлам -- не для сотрудника."""
+        with app.app_context():
+            org = Organization.query.get(self.org_id)
+            machine = Equipment(name='МТЗ-80.1', plate='80 261 EA',
+                                category='mtz', organization_id=org.id)
+            db.session.add(machine)
+            db.session.flush()
+            db.session.add(VialonMapping(vialon_name='obj', wialon_id=3464,
+                                         equipment_id=machine.id, skip=False))
+            user = User(username='gps_emp', role=ROLE_OPERATOR, full_name='gps_emp',
+                        language='ru')
+            user.set_password('x')
+            user.organizations.append(org)
+            db.session.add(user)
+            db.session.flush()
+            db.session.add(UserModulePermission(user_id=user.id, module_code='wialon',
+                                                has_access=True))
+            db.session.add(_aggregate())
+            db.session.add(_site())
+            db.session.commit()
+            user_id = user.id
+        client = app.test_client()
+        login(client, user_id)
+        html = client.get('/gps/fact').get_data(as_text=True)
+        self.assertIn('МТЗ-80.1', html)
+        self.assertIn('Спутниковая подложка не подключена', html)
+        self.assertNotIn('Подключение спутниковых снимков', html)
+        self.assertNotIn('esri_api_key.txt', html)
+
+    def test_the_stylesheet_uses_only_tokens(self):
+        with open(os.path.join(REPO_ROOT, 'static', 'css', 'gps-fact.css'),
+                  encoding='utf-8') as fh:
+            css = fh.read()
+        with open(os.path.join(REPO_ROOT, 'static', 'css', 'design-system.css'),
+                  encoding='utf-8') as fh:
+            system = fh.read()
+        self.assertNotRegex(css, r'#[0-9a-fA-F]{3,8}\b')
+        self.assertNotRegex(css, r'\brgba?\(')
+        for token in set(re.findall(r'var\((--[a-z0-9-]+)\)', css)):
+            with self.subTest(token=token):
+                self.assertRegex(system, r'(?<![\w-])' + re.escape(token) + r'\s*:')
 
 
 class OperatorAnswer(unittest.TestCase):

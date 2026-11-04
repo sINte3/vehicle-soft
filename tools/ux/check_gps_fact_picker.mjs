@@ -320,6 +320,13 @@ async function checkAnswerKeepsPlace(state) {
 async function checkTopbar(state) {
   const tag = 'topbar';
   const { ctx, page } = await open(state, TRACTOR, [1440, 900]);
+  // [REASON]: с 04.11.2026 под картой нет одиннадцати плиток, и страница
+  // суток с одним участком короче, чем нужно, чтобы кнопки масштаба доехали
+  // до шапки: без запаса проверка видела бы underBar:false и не мерила бы
+  // ничего. Запас в конце страницы не меняет того, что здесь проверяется, --
+  // кто кого перекрывает.
+  await page.evaluate(() => document.body.insertAdjacentHTML('beforeend',
+    '<div data-check-spacer style="height:100vh"></div>'));
   // Цель -- кнопки масштаба Leaflet: они есть всегда (плитки в песочнице
   // могут не загрузиться, и в пустом месте карты сравнивать было бы нечего).
   // Страница сдвигается так, чтобы кнопки встали под середину шапки.

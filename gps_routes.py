@@ -603,6 +603,21 @@ def _geometry(text):
 SITE_TONES = {GPS_LABEL_WORK: 'success', GPS_LABEL_PASSAGE: 'danger'}
 
 
+def duration(minutes, is_ru=True):
+    """317.4 -> «5 ч 17 мин», 44.6 -> «45 мин».
+
+    [REASON]: решение владельца 04.11.2026 -- экраны модуля читают люди, и
+    «317.4 мин» человек пересчитывает в часы в уме. Одна функция на таблицу
+    участков, «В движении» и подпись участка на карте «Работы за день»: одно
+    и то же время не пишется на экране двумя способами.
+    """
+    total = int(round(minutes or 0))
+    hour, minute = ('ч', 'мин') if is_ru else ('соат', 'дақ')
+    if total < 60:
+        return '%d %s' % (total, minute)
+    return '%d %s %02d %s' % (total // 60, hour, total % 60, minute)
+
+
 def map_layers(points, sites, contours, is_ru):
     """Слои карты суток снизу вверх: контуры полей, трек, участки.
 
@@ -631,8 +646,7 @@ def map_layers(points, sites, contours, is_ru):
             continue
         parts = ['№%d' % site.site_number,
                  '%.2f %s' % (site.area_ha or 0, 'га'),
-                 '%d %s' % (round(site.minutes or 0),
-                            'мин' if is_ru else 'дақ')]
+                 duration(site.minutes, is_ru)]
         if site.operator_label in answers:
             parts.append(answers[site.operator_label])
         layers.append({'kind': 'area', 'group': group_sites,
@@ -1136,6 +1150,7 @@ def fact():
         hidden_keys=hidden_keys,
         search=search, neighbour_urls=neighbour_urls, anchor=FACT_ANCHOR,
         period_back=timedelta(days=MACHINE_DEFAULT_DAYS - 1),
+        duration=duration,
     )
 
 
