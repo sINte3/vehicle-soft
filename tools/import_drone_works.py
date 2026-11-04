@@ -95,6 +95,7 @@ On Windows (PowerShell has no &&, one command per line):
 import argparse
 import csv
 import datetime
+import hashlib
 import os
 import re
 import sqlite3
@@ -1868,6 +1869,7 @@ class RunResult(object):
         self.schema_warnings = []   # dry run only; --apply refuses instead
         self.payer_decision_pending_rows = 0
         self.payer_word_new_cards = []   # [(key, spelling)] -- report only
+        self.source_book_hashes = {}     # filename -> SHA256 of original XLSX
 
 
 def collect(directory_path, manifest, dirs_files, dir_obj, default_payment):
@@ -1884,6 +1886,14 @@ def collect(directory_path, manifest, dirs_files, dir_obj, default_payment):
         period_month = manifest[file_name]
         full = os.path.join(directory_path, file_name)
         subdivision = dir_obj.subdivision_for_file(file_name)
+        # FIN-RECON-003: pin physical source bytes for the shared write
+        # gate, independently of manifest month and filename. An untouched
+        # July XLSX renamed in the folder cannot bypass the July allowlist.
+        digest = hashlib.sha256()
+        with open(full, 'rb') as source_stream:
+            for chunk in iter(lambda: source_stream.read(1024 * 1024), b''):
+                digest.update(chunk)
+        result.source_book_hashes[file_name] = digest.hexdigest()
         formulas = _formula_cells(full)
         wb = load_workbook(full, data_only=True, read_only=True)
         try:
@@ -2060,7 +2070,7 @@ def resolve(result, dir_obj):
 
 # ─── Writing ─────────────────────────────────────────────────────────────────
 
-def apply_blockers(result):
+def apply_blockers(result, approved_rows=None):
     """Why this parsed run must not be written, as ASCII lines; [] = none.
 
     [REASON]: FIN-RECON-003, fail-closed. A row that carries job data and
@@ -2082,12 +2092,23 @@ def apply_blockers(result):
         blockers.append('PAYER_DECISION_REQUIRED: %d spelling(s) of '
                         'PAYER_DECISION_PENDING_KEYS would become a new card'
                         % len(pending))
+    # FIN-RECON-003: the five July books MUST NOT pass through the old
+    # all-rows CLI or web-upload apply path. A selected cohort must carry
+    # exact approved source keys AND hashes of the original row values.
+    try:
+        try:
+            from . import drone_works_selective as selective
+        except ImportError:
+            import drone_works_selective as selective
+        selective.verify_apply_preconditions(result, approved_rows)
+    except selective.SelectionError as exc:
+        blockers.append('SOURCE_KEY_GUARD: %s' % exc)
     return blockers
 
 
-def apply_rows(con, result, batch):
+def apply_rows(con, result, batch, approved_rows=None):
     """Insert customers, aliases and works inside ONE transaction."""
-    blockers = apply_blockers(result)
+    blockers = apply_blockers(result, approved_rows=approved_rows)
     if blockers:
         raise ImportPreconditionError(
             'ERROR APPLY_REFUSED: %s. Nothing written.' % '; '.join(blockers))
@@ -2129,6 +2150,15 @@ def apply_rows(con, result, batch):
                     (row['source_file'], row['source_sheet'],
                      row['source_row']))
         if cur.fetchone():
+            # An approved subset is exact: a concurrent/late provenance
+            # collision must refuse the batch, not report a partial
+            # successful import. The caller rolls back the transaction.
+            if approved_rows is not None:
+                raise ImportPreconditionError(
+                    'ERROR SELECTED_WORK_ALREADY_IN_DB_DURING_APPLY: '
+                    '%s!%s!%d. Nothing written.' %
+                    (row['source_file'], row['source_sheet'],
+                     row['source_row']))
             skipped += 1
             continue
         cur.execute(
