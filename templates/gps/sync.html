@@ -42,7 +42,7 @@
       <span class="gps-fact-fig-value">{{ last.started_at.strftime('%d.%m.%Y %H:%M') }}</span>
     </div>
     <div>
-      <span class="gps-fact-fig-label">{{ 'Как прошёл' if is_ru else 'Қандай ўтди' }}</span>
+      <span class="gps-fact-fig-label">{{ 'Состояние' if is_ru else 'Ҳолат' }}</span>
       <span class="gps-fact-fig-value">{{ state(last) }}</span>
     </div>
     <div>

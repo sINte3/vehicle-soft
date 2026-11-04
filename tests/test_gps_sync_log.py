@@ -408,7 +408,8 @@ class ScreenForPeople(unittest.TestCase):
         self._add(status='partial', units_failed=7)
         html = self._html()
         self.assertEqual(self.figure(html, 'Последний прогон'), '10.08.2026 03:00')
-        self.assertEqual(self.figure(html, 'Как прошёл'), 'Частичный')
+        # «Состояние» -- то же слово, что в заголовке таблицы.
+        self.assertEqual(self.figure(html, 'Состояние'), 'Частичный')
         self.assertEqual(self.figure(html, 'Точек записано'), '900')
         self.assertEqual(self.figure(html, 'Объектов не прочитано'), '7')
         self.assertIn('<span class="gps-fact-fig-note">из 481</span>', html)
