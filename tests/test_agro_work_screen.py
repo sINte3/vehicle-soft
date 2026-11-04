@@ -412,7 +412,11 @@ class LateAndOpen(ScreenCase):
         row = self.row_of(html, 'APP-TEST-007')
         self.assertTrue(row.startswith('<tr class="is-danger-row">'))
         self.assertIn('<span class="vs-badge vs-badge-danger">Без вердикта</span>', row)
-        self.assertIn('Заявка открыта', row)
+        # Что она открыта, строка говорит одной фразой -- сколько суток;
+        # причина «Заявка открыта — вердикт после закрытия» её бы повторила
+        # (решение 04.11: «для человека»).
+        self.assertIn('открыта %d сут. с ввода' % self.days_open, row)
+        self.assertNotIn('вердикт после закрытия', row)
         # отрицательный контроль: выполненная заявка с вердиктом и закрытая
         # без него -- не красные строки
         for number in ('APP-TEST-001', 'APP-TEST-006'):
@@ -1147,6 +1151,51 @@ class DashboardForPeople(ScreenCase):
             with self.subTest(token=token):
                 self.assertRegex(DESIGN_SYSTEM, r'(?<![\w-])' + re.escape(token)
                                  + r'\s*:')
+
+
+class ListsForPeople(ScreenCase):
+    """Решение владельца 04.11.2026, второй шаг: таблицы списков короче.
+
+    «Заявка → работа» -- шесть колонок вместо восьми (статус и окно -- одна
+    «Срок», машина и вид работы -- одна), номер agro-work -- только у
+    машины, не связанной с нашей техникой; «Работа → заявка» --
+    организация под машиной. Сведения те же, строк в ячейке меньше.
+    """
+
+    @staticmethod
+    def heads(html):
+        head = html[html.index('<thead>'):html.index('</thead>')]
+        return [re.sub(r'<[^>]+>', '', h).strip()
+                for h in re.findall(r'<th[^>]*>(.*?)</th>', head, re.S)]
+
+    def test_the_applications_list_has_six_columns(self):
+        html = self.get('/agro-work/applications', lang='ru').get_data(as_text=True)
+        self.assertEqual(self.heads(html), [
+            'Заявка', 'Машина и работа', 'Срок', 'Вердикт',
+            'Га или часы по GPS в окне', 'Объём против GPS'])
+        row = row_of(html, 'APP-TEST-001')
+        self.assertEqual(row.count('<td'), 6)
+        # окно заявки и её статус -- в одной ячейке
+        self.assertRegex(row, r'<td><span class="aw-nowrap">10\.09 — 11\.09</span>\s*'
+                              r'<div class="vs-soft">Выполнено</div>')
+        # вид работы и способ проверки -- под машиной
+        self.assertIn('<div class="vs-soft">Култивация · гектары</div>', row)
+        uz = self.get('/agro-work/applications', lang='uz').get_data(as_text=True)
+        for head in self.heads(uz):
+            self.assertNotRegex(head.replace('GPS', ''), '[A-Za-z]', head)
+
+    def test_the_agro_work_plate_only_where_there_is_no_machine(self):
+        html = self.get('/agro-work/applications', lang='ru').get_data(as_text=True)
+        self.assertNotIn('agro-work:', row_of(html, 'APP-TEST-001'))
+        # A3 -- машина agro-work без нашей техники: её номер и есть машина
+        self.assertIn('agro-work: PT8', row_of(html, 'APP-TEST-003'))
+
+    def test_the_work_days_list_puts_the_organization_under_the_machine(self):
+        html = self.get('/agro-work/work-days', lang='ru').get_data(as_text=True)
+        self.assertEqual(self.heads(html), ['Сутки', 'Машина', 'Га по GPS',
+                                            'Покрытие', 'Заявки'])
+        self.assertRegex(html, r'МТЗ-82 80 002 EA</a>\s*<div class="vs-soft">'
+                               r'Buxoro agroklaster</div>')
 
 
 class Copies(unittest.TestCase):

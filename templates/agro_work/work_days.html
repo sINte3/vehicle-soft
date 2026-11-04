@@ -35,7 +35,6 @@
         <tr>
           <th>{{ 'Сутки' if is_ru else 'Кун' }}</th>
           <th>{{ 'Машина' if is_ru else 'Машина' }}</th>
-          <th>{{ 'Организация' if is_ru else 'Ташкилот' }}</th>
           <th class="right">{{ 'Га по GPS' if is_ru else 'GPS бўйича га' }}</th>
           <th>{{ 'Покрытие' if is_ru else 'Қопланиш' }}</th>
           <th>{{ 'Заявки' if is_ru else 'Буюртмалар' }}</th>
@@ -47,8 +46,11 @@
           <td>{{ row.day.strftime('%d.%m.%Y') }}
             {% if row.wialon_id %}<div><a href="{{ url_for('gps.fact', date=row.day.isoformat(), unit=row.wialon_id) }}">{{ 'участки на карте' if is_ru else 'участкалар' }}</a></div>{% endif %}
           </td>
-          <td><a href="{{ url_for('agro_work.machine', equipment_id=row.equipment_id, **{'from': date_from.isoformat(), 'to': date_to.isoformat()}) }}">{{ row.machine }}</a></td>
-          <td>{{ row.org_name }}</td>
+          {# Решение 04.11 («для человека»): организация -- под машиной, а не
+             своей колонкой. #}
+          <td><a href="{{ url_for('agro_work.machine', equipment_id=row.equipment_id, **{'from': date_from.isoformat(), 'to': date_to.isoformat()}) }}">{{ row.machine }}</a>
+            <div class="vs-soft">{{ row.org_name }}</div>
+          </td>
           <td class="right">{% if row.gps_ha is not none %}{{ row.gps_ha }}{% else %}—{% endif %}</td>
           <td>
             {% if row.coverage == 'pokryta' %}<span class="vs-badge vs-badge-success">{{ coverage_label(row.coverage) }}</span>
