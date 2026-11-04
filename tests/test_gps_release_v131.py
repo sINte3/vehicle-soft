@@ -49,6 +49,7 @@ from tests.test_agro_work_runbook import (                    # noqa: E402
     BACKUP_PATTERNS, DRIFT_PATTERNS, GATE_SEPARATOR, HARNESS, PYTHON,
     commands, constants, gate_lines, git, has_commit, open_items,
     parse_backup, parse_drift, prepare, real_outputs, sections, steps, text)
+from tests.test_agro_work_runbook import released  # noqa: E402
 from tests.test_agro_work_runbook import RELEASE as V120     # noqa: E402
 from tests.test_agro_work_release_v122 import (              # noqa: E402
     functions, release_block)
@@ -470,13 +471,14 @@ class ReleaseV131Runbook(unittest.TestCase):
                       "filters['org']:", fact)
 
     def test_what_step_four_names_is_on_the_screen(self):
+        commit = reviewed()
         # Подписи, которые шаг 4 велит найти, -- слово в слово подписи
         # шаблонов и меню. Адресов шаг не даёт: экраны открываются из меню.
         flat = step('Шаг 4')
         self.assertNotIn('http://', flat)
-        fact = read('templates', 'gps', 'fact.html')
-        card = read('templates', 'gps', 'machine.html')
-        menu = read('templates', '_module_nav.html')
+        fact = released(self, commit, 'templates', 'gps', 'fact.html')
+        card = released(self, commit, 'templates', 'gps', 'machine.html')
+        menu = released(self, commit, 'templates', '_module_nav.html')
         named = set(re.findall(r'«([^«»]+)»', flat.split('**Прислать:**')[0]))
         for label in ('Организация', 'Все организации',
                       'Машина — наберите номер или модель'):

@@ -1,0 +1,215 @@
+/* agro-work.css -- layout of the "Zayavki i GPS" screens (templates/agro_work/).
+ *
+ * Owner's decision of 04.11.2026: the reconciliation screens are read by
+ * people, not auditors -- what needs action first, plain words, the rules
+ * once at the bottom. Design-system tokens only; a separate file for the same
+ * reason as gps-fact.css: design-system.css is a shared file of the project.
+ */
+
+/* One line under the tabs instead of a hero card with a paragraph of rules. */
+.aw-lead {
+  margin: 0 0 14px;
+  color: var(--vs-text-muted);
+  font-size: var(--vs-fs-md);
+}
+
+.aw-section {
+  margin: 22px 0 10px;
+  font-size: var(--vs-fs-md);
+  font-weight: 700;
+  color: var(--vs-text);
+}
+
+/* -- "Needs attention": one row per kind of violation ---------------------- */
+.aw-attn {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--vs-surface);
+  border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r-lg);
+  box-shadow: var(--vs-shadow-sm);
+}
+
+.aw-attn > li {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--vs-border);
+}
+
+.aw-attn > li:first-child { border-top: none; }
+
+.aw-attn-num {
+  font-size: var(--vs-fs-2xl);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--vs-danger);
+}
+
+.aw-attn-num.is-muted { color: var(--vs-text-muted); }
+
+.aw-attn-title {
+  display: block;
+  font-size: var(--vs-fs-md);
+  font-weight: 650;
+  color: var(--vs-text);
+}
+
+.aw-attn-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--vs-fs);
+  color: var(--vs-text-muted);
+}
+
+.aw-attn-link {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.aw-attn-clear {
+  padding: 16px 20px;
+  color: var(--vs-success);
+  font-weight: 600;
+}
+
+/* -- Period results: three cards with one stacked bar each ---------------- */
+.aw-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.aw-card {
+  background: var(--vs-surface);
+  border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r-lg);
+  box-shadow: var(--vs-shadow-sm);
+  padding: 16px 20px;
+}
+
+.aw-card-title {
+  font-size: var(--vs-fs-md);
+  font-weight: 700;
+  color: var(--vs-text);
+}
+
+.aw-card-value {
+  margin: 4px 0 12px;
+  font-size: var(--vs-fs-2xl);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--vs-text);
+}
+
+.aw-card-value small {
+  margin-left: 6px;
+  font-size: var(--vs-fs);
+  font-weight: 500;
+  color: var(--vs-text-muted);
+}
+
+.aw-bar {
+  display: flex;
+  height: 12px;
+  margin-bottom: 12px;
+  overflow: hidden;
+  border-radius: var(--vs-r-pill);
+  background: var(--vs-surface-3);
+}
+
+.aw-bar > span { display: block; height: 100%; }
+
+.aw-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  font-size: var(--vs-fs);
+}
+
+.aw-legend > li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.aw-legend b {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.aw-dot {
+  flex: 0 0 10px;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+/* One colour per meaning, on the bar and on its legend alike. */
+.aw-ok    { background: var(--vs-success); }
+.aw-warn  { background: var(--vs-warning); }
+.aw-bad   { background: var(--vs-danger); }
+.aw-none  { background: var(--vs-border-input); }
+
+.aw-card-note {
+  margin-top: 10px;
+  font-size: var(--vs-fs-sm);
+  color: var(--vs-text-muted);
+}
+
+/* -- Table by organization ------------------------------------------------- */
+/* Uzbek headers are twice as long as the Russian ones: they wrap here instead
+ * of pushing the last column out of the card. */
+.aw-org .vs-table th {
+  white-space: normal;
+  vertical-align: bottom;
+}
+
+.aw-org .vs-table td:first-child { min-width: 180px; }
+
+.aw-num-bad { color: var(--vs-danger); font-weight: 700; }
+.aw-num-zero { color: var(--vs-text-muted); }
+
+.aw-sub {
+  display: block;
+  font-size: var(--vs-fs-sm);
+  font-weight: 400;
+  color: var(--vs-text-muted);
+}
+
+.aw-foot {
+  margin-top: 10px;
+  font-size: var(--vs-fs-sm);
+  color: var(--vs-text-muted);
+}
+
+/* -- "How it is counted": the rules, once, folded ------------------------- */
+.aw-rules {
+  margin: 18px 0 8px;
+  font-size: var(--vs-fs);
+  color: var(--vs-text-muted);
+}
+
+.aw-rules > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--vs-primary);
+}
+
+.aw-rules > p { margin: 8px 0 0; max-width: 960px; }
+
+@media (max-width: 1024px) {
+  .aw-cards { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 768px) {
+  .aw-attn > li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+}

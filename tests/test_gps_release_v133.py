@@ -53,6 +53,7 @@ from tests.test_agro_work_runbook import (                    # noqa: E402
     BACKUP_PATTERNS, DRIFT_PATTERNS, GATE_SEPARATOR, HARNESS, PYTHON,
     commands, constants, gate_lines, git, has_commit, open_items,
     parse_backup, parse_drift, prepare, real_outputs, sections, steps, text)
+from tests.test_agro_work_runbook import released  # noqa: E402
 from tests.test_agro_work_runbook import RELEASE as V120     # noqa: E402
 from tests.test_agro_work_release_v122 import (              # noqa: E402
     functions, release_block)
@@ -529,19 +530,20 @@ class ReleaseV133Runbook(unittest.TestCase):
                 self.assertIn(claim, flat())
 
     def test_what_step_four_names_is_on_the_screen(self):
+        commit = reviewed()
         # Подписи, которые шаг 4 велит найти, -- слово в слово подписи
         # шаблонов, меню и словарей. Адресов шаг не даёт: экраны открываются
         # из меню.
         body = step('Шаг 4')
         self.assertNotIn('http://', body)
-        menu = read('templates', '_module_nav.html')
-        tabs = read('templates', 'agro_work', '_tabs.html')
-        page = read('templates', 'agro_work', 'applications.html')
-        period = read('templates', 'agro_work', '_period.html')
-        dashboard = read('templates', 'agro_work', 'dashboard.html')
-        routes = read('agro_work_routes.py')
-        labels = read('agro_work', 'labels.py')
-        methods = read('agro_work', 'methods.py')
+        menu = released(self, commit, 'templates', '_module_nav.html')
+        tabs = released(self, commit, 'templates', 'agro_work', '_tabs.html')
+        page = released(self, commit, 'templates', 'agro_work', 'applications.html')
+        period = released(self, commit, 'templates', 'agro_work', '_period.html')
+        dashboard = released(self, commit, 'templates', 'agro_work', 'dashboard.html')
+        routes = released(self, commit, 'agro_work_routes.py')
+        labels = released(self, commit, 'agro_work', 'labels.py')
+        methods = released(self, commit, 'agro_work', 'methods.py')
         where = {
             '«Сверку»': ("'ru': 'Сверка'", menu),
             '«Заявка → работа»': ("'Заявка → работа' if is_ru", tabs),

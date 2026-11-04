@@ -1,6 +1,6 @@
 {% extends g.base_template %}
 {% set is_ru = (lang == 'ru') %}
-{% block title %}{{ 'Факт по технике — GPS' if is_ru else 'Техника бўйича факт — GPS' }}{% endblock %}
+{% block title %}{{ 'Работа за день — GPS' if is_ru else 'Кунлик иш — GPS' }}{% endblock %}
 {% block head_extra %}
 <link rel="stylesheet" href="{{ static_v('css/vs-combobox.css') }}">
 <link rel="stylesheet" href="{{ static_v('css/gps-fact.css') }}">
@@ -15,7 +15,7 @@
 
 <div class="vs-hero vs-mb">
   <div>
-    <div class="vs-hero-title">{{ 'Факт по технике' if is_ru else 'Техника бўйича факт' }}</div>
+    <div class="vs-hero-title">{{ 'Работа за день' if is_ru else 'Кунлик иш' }}</div>
     <div class="vs-hero-sub">{{ 'Сколько машина обработала за сутки — посчитано по её собственному треку, а не по обводу рукой. Участок, у которого нет геозоны, показывается как есть: работа по незаведённой земле это норма, а не ноль. Экран не решает, работа перед вами или проезд, — он спрашивает.' if is_ru else 'Машина бир кунда қанча ишлаганини ўз трекидан ҳисоблаб чиқарилган, қўлда чизилганидан эмас. Геозонаси йўқ участка борича кўрсатилади: рўйхатга олинмаган ерда ишлаш — бу норма, ноль эмас. Экран иш ёки ўтиш эканини ҳал қилмайди — сўрайди.' }}</div>
   </div>
 </div>
@@ -137,7 +137,7 @@
   {% endif %}
   <span class="vs-soft">{{ 'объект Wialon' if is_ru else 'Wialon объекти' }} {{ unit_id }}</span>
   {# A3: та же машина за две недели по эти сутки. #}
-  <a href="{{ url_for('gps.machine', unit=unit_id, to=day.isoformat(), **{'from': (day - period_back).isoformat()}) }}">{{ 'За период' if is_ru else 'Давр бўйича' }}</a>
+  <a href="{{ url_for('gps.machine', unit=unit_id, to=day.isoformat(), **{'from': (day - period_back).isoformat()}) }}">{{ 'История машины' if is_ru else 'Машина тарихи' }}</a>
   <span class="gps-fact-head-nav">
     {% if neighbour_urls.prev %}<a class="vs-btn vs-btn-sm vs-btn-ghost" href="{{ neighbour_urls.prev }}" rel="prev">← {{ 'Предыдущая' if is_ru else 'Олдинги' }}</a>{% endif %}
     {% if neighbour_urls.next %}<a class="vs-btn vs-btn-sm vs-btn-ghost" href="{{ neighbour_urls.next }}" rel="next">{{ 'Следующая' if is_ru else 'Кейинги' }} →</a>{% endif %}

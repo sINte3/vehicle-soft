@@ -1,162 +1,192 @@
 {% extends g.base_template %}
 {% set is_ru = (lang == 'ru') %}
-{% block title %}{{ 'Сверка — GPS' if is_ru else 'Солиштирув — GPS' }}{% endblock %}
+{% block title %}{{ 'Заявки и GPS' if is_ru else 'Буюртмалар ва GPS' }}{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ static_v('css/agro-work.css') }}">
+{% endblock %}
 {% block content %}
 {% include 'agro_work/_nav.html' %}
 {% include 'agro_work/_tabs.html' %}
-
-<div class="vs-hero vs-mb">
-  <div>
-    <div class="vs-hero-title">{{ 'Заявки agro-work против работы по GPS' if is_ru else 'agro-work буюртмалари GPS бўйича ишга қарши' }}</div>
-    <div class="vs-hero-sub">{{ 'В обе стороны: была ли работа по заявке — и была ли заявка на работу. Окно обычной заявки — с дня создания по день «Выполнено» включительно. Работа — участок трека, который человек не назвал проездом. «Точек нет» и «сутки не считали» — не отсутствие работы, а незнание, и нарушения по ним не выносится.' if is_ru else 'Икки томонга: буюртма бўйича иш бўлганми — ва иш учун буюртма бўлганми. Оддий буюртма ойнаси — яратилган кундан «Бажарилди» кунигача, шу кунни қўшиб. Иш — одам ўтиш деб атамаган трек участкаси. «Нуқталар йўқ» ва «кун ҳисобланмаган» — ишнинг йўқлиги эмас, балки номаълумлик, ва улар бўйича қоидабузарлик чиқарилмайди.' }}</div>
-  </div>
-</div>
+{# Решение владельца 04.11.2026: свод читают люди -- сначала то, что требует
+   действия, простыми словами; правила -- один раз, внизу, в «Как считается».
+   Числа те же, что раньше: расчёт и книга xlsx не менялись. #}
+<p class="aw-lead">{{ 'Закрытые заявки agro-work сверены с работой машин по GPS. Сначала — то, что требует внимания; каждое число открывает свой список.' if is_ru else 'Ёпилган agro-work буюртмалари машиналарнинг GPS бўйича иши билан солиштирилган. Аввал — эътибор талаб қиладиган нарсалар; ҳар бир рақам ўз рўйхатини очади.' }}</p>
 
 {% include 'agro_work/_period.html' %}
 {% include 'agro_work/_notices.html' %}
 
 {% if not empty %}
-<div class="vs-stat-grid vs-mb">
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Заявок в периоде' if is_ru else 'Даврдаги буюртмалар' }}</div>
-    <div class="vs-stat-value">{{ total.get('applications', 0) }}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Работы по GPS не было' if is_ru else 'GPS бўйича иш бўлмаган' }}</div>
-    <div class="vs-stat-value"><a href="{{ link('agro_work.applications', verdict='rabota_net') }}">{{ total.get('app_rabota_net', 0) }}</a></div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Работа была: объём против GPS' if is_ru else 'Иш бўлган: ҳажм GPS га қарши' }}</div>
-    <div class="vs-stat-value"><a href="{{ link('agro_work.applications', verdict='rabota_est') }}">{{ total.get('app_rabota_est', 0) }}</a></div>
-    {% if total.get('app_rabota_est', 0) %}
-    {% for key, counter in volume_keys %}
-    <div class="vs-soft"><a href="{{ link('agro_work.applications', verdict='rabota_est', volume=key) }}">{{ volume_label(key) }}: {{ total.get(counter, 0) }}</a></div>
-    {% endfor %}
-    {% endif %}
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Машино-суток с работой по GPS' if is_ru else 'GPS бўйича иш бўлган машина-кунлар' }}</div>
-    <div class="vs-stat-value">{{ total.get('work_days', 0) }}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Из них без заявки' if is_ru else 'Шулардан буюртмасиз' }}</div>
-    <div class="vs-stat-value"><a href="{{ link('agro_work.work_days', coverage='bez_zayavki') }}">{{ total.get('day_bez_zayavki', 0) }}</a></div>
-    {% if total.get('day_bez_zayavki', 0) %}
-    {% set after_text = {
-      'zadnim_chislom_pozzhe': ('из них с заявкой, заведённой задним числом позже: %d', 'шулардан кейин орқа сана билан киритилган буюртмаси борлари: %d'),
-      'obychnaya_pozzhe': ('с обычной заявкой, заведённой позже: %d', 'кейин оддий тартибда киритилган буюртмаси борлари: %d'),
-      'pozzhe_poryadok_neizvesten': ('с заявкой позже, порядок ввода неизвестен: %d', 'кейин киритилган буюртмаси бор, киритиш тартиби номаълум: %d'),
-      'ne_zavedena': ('заявка не заведена совсем: %d', 'буюртма умуман киритилмаганлари: %d')} %}
-    {% for kind, key in after_keys if kind != 'pozzhe_poryadok_neizvesten' or total.get(key) %}
-    <div class="vs-soft"><a href="{{ link('agro_work.work_days', coverage='bez_zayavki', after=kind) }}">{{ (after_text[kind][0] if is_ru else after_text[kind][1])|format(total.get(key, 0)) }}</a></div>
-    {% endfor %}
-    {% endif %}
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Без вердикта: заявок / суток' if is_ru else 'Ҳукмсиз: буюртма / кун' }}</div>
-    <div class="vs-stat-value">{{ total.get('app_bez_verdikta', 0) }} / {{ total.get('day_bez_verdikta', 0) }}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Работа объектов без машины в справочнике, объекто-суток' if is_ru else 'Маълумотномада машинаси йўқ объектлар иши, объект-кун' }}</div>
-    <div class="vs-stat-value">{{ orphan_days }}</div>
-  </div>
-</div>
-
 {% if not rows %}
   <div class="vs-empty">
     <div class="vs-empty-title">{{ 'За этот период сверять нечего' if is_ru else 'Бу давр учун солиштирадиган нарса йўқ' }}</div>
     <div class="vs-empty-sub">{{ 'Нет ни заявок, чьё окно задевает период, ни суток с работой по GPS.' if is_ru else 'Ойнаси даврга тегадиган буюртмалар ҳам, GPS бўйича иш бўлган кунлар ҳам йўқ.' }}</div>
   </div>
 {% else %}
-<div class="vs-table-wrap vs-mb">
+{% set no_app = total.get('day_bez_zayavki', 0) %}
+{% set no_work = total.get('app_rabota_net', 0) %}
+
+<h2 class="aw-section">{{ 'Требует внимания' if is_ru else 'Эътибор талаб қилади' }}</h2>
+{% if open_count or no_app or vol_fail or no_work or unmarked %}
+<ul class="aw-attn">
+  {% if open_count %}
+  <li>
+    <span class="aw-attn-num">{{ num(open_count) }}</span>
+    <span>
+      <span class="aw-attn-title">{{ 'Заявки не закрыты операторами' if is_ru else 'Операторлар ёпмаган буюртмалар' }}</span>
+      <span class="aw-attn-sub">{{ 'Пока заявка открыта, проверить её нельзя.' if is_ru else 'Буюртма очиқ экан, уни текшириб бўлмайди.' }}
+        {{ 'Больше всего:' if is_ru else 'Энг кўпи:' }} {% for group in open_top %}{% if group.org_id %}{{ group.org_name }}{% else %}{{ 'не связаны с нашей техникой' if is_ru else 'бизнинг техника билан боғланмаган' }}{% endif %} — {{ num(group.count) }}{% if not loop.last %}, {% endif %}{% endfor %}.
+        {{ ('Самая старая открыта %d сут.' if is_ru else 'Энг эскиси %d кундан бери очиқ.')|format(open_oldest) }}</span>
+    </span>
+    <a class="aw-attn-link" href="{{ link('agro_work.applications', reason='otkryta') }}">{{ 'Открыть список →' if is_ru else 'Рўйхатни очиш →' }}</a>
+  </li>
+  {% endif %}
+  {% if no_app %}
+  <li>
+    <span class="aw-attn-num">{{ num(no_app) }}</span>
+    <span>
+      <span class="aw-attn-title">{{ 'Дни работы машин без заявки' if is_ru else 'Машиналарнинг буюртмасиз иш кунлари' }}</span>
+      <span class="aw-attn-sub">{% for kind, key in after_keys if total.get(key) %}<a href="{{ link('agro_work.work_days', coverage='bez_zayavki', after=kind) }}">{{ after_label(kind) }}: {{ num(total.get(key)) }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</span>
+    </span>
+    <a class="aw-attn-link" href="{{ link('agro_work.work_days', coverage='bez_zayavki') }}">{{ 'Открыть список →' if is_ru else 'Рўйхатни очиш →' }}</a>
+  </li>
+  {% endif %}
+  {% if vol_fail %}
+  <li>
+    <span class="aw-attn-num">{{ num(vol_fail) }}</span>
+    <span>
+      <span class="aw-attn-title">{{ 'Объём в заявке вне допуска' if is_ru else 'Буюртмадаги ҳажм йўл қўйилишдан ташқари' }}</span>
+      <span class="aw-attn-sub">{{ 'Работа была, но объём в заявке расходится с GPS сильнее допуска — по гектарам или по часам.' if is_ru else 'Иш бўлган, лекин буюртмадаги ҳажм GPS дан йўл қўйилишдан кўпроқ фарқ қилади — гектар ёки соат бўйича.' }}</span>
+    </span>
+    <a class="aw-attn-link" href="{{ link('agro_work.applications', verdict='rabota_est', volume='fail') }}">{{ 'Открыть список →' if is_ru else 'Рўйхатни очиш →' }}</a>
+  </li>
+  {% endif %}
+  {% if no_work %}
+  <li>
+    <span class="aw-attn-num">{{ num(no_work) }}</span>
+    <span>
+      <span class="aw-attn-title">{{ 'Заявка закрыта, а работы по GPS не было' if is_ru else 'Буюртма ёпилган, лекин GPS бўйича иш бўлмаган' }}</span>
+      <span class="aw-attn-sub">{{ 'Все сутки заявки известны, и работы по GPS в них нет.' if is_ru else 'Буюртманинг барча кунлари маълум ва уларда GPS бўйича иш йўқ.' }}</span>
+    </span>
+    <a class="aw-attn-link" href="{{ link('agro_work.applications', verdict='rabota_net') }}">{{ 'Открыть список →' if is_ru else 'Рўйхатни очиш →' }}</a>
+  </li>
+  {% endif %}
+  {% if unmarked %}
+  <li>
+    <span class="aw-attn-num is-muted">{{ num(unmarked) }}</span>
+    <span>
+      <span class="aw-attn-title">{{ 'Заявки нельзя проверить: у вида работ не выбран способ проверки' if is_ru else 'Буюртмаларни текшириб бўлмайди: иш турига текшириш усули танланмаган' }}</span>
+      <span class="aw-attn-sub">{{ 'Способ — гектары, часы или рейсы — выбирает владелец; виды работ без способа — на странице «Импорт заявок».' if is_ru else 'Усулни — гектар, соат ёки рейс — эгаси танлайди; усулсиз иш турлари — «Буюртмалар импорти» саҳифасида.' }}</span>
+    </span>
+    <a class="aw-attn-link" href="{{ link('agro_work.applications', reason='metod_ne_razmechen') }}">{{ 'Открыть список →' if is_ru else 'Рўйхатни очиш →' }}</a>
+  </li>
+  {% endif %}
+</ul>
+{% else %}
+<div class="aw-attn aw-attn-clear">{{ 'За период нарушений нет.' if is_ru else 'Давр учун қоидабузарликлар йўқ.' }}</div>
+{% endif %}
+
+<h2 class="aw-section">{{ 'Итоги периода' if is_ru else 'Давр якунлари' }}</h2>
+{% macro bar(parts) -%}
+  {%- set whole = parts|map(attribute=0)|sum -%}
+  <div class="aw-bar" aria-hidden="true">{% for value, css in parts if value %}<span class="{{ css }}" style="width: {{ '%.4f'|format(100.0 * value / whole) }}%"></span>{% endfor %}</div>
+{%- endmacro %}
+<div class="aw-cards">
+  <section class="aw-card">
+    <div class="aw-card-title">{{ 'Заявки за период' if is_ru else 'Даврдаги буюртмалар' }}</div>
+    <div class="aw-card-value">{{ num(total.get('applications', 0)) }}</div>
+    {{ bar([(total.get('app_rabota_est', 0), 'aw-ok'), (no_work, 'aw-bad'), (total.get('app_bez_verdikta', 0), 'aw-none')]) }}
+    <ul class="aw-legend">
+      {% for key, css in (('rabota_est', 'aw-ok'), ('rabota_net', 'aw-bad'), ('bez_verdikta', 'aw-none')) %}
+      <li><span class="aw-dot {{ css }}"></span><a href="{{ link('agro_work.applications', verdict=key) }}">{{ verdict_label(key) }}</a><b>{{ num(total.get('app_' + key, 0)) }}</b></li>
+      {% endfor %}
+    </ul>
+    <div class="aw-card-note">{{ 'Почему заявка без вердикта, сказано у каждой заявки в списке.' if is_ru else 'Буюртма нега ҳукмсиз экани рўйхатдаги ҳар бир буюртмада айтилган.' }}</div>
+  </section>
+  <section class="aw-card">
+    <div class="aw-card-title">{{ 'Работа была: объём против GPS' if is_ru else 'Иш бўлган: ҳажм GPS га қарши' }}</div>
+    <div class="aw-card-value">{{ num(total.get('app_rabota_est', 0)) }}</div>
+    {{ bar(volume_parts) }}
+    <ul class="aw-legend">
+      {% for key, css in volume_bar %}
+      <li><span class="aw-dot {{ css }}"></span><a href="{{ link('agro_work.applications', verdict='rabota_est', volume=key) }}">{{ volume_label(key) }}</a><b>{{ num(total.get('vol_' + key, 0)) }}</b></li>
+      {% endfor %}
+    </ul>
+    <div class="aw-card-note">{{ 'Почему объём сверить нельзя, сказано у каждой заявки в списке.' if is_ru else 'Ҳажмни нега солиштириб бўлмаслиги рўйхатдаги ҳар бир буюртмада айтилган.' }}</div>
+  </section>
+  <section class="aw-card">
+    <div class="aw-card-title">{{ 'Дни работы машин по GPS' if is_ru else 'Машиналарнинг GPS бўйича иш кунлари' }}</div>
+    <div class="aw-card-value">{{ num(total.get('work_days', 0)) }}</div>
+    {{ bar([(total.get('day_pokryta', 0), 'aw-ok'), (no_app, 'aw-bad'), (total.get('day_bez_verdikta', 0), 'aw-none')]) }}
+    <ul class="aw-legend">
+      {% for key, css in (('pokryta', 'aw-ok'), ('bez_zayavki', 'aw-bad'), ('bez_verdikta', 'aw-none')) %}
+      <li><span class="aw-dot {{ css }}"></span><a href="{{ link('agro_work.work_days', coverage=key) }}">{{ coverage_label(key) }}</a><b>{{ num(total.get('day_' + key, 0)) }}</b></li>
+      {% endfor %}
+    </ul>
+    <div class="aw-card-note">{{ 'Почему день без вердикта, сказано у каждого дня в списке.' if is_ru else 'Кун нега ҳукмсиз экани рўйхатдаги ҳар бир кунда айтилган.' }}</div>
+  </section>
+</div>
+
+<h2 class="aw-section">{{ 'По организациям' if is_ru else 'Ташкилотлар бўйича' }}</h2>
+{% macro cell(value, href, bad=false) -%}
+  {%- if value -%}<a href="{{ href }}"{% if bad %} class="aw-num-bad"{% endif %}>{{ num(value) }}</a>{%- else -%}<span class="aw-num-zero">0</span>{%- endif -%}
+{%- endmacro %}
+<div class="vs-table-wrap vs-mb aw-org">
   <div class="vs-card-header">
-    <span class="vs-card-title">{{ 'Организации и категории техники' if is_ru else 'Ташкилотлар ва техника тоифалари' }}</span>
-    <span class="vs-soft">{{ 'число ведёт к списку' if is_ru else 'рақам рўйхатга олиб боради' }}</span>
+    <span class="vs-card-title">{{ 'Организации' if is_ru else 'Ташкилотлар' }}</span>
+    <span class="vs-soft">{{ 'число открывает список; красное — нарушения' if is_ru else 'рақам рўйхатни очади; қизил — қоидабузарликлар' }}</span>
   </div>
   <div class="vs-table-scroll">
     <table class="vs-table">
       <thead>
         <tr>
           <th>{{ 'Организация' if is_ru else 'Ташкилот' }}</th>
-          <th>{{ 'Категория' if is_ru else 'Тоифа' }}</th>
           <th class="right">{{ 'Машин' if is_ru else 'Машиналар' }}</th>
           <th class="right">{{ 'Заявок' if is_ru else 'Буюртмалар' }}</th>
           <th class="right">{{ 'Работа была' if is_ru else 'Иш бўлган' }}</th>
-          <th class="right">{{ 'Работы не было' if is_ru else 'Иш бўлмаган' }}</th>
-          <th class="right">{{ 'Без вердикта' if is_ru else 'Ҳукмсиз' }}</th>
-          <th class="right">{{ 'Суток с работой' if is_ru else 'Иш бўлган кунлар' }}</th>
-          <th class="right">{{ 'Покрыты заявкой' if is_ru else 'Буюртма билан қопланган' }}</th>
-          <th class="right">{{ 'Без заявки' if is_ru else 'Буюртмасиз' }}</th>
-          <th class="right">{{ 'Без вердикта' if is_ru else 'Ҳукмсиз' }}</th>
+          <th class="right">{{ 'Не закрыто' if is_ru else 'Ёпилмаган' }}</th>
+          <th class="right">{{ 'Работы по GPS не было' if is_ru else 'GPS бўйича иш бўлмаган' }}</th>
+          <th class="right">{{ 'Объём вне допуска' if is_ru else 'Ҳажм йўл қўйилишдан ташқари' }}</th>
+          <th class="right">{{ 'Дней без заявки' if is_ru else 'Буюртмасиз кунлар' }}</th>
         </tr>
       </thead>
       <tbody>
-        {% for row in rows %}
-        {% set group = {'org': row.org_id if row.org_id else 'none', 'cat': row.category or ''} %}
+        {% for row in org_rows %}
+        {% set group = {'org': row.org_id if row.org_id else 'none'} %}
         <tr>
           <td>{% if row.org_id %}{{ row.org_name }}{% else %}{{ 'Машина agro-work не связана с нашей техникой' if is_ru else 'agro-work машинаси бизнинг техника билан боғланмаган' }}{% endif %}</td>
-          <td>{{ category_label(row.category) if row.category else '—' }}</td>
-          <td class="right">{{ row.c.get('machines', 0) }}</td>
-          <td class="right">{{ row.c.get('applications', 0) }}</td>
-          <td class="right">{{ row.c.get('app_rabota_est', 0) }}</td>
-          <td class="right">{% if row.c.get('app_rabota_net') %}<a href="{{ link('agro_work.applications', verdict='rabota_net', **group) }}"><span class="vs-badge vs-badge-danger">{{ row.c.get('app_rabota_net') }}</span></a>{% else %}0{% endif %}</td>
-          <td class="right">{% if row.c.get('app_bez_verdikta') %}<a href="{{ link('agro_work.applications', verdict='bez_verdikta', **group) }}">{{ row.c.get('app_bez_verdikta') }}</a>{% else %}0{% endif %}</td>
-          <td class="right">{{ row.c.get('work_days', 0) }}</td>
-          <td class="right">{{ row.c.get('day_pokryta', 0) }}</td>
-          <td class="right">{% if row.c.get('day_bez_zayavki') %}<a href="{{ link('agro_work.work_days', coverage='bez_zayavki', **group) }}"><span class="vs-badge vs-badge-danger">{{ row.c.get('day_bez_zayavki') }}</span></a>{% else %}0{% endif %}</td>
-          <td class="right">{% if row.c.get('day_bez_verdikta') %}<a href="{{ link('agro_work.work_days', coverage='bez_verdikta', **group) }}">{{ row.c.get('day_bez_verdikta') }}</a>{% else %}0{% endif %}</td>
+          <td class="right">{{ num(row.c.get('machines', 0)) }}</td>
+          <td class="right">{{ cell(row.c.get('applications', 0), link('agro_work.applications', **group)) }}</td>
+          <td class="right">{{ cell(row.c.get('app_rabota_est', 0), link('agro_work.applications', verdict='rabota_est', **group)) }}</td>
+          <td class="right">{{ cell(row.open, link('agro_work.applications', reason='otkryta', **group), true) }}{% if row.open %}<span class="aw-sub">{{ ('до %d сут.' if is_ru else '%d кунгача')|format(row.oldest) }}</span>{% endif %}</td>
+          <td class="right">{{ cell(row.c.get('app_rabota_net', 0), link('agro_work.applications', verdict='rabota_net', **group), true) }}</td>
+          <td class="right">{{ cell(row.c.get('vol_fail', 0), link('agro_work.applications', verdict='rabota_est', volume='fail', **group), true) }}</td>
+          <td class="right">{{ cell(row.c.get('day_bez_zayavki', 0), link('agro_work.work_days', coverage='bez_zayavki', **group), true) }}</td>
         </tr>
         {% endfor %}
         <tr>
           <td><b>{{ 'Итого' if is_ru else 'Жами' }}</b></td>
-          <td></td>
-          <td class="right"><b>{{ total.get('machines', 0) }}</b></td>
-          <td class="right"><b>{{ total.get('applications', 0) }}</b></td>
-          <td class="right"><b>{{ total.get('app_rabota_est', 0) }}</b></td>
-          <td class="right"><b>{{ total.get('app_rabota_net', 0) }}</b></td>
-          <td class="right"><b>{{ total.get('app_bez_verdikta', 0) }}</b></td>
-          <td class="right"><b>{{ total.get('work_days', 0) }}</b></td>
-          <td class="right"><b>{{ total.get('day_pokryta', 0) }}</b></td>
-          <td class="right"><b>{{ total.get('day_bez_zayavki', 0) }}</b></td>
-          <td class="right"><b>{{ total.get('day_bez_verdikta', 0) }}</b></td>
+          <td class="right"><b>{{ num(total.get('machines', 0)) }}</b></td>
+          <td class="right"><b>{{ num(total.get('applications', 0)) }}</b></td>
+          <td class="right"><b>{{ num(total.get('app_rabota_est', 0)) }}</b></td>
+          <td class="right"><b>{{ num(open_count) }}</b></td>
+          <td class="right"><b>{{ num(no_work) }}</b></td>
+          <td class="right"><b>{{ num(vol_fail) }}</b></td>
+          <td class="right"><b>{{ num(no_app) }}</b></td>
         </tr>
       </tbody>
     </table>
   </div>
 </div>
+{% if orphan_days %}
+<div class="aw-foot">{{ ('Ещё %s дн. работы по GPS — у объектов Wialon, которых нет в справочнике техники; в сверку они не входят.' if is_ru else 'Яна %s иш куни GPS бўйича — техника маълумотномасида йўқ Wialon объектларида; улар солиштиришга кирмайди.')|format(num(orphan_days)) }}</div>
+{% endif %}
 {% endif %}
 
-{% if open_groups %}
-<div class="vs-table-wrap vs-mb">
-  <div class="vs-card-header">
-    <span class="vs-card-title">{{ 'Открытые заявки: кто их не закрыл' if is_ru else 'Очиқ буюртмалар: ким ёпмаган' }}</span>
-    <span class="vs-soft">{{ 'Открытая заявка — нарушение: пока она открыта, вердикта по ней нет. Срока у открытой заявки нет, возраст — суток с ввода.' if is_ru else 'Очиқ буюртма — қоидабузарлик: у очиқ экан, у бўйича ҳукм йўқ. Очиқ буюртманинг муддати йўқ, ёши — киритилгандан бери кунлар.' }}</span>
-  </div>
-  <div class="vs-table-scroll">
-    <table class="vs-table">
-      <thead>
-        <tr>
-          <th>{{ 'Организация' if is_ru else 'Ташкилот' }}</th>
-          <th class="right">{{ 'Открытых заявок' if is_ru else 'Очиқ буюртмалар' }}</th>
-          <th class="right">{{ 'Самая старая, суток с ввода' if is_ru else 'Энг эскиси, киритилгандан бери кун' }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for group in open_groups %}
-        <tr>
-          <td>{% if group.org_id %}{{ group.org_name }}{% else %}{{ 'Машина agro-work не связана с нашей техникой' if is_ru else 'agro-work машинаси бизнинг техника билан боғланмаган' }}{% endif %}</td>
-          <td class="right"><a href="{{ link('agro_work.applications', reason='otkryta', org=group.org_id if group.org_id else 'none') }}"><span class="vs-badge vs-badge-danger">{{ group.count }}</span></a></td>
-          <td class="right">{{ group.oldest }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-{% endif %}
-
-<div class="vs-help vs-mb">
-  {{ 'Сверяются заявки видов работ с методами «гектары» и «время» (часы зажигания по GPS): рейсы трек GPS пока не публикует. Метод вида работ ставит владелец (раздел «Импорт»), код его не угадывает. Машина с несколькими объектами Wialon и машина, которую план-факт GPS не считает, получают причину, а не вердикт.' if is_ru else '«Гектарлар» ва «вақт» (GPS бўйича ўт олдириш соатлари) усулидаги иш турлари буюртмалари солиштирилади: рейсларни GPS трек ҳали эълон қилмайди. Иш тури усулини эгаси қўяди («Импорт» бўлими), код уни тахмин қилмайди. Бир нечта Wialon объекти бор машина ва GPS режа-факти ҳисобламайдиган машина ҳукм эмас, сабаб олади.' }}
-</div>
+<details class="aw-rules">
+  <summary>{{ 'Как считается' if is_ru else 'Қандай ҳисобланади' }}</summary>
+  <p>{{ 'В обе стороны: была ли работа по заявке — и была ли заявка на работу. Окно обычной заявки — с дня создания по день «Выполнено» включительно. Работа — участок трека, который человек не назвал проездом. «Точек нет» и «сутки не считали» — не отсутствие работы, а незнание, и нарушения по ним не выносится.' if is_ru else 'Икки томонга: буюртма бўйича иш бўлганми — ва иш учун буюртма бўлганми. Оддий буюртма ойнаси — яратилган кундан «Бажарилди» кунигача, шу кунни қўшиб. Иш — одам ўтиш деб атамаган трек участкаси. «Нуқталар йўқ» ва «кун ҳисобланмаган» — ишнинг йўқлиги эмас, балки номаълумлик, ва улар бўйича қоидабузарлик чиқарилмайди.' }}</p>
+  <p>{{ 'Сверяются заявки видов работ с методами «гектары» и «время» (часы зажигания по GPS): рейсы трек GPS пока не публикует. Метод вида работ ставит владелец (раздел «Импорт»), код его не угадывает. Машина с несколькими объектами Wialon и машина, которую план-факт GPS не считает, получают причину, а не вердикт.' if is_ru else '«Гектарлар» ва «вақт» (GPS бўйича ўт олдириш соатлари) усулидаги иш турлари буюртмалари солиштирилади: рейсларни GPS трек ҳали эълон қилмайди. Иш тури усулини эгаси қўяди («Импорт» бўлими), код уни тахмин қилмайди. Бир нечта Wialon объекти бор машина ва GPS режа-факти ҳисобламайдиган машина ҳукм эмас, сабаб олади.' }}</p>
+  <p>{{ 'Открытая заявка — нарушение: пока она открыта, вердикта по ней нет. Срока у открытой заявки нет, возраст — суток с ввода.' if is_ru else 'Очиқ буюртма — қоидабузарлик: у очиқ экан, у бўйича ҳукм йўқ. Очиқ буюртманинг муддати йўқ, ёши — киритилгандан бери кунлар.' }}</p>
+</details>
 {% endif %}
 {% endblock %}

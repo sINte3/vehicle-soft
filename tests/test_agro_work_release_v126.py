@@ -46,6 +46,7 @@ from tests.test_agro_work_runbook import (                    # noqa: E402
     BACKUP_PATTERNS, DRIFT_PATTERNS, GATE_SEPARATOR, HARNESS, PYTHON,
     commands, constants, gate_lines, git, has_commit, open_items,
     parse_backup, parse_drift, prepare, real_outputs, sections, steps, text)
+from tests.test_agro_work_runbook import released  # noqa: E402
 from tests.test_agro_work_runbook import RELEASE as V120     # noqa: E402
 from tests.test_agro_work_release_v122 import (              # noqa: E402
     functions, release_block)
@@ -408,9 +409,10 @@ class ReleaseV126Runbook(unittest.TestCase):
                       ' '.join(text(RELEASE).split()))
 
     def test_the_nine_numbers_are_the_nine_columns_of_the_total_row(self):
+        commit = constants(block('Шаг 3'))['reviewed'].strip("'")
         # Шаг 4.1 велит сверять девять чисел «Итого»: столько числовых
         # столбцов у таблицы свода, и порядок -- тот, что назван в шаге 2.
-        page = read('templates', 'agro_work', 'dashboard.html')
+        page = released(self, commit, 'templates', 'agro_work', 'dashboard.html')
         head = page[page.index('<thead>'):page.index('</thead>')]
         numeric = re.findall(r'<th class="right">\{\{ \'([^\']+)\'', head)
         self.assertEqual(numeric, ['Машин', 'Заявок', 'Работа была',
@@ -451,11 +453,12 @@ class ReleaseV126Runbook(unittest.TestCase):
         self.assertIn("@agro_work_bp.route('/')\n", source)
 
     def test_what_step_four_names_is_on_the_screen(self):
+        commit = constants(block('Шаг 3'))['reviewed'].strip("'")
         # Подписи, которые шаг 4 велит найти, -- слово в слово подписи
         # шаблона и словарей.
         from agro_work import labels, reconcile as rc
         flat = step('Шаг 4')
-        dashboard = read('templates', 'agro_work', 'dashboard.html')
+        dashboard = released(self, commit, 'templates', 'agro_work', 'dashboard.html')
         self.assertIn("'Машин' if is_ru else 'Машиналар'", dashboard)
         self.assertIn('«Машин»', flat)
         # Строки, названные в шаге 4.2, -- «организация · категория»;

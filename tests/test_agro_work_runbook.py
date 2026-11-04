@@ -883,6 +883,21 @@ def has_commit(commit):
                           cwd=REPO_ROOT, capture_output=True).returncode == 0
 
 
+def released(case, commit, *parts):
+    """Файл так, как он лежит в проверенном коммите выпуска.
+
+    [REASON]: шаг 4 закрытого выпуска называет подписи экрана того кода,
+    который выпуск выкатил. Экран живёт дальше (решение владельца 04.11.2026:
+    «Свод» и названия пунктов меню переделаны), а выпуск уже прошёл: сличать
+    его подписи с рабочим деревом значило бы требовать, чтобы экран не
+    менялся никогда. Коммита нет в клоне (в CI клон глубиной 1) -- пропуск,
+    как у остальных проверок истории.
+    """
+    if not has_commit(commit):
+        case.skipTest('the release commit is outside this clone')
+    return git('show', '%s:%s' % (commit, '/'.join(parts)))
+
+
 def open_items(lines):
     """То же, что Get-OpenItems шагов 2 и 3, -- на Python."""
     for i, line in enumerate(lines):

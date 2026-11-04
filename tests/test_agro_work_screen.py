@@ -23,6 +23,7 @@
 """
 
 import hashlib
+import os
 import re
 import sqlite3
 import unittest
@@ -38,6 +39,10 @@ import migrate_agro_work_001 as agro_mig
 from agro_work import labels
 
 TODAY_RANGE = {'from': '2026-09-10', 'to': '2026-09-20'}
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+with open(os.path.join(REPO_ROOT, 'static', 'css', 'design-system.css'),
+          encoding='utf-8') as _fh:
+    DESIGN_SYSTEM = _fh.read()
 
 
 def _sql(statements, args=()):
@@ -73,6 +78,20 @@ def install_agro_tables():
         con.commit()
     finally:
         con.close()
+
+
+def attention(html, title):
+    """Число строки «Требует внимания» с этим заголовком или None."""
+    match = re.search(r'<span class="aw-attn-num[^"]*">([^<]+)</span>\s*<span>\s*'
+                      r'<span class="aw-attn-title">' + re.escape(title) + '</span>',
+                      html)
+    return match.group(1) if match else None
+
+
+def legend(html, label):
+    """Число в подписи полосы «Итогов периода» у этой подписи или None."""
+    match = re.search(r'>' + re.escape(label) + r'</a><b>([^<]+)</b>', html)
+    return match.group(1) if match else None
 
 
 def sha():
@@ -234,12 +253,16 @@ class AnonymousVisitor(ScreenCase):
 class Numbers(ScreenCase):
     def test_dashboard_shows_both_violations_and_links_to_them(self):
         html = self.get('/agro-work/', lang='ru').get_data(as_text=True)
-        self.assertIn('Заявки agro-work против работы по GPS', html)
+        self.assertIn('Требует внимания', html)
         self.assertIn('Buxoro agroklaster', html)
         self.assertIn('Jizzax filial', html)
         self.assertIn('verdict=rabota_net', html)
         self.assertIn('coverage=bez_zayavki', html)
         self.assertIn('Машина agro-work не связана с нашей техникой', html)
+        # A2 закрыта без работы, 13-го T2 работала без заявки: обе -- первыми.
+        self.assertEqual(attention(html, 'Заявка закрыта, а работы по GPS не было'),
+                         '1')
+        self.assertEqual(attention(html, 'Дни работы машин без заявки'), '1')
 
     def test_the_dashboard_says_time_applications_are_reconciled(self):
         # [REASON]: вердикты «время» включены 29.10 (проверка часов по
@@ -295,8 +318,12 @@ class Numbers(ScreenCase):
 
     def test_uzbek_interface_has_no_russian_headings(self):
         html = self.get('/agro-work/', lang='uz').get_data(as_text=True)
-        self.assertIn('agro-work буюртмалари GPS бўйича ишга қарши', html)
-        self.assertNotIn('Заявки agro-work против работы по GPS', html)
+        for heading in ('Эътибор талаб қилади', 'Давр якунлари',
+                        'Ташкилотлар бўйича', 'Қандай ҳисобланади'):
+            self.assertIn(heading, html)
+        for heading in ('Требует внимания', 'Итоги периода', 'По организациям',
+                        'Как считается'):
+            self.assertNotIn(heading, html)
 
     def test_the_screen_writes_nothing(self):
         before = sha()
@@ -347,14 +374,21 @@ class LateAndOpen(ScreenCase):
 
     def test_the_dashboard_counts_it_and_lists_who_keeps_applications_open(self):
         html = self.get('/agro-work/', lang='ru').get_data(as_text=True)
-        self.assertIn('из них с заявкой, заведённой задним числом позже: 1', html)
-        self.assertIn('Открытые заявки: кто их не закрыл', html)
-        card = html[html.index('Открытые заявки: кто их не закрыл'):]
-        self.assertIn('Buxoro agroklaster', card[:3000])
-        self.assertIn('reason=otkryta', card[:3000])
-        self.assertIn('>%d</td>' % self.days_open, card[:3000])
+        self.assertIn('Позже заведена заявка задним числом: 1', html)
+        self.assertIn('after=zadnim_chislom_pozzhe', html)
+        # Открытые заявки: строка «Требует внимания» называет, у кого их
+        # больше, и самую старую; таблица -- сколько у каждой организации.
+        self.assertEqual(attention(html, 'Заявки не закрыты операторами'), '1')
+        self.assertIn('Buxoro agroklaster — 1', html)
+        self.assertIn('Самая старая открыта %d сут.' % self.days_open, html)
+        row = html[html.index('<td>Buxoro agroklaster</td>'):]
+        row = row[:row.index('</tr>')]
+        self.assertIn('reason=otkryta', row)
+        self.assertIn('org=%d' % self.org1_id, row.replace('&amp;', '&'))
+        self.assertIn('до %d сут.' % self.days_open, row)
         html = self.get('/agro-work/', lang='uz').get_data(as_text=True)
-        self.assertIn('Очиқ буюртмалар: ким ёпмаган', html)
+        self.assertEqual(attention(html, 'Операторлар ёпмаган буюртмалар'), '1')
+        self.assertIn('Энг эскиси %d кундан бери очиқ.' % self.days_open, html)
 
     def test_an_open_application_shows_how_long_it_is_open(self):
         html = self.get('/agro-work/applications', lang='ru',
@@ -398,11 +432,13 @@ class LateAndOpen(ScreenCase):
 
     def test_the_dashboard_card_calls_it_a_violation(self):
         html = self.get('/agro-work/', lang='ru').get_data(as_text=True)
-        card = html[html.index('Открытые заявки: кто их не закрыл'):]
-        card = card[:card.index('</table>')]
-        self.assertIn('Открытая заявка — нарушение', card)
-        self.assertNotIn('решает владелец', card)
-        self.assertIn('<span class="vs-badge vs-badge-danger">1</span>', card)
+        rules = html[html.index('<details class="aw-rules">'):]
+        self.assertIn('Открытая заявка — нарушение', rules)
+        self.assertNotIn('решает владелец', html)
+        # Красное число -- нарушение: и в «Требует внимания», и в таблице.
+        row = html[html.index('<td>Buxoro agroklaster</td>'):]
+        row = row[:row.index('</tr>')]
+        self.assertRegex(row, r'reason=otkryta[^"]*" class="aw-num-bad">1</a>')
         html = self.get('/agro-work/', lang='uz').get_data(as_text=True)
         self.assertIn('Очиқ буюртма — қоидабузарлик', html)
 
@@ -428,10 +464,10 @@ class WhatCameAfterOnScreen(ScreenCase):
         self.assertIn('заявка не заведена совсем: позже у машины новых заявок '
                       'нет', html)
         html = self.get('/agro-work/', lang='ru').get_data(as_text=True)
-        self.assertIn('заявка не заведена совсем: 1', html)
-        self.assertIn('с обычной заявкой, заведённой позже: 0', html)
-        self.assertIn('из них с заявкой, заведённой задним числом позже: 0', html)
-        # Части без заявок с неизвестным порядком на экране нет, пока она пуста.
+        self.assertIn('Заявка не заведена совсем: 1', html)
+        # Пустые части «что было потом» не показываются вовсе.
+        self.assertNotIn('Позже заведена обычная заявка:', html)
+        self.assertNotIn('Позже заведена заявка задним числом:', html)
         self.assertNotIn('порядок ввода неизвестен:', html)
 
     def test_a_later_ordinary_application_is_named_on_every_screen(self):
@@ -450,11 +486,11 @@ class WhatCameAfterOnScreen(ScreenCase):
         self.assertIn('APP-TEST-008 буюртма 3 кундан кейин оддий тартибда '
                       'киритилган, ҳали очиқ', html)
         html = self.get('/agro-work/', lang='ru').get_data(as_text=True)
-        self.assertIn('с обычной заявкой, заведённой позже: 1', html)
-        self.assertIn('заявка не заведена совсем: 0', html)
+        self.assertIn('Позже заведена обычная заявка: 1', html)
+        self.assertNotIn('Заявка не заведена совсем:', html)
         self.assertIn('after=obychnaya_pozzhe', html)
         html = self.get('/agro-work/', lang='uz').get_data(as_text=True)
-        self.assertIn('кейин оддий тартибда киритилган буюртмаси борлари: 1', html)
+        self.assertIn('Кейин оддий тартибда буюртма киритилган: 1', html)
 
     def test_the_list_filters_by_what_came_after(self):
         self.add_ordinary()
@@ -545,13 +581,15 @@ class VolumeOnScreen(ScreenCase):
     def test_the_dashboard_card_counts_and_links(self):
         html = self.get('/agro-work/', lang='ru').get_data(as_text=True)
         self.assertIn('Работа была: объём против GPS', html)
-        self.assertIn('Сверить нельзя: 2', html)          # объёма нет у обеих
+        self.assertEqual(legend(html, 'Сверить нельзя'), '2')  # объёма нет у обеих
+        self.assertIsNone(attention(html, 'Объём в заявке вне допуска'))
         self.set_volume('A1', '2.50')
         self.set_volume('A4', '10.00')
         html = self.get('/agro-work/', lang='ru').get_data(as_text=True)
-        for text in ('В допуске: 1', 'На грани: 0', 'Вне допуска: 1',
-                     'Сверить нельзя: 0'):
-            self.assertIn(text, html)
+        for label, count in (('В допуске', '1'), ('На грани', '0'),
+                             ('Вне допуска', '1'), ('Сверить нельзя', '0')):
+            self.assertEqual(legend(html, label), count, label)
+        self.assertEqual(attention(html, 'Объём в заявке вне допуска'), '1')
         self.assertIn('volume=fail', html)
         self.assertIn('verdict=rabota_est', html)
 
@@ -580,7 +618,7 @@ class VolumeOnScreen(ScreenCase):
         self.assertNotIn('в заявке', mine)
         html = self.get('/agro-work/', lang='uz').get_data(as_text=True)
         self.assertIn('Иш бўлган: ҳажм GPS га қарши', html)
-        self.assertIn('Йўл қўйилишда: 1', html)
+        self.assertEqual(legend(html, 'Йўл қўйилишда'), '1')
         for table in (labels.VOLUME, labels.VOLUME_REASONS):
             for _ru, uz in table.values():
                 self.assertNotRegex(uz.replace('GPS', ''), '[A-Za-z]', uz)
@@ -773,13 +811,13 @@ class OneReconciliationSection(ScreenCase):
 
     def test_both_languages(self):
         for lang, labels, title in (
-                ('ru', ['Факт по технике', 'Машина за период', 'Сверка',
+                # Названия пунктов с 04.11.2026 -- решение владельца.
+                ('ru', ['Работа за день', 'История машины', 'Заявки и GPS',
                         'Импорт заявок', 'Приём данных'],
-                 'Сверка — GPS'),
-                ('uz', ['Техника бўйича факт', 'Машина давр бўйича',
-                        'Солиштирув', 'Буюртмалар импорти',
-                        'Маълумот қабули'],
-                 'Солиштирув — GPS')):
+                 'Заявки и GPS'),
+                ('uz', ['Кунлик иш', 'Машина тарихи', 'Буюртмалар ва GPS',
+                        'Буюртмалар импорти', 'Маълумот қабули'],
+                 'Буюртмалар ва GPS')):
             html = self.get('/agro-work/', lang=lang).get_data(as_text=True)
             pills = [x.strip() for x in re.findall(r'>([^<>]+)</a>',
                                                    _strip(html))]
@@ -787,8 +825,9 @@ class OneReconciliationSection(ScreenCase):
                 self.assertEqual(pills, labels)
                 self.assertIn(title, html)
                 if lang == 'uz':
-                    # узбекский -- только кириллицей
-                    self.assertFalse(any(re.search('[A-Za-z]', x)
+                    # узбекский -- только кириллицей; GPS -- название
+                    self.assertFalse(any(re.search('[A-Za-z]',
+                                                   x.replace('GPS', ''))
                                          for x in labels))
 
 
@@ -916,14 +955,14 @@ class OneScreen(ScreenCase):
 
     def test_summary_counts_and_links_follow_the_filters(self):
         html = self.get('/agro-work/', lang='ru', pay='CASH').get_data(as_text=True)
-        first = re.search(r'Заявок в периоде</div>\s*<div class="vs-stat-value">'
+        first = re.search(r'Заявки за период</div>\s*<div class="aw-card-value">'
                           r'(\d+)</div>', html)
         self.assertEqual(first.group(1), '2')
         for link in re.findall(r'href="(/agro-work/(?:applications|work-days)'
                                r'\?[^"]+)"', html):
             self.assertIn('pay=CASH', link.replace('&amp;', '&'))
         plain = self.get('/agro-work/', lang='ru').get_data(as_text=True)
-        first = re.search(r'Заявок в периоде</div>\s*<div class="vs-stat-value">'
+        first = re.search(r'Заявки за период</div>\s*<div class="aw-card-value">'
                           r'(\d+)</div>', plain)
         self.assertEqual(first.group(1), '5')
 
@@ -979,6 +1018,135 @@ class OneScreen(ScreenCase):
             self.assertNotRegex(text, '[A-Za-z]', text)
         self.assertIn('Excel юклаб олиш', html)
         self.assertIn('Тўлов тури', html)
+
+
+class DashboardForPeople(ScreenCase):
+    """Решение владельца 04.11.2026: «Свод» читают люди, а не проверяющие.
+
+    Сначала -- что требует действия (строка с числом, фразой и списком),
+    потом итоги периода тремя полосами, потом одна таблица по организациям;
+    правила -- один раз, внизу. Числа те же, что у списков и книги: здесь
+    держится, что новые места показывают одни и те же счётчики, а пустое
+    нарушение не показывается вовсе.
+    """
+
+    def test_the_attention_numbers_are_the_card_and_table_numbers(self):
+        html = self.get('/agro-work/', lang='ru').get_data(as_text=True)
+        self.assertEqual(attention(html, 'Заявка закрыта, а работы по GPS не было'),
+                         legend(html, 'Работы по GPS не было'))
+        self.assertEqual(attention(html, 'Дни работы машин без заявки'),
+                         legend(html, 'Работа без заявки'))
+        # «Итого» таблицы по организациям -- те же числа, что у карточек.
+        total = html[html.index('<td><b>Итого</b></td>'):]
+        # [Итого, машин, заявок, работа была, не закрыто, работы не было,
+        #  вне допуска, дней без заявки]
+        total = re.findall(r'<b>([^<]+)</b>', total[:total.index('</tr>')])
+        self.assertEqual(total[2], re.search(
+            r'Заявки за период</div>\s*<div class="aw-card-value">([^<]+)</div>',
+            html).group(1))
+        self.assertEqual(total[3], legend(html, 'Работа была'))
+        self.assertEqual(total[5], legend(html, 'Работы по GPS не было'))
+        self.assertEqual(total[7], legend(html, 'Работа без заявки'))
+        # Строки по организациям складываются в «Итого».
+        body = html[html.index('<div class="vs-table-wrap vs-mb aw-org">'):]
+        body = body[:body.index('<td><b>Итого</b></td>')]
+        body = body[body.index('<tbody>'):]
+        apps = []
+        for row in re.findall(r'<tr>(.*?)</tr>', body, re.S):
+            cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.S)
+            apps.append(int(re.sub(r'<[^>]+>', '', cells[2]).strip()))
+        self.assertEqual(len(apps), 3)       # две организации и «не связаны»
+        self.assertEqual(sum(apps), int(total[2]))
+
+    def test_an_empty_violation_is_not_shown(self):
+        # Вторая организация: одна заявка, работа была, объём не сравнить --
+        # нарушать нечего, и экран так и говорит.
+        html = self.get('/agro-work/', lang='ru',
+                        org=self.org2_id).get_data(as_text=True)
+        self.assertNotIn('class="aw-attn-num', html)
+        self.assertIn('За период нарушений нет.', html)
+        html = self.get('/agro-work/', lang='uz',
+                        org=self.org2_id).get_data(as_text=True)
+        self.assertIn('Давр учун қоидабузарликлар йўқ.', html)
+
+    def test_a_zero_line_is_left_out_of_the_list(self):
+        # В основе нарушения есть (A2 без работы, 13-е без заявки), а открытых
+        # заявок, объёма вне допуска и видов работ без способа нет: их строк
+        # в списке нет, нулей «Требует внимания» не показывает.
+        html = self.get('/agro-work/', lang='ru').get_data(as_text=True)
+        self.assertEqual(html.count('class="aw-attn-num'), 2)
+        for title in ('Заявки не закрыты операторами', 'Объём в заявке вне допуска',
+                      'Заявки нельзя проверить: у вида работ не выбран способ '
+                      'проверки'):
+            self.assertIsNone(attention(html, title), title)
+        self.assertNotIn('За период нарушений нет.', html)
+
+    def test_applications_without_a_method_are_their_own_line(self):
+        _sql(["INSERT INTO agro_work_work_types (id, name, unit, method, "
+              "first_seen_at, last_seen_at) VALUES ('W2', 'Хар хил ишлар', "
+              "'HOUR', NULL, 't', 't')",
+              "INSERT INTO agro_work_applications (id, application_number, "
+              "transport_id, work_type_id, work_type_name, unit, status, "
+              "created_at, updated_at, created_day, first_seen_run_id, "
+              "last_seen_run_id, history_updated_at, initial_status, "
+              "completed_day, plate_number) VALUES ('A9', 'APP-TEST-009', "
+              "'T1', 'W2', 'Хар хил ишлар', 'HOUR', 'COMPLETED', "
+              "'2026-09-14T08:00:00+05:00', 'u', '2026-09-14', 1, 1, 'u', "
+              "'IN_PROGRESS', '2026-09-14', 'PT1')"])
+        html = self.get('/agro-work/', lang='ru').get_data(as_text=True)
+        title = 'Заявки нельзя проверить: у вида работ не выбран способ проверки'
+        self.assertEqual(attention(html, title), '1')
+        # Это не нарушение оператора -- число серое, а не красное.
+        self.assertIn('<span class="aw-attn-num is-muted">1</span>', html)
+        self.assertIn('reason=metod_ne_razmechen', html)
+
+    def test_the_rules_are_kept_word_for_word_once_at_the_bottom(self):
+        html = self.get('/agro-work/', lang='ru').get_data(as_text=True)
+        rules = html[html.index('<details class="aw-rules">'):]
+        for text in ('В обе стороны: была ли работа по заявке — и была ли заявка '
+                     'на работу.',
+                     'Окно обычной заявки — с дня создания по день «Выполнено» '
+                     'включительно.',
+                     'Сверяются заявки видов работ с методами «гектары» и «время»'):
+            self.assertIn(text, rules)
+            self.assertEqual(html.count(text), 1, text)
+
+    def test_no_wall_of_text_above_the_numbers(self):
+        # Вместо карточки с абзацами правил -- одна строка под вкладками.
+        for url in ('/agro-work/', '/agro-work/applications',
+                    '/agro-work/work-days'):
+            html = self.get(url, lang='ru').get_data(as_text=True)
+            with self.subTest(url=url):
+                self.assertNotIn('class="vs-hero', html)
+                self.assertEqual(html.count('<p class="aw-lead">'), 1)
+                self.assertEqual(html.count('<details class="aw-rules">'), 1)
+                self.assertIn("css/agro-work.css", html)
+
+    def test_the_bars_add_up(self):
+        html = self.get('/agro-work/', lang='ru').get_data(as_text=True)
+        for bar in re.findall(r'<div class="aw-bar"[^>]*>(.*?)</div>', html, re.S):
+            widths = [float(x) for x in re.findall(r'width: ([\d.]+)%', bar)]
+            if widths:
+                self.assertAlmostEqual(sum(widths), 100.0, places=2)
+
+    def test_thousands_are_grouped(self):
+        from agro_work_routes import _num
+        self.assertEqual(_num(4274), '4\u00a0274')
+        self.assertEqual(_num(0), '0')
+        self.assertEqual(_num(None), '0')
+
+    def test_the_stylesheet_uses_only_tokens(self):
+        # Цвета -- только токенами дизайн-системы: файл модуля не заводит
+        # своих оттенков.
+        with open(os.path.join(REPO_ROOT, 'static', 'css', 'agro-work.css'),
+                  encoding='utf-8') as fh:
+            css = fh.read()
+        self.assertNotRegex(css, r'#[0-9a-fA-F]{3,8}\b')
+        self.assertNotRegex(css, r'\brgba?\(')
+        for token in set(re.findall(r'var\((--[a-z0-9-]+)\)', css)):
+            with self.subTest(token=token):
+                self.assertRegex(DESIGN_SYSTEM, r'(?<![\w-])' + re.escape(token)
+                                 + r'\s*:')
 
 
 class Copies(unittest.TestCase):
