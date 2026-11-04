@@ -188,6 +188,17 @@
   color: var(--vs-text-muted);
 }
 
+/* "Import of applications": how the last run went -- one line above the to-do. */
+.aw-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 0 0 6px;
+  font-size: var(--vs-fs-md);
+  color: var(--vs-text);
+}
+
 /* A date range is read as one thing: "10.09 - 11.09" never breaks in two. */
 .aw-nowrap { white-space: nowrap; }
 
