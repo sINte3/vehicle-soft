@@ -38,6 +38,15 @@ def row(n=11):
     }
 
 
+def _directory(db):
+    con = imp._connect(db, read_only=True)
+    try:
+        # Importer Directory caches the directory mapping in memory.
+        return imp.Directory(con)
+    finally:
+        con.close()
+
+
 def approved(rows):
     return {sel.source_key(r): sel.row_fingerprint(r) for r in rows}
 
@@ -376,6 +385,128 @@ class SelectiveImportTests(unittest.TestCase):
                 'SELECT COUNT(*) FROM drone_works').fetchone()[0], 1)
         finally:
             con.close()
+
+    def test_renamed_and_repacked_july_xlsx_refused_by_cli_and_web(self):
+        # Codex P1 reproduction: ZIP metadata changes without changing
+        # parsed work rows; byte hash and filename both cease to match.
+        import contextlib
+        import zipfile
+        from tools import drone_works_fixtures as fx
+        from drone_works_upload import run_import
+
+        with tempfile.TemporaryDirectory() as folder:
+            name = 'ResavedElsewhere.xlsx'
+            label = 'PinnedOriginalJuly.xlsx'
+            sheet = 'свод ичи (Усмон)'
+            header = ('№', 'ФХ номи ', 'Майдон (га)',
+                      'Хизмат кўрсатиш суммаси', 'Жами сумма',
+                      'Бошка харажатлар', 'Оператор топшириши керак',
+                      'Дрон ишлаган сана', '*Изоҳ')
+            jobs = [
+                ('Нақд (Июль ойи)',), header,
+                (1, 'Тест А фх', 2.5, 200000, 500000, None, None,
+                 datetime.datetime(2026, 7, 11), None),
+                (2, 'Тест Б фх', 3.0, 200000, 600000, None, None,
+                 datetime.datetime(2026, 7, 12), None),
+            ]
+            directory, manifest = fx.build(
+                os.path.join(folder, 'books'),
+                books=((name, '2026-07', ((sheet, jobs),)),))
+            db = fx.build_database(os.path.join(folder, 'db.sqlite'))
+            book = os.path.join(directory, name)
+            original = hashlib.sha256(open(book, 'rb').read()).hexdigest()
+            pinned = {label: original}
+            with mock.patch.dict(sel.JULY_BOOK_SHA256, pinned, clear=True):
+                # The same original bytes under a different name are held.
+                parsed = imp.collect(
+                    directory, {name: '2026-07'}, [name], _directory(db),
+                    None)
+                self.assertEqual(len(parsed.rows), 2)
+                self.assertIn(
+                    'SOURCE_KEY_GUARD: ORIGINAL_JULY_BOOK_BYTES_REQUIRE_ALLOWLIST',
+                    imp.apply_blockers(parsed))
+
+                with zipfile.ZipFile(book, 'a') as z:
+                    z.comment = b'only-xlsx-archive-comment-changed'
+                self.assertNotEqual(
+                    hashlib.sha256(open(book, 'rb').read()).hexdigest(),
+                    original)
+                parsed_repacked = imp.collect(
+                    directory, {name: '2026-07'}, [name], _directory(db),
+                    None)
+                self.assertEqual(
+                    [(r['customer_raw'], r['area_ha']) for r in parsed.rows],
+                    [(r['customer_raw'], r['area_ha']) for r in
+                     parsed_repacked.rows])
+                self.assertEqual(len(parsed_repacked.rows), 2)
+                self.assertIn(
+                    'SOURCE_KEY_GUARD: JULY_2026_WORK_REQUIRES_ALLOWLIST',
+                    imp.apply_blockers(parsed_repacked))
+                report = os.path.join(folder, 'legacy-report.txt')
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    exit_code = imp.main([
+                        '--dir', directory, '--manifest', manifest,
+                        '--db', db, '--report', report, '--apply'])
+                self.assertEqual(exit_code, 2, out.getvalue())
+                self.assertIn('JULY_2026_WORK_REQUIRES_ALLOWLIST',
+                              out.getvalue())
+                with self.assertRaisesRegex(
+                        imp.ImportPreconditionError,
+                        'JULY_2026_WORK_REQUIRES_ALLOWLIST'):
+                    run_import(
+                        db, directory, [{'name': name}], '2026-07', True,
+                        'synthetic-web', os.path.join(folder, 'web-report.txt'))
+                con = sqlite3.connect(db)
+                try:
+                    for table in ('drone_works', 'drone_customers',
+                                  'drone_customer_aliases'):
+                        self.assertEqual(con.execute(
+                            'SELECT COUNT(*) FROM ' + table).fetchone()[0], 0)
+                finally:
+                    con.close()
+
+    def test_july_actual_date_cannot_be_relabelled_as_june(self):
+        r = dict(row(), source_file='UnpinnedResaved.xlsx',
+                 period_month='2026-06')
+        self.assertFalse(sel.protected(r))
+        self.assertTrue(sel.july_work(r))
+        self.assertIn(
+            'SOURCE_KEY_GUARD: JULY_2026_WORK_REQUIRES_ALLOWLIST',
+            imp.apply_blockers(run_result([r])))
+
+    def test_cp1251_error_output_is_ascii_safe_and_status_2(self):
+        import contextlib
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as folder:
+            # A matching filename whose original XLSX digest differs;
+            # only the refusal output is under test, no actual imports.
+            name = 'Дрон Ғиждувон ПТЗ Июль.xlsx'
+            manifest = os.path.join(folder, 'manifest.txt')
+            with open(manifest, 'w', encoding='utf-8') as out:
+                out.write(name + ' 2026-07\n')
+            with open(os.path.join(folder, name), 'wb') as out:
+                out.write(b'different-byte-content')
+            db = os.path.join(folder, 'db.sqlite')
+            with open(db, 'wb') as out:
+                out.write(b'not-used-since-verify-books-fails-first')
+            approved_csv = os.path.join(folder, 'approved.csv')
+            with open(approved_csv, 'wb') as out:
+                out.write(b'source_key,row_sha256\nkey,hash\n')
+            raw = io.BytesIO()
+            encoded = io.TextIOWrapper(raw, encoding='cp1251',
+                                       errors='strict', write_through=True)
+            with contextlib.redirect_stdout(encoded):
+                code = sel.cli([
+                    '--dir', folder, '--manifest', manifest, '--db', db,
+                    '--only-keys', approved_csv,
+                    '--only-keys-sha256', hashlib.sha256(
+                        open(approved_csv, 'rb').read()).hexdigest()])
+                encoded.flush()
+            self.assertEqual(code, 2)
+            self.assertIn(b'ORIGINAL_BOOK_SHA256_MISMATCH',
+                          raw.getvalue())
+            self.assertNotIn(b'Traceback', raw.getvalue())
 
     def test_allowlist_only_covers_exact_july_five_books(self):
         other = dict(row(), source_file='SomeOtherBook.xlsx')
