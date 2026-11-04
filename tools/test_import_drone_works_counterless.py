@@ -739,7 +739,8 @@ class RealJulyBooksTests(unittest.TestCase):
         self.assertEqual(imp.apply_blockers(self.result),
                          ['PAYER_DECISION_REQUIRED: 1 spelling(s) of '
                           'PAYER_DECISION_PENDING_KEYS would become a new '
-                          'card'])
+                          'card',
+                          'SOURCE_KEY_GUARD: JULY_ALLOWLIST_REQUIRED'])
 
     def test_the_month_comes_from_the_july_dates(self):
         self.assertEqual({r['period_month'] for r in self.result.rows},
