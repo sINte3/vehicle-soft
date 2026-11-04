@@ -27,8 +27,10 @@ A PRIVATE, approved CSV must contain exactly:
     source_key,row_sha256
 
 A source key is the exact source_file!source_sheet!source_row string.
-row_sha256 is the SHA-256 of canonical JSON from the parsed row, computed
-by drone_works_selective.row_fingerprint. The owner separately approves
+row_sha256 is the SHA-256 of canonical JSON from the parsed AND
+CUSTOMER/OPERATOR-RESOLVED row, computed by drone_works_selective.row_fingerprint.
+The fingerprint pins both customer and operator IDs, and the unidentified
+payer flag: a later alias reassignment invalidates the signed row. The owner separately approves
 the exact CSV bytes and the overall SHA-256.
 
 IMPORTANT: a hash is only an integrity pin; it is NOT an electronic
@@ -47,8 +49,8 @@ Before any write it verifies:
 3. Every approved physical source key occurs exactly once among accepted
    parsed records (missing/duplicate/changed references are refused).
 4. Every selected row matches its complete financial fingerprint, so
-   changing area, amount, customer, date, payment type or received value
-   invalidates the approval.
+   changing area, amount, customer, date, payment type, received value,
+   resolved customer/operator ID or payer classification invalidates approval.
 5. No unparsed source jobs, duplicate provenance, or alias conflicts.
 6. No automatic creation of customers/aliases, unresolved operators,
    previously imported selected rows, blank customers or undated jobs.
