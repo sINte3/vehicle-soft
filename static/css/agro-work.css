@@ -188,6 +188,9 @@
   color: var(--vs-text-muted);
 }
 
+/* A date range is read as one thing: "10.09 - 11.09" never breaks in two. */
+.aw-nowrap { white-space: nowrap; }
+
 /* -- "How it is counted": the rules, once, folded ------------------------- */
 .aw-rules {
   margin: 18px 0 8px;
