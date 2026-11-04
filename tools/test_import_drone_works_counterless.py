@@ -112,6 +112,20 @@ def usmon_like():
         (None, None, 'ИТОГО:', 0),
     ]
 
+def usmon_like_june():
+    """Historical-write regression: June work stays outside July hold."""
+    shifted = []
+    for source_row in usmon_like():
+        values = []
+        for value in source_row:
+            if isinstance(value, datetime.datetime) and value.year == 2026:
+                value = value.replace(month=6)
+            elif isinstance(value, str):
+                value = value.replace('Июль ойи', 'Июнь ойи')
+            values.append(value)
+        shifted.append(tuple(values))
+    return shifted
+
 
 # ─── Parsing ─────────────────────────────────────────────────────────────────
 
@@ -464,7 +478,8 @@ class ApplyRefusalTests(RunTestBase):
 
 class CleanRunTests(RunTestBase):
     books = (
-        _book('Дрон Г ПТЗ Июль.xlsx', [(SHEET, usmon_like())]),
+        _book('Дрон Г ПТЗ Июнь.xlsx', [(SHEET, usmon_like_june())],
+              period='2026-06'),
     )
 
     def test_apply_writes_the_counterless_rows_once(self):
@@ -496,7 +511,7 @@ class CleanRunTests(RunTestBase):
         self.assertIn('РАБОТЫ, ПРИНЯТЫЕ БЕЗ НОМЕРА «№»: 4 строк, 41.43 га',
                       text)
         self.assertIn('свод ичи (Усмон) / строка 7: «Гарден» 13.53 га, '
-                      '2026-07-11, сумма 1158614.49', text)
+                      '2026-06-11, сумма 1158614.49', text)
         self.assertIn('мост сходится: ДА', text)
         self.assertNotIn('+998', text)
 
@@ -599,7 +614,9 @@ class KogonFukaroTests(RunTestBase):
         self.assertEqual(rows['Когон Фукаро']['drone_customer_id'], 1)
         self.assertFalse(rows['Когон Фукаро']['payer_decision_pending'])
         code, out = self.main('--apply', '--batch', 'k')
-        self.assertEqual(code, 0, out)
+        self.assertEqual(code, 2, out)
+        self.assertIn('JULY_2026_WORK_REQUIRES_ALLOWLIST', out)
+        self.assertEqual(self.count('drone_works'), 0)
 
     def test_the_owners_generic_decision_simulated_not_applied(self):
         decided = imp.GENERIC_PAYER_KEYS | {'когон фукаро'}
@@ -609,7 +626,8 @@ class KogonFukaroTests(RunTestBase):
         kogon = rows['Когон Фукаро']
         self.assertTrue(kogon['payer_unidentified'])
         self.assertFalse(kogon['payer_decision_pending'])
-        self.assertEqual(code, 0, out)
+        self.assertEqual(code, 2, out)
+        self.assertIn('JULY_2026_WORK_REQUIRES_ALLOWLIST', out)
         con = sqlite3.connect(self.db)
         try:
             names = [r[0] for r in con.execute(
@@ -617,7 +635,7 @@ class KogonFukaroTests(RunTestBase):
         finally:
             con.close()
         self.assertNotIn('Когон Фукаро', names)
-        self.assertIn('Ахмад (фукаро)', names)
+        self.assertNotIn('Ахмад (фукаро)', names)
         # The code as committed is untouched by the simulation.
         self.assertNotIn('когон фукаро', imp.GENERIC_PAYER_KEYS)
 
@@ -625,14 +643,17 @@ class KogonFukaroTests(RunTestBase):
         with mock.patch.object(imp, 'PAYER_DECISION_PENDING_KEYS',
                                frozenset()):
             code, out = self.main('--apply', '--batch', 'k')
-        self.assertEqual(code, 0, out)
+        # Even removing the payer-specific hold cannot bypass the
+        # independent July-work write boundary.
+        self.assertEqual(code, 2, out)
+        self.assertIn('JULY_2026_WORK_REQUIRES_ALLOWLIST', out)
         con = sqlite3.connect(self.db)
         try:
             names = [r[0] for r in con.execute(
                 'SELECT name FROM drone_customers')]
         finally:
             con.close()
-        self.assertIn('Когон Фукаро', names)
+        self.assertNotIn('Когон Фукаро', names)
 
     def test_existing_history_is_not_touched(self):
         con = sqlite3.connect(self.db)
@@ -740,7 +761,7 @@ class RealJulyBooksTests(unittest.TestCase):
                          ['PAYER_DECISION_REQUIRED: 1 spelling(s) of '
                           'PAYER_DECISION_PENDING_KEYS would become a new '
                           'card',
-                          'SOURCE_KEY_GUARD: JULY_ALLOWLIST_REQUIRED'])
+                          'SOURCE_KEY_GUARD: ORIGINAL_JULY_BOOK_BYTES_REQUIRE_ALLOWLIST'])
 
     def test_the_month_comes_from_the_july_dates(self):
         self.assertEqual({r['period_month'] for r in self.result.rows},
