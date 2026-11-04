@@ -2060,7 +2060,7 @@ def resolve(result, dir_obj):
 
 # ─── Writing ─────────────────────────────────────────────────────────────────
 
-def apply_blockers(result):
+def apply_blockers(result, approved_rows=None):
     """Why this parsed run must not be written, as ASCII lines; [] = none.
 
     [REASON]: FIN-RECON-003, fail-closed. A row that carries job data and
@@ -2082,12 +2082,23 @@ def apply_blockers(result):
         blockers.append('PAYER_DECISION_REQUIRED: %d spelling(s) of '
                         'PAYER_DECISION_PENDING_KEYS would become a new card'
                         % len(pending))
+    # FIN-RECON-003: the five July books MUST NOT pass through the old
+    # all-rows CLI or web-upload apply path. A selected cohort must carry
+    # exact approved source keys AND hashes of the original row values.
+    try:
+        try:
+            from . import drone_works_selective as selective
+        except ImportError:
+            import drone_works_selective as selective
+        selective.verify_apply_preconditions(result, approved_rows)
+    except selective.SelectionError as exc:
+        blockers.append('SOURCE_KEY_GUARD: %s' % exc)
     return blockers
 
 
-def apply_rows(con, result, batch):
+def apply_rows(con, result, batch, approved_rows=None):
     """Insert customers, aliases and works inside ONE transaction."""
-    blockers = apply_blockers(result)
+    blockers = apply_blockers(result, approved_rows=approved_rows)
     if blockers:
         raise ImportPreconditionError(
             'ERROR APPLY_REFUSED: %s. Nothing written.' % '; '.join(blockers))
