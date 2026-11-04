@@ -56,10 +56,14 @@ Before any write it verifies:
    previously imported selected rows, blank customers or undated jobs.
 
 The legacy whole-book CLI and the web-upload route call the same
-import_drone_works.apply_rows guard. Both refuse original July 2026 jobs
-without an approved exact list. The guard is limited to the five named
-original books and the manifest month 2026-07, leaving other periods
-and the separate existing Hasanboy book unchanged.
+import_drone_works.apply_rows guard. Both refuse the five protected July
+workbooks without an approved exact list: the original source filename is
+protected regardless of manifest month, and even a renamed original XLSX
+is protected by its exact source-byte SHA-256. The approved subset mode
+requires the exact original five filenames and 2026-07 in the manifest.
+Unrelated books and the separate existing Hasanboy book remain unchanged.
+If a selected row appears between preflight and apply, the whole
+approved batch fails rather than silently reporting a partial success.
 
 ## Operating restrictions
 
