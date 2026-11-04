@@ -261,6 +261,41 @@ class SelectiveImportTests(unittest.TestCase):
         self.assertTrue(any('UNRESOLVED_CUSTOMERS' in reason
                             for reason in reasons))
 
+    def test_exactly_one_approved_row_is_written_on_synthetic_sqlite(self):
+        # This is an in-memory test, NOT a production/backup database.
+        a = dict(row(), drone_operator_id=14, drone_customer_id=155,
+                 payer_unidentified=False)
+        b = dict(row(35), source_row=35, drone_operator_id=14,
+                 drone_customer_id=155, payer_unidentified=False)
+        selection = approved([a])
+        selected = sel.select_rows([a, b], selection)
+        r = run_result(selected)
+        con = sqlite3.connect(':memory:')
+        try:
+            columns = [
+                'period_month', 'work_date_from', 'work_date_to', 'date_raw',
+                'drone_operator_id', 'operator_raw', 'drone_customer_id',
+                'customer_raw', 'area_ha', 'price_per_ha', 'amount',
+                'other_costs', 'received_amount', 'received_kind',
+                'payment_type', 'subdivision_name', 'source_file',
+                'source_sheet', 'source_row', 'import_batch', 'note',
+                'created_at', 'payer_unidentified']
+            con.execute('CREATE TABLE drone_works (id INTEGER PRIMARY KEY, '
+                        + ', '.join(name + ' TEXT' for name in columns) + ')')
+            created, inserted, skipped = imp.apply_rows(
+                con, r, 'synthetic-test', approved_rows=selection)
+            self.assertEqual((created, inserted, skipped), (0, 1, 0))
+            stored = list(con.execute(
+                'SELECT source_row, area_ha, amount, drone_customer_id '
+                'FROM drone_works'))
+            self.assertEqual(len(stored), 1)
+            self.assertEqual(int(stored[0][0]), 11)
+            self.assertAlmostEqual(float(stored[0][1]), 13.53)
+            self.assertAlmostEqual(float(stored[0][2]), 1158614.49)
+            self.assertEqual(int(stored[0][3]), 155)
+        finally:
+            con.close()
+
     def test_allowlist_only_covers_exact_july_five_books(self):
         other = dict(row(), source_file='SomeOtherBook.xlsx')
         with self.assertRaisesRegex(sel.SelectionError,
