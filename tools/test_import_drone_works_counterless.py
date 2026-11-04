@@ -119,7 +119,7 @@ def usmon_like_june():
         values = []
         for value in source_row:
             if isinstance(value, datetime.datetime) and value.year == 2026:
-                value = value.replace(month=6)
+                value = value.replace(month=6, day=min(value.day, 30))
             elif isinstance(value, str):
                 value = value.replace('Июль ойи', 'Июнь ойи')
             values.append(value)
