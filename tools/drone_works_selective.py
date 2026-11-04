@@ -36,6 +36,7 @@ ROW_FIELDS = (
     'operator_raw', 'customer_raw', 'subdivision_name',
     'area_ha', 'price_per_ha', 'amount', 'other_costs',
     'received_amount', 'received_kind', 'payment_type', 'note',
+    'drone_operator_id', 'drone_customer_id', 'payer_unidentified',
 )
 
 
@@ -139,8 +140,8 @@ def load_allowlist(path, pinned_sha256):
         raise SelectionError('ALLOWLIST_INVALID_CSV') from exc
 
 
-def select_rows(full_rows, approved):
-    """Require 1:1 identity; never silently drop an approved missing row."""
+def select_rows(full_rows, approved, check_hashes=True):
+    """Require 1:1 identity; optionally defer hashes until AFTER resolution."""
     available = {}
     for row in full_rows:
         if not protected(row):
@@ -154,7 +155,8 @@ def select_rows(full_rows, approved):
         raise SelectionError('APPROVED_KEYS_NOT_PARSED: %d, first=%s'
                              % (len(unknown), unknown[0]))
     selected = [row for row in full_rows if source_key(row) in approved]
-    validate_row_hashes(selected, approved)
+    if check_hashes:
+        validate_row_hashes(selected, approved)
     return selected
 
 
@@ -250,7 +252,11 @@ def cli(argv=None):
             if all_rows.unparsed:
                 raise SelectionError('UNPARSED_JULY_ROWS: %d'
                                      % len(all_rows.unparsed))
-            all_rows.rows = select_rows(all_rows.rows, approved)
+            # Select exact provenance first, then resolve customer/operator
+            # IDs; the signed row hash also pins the resolved IDs. It is
+            # checked by verify_apply_preconditions() after resolve().
+            all_rows.rows = select_rows(all_rows.rows, approved,
+                                        check_hashes=False)
             all_rows.manifest_problems = manifest_errors
             imp.resolve(all_rows, directory)
             all_rows.filename_alias_conflicts = (
