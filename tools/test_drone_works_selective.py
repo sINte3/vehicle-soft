@@ -496,13 +496,15 @@ class SelectiveImportTests(unittest.TestCase):
             raw = io.BytesIO()
             encoded = io.TextIOWrapper(raw, encoding='cp1251',
                                        errors='strict', write_through=True)
-            with contextlib.redirect_stdout(encoded):
-                code = sel.cli([
-                    '--dir', folder, '--manifest', manifest, '--db', db,
-                    '--only-keys', approved_csv,
-                    '--only-keys-sha256', hashlib.sha256(
-                        open(approved_csv, 'rb').read()).hexdigest()])
-                encoded.flush()
+            with mock.patch.dict(
+                    sel.JULY_BOOK_SHA256, {name: '0' * 64}, clear=True):
+                with contextlib.redirect_stdout(encoded):
+                    code = sel.cli([
+                        '--dir', folder, '--manifest', manifest, '--db', db,
+                        '--only-keys', approved_csv,
+                        '--only-keys-sha256', hashlib.sha256(
+                            open(approved_csv, 'rb').read()).hexdigest()])
+                    encoded.flush()
             self.assertEqual(code, 2)
             self.assertIn(b'ORIGINAL_BOOK_SHA256_MISMATCH',
                           raw.getvalue())
