@@ -1,11 +1,12 @@
-// GPS · «Сверка» (agro-work) · один пункт, вкладки, фильтры, Excel -- в браузере.
+// GPS · «Заявки и GPS» (agro-work; до 04.11.2026 -- «Сверка») · один пункт, вкладки,
+// фильтры, Excel -- в браузере.
 //
 // Просьба владельца 19.10.2026: «Заявка → работа» и «Работа → заявка»
 // объединить в один пункт, сверху -- фильтры по организации, статусу и типу
 // оплаты, выгрузка в Excel. DOM-тесты Python (tests/test_agro_work_screen.py,
 // OneScreen) видят разметку и числа; этот файл проверяет то, что видно только
 // в браузере:
-//   * в меню модуля один пункт «Сверка», под ним три вкладки, активная --
+//   * в меню модуля один пункт «Заявки и GPS», под ним три вкладки, активная --
 //     та, на которой стоишь; переход по вкладке не теряет фильтр;
 //   * выбор «Наличные» в списке «Тип оплаты» и «Показать» -- в адресе
 //     pay=CASH и в таблице только заявки с наличной оплатой;
@@ -74,10 +75,11 @@ async function checkMenuAndTabs(state) {
     const tag = `tabs ${label}`;
     const { ctx, page, errors } = await open(state, `${BASE}${path}?${PERIOD}&pay=CASH`, [1440, 900]);
     const pills = await page.$$eval('nav.vs-modulenav a', (els) => els.map((e) => e.textContent.trim()));
-    expect(JSON.stringify(pills) === JSON.stringify(['Факт по технике', 'Сверка', 'Импорт заявок', 'Приём данных']),
-      `${tag}: module menu has one «Сверка» item (${pills.join(' | ')})`);
+    expect(JSON.stringify(pills) === JSON.stringify(['Работа за день', 'История машины', 'Заявки и GPS',
+      'Импорт заявок', 'Приём данных']),
+      `${tag}: module menu has one «Заявки и GPS» item (${pills.join(' | ')})`);
     const active = await page.$$eval('nav.vs-modulenav a.is-active', (els) => els.map((e) => e.textContent.trim()));
-    expect(active.length === 1 && active[0] === 'Сверка', `${tag}: «Сверка» is the current item`);
+    expect(active.length === 1 && active[0] === 'Заявки и GPS', `${tag}: «Заявки и GPS» is the current item`);
     const tabs = await page.$$eval('nav.vs-segmented a', (els) => els.map((e) => ({
       text: e.textContent.trim(), href: e.getAttribute('href'), current: e.getAttribute('aria-current') })));
     expect(tabs.length === 3, `${tag}: three tabs`);

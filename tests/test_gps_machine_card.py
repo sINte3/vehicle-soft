@@ -467,7 +467,8 @@ class AccessAndMenu(Base):
             User.query.get(self.admin_id).language = 'uz'
             db.session.commit()
         html = self.page()
-        for text in ('Машина давр бўйича', 'Ишланган, га', 'Ҳаракатда',
+        # «Машина тарихи» -- название пункта с 04.11.2026 (решение владельца).
+        for text in ('Машина тарихи', 'Ишланган, га', 'Ҳаракатда',
                      'Давр кунлари', 'ҳисоб йўқ', 'Охирги 7 кун'):
             self.assertIn(text, html)
         for text in ('Обработано', 'В движении', 'расчёта нет',

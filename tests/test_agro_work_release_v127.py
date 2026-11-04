@@ -48,6 +48,7 @@ from tests.test_agro_work_runbook import (                    # noqa: E402
     BACKUP_PATTERNS, DRIFT_PATTERNS, GATE_SEPARATOR, HARNESS, PYTHON,
     commands, constants, gate_lines, git, has_commit, open_items,
     parse_backup, parse_drift, prepare, real_outputs, sections, steps, text)
+from tests.test_agro_work_runbook import released  # noqa: E402
 from tests.test_agro_work_runbook import RELEASE as V120     # noqa: E402
 from tests.test_agro_work_release_v122 import (              # noqa: E402
     functions, release_block)
@@ -443,12 +444,13 @@ class ReleaseV127Runbook(unittest.TestCase):
         self.assertIn("_parse_date(request.args.get('date'))", source)
 
     def test_what_step_four_names_is_on_the_screen(self):
+        commit = constants(block('Шаг 3'))['reviewed'].strip("'")
         # Подписи, которые шаг 4 велит найти, -- слово в слово подписи
         # шаблона и кнопок карты (их пишет gps_routes.map_controls). Текст
         # читается, а не импортируется: эти тесты идут в CI без Flask.
         flat = step('Шаг 4')
-        page = read('templates', 'gps', 'fact.html')
-        source = read('gps_routes.py')
+        page = released(self, commit, 'templates', 'gps', 'fact.html')
+        source = released(self, commit, 'gps_routes.py')
         controls = source[source.index('def map_controls(is_ru):'):]
         controls = controls[:controls.index('\n\n\n')]
         # Кавычки до «Прислать»: там -- подписи экрана; дальше -- слова

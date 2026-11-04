@@ -43,6 +43,7 @@ from tests.test_agro_work_runbook import (                    # noqa: E402
     BACKUP_PATTERNS, DRIFT_PATTERNS, GATE_SEPARATOR, HARNESS, PYTHON,
     commands, constants, gate_lines, git, has_commit, open_items,
     parse_backup, parse_drift, prepare, real_outputs, sections, steps, text)
+from tests.test_agro_work_runbook import released  # noqa: E402
 from tests.test_agro_work_runbook import RELEASE as V120     # noqa: E402
 from tests.test_agro_work_release_v122 import (              # noqa: E402
     functions, release_block)
@@ -395,9 +396,10 @@ class ReleaseV125Runbook(unittest.TestCase):
                       step('Шаг 4'))
 
     def test_the_nine_numbers_are_the_nine_columns_of_the_total_row(self):
+        commit = constants(block('Шаг 3'))['reviewed'].strip("'")
         # Шаг 4.1 велит сверять девять чисел «Итого»: столько числовых
         # столбцов у таблицы свода, и порядок -- тот, что назван в шаге 2.
-        page = read('templates', 'agro_work', 'dashboard.html')
+        page = released(self, commit, 'templates', 'agro_work', 'dashboard.html')
         head = page[page.index('<thead>'):page.index('</thead>')]
         numeric = re.findall(r'<th class="right">\{\{ \'([^\']+)\'', head)
         self.assertEqual(numeric, ['Машин', 'Заявок', 'Работа была',
@@ -437,13 +439,14 @@ class ReleaseV125Runbook(unittest.TestCase):
         self.assertIn("volume = (request.args.get('volume')", source)
 
     def test_the_volume_screens_of_step_four_are_the_screens_of_the_code(self):
+        commit = constants(block('Шаг 3'))['reviewed'].strip("'")
         # Подписи, которые шаг 4 велит найти, -- слово в слово подписи
         # шаблонов и словаря; N -- место числа.
         from agro_work import labels, reconcile as rc
         flat = step('Шаг 4')
-        dashboard = read('templates', 'agro_work', 'dashboard.html')
-        applications = read('templates', 'agro_work', 'applications.html')
-        routes = read('agro_work_routes.py')
+        dashboard = released(self, commit, 'templates', 'agro_work', 'dashboard.html')
+        applications = released(self, commit, 'templates', 'agro_work', 'applications.html')
+        routes = released(self, commit, 'agro_work_routes.py')
         self.assertIn("'Работа была: объём против GPS' if is_ru else "
                       "'Иш бўлган: ҳажм GPS га қарши'", dashboard)
         self.assertIn('«Работа была: объём против GPS»', ' '.join(
@@ -476,7 +479,7 @@ class ReleaseV125Runbook(unittest.TestCase):
         self.assertIn('раздел 9.2 трека agro-work', ' '.join(
             text(RELEASE).split()))
         self.assertIn('### 9.2 U2: объём заявки против гектаров GPS',
-                      read('docs', 'tracks', 'agro-work.md'))
+                      released(self, commit, 'docs', 'tracks', 'agro-work.md'))
 
 
 class ReleaseV125ToolFormats(unittest.TestCase):

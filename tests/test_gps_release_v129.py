@@ -61,6 +61,7 @@ from tests.test_agro_work_runbook import (                    # noqa: E402
     _backup_outputs, _entry, _lock_outputs, commands, constants, gate_lines,
     git, has_commit, open_items, parse_backup, parse_drift, prepare, sections,
     steps, text)
+from tests.test_agro_work_runbook import released  # noqa: E402
 from tests.test_agro_work_runbook import RELEASE as V120     # noqa: E402
 from tests.test_agro_work_release_v122 import (              # noqa: E402
     functions, release_block)
@@ -796,7 +797,8 @@ class ReleaseV129Runbook(unittest.TestCase):
         self.assertIn('`BAT: STOP - gps_daily.bat is not as expected`', text(RELEASE))
 
     def test_the_screen_addresses_are_real(self):
-        source = read('agro_work_routes.py')
+        commit = constants(block('Шаг 3'))['reviewed'].strip("'")
+        source = released(self, commit, 'agro_work_routes.py')
         addresses = re.findall(r'http://10\.103\.25\.14:5050(/[a-z/-]*)'
                                r'\?([^`\s]+)', text(RELEASE))
         self.assertEqual(sorted({path for path, _ in addresses}), ['/agro-work/'])
@@ -808,16 +810,16 @@ class ReleaseV129Runbook(unittest.TestCase):
         self.assertIn("_parse_date(request.args.get('from'))", source)
         self.assertGreaterEqual(int(in_code('agro_work_routes.py',
                                             r'^MAX_PERIOD_DAYS = (\d+)$')), 30)
-        tabs = read('templates', 'agro_work', '_tabs.html')
+        tabs = released(self, commit, 'templates', 'agro_work', '_tabs.html')
         flat = ' '.join(text(RELEASE).split())
         for tab in ('Свод', 'Заявка → работа', 'Работа → заявка'):
             with self.subTest(tab=tab):
                 self.assertIn(tab, tabs)
                 self.assertIn('«%s»' % tab, flat)
-        nav = read('templates', '_module_nav.html')
+        nav = released(self, commit, 'templates', '_module_nav.html')
         self.assertIn("'ep': 'agro_work.dashboard',     'ru': 'Сверка'", nav)
-        self.assertIn("'%.2f ч'", read('templates', 'agro_work', 'applications.html'))
-        self.assertIn("'пробег %.1f км'", read('templates', 'agro_work', 'applications.html'))
+        self.assertIn("'%.2f ч'", released(self, commit, 'templates', 'agro_work', 'applications.html'))
+        self.assertIn("'пробег %.1f км'", released(self, commit, 'templates', 'agro_work', 'applications.html'))
 
     def test_step_one_names_the_check_outcome(self):
         # Шаг 1 говорит владельцу, чем кончилась GPS-28, теми строками, что

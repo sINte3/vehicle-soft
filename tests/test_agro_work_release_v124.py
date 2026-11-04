@@ -44,6 +44,7 @@ from tests.test_agro_work_runbook import (                    # noqa: E402
     BACKUP_PATTERNS, DRIFT_PATTERNS, GATE_SEPARATOR, HARNESS, PYTHON,
     commands, constants, gate_lines, git, has_commit, open_items,
     parse_backup, parse_drift, prepare, real_outputs, sections, steps, text)
+from tests.test_agro_work_runbook import released  # noqa: E402
 from tests.test_agro_work_runbook import RELEASE as V120     # noqa: E402
 from tests.test_agro_work_release_v122 import (              # noqa: E402
     RELEASE as V122, functions, release_block)
@@ -414,9 +415,10 @@ class ReleaseV124Runbook(unittest.TestCase):
                       step('Шаг 4'))
 
     def test_the_nine_numbers_are_the_nine_columns_of_the_total_row(self):
+        commit = constants(block('Шаг 3'))['reviewed'].strip("'")
         # Шаг 4.1 велит сверять девять чисел «Итого»: столько числовых
         # столбцов у таблицы свода, и порядок -- тот, что назван в шаге 2.
-        page = read('templates', 'agro_work', 'dashboard.html')
+        page = released(self, commit, 'templates', 'agro_work', 'dashboard.html')
         head = page[page.index('<thead>'):page.index('</thead>')]
         numeric = re.findall(r'<th class="right">\{\{ \'([^\']+)\'', head)
         self.assertEqual(numeric, ['Машин', 'Заявок', 'Работа была',
@@ -497,15 +499,16 @@ class ReleaseV124Runbook(unittest.TestCase):
                       read('tests', 'test_agro_work_screen.py'))
 
     def test_the_b5_lines_of_step_four_are_on_the_screens(self):
+        commit = constants(block('Шаг 3'))['reviewed'].strip("'")
         # Строки, которые шаг 4 велит найти глазами, -- слово в слово строки
         # шаблонов; N и APP-… -- места чисел и номера заявки.
         flat = step('Шаг 4')
         screens = {
-            'dashboard': read('templates', 'agro_work', 'dashboard.html'),
-            'work_days': read('templates', 'agro_work', 'work_days.html'),
-            'machine': read('templates', 'agro_work', 'machine.html'),
-            'routes': read('agro_work_routes.py'),
-            'labels': read('agro_work', 'labels.py'),
+            'dashboard': released(self, commit, 'templates', 'agro_work', 'dashboard.html'),
+            'work_days': released(self, commit, 'templates', 'agro_work', 'work_days.html'),
+            'machine': released(self, commit, 'templates', 'agro_work', 'machine.html'),
+            'routes': released(self, commit, 'agro_work_routes.py'),
+            'labels': released(self, commit, 'agro_work', 'labels.py'),
         }
         waited = [
             ('«из них с заявкой, заведённой задним числом позже: N»',

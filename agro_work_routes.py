@@ -33,6 +33,7 @@
 import io
 import os
 import sqlite3
+from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 
 from flask import (Blueprint, abort, current_app, g, render_template, request,
@@ -369,16 +370,56 @@ def dashboard():
         group['oldest'] = max(group['oldest'], item['days_open'])
     open_groups = sorted(opened.values(),
                          key=lambda g: (-g['oldest'], g['org_name'] or ''))
+    # [REASON]: решение владельца 04.11 -- «Свод» одной таблицей по
+    # организациям, вид техники -- фильтром сверху. Машина принадлежит одной
+    # строке (организация, вид), поэтому сумма машин по видам -- машины
+    # организации без двойного счёта.
+    by_org = {}
+    for row in rows:
+        org = by_org.setdefault(row['org_id'], {
+            'org_id': row['org_id'], 'org_name': row['org_name'],
+            'c': Counter(), 'open': 0, 'oldest': 0})
+        org['c'].update(row['c'])
+    for group in open_groups:
+        org = by_org.setdefault(group['org_id'], {
+            'org_id': group['org_id'], 'org_name': group['org_name'],
+            'c': Counter(), 'open': 0, 'oldest': 0})
+        org['open'], org['oldest'] = group['count'], group['oldest']
+    org_rows = sorted(by_org.values(),
+                      key=lambda r: (r['org_id'] is None,
+                                     -r['c'].get('applications', 0),
+                                     r['org_name'] or ''))
+    open_top = sorted(open_groups, key=lambda g: (-g['count'],
+                                                  g['org_name'] or ''))
+    is_ru = _is_ru()
     return render_template(
         'agro_work/dashboard.html',
         **_screen(date_from, date_to, flt, 'summary', ctx, empty=None,
-                  rows=rows, total=total,
+                  rows=rows, total=total, org_rows=org_rows,
                   orphan_days=ctx.orphan_work_days(),
-                  open_groups=open_groups,
+                  open_groups=open_groups, open_top=open_top[:3],
+                  open_count=sum(g['count'] for g in open_groups),
+                  open_oldest=max([g['oldest'] for g in open_groups] or [0]),
+                  unmarked=total.get('app_reason_' + rc.R_METHOD_UNMARKED, 0),
+                  vol_fail=total.get(rc.VOL + rc.VOL_FAIL, 0),
                   after_keys=[(kind, rc.DAY_AFTER + kind)
                               for kind in rc.AFTER_KINDS],
-                  volume_keys=[(key, rc.VOL + key)
-                               for key in rc.VOLUME_VERDICTS]))
+                  after_label=lambda key: labels.pick(labels.AFTER, key, is_ru),
+                  volume_bar=VOLUME_BAR,
+                  volume_parts=[(total.get(rc.VOL + key, 0), css)
+                                for key, css in VOLUME_BAR],
+                  num=_num))
+
+
+# Полоса «объём против GPS»: от хорошего к плохому, серое -- последним; цвет
+# один и тот же у полосы и её подписи.
+VOLUME_BAR = ((rc.VOL_OK, 'aw-ok'), (rc.VOL_WARN, 'aw-warn'),
+              (rc.VOL_FAIL, 'aw-bad'), (rc.VOL_NONE, 'aw-none'))
+
+
+def _num(value):
+    """4274 -> «4 274»: неразрывный пробел между тысячами, как в книге."""
+    return '{:,}'.format(int(value or 0)).replace(',', ' ')
 
 
 # --- заявка -> работа ----------------------------------------------------------

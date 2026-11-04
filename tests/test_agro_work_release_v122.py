@@ -41,6 +41,7 @@ from tests.test_agro_work_runbook import (                    # noqa: E402
     BACKUP_PATTERNS, DRIFT_PATTERNS, GATE_SEPARATOR, HARNESS, PYTHON,
     commands, constants, gate_lines, git, has_commit, open_items,
     parse_backup, parse_drift, prepare, real_outputs, sections, steps, text)
+from tests.test_agro_work_runbook import released  # noqa: E402
 from tests.test_agro_work_runbook import RELEASE as V120     # noqa: E402
 
 RELEASE = os.path.join(REPO_ROOT, 'docs',
@@ -337,11 +338,10 @@ class ReleaseV122Runbook(unittest.TestCase):
                 self.assertIn(printed, tool)
 
     def test_the_nine_numbers_are_the_nine_columns_of_the_total_row(self):
+        commit = constants(release_block('Шаг 3'))['reviewed'].strip("'")
         # Шаг 4.1 велит сверять девять чисел «Итого»: столько числовых
         # столбцов у таблицы свода, и порядок -- тот, что назван в шаге 2.
-        with open(os.path.join(REPO_ROOT, 'templates', 'agro_work',
-                               'dashboard.html'), encoding='utf-8') as fh:
-            page = fh.read()
+        page = released(self, commit, 'templates', 'agro_work', 'dashboard.html')
         head = page[page.index('<thead>'):page.index('</thead>')]
         numeric = re.findall(r'<th class="right">\{\{ \'([^\']+)\'', head)
         self.assertEqual(numeric, ['Машин', 'Заявок', 'Работа была',
