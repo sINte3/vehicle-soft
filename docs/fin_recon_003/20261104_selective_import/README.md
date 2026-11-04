@@ -1,10 +1,10 @@
-# FIN-RECON-003 — guarded selective July import (Draft PR)
+# FIN-RECON-003 — guarded selective July import (review-only)
 
 **Status: NO IMPORT GO. NO MERGE. NO DEPLOY. NO MIGRATIONS. NO BUSINESS DATA WRITES.**
 
 This increment adds a separate guarded CLI, tools/drone_works_selective.py,
-and refuses legacy full-book writes through shared apply_rows when the
-five original July 2026 books are involved. It does not decide whether
+and refuses legacy/web writes of July 2026 works through shared apply_rows,
+including renamed and repacked source workbooks. It does not decide whether
 work occurred, cash was received, or any customer is the right one.
 
 ## Why this is needed
@@ -55,15 +55,25 @@ Before any write it verifies:
 6. No automatic creation of customers/aliases, unresolved operators,
    previously imported selected rows, blank customers or undated jobs.
 
-The legacy whole-book CLI and the web-upload route call the same
-import_drone_works.apply_rows guard. Both refuse the five protected July
-workbooks without an approved exact list: the original source filename is
-protected regardless of manifest month, and even a renamed original XLSX
-is protected by its exact source-byte SHA-256. The approved subset mode
-requires the exact original five filenames and 2026-07 in the manifest.
-Unrelated books and the separate existing Hasanboy book remain unchanged.
-If a selected row appears between preflight and apply, the whole
-approved batch fails rather than silently reporting a partial success.
+The legacy whole-book CLI and web-upload route call the same
+import_drone_works.apply_rows guard. Both refuse ANY parsed July-2026 work
+without an approved list, identified by work date or resulting period_month
+regardless of filename or packaging. The original five filenames and original
+byte SHA-256 are also pinned (defense-in-depth), even if someone falsely
+changes the manifest month. The approved subset mode still requires the exact
+original five filenames and manifest period 2026-07.
+
+This intentionally changes FUTURE legacy uploads of *other* July-2026 books:
+they will be held for separate review; previously imported Hasanboy works
+in the DB are never altered or re-imported. Earlier periods remain unaffected
+for dated works. Work rows with no date and a deliberately false historical
+manifest period cannot be identified by their date alone: the original
+five pinned names and original byte hashes remain a secondary control.
+A future import for genuinely new July source books requires a separately
+approved policy, not an automatic override.
+
+If a selected row appears between preflight and apply, the whole approved
+batch fails instead of silently reporting partial success.
 
 ## Operating restrictions
 
@@ -73,7 +83,8 @@ requirements. The CLI intentionally does not auto-generate an approved
 list or permit new customer cards. No production data, approved list,
 password, personal phone or database extract is committed to this PR.
 
-All unit tests operate on synthetic rows and in-memory SQLite. CI must
-pass on Linux and Windows before considering Ready for review.
-The PR must remain Draft until independent code review. Nothing here
-authorizes deploy or import.
+Unit tests use synthetic XLSX books, temporary SQLite databases and in-memory
+SQLite. No production data is used. CI must pass on Linux and Windows.
+Independent Codex review found P1/P2/P3 on 2026-11-04; this follow-up is
+the narrowly scoped repair and regression suite. No code merge is authorized
+by a green CI. Nothing here authorizes deploy or import.
