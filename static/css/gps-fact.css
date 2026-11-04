@@ -1,4 +1,5 @@
-/* gps-fact.css -- raskladka ekrana "Rabota za den" (templates/gps/fact.html).
+/* gps-fact.css -- raskladka ekranov "Rabota za den" (templates/gps/fact.html)
+ * i "Istoriya mashiny" (templates/gps/machine.html).
  *
  * Tolko tokeny dizayn-sistemy. Otdelnyy fayl po toy zhe prichine, chto
  * vs-map.css: design-system.css -- obshchiy fayl proekta.
@@ -163,6 +164,23 @@
 
 .gps-fact-quality b { font-weight: 600; }
 .gps-fact-quality b.is-marked { color: var(--vs-warning); }
+
+/* Ogovorki k chislam perioda ("Istoriya mashiny") -- slovami, ne melko. */
+.gps-fact-notes {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  font-size: var(--vs-fs);
+  color: var(--vs-text-muted);
+}
+
+.gps-fact-notes > li + li { margin-top: 4px; }
+
+/* Data, vremya i ssylka chitayutsya kak odno: ne rvutsya na dve stroki. */
+.gps-fact-nowrap { white-space: nowrap; }
+
+/* Sutki bez raschyota podryad -- odnoy stroki, priglushyonno: dyra vidna,
+ * no ne zaslonyaet sutki s rabotoy. */
+.gps-fact-gap > td { color: var(--vs-text-muted); }
 
 /* -- "Kak schitaetsya" i podklyuchenie sputnika: odin raz, svyornuto ------- */
 .gps-fact-rules {

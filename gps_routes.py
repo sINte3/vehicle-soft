@@ -607,9 +607,10 @@ def duration(minutes, is_ru=True):
     """317.4 -> «5 ч 17 мин», 44.6 -> «45 мин».
 
     [REASON]: решение владельца 04.11.2026 -- экраны модуля читают люди, и
-    «317.4 мин» человек пересчитывает в часы в уме. Одна функция на таблицу
-    участков, «В движении» и подпись участка на карте «Работы за день»: одно
-    и то же время не пишется на экране двумя способами.
+    «317.4 мин» человек пересчитывает в часы в уме. Одна функция на время
+    участков и «В движении» обоих экранов -- «Работы за день» и «Истории
+    машины» -- и на подписи участков их карт: одно и то же время не пишется
+    двумя способами.
     """
     total = int(round(minutes or 0))
     hour, minute = ('ч', 'мин') if is_ru else ('соат', 'дақ')
@@ -1341,6 +1342,30 @@ def machine_summary(rows):
     }
 
 
+def table_runs(rows):
+    """Строки таблицы «Сутки периода»: подряд идущие сутки без расчёта -- одной.
+
+    Возвращает список: {'gap': False, 'row': строка machine_days} или
+    {'gap': True, 'first': сутки, 'last': сутки, 'days': сколько}.
+
+    [REASON]: решение владельца 04.11.2026 -- экраны читают люди. Двенадцать
+    одинаковых строк «расчёта нет» прятали две, ради которых экран открыли.
+    Дыра в периоде остаётся видна (machine_days: «мы не смотрели» -- не
+    «работы нет»): одной строкой, с первыми и последними сутками и их числом.
+    """
+    runs = []
+    for row in rows:
+        if row['aggregate'] is not None:
+            runs.append({'gap': False, 'row': row})
+        elif runs and runs[-1]['gap']:
+            runs[-1]['last'] = row['day']
+            runs[-1]['days'] += 1
+        else:
+            runs.append({'gap': True, 'first': row['day'], 'last': row['day'],
+                         'days': 1})
+    return runs
+
+
 def machine_map_layers(rows, contours, is_ru):
     """Слои карты периода: контуры полей, трек по суткам, участки.
 
@@ -1373,8 +1398,7 @@ def machine_map_layers(rows, contours, is_ru):
                 continue
             parts = [row['day'].strftime('%d.%m.%Y'), '№%d' % site.site_number,
                      '%.2f %s' % (site.area_ha or 0, 'га'),
-                     '%d %s' % (round(site.minutes or 0),
-                                'мин' if is_ru else 'дақ')]
+                     duration(site.minutes, is_ru)]
             parts.append(answers.get(site.operator_label)
                          or ('без ответа' if is_ru else 'жавобсиз'))
             layers.append({'kind': 'area', 'group': group_sites,
@@ -1537,4 +1561,5 @@ def machine():
         categories=CATEGORIES, machine_options=machine_options,
         listed_count=len(listed), total_count=len(order), hidden_keys=hidden_keys, search=search,
         anchor=MACHINE_ANCHOR, track_only_reason=REASON_TRACK_ONLY,
+        table=table_runs(rows), duration=duration,
     )
