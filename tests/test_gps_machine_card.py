@@ -38,6 +38,7 @@ from datetime import date, datetime, timedelta, timezone
 from html import unescape
 
 from tests.harness import app, db, reset_db, create_admin, login
+from tests.test_agro_work_runbook import released
 from models import (Equipment, FieldContour, GpsDailyAggregate,
                     GpsWorkPolygon, Organization, User, UserModulePermission,
                     VialonMapping, ROLE_OPERATOR)
@@ -52,6 +53,11 @@ SQUARE = json.dumps({"type": "Polygon", "coordinates": [[
     [64.5500001234, 39.9900004321], [64.560, 39.990], [64.560, 40.000],
     [64.550, 40.000], [64.5500001234, 39.9900004321]]]})
 PERIOD = '?from=2026-07-27&to=2026-07-30'
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Production до четвёртого шага «для человека» (v1.34, 04.11.2026).
+BEFORE_HISTORY_FOR_PEOPLE = 'a73d756dcb67c06388e58bc7c4a0a1ac64e59e34'
+HERO_START = 'Что одна машина сделала за выбранные сутки'
+HELP_START = 'Пробег — сумма пробега по треку посчитанных суток'
 
 
 def aggregate(day, wialon_id=UNIT, reason=None, km=10.0, points=100):
@@ -213,8 +219,10 @@ class Base(unittest.TestCase):
         return resp.get_data(as_text=True)
 
     def stat(self, html, label):
-        found = re.search(r'<div class="vs-stat-label">%s</div>\s*'
-                          r'<div class="vs-stat-value[^"]*">(.*?)</div>'
+        # 04.11.2026: итог периода -- одна карточка (gps-fact-fig-*), а не
+        # плитки vs-stat.
+        found = re.search(r'<span class="gps-fact-fig-label">%s</span>\s*'
+                          r'<span class="gps-fact-fig-value">(.*?)</span>'
                           % re.escape(label), html, re.S)
         self.assertIsNotNone(found, label)
         return ' '.join(found.group(1).split())
@@ -222,7 +230,7 @@ class Base(unittest.TestCase):
     def rows(self, html):
         body = html.split('<tbody>')[-1].split('</tbody>')[0]
         return [re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', unescape(row))).strip()
-                for row in re.findall(r'<tr>(.*?)</tr>', body, re.S)]
+                for row in re.findall(r'<tr[^>]*>(.*?)</tr>', body, re.S)]
 
     def map_data(self, html):
         found = re.search(r'<script type="application/json" '
@@ -244,8 +252,9 @@ class Summary(Base):
         # 45,00 / 46,50.
         self.assertEqual(self.stat(html, 'Обработано, га'), '5.00')
         self.assertEqual(self.stat(html, 'Суток с работой'), '1')
-        self.assertEqual(self.stat(html, 'Участков, из них без ответа'),
-                         '3 / 1')
+        self.assertEqual(self.stat(html, 'Участков'), '3')
+        self.assertIn('<span class="gps-fact-fig-note is-open">без ответа: 1</span>',
+                      html)
         self.assertIn('Без ответа «работа/проезд» — участков: 1, 3.00 га',
                       unescape(html))
 
@@ -253,17 +262,17 @@ class Summary(Base):
         # 30,5 + 4,0 + 12,0: пробег измерен и у суток с редкой записью.
         html = self.page()
         self.assertEqual(self.stat(html, 'Пробег по треку, км'), '46.5')
-        self.assertEqual(self.stat(html, 'Суток с расчётом, из них с площадью'),
-                         '3 / 2')
+        self.assertIn('Суток в периоде: 4 · с расчётом 3 · с площадью 2', html)
 
     def test_every_day_of_the_period_has_a_row(self):
         rows = self.rows(self.page())
         self.assertEqual(len(rows), 4)
-        self.assertTrue(rows[0].startswith('27.07.2026 площадь опубликована 5.00 3 / 1 30.5'), rows[0])
-        self.assertTrue(rows[1].startswith('28.07.2026 площадь опубликована 0.00 0 / 0 4.0'), rows[1])
+        self.assertTrue(rows[0].startswith('27.07.2026 посчитан 5.00 3 без ответа: 1 30.5'), rows[0])
+        self.assertTrue(rows[1].startswith('28.07.2026 посчитан 0.00 0 4.0'), rows[1])
         self.assertTrue(rows[2].startswith('29.07.2026 Редкая запись трека'), rows[2])
         self.assertIn('— — 12.0', rows[2])
-        self.assertEqual(rows[3], '30.07.2026 расчёта нет — — — — —')
+        # одни сутки без расчёта -- своя строка, без счёта суток
+        self.assertEqual(rows[3], '30.07.2026 расчёта нет')
         self.assertIn('Суток без расчёта: 1 из 4', unescape(self.page()))
 
     def test_a_day_links_to_the_fact_screen_of_the_same_machine(self):
@@ -312,8 +321,8 @@ class TimeInMotion(Base):
         html = self.page()
         self.assertEqual(self.stat(html, 'В движении'), '1 ч 45 мин')
         rows = self.rows(html)
-        self.assertIn('1:30 06:00–12:30', rows[0])
-        self.assertIn('0:15 08:00–08:15', rows[1])
+        self.assertIn('1 ч 30 мин 06:00–12:30', rows[0])
+        self.assertIn('15 мин 08:00–08:15', rows[1])
         # и «Факт» за 27.07 показывает те же полтора часа
         fact = self.client().get('/gps/fact?date=2026-07-27&unit=101')
         self.assertIn('1 ч 30 мин', fact.get_data(as_text=True))
@@ -332,7 +341,144 @@ class TimeInMotion(Base):
             db.session.commit()
         self.write_track(run(D1, 6 * 3600, 121))
         rows = self.rows(self.page())
-        self.assertIn('0:00', rows[1])
+        self.assertIn(' 0 мин ', rows[1])
+
+
+class HistoryForPeople(Base):
+    """Решение владельца 04.11.2026, четвёртый шаг: «История машины».
+
+    Вместо карточки с абзацем -- одна строка; итог периода -- пять чисел
+    одной карточкой, без дробей «3 / 1», оговорки словами в ней же; сутки без
+    расчёта подряд -- одной строкой таблицы; время -- «1 ч 30 мин», как на
+    «Работе за день»; правила -- дословно, один раз, свёрнуто внизу. Расчёт
+    не менялся: те же числа (класс Summary выше), на новом месте.
+    """
+
+    def head(self, html):
+        start = html.index('class="gps-fact-head"')
+        return html[start:html.index('</div>', start)]
+
+    def test_no_wall_of_text_above_the_numbers(self):
+        html = self.page()
+        self.assertNotIn('vs-hero', html)
+        self.assertLess(html.index('<p class="gps-fact-lead">'),
+                        html.index('data-gps-fact-filters'))
+        above = html[:html.index('class="gps-fact-day"')]
+        self.assertNotIn(HERO_START, above)
+        self.assertNotIn(HELP_START, above)
+
+    def test_the_rules_are_kept_word_for_word_once_at_the_bottom(self):
+        html = self.page()
+        start = html.index('<details class="gps-fact-rules">\n  <summary>Как считается')
+        rules = html[start:html.index('</details>', start)]
+        for text in (HERO_START, HELP_START):
+            with self.subTest(text=text):
+                self.assertEqual(unescape(html).count(text), 1)
+                self.assertIn(text, unescape(rules))
+        self.assertGreater(start, html.index('</section>'))
+
+    def test_the_rules_are_the_production_text(self):
+        before = released(self, BEFORE_HISTORY_FOR_PEOPLE,
+                          'templates', 'gps', 'machine.html')
+        with open(os.path.join(REPO_ROOT, 'templates', 'gps', 'machine.html'),
+                  encoding='utf-8') as fh:
+            after = fh.read()
+        hero = re.search(r'<div class="vs-hero-sub">(\{\{ .*? \}\})</div>', before).group(1)
+        help_text = re.search(r'<div class="vs-help vs-mb">\n  (\{\{ .*? \}\})\n</div>',
+                              before, re.S).group(1)
+        rules = after[after.index('<details class="gps-fact-rules">'):]
+        self.assertIn('<p>%s</p>' % hero, rules)
+        self.assertIn('<p>%s</p>' % help_text, rules)
+
+    def test_the_period_is_summed_up_in_one_card_without_fractions(self):
+        html = self.page()
+        card = html[html.index('class="gps-fact-day"'):html.index('class="vs-card gps-fact-map-card')]
+        self.assertEqual(
+            re.findall(r'<span class="gps-fact-fig-label">([^<]+)</span>', card),
+            ['Обработано, га', 'Суток с работой', 'Участков', 'В движении',
+             'Пробег по треку, км'])
+        values = re.findall(r'<span class="gps-fact-fig-value">([^<]+)</span>', card)
+        self.assertEqual(values, ['5.00', '1', '3', '0 мин', '46.5'])
+        self.assertNotIn('vs-stat', html)
+
+    def test_the_notes_are_words_inside_the_card(self):
+        html = unescape(self.page())
+        card = html[html.index('class="gps-fact-day"'):html.index('class="vs-card gps-fact-map-card')]
+        notes = card[card.index('<ul class="gps-fact-notes">'):]
+        self.assertIn('Без ответа «работа/проезд» — участков: 1, 3.00 га', notes)
+        self.assertIn('Суток без расчёта: 1 из 4', notes)
+        self.assertNotIn('vs-help', html)
+
+    def test_when_every_site_is_answered_nothing_is_marked(self):
+        """Отрицательный контроль к «без ответа: 1» (класс Summary)."""
+        with app.app_context():
+            for row in GpsWorkPolygon.query.filter_by(wialon_id=UNIT, work_date=D1):
+                row.operator_label = row.operator_label or 'работа'
+            db.session.commit()
+        html = self.page()
+        self.assertIn('<span class="gps-fact-fig-note">все отвечены</span>', html)
+        self.assertNotIn('gps-fact-fig-note is-open', html)
+
+    def test_the_head_has_no_wialon_object_number(self):
+        head = self.head(self.page())
+        self.assertIn('МТЗ-80Х — 80 613 EA', head)
+        self.assertNotIn('Wialon', head)
+        self.assertNotIn('101', head)
+
+    def test_days_without_calculation_in_a_row_are_one_line(self):
+        html = self.page('?from=2026-07-20&to=2026-07-30&unit=101')
+        rows = self.rows(html)
+        self.assertEqual(rows[0], '20.07–26.07.2026 расчёта нет · 7 сут.')
+        self.assertTrue(rows[1].startswith('27.07.2026 посчитан'), rows[1])
+        self.assertEqual(rows[4], '30.07.2026 расчёта нет')
+        self.assertEqual(len(rows), 5)
+        # дыра по-прежнему названа и в оговорках
+        self.assertIn('Суток без расчёта: 8 из 11', unescape(html))
+
+    def test_a_run_across_the_new_year_names_both_years(self):
+        with app.app_context():
+            db.session.add(aggregate(date(2027, 1, 2)))
+            db.session.commit()
+        rows = self.rows(self.page('?from=2026-12-30&to=2027-01-02&unit=101'))
+        self.assertEqual(rows[0], '30.12.2026–01.01.2027 расчёта нет · 3 сут.')
+        self.assertTrue(rows[1].startswith('02.01.2027 посчитан'), rows[1])
+
+    def test_table_runs_keeps_every_day_and_joins_only_neighbours(self):
+        days = [date(2026, 7, 1) + timedelta(days=i) for i in range(6)]
+        marks = [None, None, 'a', None, 'a', None]
+        rows = [{'day': d, 'aggregate': m} for d, m in zip(days, marks)]
+        runs = gps_routes.table_runs(rows)
+        self.assertEqual([r['gap'] for r in runs], [True, False, True, False, True])
+        self.assertEqual((runs[0]['first'], runs[0]['last'], runs[0]['days']),
+                         (days[0], days[1], 2))
+        self.assertEqual(runs[2]['days'], 1)
+        self.assertEqual(sum(r['days'] if r['gap'] else 1 for r in runs), len(days))
+        self.assertEqual(gps_routes.table_runs([]), [])
+
+    def test_time_is_written_as_on_the_day_screen(self):
+        self.write_track(run(D1, 6 * 3600, 121) + run(D1, 12 * 3600, 61))
+        html = self.page()
+        self.assertEqual(self.stat(html, 'В движении'), '1 ч 30 мин')
+        areas = [l['title'] for l in self.map_data(html)['layers'] if l['kind'] == 'area']
+        self.assertEqual(sorted(areas), [
+            '27.07.2026 · №1 · 2.00 га · 30 мин · работа',
+            '27.07.2026 · №2 · 3.00 га · 30 мин · без ответа',
+            '27.07.2026 · №3 · 1.50 га · 30 мин · проезд'])
+
+    def test_the_uzbek_interface_names_the_new_words_in_uzbek(self):
+        with app.app_context():
+            User.query.get(self.admin_id).language = 'uz'
+            db.session.commit()
+        html = unescape(self.page('?from=2026-07-20&to=2026-07-30&unit=101'))
+        for text in ('Машина давр давомида ўз GPS-треки бўйича нима қилди',
+                     'ҳисоб йўқ · 7 кун', 'ҳисобланган', 'жавобсиз: 1',
+                     'Даврдаги кунлар: 11 · ҳисобли 3 · майдонли 2',
+                     'Қандай ҳисобланади'):
+            with self.subTest(text=text):
+                self.assertIn(text, html)
+        for text in ('посчитан', 'сут.', 'без ответа', 'Как считается'):
+            with self.subTest(text=text):
+                self.assertNotIn(text, html)
 
 
 class ReadOnly(Base):
