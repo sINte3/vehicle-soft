@@ -50,8 +50,8 @@ def source_key(row):
 
 
 def protected(row):
-    return (row.get('source_file') in JULY_BOOK_SHA256
-            and row.get('period_month') == PERIOD)
+    """Known July-book provenance is protected even if month is mislabeled."""
+    return row.get('source_file') in JULY_BOOK_SHA256
 
 
 def _canonical(value):
@@ -175,7 +175,7 @@ def validate_row_hashes(rows, approved):
         raise SelectionError('SELECTED_KEYS_DIFFER_FROM_ALLOWLIST')
     for row in rows:
         key = source_key(row)
-        if not protected(row):
+        if not protected(row) or row.get('period_month') != PERIOD:
             raise SelectionError('NON_JULY_SOURCE_IN_ALLOWLIST: %s' % key)
         expected = approved[key]
         if not HASH_RE.fullmatch(expected):
@@ -185,7 +185,17 @@ def validate_row_hashes(rows, approved):
 
 
 def verify_apply_preconditions(result, approved):
-    """Check *before* BEGIN, and refuse all unsanctioned customer creation."""
+    """Check *before* BEGIN, and refuse all unsanctioned customer creation.
+
+    Legacy callers cannot evade the July guard by changing the manifest
+    month, or by renaming an unmodified original XLSX. collect() records
+    source-book digests independently of the dispatcher-provided filename.
+    """
+    source_hashes = getattr(result, 'source_book_hashes', None) or {}
+    pinned_hashes = set(JULY_BOOK_SHA256.values())
+    if approved is None and any(
+            h in pinned_hashes for h in source_hashes.values()):
+        raise SelectionError('ORIGINAL_JULY_BOOK_BYTES_REQUIRE_ALLOWLIST')
     validate_row_hashes(result.rows, approved)
     if approved is None:
         return
