@@ -95,6 +95,7 @@ On Windows (PowerShell has no &&, one command per line):
 import argparse
 import csv
 import datetime
+import hashlib
 import os
 import re
 import sqlite3
@@ -1868,6 +1869,7 @@ class RunResult(object):
         self.schema_warnings = []   # dry run only; --apply refuses instead
         self.payer_decision_pending_rows = 0
         self.payer_word_new_cards = []   # [(key, spelling)] -- report only
+        self.source_book_hashes = {}     # filename -> SHA256 of original XLSX
 
 
 def collect(directory_path, manifest, dirs_files, dir_obj, default_payment):
@@ -1884,6 +1886,14 @@ def collect(directory_path, manifest, dirs_files, dir_obj, default_payment):
         period_month = manifest[file_name]
         full = os.path.join(directory_path, file_name)
         subdivision = dir_obj.subdivision_for_file(file_name)
+        # FIN-RECON-003: pin physical source bytes for the shared write
+        # gate, independently of manifest month and filename. An untouched
+        # July XLSX renamed in the folder cannot bypass the July allowlist.
+        digest = hashlib.sha256()
+        with open(full, 'rb') as source_stream:
+            for chunk in iter(lambda: source_stream.read(1024 * 1024), b''):
+                digest.update(chunk)
+        result.source_book_hashes[file_name] = digest.hexdigest()
         formulas = _formula_cells(full)
         wb = load_workbook(full, data_only=True, read_only=True)
         try:
