@@ -1,15 +1,23 @@
 {% extends g.base_template %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Приём данных — GPS' if is_ru else 'Маълумот қабули — GPS' }}{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ static_v('css/gps-fact.css') }}">
+{% endblock %}
 {% block content %}
 {% include 'gps/_gps_nav.html' %}
+{# 04.11.2026, решение владельца: и служебные страницы читают люди. Сверху --
+   как прошла последняя ночь; в таблице -- главные колонки, служебные
+   счётчики одной строкой; прежний абзац и пояснение -- внизу, свёрнуто.
+   Счётчики те же: тождество «увидено = записано + дубли + без координат»
+   проверяется, как прежде, и громко. #}
+<p class="gps-fact-lead">{{ 'Пришли ли этой ночью точки GPS и сколько. Прогон — один ночной запуск сборщика точек.' if is_ru else 'Шу кеча GPS нуқталари келдими ва қанча. Прогон — нуқталар йиғувчисининг бир кечалик ишга тушиши.' }}</p>
 
-<div class="vs-hero vs-mb">
-  <div>
-    <div class="vs-hero-title">{{ 'Приём данных' if is_ru else 'Маълумот қабули' }}</div>
-    <div class="vs-hero-sub">{{ 'Что сделал каждый ночной прогон коллектора. Без этой страницы «отработал и ничего нового не нашёл» неотличимо от «не запускался», а точки лежат вне основной базы и посмотреть на них отсюда нельзя. Каждое сообщение попадает ровно в одну корзину: легло точкой, отброшено ключом как уже известное, или не имело координат вовсе — и сумма корзин обязана сойтись с числом увиденных.' if is_ru else 'Ҳар бир кечаги коллектор прогони нима қилгани. Бу саҳифасиз «ишлади ва янги ҳеч нарса топмади» «ишга тушмади» дан фарқ қилмайди, нуқталар эса асосий базадан ташқарида ётади ва бу ердан уларга қараб бўлмайди. Ҳар бир хабар аниқ бир саватга тушади: нуқта бўлиб ётди, калит томонидан аллақачон маълум деб рад этилди, ёки умуман координатасиз эди — саватлар йиғиндиси кўрилганлар сони билан мос келиши шарт.' }}</div>
-  </div>
-</div>
+{% macro state(run) -%}
+  {%- if run.status == 'ok' %}<span class="vs-badge vs-badge-success">{{ 'Полный' if is_ru else 'Тўлиқ' }}</span>
+  {%- elif run.status == 'partial' %}<span class="vs-badge vs-badge-warning">{{ 'Частичный' if is_ru else 'Қисман' }}</span>
+  {%- else %}<span class="vs-badge vs-badge-danger">{{ 'Прерван' if is_ru else 'Узилди' }}</span>{% endif -%}
+{%- endmacro %}
 
 {% if broken %}
 <div class="vs-alert is-danger vs-mb">
@@ -26,6 +34,29 @@
     <div class="vs-empty-sub">{{ 'Строка появляется после первого запуска коллектора на сервере. Пустая страница означает именно это, а не отсутствие точек.' if is_ru else 'Қатор серверда коллектор биринчи марта ишга туширилгандан кейин пайдо бўлади. Бўш саҳифа айнан шуни билдиради, нуқталар йўқлигини эмас.' }}</div>
   </div>
 {% else %}
+{% set last = runs[0] %}
+<div class="gps-fact-day">
+  <div class="gps-fact-figs">
+    <div>
+      <span class="gps-fact-fig-label">{{ 'Последний прогон' if is_ru else 'Сўнгги прогон' }}</span>
+      <span class="gps-fact-fig-value">{{ last.started_at.strftime('%d.%m.%Y %H:%M') }}</span>
+    </div>
+    <div>
+      <span class="gps-fact-fig-label">{{ 'Как прошёл' if is_ru else 'Қандай ўтди' }}</span>
+      <span class="gps-fact-fig-value">{{ state(last) }}</span>
+    </div>
+    <div>
+      <span class="gps-fact-fig-label">{{ 'Точек записано' if is_ru else 'Ёзилган нуқталар' }}</span>
+      <span class="gps-fact-fig-value">{{ last.points_written }}</span>
+    </div>
+    <div>
+      <span class="gps-fact-fig-label">{{ 'Объектов не прочитано' if is_ru else 'Ўқилмаган объектлар' }}</span>
+      <span class="gps-fact-fig-value">{{ last.units_failed }}</span>
+      <span class="gps-fact-fig-note">{{ ('из %d' if is_ru else '%d тадан')|format(last.units_total) }}</span>
+    </div>
+  </div>
+</div>
+
 <div class="vs-table-wrap vs-mb">
   <div class="vs-card-header">
     <span class="vs-card-title">{{ 'Последние прогоны' if is_ru else 'Сўнгги прогонлар' }}</span>
@@ -38,51 +69,48 @@
           <th>{{ 'Начат' if is_ru else 'Бошланди' }}</th>
           <th>{{ 'Состояние' if is_ru else 'Ҳолат' }}</th>
           <th class="right">{{ 'Объектов' if is_ru else 'Объектлар' }}</th>
-          <th class="right">{{ 'Спрошено' if is_ru else 'Сўралди' }}</th>
           <th class="right">{{ 'Не прочитано' if is_ru else 'Ўқилмади' }}</th>
-          <th class="right">{{ 'Увидено' if is_ru else 'Кўрилди' }}</th>
           <th class="right">{{ 'Записано' if is_ru else 'Ёзилди' }}</th>
-          <th class="right">{{ 'Дубли' if is_ru else 'Дубллар' }}</th>
-          <th class="right">{{ 'Без координат' if is_ru else 'Координатасиз' }}</th>
-          <th class="right">{{ 'Запросов' if is_ru else 'Сўровлар' }}</th>
+          <th>{{ 'Подробно' if is_ru else 'Батафсил' }}</th>
         </tr>
       </thead>
       <tbody>
         {% for run in runs %}
         <tr>
-          <td>{{ run.started_at.strftime('%d.%m.%Y %H:%M') }}
+          <td class="gps-fact-nowrap">{{ run.started_at.strftime('%d.%m.%Y %H:%M') }}
             <div class="vs-soft">{{ ((run.finished_at - run.started_at).total_seconds() / 60)|round(1) }} {{ 'мин' if is_ru else 'дақ' }}</div>
           </td>
           <td>
-            {% if run.status == 'ok' %}<span class="vs-badge vs-badge-success">{{ 'Полный' if is_ru else 'Тўлиқ' }}</span>
-            {% elif run.status == 'partial' %}<span class="vs-badge vs-badge-warning">{{ 'Частичный' if is_ru else 'Қисман' }}</span>
-            {% else %}<span class="vs-badge vs-badge-danger">{{ 'Прерван' if is_ru else 'Узилди' }}</span>{% endif %}
+            {{ state(run) }}
             {% if not run.balances %}<div><span class="vs-badge vs-badge-danger">{{ 'счётчики не сходятся' if is_ru else 'ҳисоблагичлар мос эмас' }}</span></div>{% endif %}
             {% if run.error %}<div class="vs-soft">{{ run.error }}</div>{% endif %}
           </td>
           <td class="right">{{ run.units_total }}</td>
-          <td class="right">{{ run.units_asked }}
-            <div class="vs-soft">{{ 'молчат: ' if is_ru else 'жим: ' }}{{ run.units_silent }}</div>
-          </td>
           <td class="right">{{ run.units_failed }}</td>
-          <td class="right">{{ run.messages_seen }}</td>
           <td class="right">{{ run.points_written }}</td>
-          <td class="right">{{ run.points_duplicate }}</td>
-          <td class="right">{{ run.points_no_position }}</td>
-          <td class="right">{{ run.requests }}
-            {% if run.abandoned %}<div class="vs-soft">{{ 'брошено: ' if is_ru else 'ташланди: ' }}{{ run.abandoned }}</div>{% endif %}
-            {% if run.logins != 1 %}<div class="vs-soft">{{ 'входов: ' if is_ru else 'кириш: ' }}{{ run.logins }}</div>{% endif %}
-            {% if run.truncated %}<div class="vs-soft">{{ 'усечено: ' if is_ru else 'кесилди: ' }}{{ run.truncated }}</div>{% endif %}
-          </td>
+          {# Служебные счётчики -- одной строкой, в прежних словах: нужны, когда
+             разбирают сбой; «входов» -- только когда их не один. #}
+          <td class="gps-fact-fig-note">{{ 'спрошено' if is_ru else 'сўралди' }} {{ run.units_asked }}, {{ 'молчат' if is_ru else 'жим' }} {{ run.units_silent }}
+            · {{ 'увидено' if is_ru else 'кўрилди' }} {{ run.messages_seen }}
+            · {{ 'дубли' if is_ru else 'дубллар' }} {{ run.points_duplicate }}
+            · {{ 'без координат' if is_ru else 'координатасиз' }} {{ run.points_no_position }}
+            · {{ 'запросов' if is_ru else 'сўровлар' }} {{ run.requests }}
+            {%- if run.abandoned or run.logins != 1 or run.truncated %} (
+              {%- if run.abandoned %}{{ 'брошено: ' if is_ru else 'ташланди: ' }}{{ run.abandoned }}{% endif %}
+              {%- if run.logins != 1 %}{% if run.abandoned %}, {% endif %}{{ 'входов: ' if is_ru else 'кириш: ' }}{{ run.logins }}{% endif %}
+              {%- if run.truncated %}{% if run.abandoned or run.logins != 1 %}, {% endif %}{{ 'усечено: ' if is_ru else 'кесилди: ' }}{{ run.truncated }}{% endif -%}
+            ){% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
-
-<div class="vs-help vs-mb">
-  {{ '«Частичный» — не отказ: интервалы непрочитанных объектов остались за отметкой и приедут следующей ночью. Но если объект не читается неделю, видно это только здесь. «Входов» показывается, только когда их не один: повторный вход за ночь означает, что сессия рвалась.' if is_ru else '«Қисман» — рад этиш эмас: ўқилмаган объектларнинг оралиқлари белгидан кейин қолди ва кейинги кечада келади. Аммо объект бир ҳафта ўқилмаса, буни фақат шу ерда кўриш мумкин. «Кириш» фақат биттадан кўп бўлганда кўрсатилади: кечада такрорий кириш сессия узилганини англатади.' }}
-</div>
 {% endif %}
+
+<details class="gps-fact-rules">
+  <summary>{{ 'Как читать эту страницу' if is_ru else 'Бу саҳифани қандай ўқиш керак' }}</summary>
+  <p>{{ 'Что сделал каждый ночной прогон коллектора. Без этой страницы «отработал и ничего нового не нашёл» неотличимо от «не запускался», а точки лежат вне основной базы и посмотреть на них отсюда нельзя. Каждое сообщение попадает ровно в одну корзину: легло точкой, отброшено ключом как уже известное, или не имело координат вовсе — и сумма корзин обязана сойтись с числом увиденных.' if is_ru else 'Ҳар бир кечаги коллектор прогони нима қилгани. Бу саҳифасиз «ишлади ва янги ҳеч нарса топмади» «ишга тушмади» дан фарқ қилмайди, нуқталар эса асосий базадан ташқарида ётади ва бу ердан уларга қараб бўлмайди. Ҳар бир хабар аниқ бир саватга тушади: нуқта бўлиб ётди, калит томонидан аллақачон маълум деб рад этилди, ёки умуман координатасиз эди — саватлар йиғиндиси кўрилганлар сони билан мос келиши шарт.' }}</p>
+  <p>{{ '«Частичный» — не отказ: интервалы непрочитанных объектов остались за отметкой и приедут следующей ночью. Но если объект не читается неделю, видно это только здесь. «Входов» показывается, только когда их не один: повторный вход за ночь означает, что сессия рвалась.' if is_ru else '«Қисман» — рад этиш эмас: ўқилмаган объектларнинг оралиқлари белгидан кейин қолди ва кейинги кечада келади. Аммо объект бир ҳафта ўқилмаса, буни фақат шу ерда кўриш мумкин. «Кириш» фақат биттадан кўп бўлганда кўрсатилади: кечада такрорий кириш сессия узилганини англатади.' }}</p>
+</details>
 {% endblock %}

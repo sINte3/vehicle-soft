@@ -23,6 +23,7 @@
   python -m unittest tests.test_gps_sync_log -v
 """
 import os
+import re
 import sqlite3
 import sys
 import tempfile
@@ -371,6 +372,88 @@ class Screen(unittest.TestCase):
                              finished_at=datetime.utcnow(), status='ok')
             self.assertTrue(good.balances)
             self.assertFalse(bad.balances)
+
+
+class ScreenForPeople(unittest.TestCase):
+    """Решение владельца 04.11.2026, пятый шаг: служебная «Приём данных».
+
+    Сверху -- как прошла последняя ночь; в таблице -- главные колонки,
+    служебные счётчики одной строкой в прежних словах; прежний абзац и
+    пояснение -- внизу, свёрнуто. Тождество по-прежнему кричит (класс Screen).
+    """
+
+    setUp = Screen.setUp
+    _add = Screen._add
+    _html = Screen._html
+
+    def figure(self, html, label):
+        found = re.search(r'<span class="gps-fact-fig-label">%s</span>\s*'
+                          r'<span class="gps-fact-fig-value">(.*?)</span>'
+                          % re.escape(label), html, re.S)
+        self.assertIsNotNone(found, label)
+        return re.sub(r'<[^>]+>', '', found.group(1)).strip()
+
+    def test_no_wall_of_text_above_the_numbers(self):
+        self._add()
+        html = self._html()
+        self.assertNotIn('vs-hero', html)
+        self.assertIn('<p class="gps-fact-lead">Пришли ли этой ночью точки GPS и сколько.', html)
+        above = html[:html.index('class="gps-fact-day"')]
+        self.assertNotIn('Что сделал каждый ночной прогон коллектора', above)
+
+    def test_the_card_is_the_newest_run(self):
+        self._add(started_at=datetime(2026, 8, 9, 3, 0, 0),
+                  finished_at=datetime(2026, 8, 9, 3, 20, 0), points_written=5,
+                  messages_seen=105)
+        self._add(status='partial', units_failed=7)
+        html = self._html()
+        self.assertEqual(self.figure(html, 'Последний прогон'), '10.08.2026 03:00')
+        self.assertEqual(self.figure(html, 'Как прошёл'), 'Частичный')
+        self.assertEqual(self.figure(html, 'Точек записано'), '900')
+        self.assertEqual(self.figure(html, 'Объектов не прочитано'), '7')
+        self.assertIn('<span class="gps-fact-fig-note">из 481</span>', html)
+
+    def test_the_table_has_the_main_columns_and_one_line_of_counters(self):
+        self._add()
+        html = self._html()
+        head = html[html.index('<thead>'):html.index('</thead>')]
+        self.assertEqual(re.findall(r'<th[^>]*>([^<]+)</th>', head),
+                         ['Начат', 'Состояние', 'Объектов', 'Не прочитано',
+                          'Записано', 'Подробно'])
+        line = re.sub(r'\s+', ' ', re.search(
+            r'<td class="gps-fact-fig-note">(.*?)</td>', html, re.S).group(1)).strip()
+        self.assertEqual(line, 'спрошено 298, молчат 183 · увидено 1000 · дубли 80 '
+                               '· без координат 20 · запросов 598')
+
+    def test_extra_request_counters_go_in_brackets(self):
+        self._add(abandoned=3, logins=2, truncated=104)
+        line = re.sub(r'\s+', ' ', re.search(
+            r'<td class="gps-fact-fig-note">(.*?)</td>', self._html(), re.S).group(1))
+        self.assertIn('запросов 598 (брошено: 3, входов: 2, усечено: 104)', line)
+
+    def test_the_old_texts_are_kept_word_for_word_once_at_the_bottom(self):
+        self._add()
+        html = self._html()
+        rules = html[html.index('<details class="gps-fact-rules">'):]
+        for text in ('Что сделал каждый ночной прогон коллектора',
+                     '«Частичный» — не отказ: интервалы непрочитанных объектов'):
+            with self.subTest(text=text):
+                self.assertEqual(html.count(text), 1)
+                self.assertIn(text, rules)
+
+    def test_the_uzbek_page_is_uzbek(self):
+        with app.app_context():
+            User.query.get(self.admin_id).language = 'uz'
+            db.session.commit()
+        self._add()
+        html = self._html()
+        for text in ('Шу кеча GPS нуқталари келдими', 'Сўнгги прогон',
+                     'Ёзилган нуқталар', 'Бу саҳифани қандай ўқиш керак', 'Батафсил'):
+            with self.subTest(text=text):
+                self.assertIn(text, html)
+        for text in ('Последний прогон', 'Подробно', 'Как читать'):
+            with self.subTest(text=text):
+                self.assertNotIn(text, html)
 
 
 if __name__ == '__main__':
