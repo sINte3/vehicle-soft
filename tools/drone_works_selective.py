@@ -50,8 +50,27 @@ def source_key(row):
 
 
 def protected(row):
-    """Known July-book provenance is protected even if month is mislabeled."""
+    """Known original book provenance always stays protected."""
     return row.get('source_file') in JULY_BOOK_SHA256
+
+
+def july_work(row):
+    """Protect July-2026 WORKS by their actual dates, not an Excel wrapper.
+
+    A renamed/repacked XLSX has different bytes and name, but keeps
+    its work dates and derived period_month. Checking every accepted row
+    at the shared pre-write boundary covers both legacy CLI and web upload.
+    """
+    if row.get('period_month') == PERIOD:
+        return True
+    for field in ('work_date_from', 'work_date_to'):
+        value = row.get(field)
+        if isinstance(value, (datetime.date, datetime.datetime)):
+            if value.year == 2026 and value.month == 7:
+                return True
+        elif isinstance(value, str) and value.startswith('2026-07'):
+            return True
+    return False
 
 
 def _canonical(value):
@@ -163,6 +182,8 @@ def select_rows(full_rows, approved, check_hashes=True):
 def validate_row_hashes(rows, approved):
     """Hard gate for apply_rows, including callers other than this CLI."""
     if approved is None:
+        if any(july_work(row) for row in rows):
+            raise SelectionError('JULY_2026_WORK_REQUIRES_ALLOWLIST')
         if any(protected(row) for row in rows):
             raise SelectionError('JULY_ALLOWLIST_REQUIRED')
         return
@@ -298,7 +319,10 @@ def cli(argv=None):
         return 0
     except (SelectionError, imp.ImportPreconditionError,
             OSError, ValueError) as exc:
-        print('ERROR: %s; NO IMPORT' % exc)
+        # Windows redirection commonly uses cp1251. The filename from an
+        # SHA256 mismatch may contain Ғ, which cp1251 cannot encode.
+        # A refusal must always be printed safely with exit status 2.
+        print('ERROR: %s; NO IMPORT' % imp._ascii(exc))
         return 2
 
 
