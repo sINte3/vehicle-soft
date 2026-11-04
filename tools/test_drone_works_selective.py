@@ -78,6 +78,24 @@ class SelectiveImportTests(unittest.TestCase):
             with self.subTest(field=field):
                 self.assertNotEqual(sel.row_fingerprint(changed_row), digest)
 
+    def test_resolved_alias_identity_drift_is_a_hard_refusal(self):
+        original = dict(row(), drone_operator_id=14,
+                        drone_customer_id=155, payer_unidentified=False)
+        signed = approved([original])
+        for field, changed in (
+                ('drone_customer_id', 903),
+                ('drone_operator_id', 13),
+                ('payer_unidentified', True)):
+            with self.subTest(field=field):
+                altered = dict(original, **{field: changed})
+                self.assertEqual(
+                    len(sel.select_rows([altered], signed, check_hashes=False)),
+                    1)
+                with self.assertRaisesRegex(sel.SelectionError,
+                                            'ROW_FINGERPRINT_MISMATCH'):
+                    sel.verify_apply_preconditions(
+                        run_result([altered]), signed)
+
     def test_exact_list_pinned_by_bytes_and_duplicate_rejected(self):
         a = approved([row()])
         data = allow_csv(list(a.items()))
