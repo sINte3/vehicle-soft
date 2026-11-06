@@ -668,6 +668,17 @@ jobs:
           GPS_RELEASE_POWERSHELL: pwsh
         run: python -m unittest tests.test_gps_release_v134
 
+      # Release v1.35 (docs/FIN_RECON_003_RELEASE_V135_RUNBOOK.md): FIN-RECON-003,
+      # the isolated commit 9051693 only, no migration. Steps 2, 3 and the
+      # rollback are the v1.34 blocks with new constants (their stop paths run
+      # above); the new steps 1 and 4 change nothing, run the reviewed preflight
+      # (SHA-256 pinned) and their verdict is executed on canned preflight
+      # outputs. Stdlib only.
+      - name: FIN-RECON-003 release v1.35 runbook and verdict (pwsh 7)
+        env:
+          FIN_RECON_RELEASE_POWERSHELL: pwsh
+        run: python -m unittest tests.test_fin_recon_003_release_v135
+
       # Release v1.32 (docs/FIN_RECON_002_RELEASE_V132_RUNBOOK.md): FIN-RECON-002,
       # two migrations and the June books in one window. The runbook's pins are
       # bound to the tools (table SHA, book SHAs, registry names, the strings a
@@ -889,6 +900,14 @@ jobs:
         env:
           GPS_RELEASE_POWERSHELL: powershell
         run: python -m unittest tests.test_gps_release_v134.ReleaseV134ToolFormats tests.test_gps_release_v134.ReleaseV134BlocksInPowerShell
+
+      # FIN-RECON-003 release v1.35: its blocks parsed and its verdict executed
+      # by the interpreter the owner pastes into.
+      - name: FIN-RECON-003 release v1.35 blocks on Windows PowerShell 5.1
+        shell: powershell
+        env:
+          FIN_RECON_RELEASE_POWERSHELL: powershell
+        run: python -m unittest tests.test_fin_recon_003_release_v135.ReleaseV135BlocksInPowerShell
 
       # FIN-RECON-002 release v1.32: its blocks parsed by the interpreter the
       # owner pastes into, then step 3, the restore and the rollback executed
