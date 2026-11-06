@@ -15,6 +15,7 @@ import io
 import json
 import os
 import re
+import sqlite3
 import sys
 
 # These are the five immutable ORIGINAL July books, not summary books.
@@ -28,6 +29,16 @@ JULY_BOOK_SHA256 = {
 
 PERIOD = '2026-07'
 MAX_ALLOWLIST_BYTES = 1024 * 1024
+# [REASON]: FIN-RECON-003 R02, confirmed 05.11.2026: this physical row is a
+# second entry of the work recorded on the previous row of the same sheet
+# (same farm, same area and amount, the next day). It is EXCLUDED, not held:
+# no allowlist may ever carry it, whatever its row hash. A hash proves only
+# that the bytes did not change, so a list built by mistake from the whole
+# cohort would otherwise write the duplicate. Grows only by a confirmed
+# decision and a test, like GENERIC_PAYER_KEYS in the importer.
+EXCLUDED_SOURCE_KEYS = frozenset((
+    'Дрон Ғиждувон ПТЗ Июль.xlsx!свод ичи (Усмон)!11',
+))
 HASH_RE = re.compile(r'^[0-9a-f]{64}$')
 # A row hash pins the facts that would be written, not just its Excel address.
 ROW_FIELDS = (
@@ -147,6 +158,8 @@ def load_allowlist(path, pinned_sha256):
                 raise SelectionError('INVALID_KEY_OR_ROW_HASH: %d' % lineno)
             if key in rows:
                 raise SelectionError('DUPLICATE_ALLOWLIST_KEY: %d' % lineno)
+            if key in EXCLUDED_SOURCE_KEYS:
+                raise SelectionError('EXCLUDED_SOURCE_KEY: %d' % lineno)
             rows[key] = fingerprint
         if not rows:
             raise SelectionError('EMPTY_ALLOWLIST')
@@ -189,6 +202,11 @@ def validate_row_hashes(rows, approved):
         return
     if not isinstance(approved, dict) or not approved:
         raise SelectionError('ALLOWLIST_EMPTY_OR_INVALID')
+    # Checked here as well as in load_allowlist(): apply_rows() callers
+    # other than the CLI pass a dict that never went through the CSV reader.
+    excluded = sorted(EXCLUDED_SOURCE_KEYS & set(approved))
+    if excluded:
+        raise SelectionError('EXCLUDED_SOURCE_KEY: %s' % excluded[0])
     keys = [source_key(row) for row in rows]
     if len(keys) != len(set(keys)):
         raise SelectionError('DUPLICATE_SELECTED_SOURCE_KEY')
@@ -257,6 +275,14 @@ def cli(argv=None):
     parser.add_argument('--batch', default=None)
     args = parser.parse_args(argv)
 
+    # [REASON]: under `python -I tools/drone_works_selective.py` isolated
+    # mode leaves the script's folder off sys.path, and the import below died
+    # with a traceback (exit 1) before any check ran. Added here, in the CLI
+    # only: the web app imports this module as tools.* and must not get
+    # tools/ on its path.
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
     # Lazy import avoids a circular dependency when the production importer
     # calls verify_apply_preconditions().
     import import_drone_works as imp
@@ -304,11 +330,21 @@ def cli(argv=None):
                   % (stats['rows'], stats['area'], stats['amount']))
             print('CREATED_CUSTOMERS=0')
             if args.apply:
-                created, inserted, skipped = imp.apply_rows(
-                    con, all_rows,
-                    args.batch or ('july_approved_%s' %
-                                   datetime.datetime.now().strftime('%Y%m%d_%H%M%S')),
-                    approved_rows=approved)
+                try:
+                    created, inserted, skipped = imp.apply_rows(
+                        con, all_rows,
+                        args.batch or ('july_approved_%s' %
+                                       datetime.datetime.now().strftime('%Y%m%d_%H%M%S')),
+                        approved_rows=approved)
+                except BaseException:
+                    # [REASON]: apply_rows() leaves its open transaction to
+                    # the caller, and the legacy CLI and the upload screen
+                    # both roll back explicitly. Relying on close() alone
+                    # would make "nothing written" depend on SQLite's
+                    # behaviour at close instead of on this code.
+                    if con.in_transaction:
+                        con.rollback()
+                    raise
                 print('RESULT=APPROVED_SUBSET_APPLIED created=%d inserted=%d skipped=%d'
                       % (created, inserted, skipped))
             else:
@@ -318,7 +354,7 @@ def cli(argv=None):
             con.close()
         return 0
     except (SelectionError, imp.ImportPreconditionError,
-            OSError, ValueError) as exc:
+            OSError, ValueError, sqlite3.Error) as exc:
         # Windows redirection commonly uses cp1251. The filename from an
         # SHA256 mismatch may contain Ғ, which cp1251 cannot encode.
         # A refusal must always be printed safely with exit status 2.

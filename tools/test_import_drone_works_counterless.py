@@ -51,6 +51,7 @@ for directory in (HERE, ROOT):
 
 import drone_works_fixtures as fx  # noqa: E402
 import import_drone_works as imp  # noqa: E402
+import drone_works_selective as sel  # noqa: E402
 
 # The July layout, exactly as «свод ичи (Усмон)» writes it.
 HEADER = ('№', 'ФХ номи ', 'Майдон (га)', 'Хизмат кўрсатиш суммаси',
@@ -559,20 +560,38 @@ class KogonFukaroTests(RunTestBase):
             job(3, 'Когон Фукаро', 6.0, 200000, 23),
             job(4, 'Ахмад (фукаро)', 2.0, 200000, 24),
             job(5, 'Когон Фукаро (Халимов Ж)', 1.5, 200000, 25),
-            job(6, 'Фукаро', 3.0, 200000, 26)])]),
+            job(6, 'Фукаро', 3.0, 200000, 26),
+            job(7, 'Когон Фуқаро', 2.0, 200000, 27)])]),
     )
 
     def by_name(self, result):
         return {r['customer_raw']: r for r in result.rows}
 
-    def test_it_is_held_not_carded_and_apply_refuses(self):
+    def test_r01_exact_spelling_is_an_unidentified_citizen(self):
+        # FIN-RECON-003 R01, owner's policy of 05.11.2026.
         result = self.collect()
         rows = self.by_name(result)
         kogon = rows['Когон Фукаро']
-        self.assertTrue(kogon['payer_decision_pending'])
-        self.assertFalse(kogon['payer_unidentified'])
+        self.assertTrue(kogon['payer_unidentified'])
+        self.assertFalse(kogon['payer_decision_pending'])
+        self.assertFalse(kogon['customer_is_new'])
         self.assertIsNone(kogon['drone_customer_id'])
-        self.assertEqual(imp.customer_class(kogon), 'PAYER_DECISION_REQUIRED')
+        self.assertEqual(imp.customer_class(kogon), 'GENERIC_PAYER')
+        self.assertNotIn('когон фукаро', dict(result.created_customers))
+        # 'Фукаро' and 'Когон Фукаро'; the named and the folded ones are not.
+        self.assertEqual(result.payer_unidentified_rows, 2)
+        for spelling in ('Когон Фукаро', 'КОГОН  ФУКАРО', ' когон фукаро '):
+            self.assertTrue(imp.is_generic_payer(spelling), spelling)
+
+    def test_the_folded_variant_is_still_held_and_apply_refuses(self):
+        result = self.collect()
+        variant = self.by_name(result)['Когон Фуқаро']
+        self.assertFalse(imp.is_generic_payer('Когон Фуқаро'))
+        self.assertTrue(variant['payer_decision_pending'])
+        self.assertFalse(variant['payer_unidentified'])
+        self.assertIsNone(variant['drone_customer_id'])
+        self.assertEqual(imp.customer_class(variant),
+                         'PAYER_DECISION_REQUIRED')
         self.assertEqual(result.payer_decision_pending_rows, 1)
         before = self.sha()
         code, out = self.main('--apply', '--batch', 'k')
@@ -588,7 +607,13 @@ class KogonFukaroTests(RunTestBase):
             self.assertFalse(rows[name]['payer_decision_pending'], name)
             self.assertFalse(rows[name]['payer_unidentified'], name)
         self.assertTrue(rows['Фукаро']['payer_unidentified'])
-        self.assertFalse(imp.is_generic_payer('Когон Фукаро'))
+        # R01 is exact: a person's name, another district, a reordering or
+        # a glued word is NOT the generic citizen.
+        for spelling in ('Когон Фукаро (Халимов Ж)', 'Ахмад (фукаро)',
+                         'Ромитан Фукаро', 'Фукаро (Шофиркон т.)',
+                         'Фукаро Когон', 'Когон Фукаролари', 'КогонФукаро',
+                         'Когон', 'Когон т. Фукаро'):
+            self.assertFalse(imp.is_generic_payer(spelling), spelling)
         # Held after the Uzbek fold and the case fold, not only as typed.
         for spelling in ('Когон Фуқаро', 'КОГОН  ФУКАРО'):
             self.assertTrue(imp.is_payer_decision_pending(
@@ -598,7 +623,10 @@ class KogonFukaroTests(RunTestBase):
         self.assertTrue(imp.has_generic_payer_word('Когон Фукаро'))
         self.assertFalse(imp.has_generic_payer_word('Фукарою'))
 
-    def test_an_alias_the_owner_gave_is_followed(self):
+    def test_an_alias_for_the_generic_key_is_ignored_not_deleted(self):
+        # The same rule «фукаро» follows against card #589: the generic list
+        # is consulted BEFORE the alias, so a shared card cannot collect
+        # different citizens. The alias row itself is left as it is.
         con = sqlite3.connect(self.db)
         try:
             con.execute("INSERT INTO drone_customers (name, customer_type, "
@@ -611,38 +639,53 @@ class KogonFukaroTests(RunTestBase):
         finally:
             con.close()
         rows = self.by_name(self.collect())
-        self.assertEqual(rows['Когон Фукаро']['drone_customer_id'], 1)
-        self.assertFalse(rows['Когон Фукаро']['payer_decision_pending'])
+        self.assertIsNone(rows['Когон Фукаро']['drone_customer_id'])
+        self.assertTrue(rows['Когон Фукаро']['payer_unidentified'])
         code, out = self.main('--apply', '--batch', 'k')
         self.assertEqual(code, 2, out)
         self.assertIn('JULY_2026_WORK_REQUIRES_ALLOWLIST', out)
         self.assertEqual(self.count('drone_works'), 0)
+        self.assertEqual(self.count('drone_customer_aliases'), 1)
 
-    def test_the_owners_generic_decision_simulated_not_applied(self):
-        decided = imp.GENERIC_PAYER_KEYS | {'когон фукаро'}
-        with mock.patch.object(imp, 'GENERIC_PAYER_KEYS', decided):
-            rows = self.by_name(self.collect())
-            code, out = self.main('--apply', '--batch', 'k')
-        kogon = rows['Когон Фукаро']
-        self.assertTrue(kogon['payer_unidentified'])
-        self.assertFalse(kogon['payer_decision_pending'])
-        self.assertEqual(code, 2, out)
-        self.assertIn('JULY_2026_WORK_REQUIRES_ALLOWLIST', out)
+    def test_an_alias_the_owner_gave_a_held_variant_is_followed(self):
         con = sqlite3.connect(self.db)
         try:
-            names = [r[0] for r in con.execute(
-                'SELECT name FROM drone_customers ORDER BY name')]
+            con.execute("INSERT INTO drone_customers (name, customer_type, "
+                        "is_active) VALUES ('Когон т. фуқаролари', "
+                        "'external', 1)")
+            con.execute("INSERT INTO drone_customer_aliases (raw_name, "
+                        "normalized_key, drone_customer_id, is_active) "
+                        "VALUES ('Когон Фуқаро', 'когон фуқаро', 1, 1)")
+            con.commit()
         finally:
             con.close()
-        self.assertNotIn('Когон Фукаро', names)
-        self.assertNotIn('Ахмад (фукаро)', names)
-        # The code as committed is untouched by the simulation.
-        self.assertNotIn('когон фукаро', imp.GENERIC_PAYER_KEYS)
+        rows = self.by_name(self.collect())
+        self.assertEqual(rows['Когон Фуқаро']['drone_customer_id'], 1)
+        self.assertFalse(rows['Когон Фуқаро']['payer_decision_pending'])
+
+    def test_negative_control_without_r01_the_row_is_held_again(self):
+        # Take R01 out of the generic list and the exact spelling falls back
+        # to the hold: the classification above is R01 at work.
+        before_r01 = imp.GENERIC_PAYER_KEYS - {'когон фукаро'}
+        with mock.patch.object(imp, 'GENERIC_PAYER_KEYS', before_r01):
+            rows = self.by_name(self.collect())
+        kogon = rows['Когон Фукаро']
+        self.assertFalse(kogon['payer_unidentified'])
+        self.assertTrue(kogon['payer_decision_pending'])
+        self.assertIn('когон фукаро', imp.GENERIC_PAYER_KEYS)
+        self.assertEqual(imp.GENERIC_PAYER_KEYS,
+                         frozenset(('фукаро', 'ромитан т. фукаро',
+                                    'когон фукаро')))
 
     def test_negative_control_without_the_hold_the_card_is_made(self):
         with mock.patch.object(imp, 'PAYER_DECISION_PENDING_KEYS',
                                frozenset()):
+            rows = self.by_name(self.collect())
             code, out = self.main('--apply', '--batch', 'k')
+        # Without the hold the undecided folded variant would be a new card;
+        # only the July write boundary below still stops it.
+        self.assertTrue(rows['Когон Фуқаро']['customer_is_new'])
+        self.assertFalse(rows['Когон Фуқаро']['payer_decision_pending'])
         # Even removing the payer-specific hold cannot bypass the
         # independent July-work write boundary.
         self.assertEqual(code, 2, out)
@@ -751,17 +794,34 @@ class RealJulyBooksTests(unittest.TestCase):
         self.assertEqual([c for c in self.result.total_checks
                           if c[-1] == 'MISMATCH'], [])
 
-    def test_kogon_fukaro_is_the_one_held_row(self):
-        held = [self.key(r) for r in self.result.rows
-                if r['payer_decision_pending']]
-        self.assertEqual(held, ['Дрон Ғиждувон ПТЗ Июль.xlsx!'
-                                'свод ичи (Шахзод)!20'])
-        self.assertEqual(self.result.payer_unidentified_rows, 13)
+    def test_kogon_fukaro_is_the_fourteenth_unidentified_row(self):
+        # R01: row 20 joins the thirteen «Фукаро» rows; nothing is held for
+        # a payer decision any more, and the books stay behind the July
+        # allowlist guard.
+        r01 = [r for r in self.result.rows if self.key(r)
+               == 'Дрон Ғиждувон ПТЗ Июль.xlsx!свод ичи (Шахзод)!20']
+        self.assertEqual(len(r01), 1)
+        self.assertTrue(r01[0]['payer_unidentified'])
+        self.assertIsNone(r01[0]['drone_customer_id'])
+        self.assertEqual((r01[0]['area_ha'], r01[0]['amount']),
+                         (6.0, 1200000.0))
+        self.assertEqual([r for r in self.result.rows
+                          if r['payer_decision_pending']], [])
+        self.assertEqual(self.result.payer_unidentified_rows, 14)
         self.assertEqual(imp.apply_blockers(self.result),
-                         ['PAYER_DECISION_REQUIRED: 1 spelling(s) of '
-                          'PAYER_DECISION_PENDING_KEYS would become a new '
-                          'card',
-                          'SOURCE_KEY_GUARD: ORIGINAL_JULY_BOOK_BYTES_REQUIRE_ALLOWLIST'])
+                         ['SOURCE_KEY_GUARD: ORIGINAL_JULY_BOOK_BYTES_REQUIRE_ALLOWLIST'])
+
+    def test_r02_is_the_next_day_repeat_of_row_10(self):
+        rows = {self.key(r): r for r in self.result.rows}
+        r02, twin = rows[USMON % 11], rows[USMON % 10]
+        self.assertIn(USMON % 11, sel.EXCLUDED_SOURCE_KEYS)
+        self.assertNotIn(USMON % 10, sel.EXCLUDED_SOURCE_KEYS)
+        for field in ('customer_raw', 'area_ha', 'amount', 'operator_raw'):
+            self.assertEqual(r02[field], twin[field], field)
+        self.assertEqual((twin['work_date_from'].day,
+                          r02['work_date_from'].day), (10, 11))
+        self.assertEqual((r02['area_ha'], r02['amount']),
+                         (13.53, 1158614.49))
 
     def test_the_month_comes_from_the_july_dates(self):
         self.assertEqual({r['period_month'] for r in self.result.rows},

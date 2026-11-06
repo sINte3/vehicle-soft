@@ -243,9 +243,17 @@ def customer_key(value):
 # example. Spellings with a district in brackets («Фукаро (Шофиркон т.)») or
 # «Ромитан Фукаро» already have cards; whether they are generic too is an
 # open question for the owner and they are NOT listed here.
+#
+# [REASON]: FIN-RECON-003 R01, owner's policy of 05.11.2026 for the July
+# books: «Когон Фукаро» (6 ha, «Дрон Ғиждувон ПТЗ Июль.xlsx / свод ичи
+# (Шахзод)» row 20) is an UNIDENTIFIED citizen -- no card, no alias, NULL
+# customer, payer_unidentified = 1, settled per work and never against a
+# shared debtor. Only this exact spelling; it decides nothing about «Ромитан
+# Фукаро», «Фукаро (Шофиркон т.)» or any spelling that names a person.
 GENERIC_PAYER_KEYS = frozenset((
     'фукаро',
     'ромитан т. фукаро',
+    'когон фукаро',
 ))
 
 
@@ -267,6 +275,13 @@ def is_generic_payer(customer_raw):
 # the key moves to GENERIC_PAYER_KEYS with a test. Exact keys, like the list
 # above: «Ахмад (фукаро)» and every other spelling with a person's name in it
 # are untouched.
+#
+# [REASON]: R01 put the EXACT key into GENERIC_PAYER_KEYS (05.11.2026), and
+# resolve() checks that list first, so the exact spelling never reaches this
+# hold. The key deliberately STAYS here: this list compares after the Uzbek
+# fold, so «Когон Фуқаро» -- a spelling nobody has decided -- is still held
+# instead of silently becoming the new shared 'external' card that R01 exists
+# to prevent. Removing it here re-opens exactly that path.
 PAYER_DECISION_PENDING_KEYS = frozenset((
     'когон фукаро',
 ))
