@@ -20,7 +20,10 @@ import drone_works_selective as sel
 import import_drone_works as imp
 
 
-def row(n=11):
+def row(n=12):
+    # [REASON]: a synthetic row. Row 11 of this sheet is the real R02
+    # duplicate, which EXCLUDED_SOURCE_KEYS refuses in every allowlist; the
+    # fixture used to sit on it and the positive test wrote it.
     return {
         'source_file': 'Дрон Ғиждувон ПТЗ Июль.xlsx',
         'source_sheet': 'свод ичи (Усмон)',
@@ -70,7 +73,7 @@ def allow_csv(rows):
 class SelectiveImportTests(unittest.TestCase):
     def test_source_key_uses_physical_excel_row(self):
         self.assertEqual(sel.source_key(row()),
-                         'Дрон Ғиждувон ПТЗ Июль.xlsx!свод ичи (Усмон)!11')
+                         'Дрон Ғиждувон ПТЗ Июль.xlsx!свод ичи (Усмон)!12')
 
     def test_row_hash_pins_financial_date_customer_and_channel(self):
         original = row()
@@ -140,7 +143,7 @@ class SelectiveImportTests(unittest.TestCase):
                             path, hashlib.sha256(data).hexdigest())
 
     def test_select_exact_subset_and_no_silent_missing(self):
-        a, b = row(11), row(35)
+        a, b = row(12), row(35)
         selection = approved([a])
         self.assertEqual([sel.source_key(r) for r in sel.select_rows(
             [a, b], selection)], [sel.source_key(a)])
@@ -209,7 +212,7 @@ class SelectiveImportTests(unittest.TestCase):
         self.assertFalse(imp.apply_blockers(r))
 
     def test_approved_list_must_match_all_rows_before_begin(self):
-        a, b = row(11), row(35)
+        a, b = row(12), row(35)
         r = run_result([a, b])
         con = sqlite3.connect(':memory:')
         try:
@@ -302,7 +305,7 @@ class SelectiveImportTests(unittest.TestCase):
                 'SELECT source_row, area_ha, amount, drone_customer_id '
                 'FROM drone_works'))
             self.assertEqual(len(stored), 1)
-            self.assertEqual(int(stored[0][0]), 11)
+            self.assertEqual(int(stored[0][0]), 12)
             self.assertAlmostEqual(float(stored[0][1]), 13.53)
             self.assertAlmostEqual(float(stored[0][2]), 1158614.49)
             self.assertEqual(int(stored[0][3]), 155)
@@ -520,6 +523,418 @@ class SelectiveImportTests(unittest.TestCase):
         with self.assertRaisesRegex(sel.SelectionError,
                                     'NON_JULY_SOURCE_IN_ALLOWLIST'):
             sel.validate_row_hashes([other], approved([other]))
+
+
+# ─── FIN-RECON-003 readiness, 05.11.2026 ─────────────────────────────────────
+
+R02_KEY = 'Дрон Ғиждувон ПТЗ Июль.xlsx!свод ичи (Усмон)!11'
+
+
+def resolved(n, **changes):
+    base = dict(row(n), drone_operator_id=14, drone_customer_id=155,
+                payer_unidentified=False)
+    base.update(changes)
+    return base
+
+
+def works_table(con):
+    columns = ['period_month', 'work_date_from', 'work_date_to', 'date_raw',
+               'drone_operator_id', 'operator_raw', 'drone_customer_id',
+               'customer_raw', 'area_ha', 'price_per_ha', 'amount',
+               'other_costs', 'received_amount', 'received_kind',
+               'payment_type', 'subdivision_name', 'source_file',
+               'source_sheet', 'source_row', 'import_batch', 'note',
+               'created_at', 'payer_unidentified']
+    con.execute('CREATE TABLE drone_works (id INTEGER PRIMARY KEY, '
+                + ', '.join(name + ' TEXT' for name in columns) + ')')
+
+
+class ExcludedDuplicateAndFingerprintTests(unittest.TestCase):
+
+    def test_r02_is_refused_even_with_a_valid_row_hash(self):
+        r02 = resolved(11)
+        self.assertEqual(sel.source_key(r02), R02_KEY)
+        self.assertIn(R02_KEY, sel.EXCLUDED_SOURCE_KEYS)
+        data = allow_csv(list(approved([r02]).items()))
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'keys.csv')
+            with open(path, 'wb') as f:
+                f.write(data)
+            with self.assertRaisesRegex(sel.SelectionError,
+                                        'EXCLUDED_SOURCE_KEY: 2'):
+                sel.load_allowlist(path, hashlib.sha256(data).hexdigest())
+        # A caller that hands apply_rows() a dict directly is refused too,
+        # before BEGIN.
+        con = sqlite3.connect(':memory:')
+        try:
+            works_table(con)
+            with self.assertRaisesRegex(imp.ImportPreconditionError,
+                                        'EXCLUDED_SOURCE_KEY'):
+                imp.apply_rows(con, run_result([r02]), 'r02',
+                               approved_rows=approved([r02]))
+            self.assertFalse(con.in_transaction)
+            self.assertEqual(con.execute(
+                'SELECT COUNT(*) FROM drone_works').fetchone()[0], 0)
+        finally:
+            con.close()
+
+    def test_r02_negative_control_and_its_twin_is_not_excluded(self):
+        # Without the exclusion the very same row and list ARE written, so
+        # the refusal above is the rule at work and not some other guard.
+        r02 = resolved(11)
+        con = sqlite3.connect(':memory:')
+        try:
+            works_table(con)
+            with mock.patch.object(sel, 'EXCLUDED_SOURCE_KEYS', frozenset()):
+                self.assertEqual(imp.apply_rows(
+                    con, run_result([r02]), 'control',
+                    approved_rows=approved([r02])), (0, 1, 0))
+        finally:
+            con.close()
+        # The exclusion is the exact key: row 10, the original entry with
+        # the same farm, area and amount, is not excluded by it (it is HELD
+        # for the owner's acceptance like every other row).
+        twin = resolved(10, work_date_from=datetime.date(2026, 7, 10),
+                        work_date_to=datetime.date(2026, 7, 10),
+                        date_raw='2026-07-10')
+        sel.validate_row_hashes([twin], approved([twin]))
+
+    def test_generic_payer_row_is_written_with_null_customer(self):
+        payer = resolved(30, customer_raw='Фукаро', drone_customer_id=None,
+                         payer_unidentified=True)
+        con = sqlite3.connect(':memory:')
+        try:
+            works_table(con)
+            self.assertEqual(imp.apply_rows(
+                con, run_result([payer]), 'p01',
+                approved_rows=approved([payer])), (0, 1, 0))
+            self.assertEqual(list(con.execute(
+                'SELECT drone_customer_id, payer_unidentified, customer_raw '
+                'FROM drone_works')), [(None, '1', 'Фукаро')])
+        finally:
+            con.close()
+
+    def test_every_fingerprint_field_is_pinned(self):
+        base = resolved(12)
+        digest = sel.row_fingerprint(base)
+
+        def other(value):
+            if isinstance(value, bool):
+                return not value
+            if isinstance(value, (int, float)):
+                return value + 1
+            if isinstance(value, datetime.date):
+                return value + datetime.timedelta(days=1)
+            if value is None:
+                return 'x'
+            return value + 'x'
+
+        for field in sel.ROW_FIELDS:
+            with self.subTest(field=field):
+                self.assertNotEqual(sel.row_fingerprint(
+                    dict(base, **{field: other(base.get(field))})), digest)
+
+    def test_dirty_manifest_unlisted_files_and_alias_conflicts_refused(self):
+        a = resolved(12)
+        for attribute, value, error in (
+                ('manifest_problems', ['line 3: no month'],
+                 'MANIFEST_HAS_ERRORS'),
+                ('files_skipped_no_manifest', ['Extra.xlsx'],
+                 'FILES_SKIPPED_NO_MANIFEST'),
+                ('filename_alias_conflicts', [('a', 'b')],
+                 'UNSAFE_FILENAME_ALIASES')):
+            with self.subTest(error=error):
+                r = run_result([a])
+                setattr(r, attribute, value)
+                with self.assertRaisesRegex(sel.SelectionError, error):
+                    sel.verify_apply_preconditions(r, approved([a]))
+
+    def test_a_failed_insert_leaves_the_whole_batch_unwritten(self):
+        a, b = resolved(12), resolved(13)
+        with tempfile.TemporaryDirectory() as d:
+            db = os.path.join(d, 'works.sqlite')
+            con = sqlite3.connect(db)
+            works_table(con)
+            con.execute("CREATE TRIGGER fail_second BEFORE INSERT ON "
+                        "drone_works WHEN CAST(NEW.source_row AS INTEGER) = 13 "
+                        "BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END")
+            con.commit()
+            try:
+                with self.assertRaises(sqlite3.IntegrityError):
+                    imp.apply_rows(con, run_result([a, b]), 'fail',
+                                   approved_rows=approved([a, b]))
+            finally:
+                con.close()     # no commit, no explicit rollback
+            con = sqlite3.connect(db)
+            try:
+                self.assertEqual(con.execute(
+                    'SELECT COUNT(*) FROM drone_works').fetchone()[0], 0)
+            finally:
+                con.close()
+
+
+JULY_HEADER = ('№', 'ФХ номи ', 'Майдон (га)', 'Хизмат кўрсатиш суммаси',
+               'Жами сумма', 'Бошка харажатлар', 'Оператор топшириши керак',
+               'Дрон ишлаган сана', '*Изоҳ')
+CASH = ('Нақд (Июль ойи)',)
+
+
+def _job(n, farm, area, day):
+    return (n, farm, area, 200000, round(area * 200000, 2), None, None,
+            datetime.datetime(2026, 7, day), None)
+
+
+GIJ = 'Дрон Ғиждувон ПТЗ Июль.xlsx'
+K_NAMED = GIJ + '!свод ичи (Шахзод)!3'
+K_GENERIC = GIJ + '!свод ичи (Шахзод)!4'
+K_R01 = GIJ + '!свод ичи (Шахзод)!5'
+K_NO_CARD = GIJ + '!свод ичи (Шахзод)!6'
+K_SUMMARY = GIJ + '!ОБШИЙ СВОД!3'
+
+
+class SelectiveCliEndToEndTests(unittest.TestCase):
+    """The guarded CLI from argv to the database, on five SYNTHETIC books
+    saved under the five pinned names; their hashes are patched in. The
+    allowlists are computed at run time and deleted with the folder."""
+
+    def setUp(self):
+        from tools import drone_works_fixtures as fx
+        self.tmp = tempfile.mkdtemp(prefix='fr3_sel_e2e_')
+        self.addCleanup(__import__('shutil').rmtree, self.tmp, True)
+        sheets = {
+            GIJ: (
+                ('свод ичи (Шахзод)', [
+                    CASH, JULY_HEADER,
+                    _job(1, 'Тест А фх', 2.5, 11),      # row 3: has an alias
+                    _job(2, 'Фукаро', 3.0, 12),         # row 4: generic payer
+                    _job(3, 'Когон Фукаро', 6.0, 23),   # row 5: R01
+                    _job(4, 'Гоу  бобо', 1.5, 14)]),    # row 6: no card
+                ('ОБШИЙ СВОД', [('ЖАМИ',), JULY_HEADER,
+                                _job(1, 'Тест А фх', 2.5, 11)])),
+            'ИЮЛЬ Агрокластер.xlsx': (('свод ичи (Нурали)', [
+                CASH, JULY_HEADER, _job(1, 'Тест Б фх', 1.0, 5)]),),
+            'Когон ПТЗ ИЮЛЬ.xlsx': (('свод ичи (Шохрух)', [
+                CASH, JULY_HEADER, _job(1, 'Тест Б фх', 1.5, 6)]),),
+            'Сервис Дрон маълумот Июль.xlsx': (('свод ичи (Шахзод)', [
+                CASH, JULY_HEADER, _job(1, 'Тест Б фх', 2.0, 7)]),),
+            'Шофиркон ПТЗ Дрон маълумот Июль.xlsx': (('свод ичи (Туйғун)', [
+                CASH, JULY_HEADER, _job(1, 'Тест Б фх', 2.5, 8)]),),
+        }
+        self.assertEqual(set(sheets), set(sel.JULY_BOOK_SHA256))
+        self.books, self.manifest = fx.build(
+            os.path.join(self.tmp, 'books'),
+            books=tuple((name, '2026-07', sheets[name])
+                        for name in sorted(sheets)))
+        pinned = {}
+        for name in sheets:
+            with open(os.path.join(self.books, name), 'rb') as f:
+                pinned[name] = hashlib.sha256(f.read()).hexdigest()
+        patcher = mock.patch.dict(sel.JULY_BOOK_SHA256, pinned, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.db = fx.build_database(os.path.join(self.tmp, 'db.sqlite'))
+        con = sqlite3.connect(self.db)
+        try:
+            for cid, name in ((1, 'Тест А фх'), (2, 'Тест Б фх')):
+                con.execute('INSERT INTO drone_customers (id, name, '
+                            "customer_type, is_active) VALUES (?, ?, "
+                            "'external', 1)", (cid, name))
+                con.execute('INSERT INTO drone_customer_aliases (raw_name, '
+                            'normalized_key, drone_customer_id, is_active) '
+                            'VALUES (?, ?, ?, 1)',
+                            (name, imp.customer_key(name), cid))
+            con.commit()
+        finally:
+            con.close()
+        self.rows = self.parse()
+
+    def parse(self):
+        manifest, _problems = imp.read_manifest(self.manifest)
+        con = imp._connect(self.db, read_only=True)
+        try:
+            directory = imp.Directory(con)
+            result = imp.collect(self.books, manifest, sorted(manifest),
+                                 directory, None)
+            imp.resolve(result, directory)
+        finally:
+            con.close()
+        return {sel.source_key(r): r for r in result.rows}
+
+    def allowlist(self, keys, name='keys.csv'):
+        data = allow_csv([(k, sel.row_fingerprint(self.rows[k])
+                           if k in self.rows else '0' * 64) for k in keys])
+        path = os.path.join(self.tmp, name)
+        with open(path, 'wb') as f:
+            f.write(data)
+        return path, hashlib.sha256(data).hexdigest()
+
+    def cli(self, keys, *extra, manifest=None, books=None):
+        import contextlib
+        path, digest = keys if isinstance(keys, tuple) else self.allowlist(keys)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = sel.cli(['--dir', books or self.books,
+                            '--manifest', manifest or self.manifest,
+                            '--db', self.db, '--only-keys', path,
+                            '--only-keys-sha256', digest] + list(extra))
+        return code, out.getvalue()
+
+    def counts(self):
+        con = sqlite3.connect(self.db)
+        try:
+            return tuple(con.execute('SELECT COUNT(*) FROM ' + t).fetchone()[0]
+                         for t in ('drone_works', 'drone_customers',
+                                   'drone_customer_aliases'))
+        finally:
+            con.close()
+
+    def db_sha(self):
+        with open(self.db, 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()
+
+    def test_the_synthetic_books_classify_as_intended(self):
+        self.assertEqual(len(self.rows), 8)
+        self.assertEqual(self.rows[K_NAMED]['drone_customer_id'], 1)
+        for key in (K_GENERIC, K_R01):
+            self.assertIsNone(self.rows[key]['drone_customer_id'], key)
+            self.assertTrue(self.rows[key]['payer_unidentified'], key)
+        self.assertTrue(self.rows[K_NO_CARD]['customer_is_new'])
+        self.assertNotIn(K_SUMMARY, self.rows)
+        self.assertTrue(all(r['drone_operator_id'] for r in self.rows.values()))
+
+    def test_read_only_then_exact_write_then_second_apply_refused(self):
+        keys = [K_NAMED, K_GENERIC, K_R01]
+        before = self.db_sha()
+        code, out = self.cli(keys)
+        self.assertEqual(code, 0, out)
+        self.assertIn('RESULT=READONLY_SUBSET_TECHNICAL_GATE_OK', out)
+        self.assertEqual(self.db_sha(), before)
+
+        code, out = self.cli(keys, '--apply', '--batch', 'e2e')
+        self.assertEqual(code, 0, out)
+        self.assertIn('created=0 inserted=3 skipped=0', out)
+        self.assertEqual(self.counts(), (3, 2, 2))
+        con = sqlite3.connect(self.db)
+        try:
+            stored = {(r[0], r[1]): (r[2], r[3]) for r in con.execute(
+                'SELECT source_sheet, source_row, drone_customer_id, '
+                'payer_unidentified FROM drone_works')}
+        finally:
+            con.close()
+        self.assertEqual(stored, {('свод ичи (Шахзод)', 3): (1, None),
+                                  ('свод ичи (Шахзод)', 4): (None, 1),
+                                  ('свод ичи (Шахзод)', 5): (None, 1)})
+
+        written = self.db_sha()
+        code, out = self.cli(keys, '--apply', '--batch', 'e2e-again')
+        self.assertEqual(code, 2, out)
+        self.assertIn('SELECTED_WORK_ALREADY_IN_DB', out)
+        self.assertIn('NO IMPORT', out)
+        self.assertEqual(self.counts(), (3, 2, 2))
+        self.assertEqual(self.db_sha(), written)
+
+    def test_refusals_write_nothing(self):
+        bad_manifest = os.path.join(self.tmp, 'dirty_manifest.txt')
+        with open(self.manifest, encoding='utf-8') as f:
+            text = f.read()
+        with open(bad_manifest, 'w', encoding='utf-8') as f:
+            f.write(text + 'this line has no month\n')
+        wrong_sha = (self.allowlist([K_NAMED], 'w.csv')[0], 'f' * 64)
+        cases = (
+            ('no card for the spelling', [K_NAMED, K_NO_CARD], {},
+             'UNRESOLVED_CUSTOMERS'),
+            ('summary-only key', [K_NAMED, K_SUMMARY], {},
+             'APPROVED_KEYS_NOT_PARSED'),
+            ('excluded duplicate R02', [K_NAMED, R02_KEY], {},
+             'EXCLUDED_SOURCE_KEY'),
+            ('dirty manifest', [K_NAMED], {'manifest': bad_manifest},
+             'MANIFEST_HAS_ERRORS'),
+            ('list bytes differ from the approved SHA', wrong_sha, {},
+             'ALLOWLIST_SHA256_MISMATCH'),
+        )
+        before = self.db_sha()
+        for label, keys, kwargs, error in cases:
+            with self.subTest(label):
+                code, out = self.cli(keys, '--apply', **kwargs)
+                self.assertEqual(code, 2, out)
+                self.assertIn(error, out)
+                self.assertIn('NO IMPORT', out)
+                self.assertEqual(self.db_sha(), before)
+
+    def test_a_sixth_workbook_in_the_folder_is_refused(self):
+        import shutil
+        shutil.copy(os.path.join(self.books, GIJ),
+                    os.path.join(self.books, 'Копия.xlsx'))
+        code, out = self.cli([K_NAMED], '--apply')
+        self.assertEqual(code, 2, out)
+        self.assertIn('BOOK_SET_MISMATCH', out)
+        self.assertEqual(self.counts(), (0, 2, 2))
+
+    def test_alias_moved_after_signing_is_refused(self):
+        keys = self.allowlist([K_NAMED])
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute("UPDATE drone_customer_aliases SET "
+                        "drone_customer_id = 2 WHERE normalized_key = ?",
+                        (imp.customer_key('Тест А фх'),))
+            con.commit()
+        finally:
+            con.close()
+        code, out = self.cli(keys, '--apply')
+        self.assertEqual(code, 2, out)
+        self.assertIn('ROW_FINGERPRINT_MISMATCH', out)
+        self.assertEqual(self.counts(), (0, 2, 2))
+
+    def test_a_failed_write_rolls_the_cli_batch_back(self):
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute("CREATE TRIGGER fail_r01 BEFORE INSERT ON drone_works "
+                        "WHEN NEW.source_row = 5 "
+                        "BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END")
+            con.commit()
+        finally:
+            con.close()
+        keys = [K_NAMED, K_GENERIC, K_R01]
+        code, out = self.cli(keys, '--apply')
+        self.assertEqual(code, 2, out)
+        self.assertIn('NO IMPORT', out)
+        self.assertNotIn('Traceback', out)
+        self.assertEqual(self.counts(), (0, 2, 2))
+        # Negative control: the trigger, and nothing else, stopped it.
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute('DROP TRIGGER fail_r01')
+            con.commit()
+        finally:
+            con.close()
+        code, out = self.cli(keys, '--apply')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.counts(), (3, 2, 2))
+
+    def test_a_row_written_between_preflight_and_apply_fails_the_batch(self):
+        keys = [K_NAMED, K_GENERIC, K_R01]
+        original = imp.apply_rows
+
+        def interleaved(con, result, batch, approved_rows=None):
+            other = sqlite3.connect(self.db)
+            try:
+                other.execute(
+                    'INSERT INTO drone_works (period_month, customer_raw, '
+                    'area_ha, payment_type, source_file, source_sheet, '
+                    "source_row) VALUES ('2026-07', 'x', 1, 'cash', ?, "
+                    "'свод ичи (Шахзод)', 4)", (GIJ,))
+                other.commit()
+            finally:
+                other.close()
+            return original(con, result, batch, approved_rows=approved_rows)
+
+        with mock.patch.object(imp, 'apply_rows', interleaved):
+            code, out = self.cli(keys, '--apply')
+        self.assertEqual(code, 2, out)
+        self.assertIn('SELECTED_WORK_ALREADY_IN_DB_DURING_APPLY', out)
+        # Only the interleaved row exists: row 3, inserted before row 4 was
+        # met, was rolled back with the rest of the batch.
+        self.assertEqual(self.counts(), (1, 2, 2))
 
 
 if __name__ == '__main__':

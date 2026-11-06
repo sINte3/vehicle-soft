@@ -96,6 +96,7 @@ jobs:
           python -m unittest tools.test_import_drone_works -v
           python -m unittest tools.test_import_drone_works_counterless -v
           python -m unittest tools.test_drone_works_selective -v
+          python -m unittest tools.test_drone_works_fingerprint_export -v
 
       - name: Field geometry probe self-test (format detection, no guessing)
         run: python tools/test_drone_field_geometry_probe.py
