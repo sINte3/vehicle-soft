@@ -1,0 +1,79 @@
+========================================================================
+DRONE-WORKS-001 import  --  DRY RUN (nothing written)
+========================================================================
+directory   : %WORK%\july\books
+manifest    : %WORK%\july\manifest.txt
+database    : %WORK%\july\synth.db
+batch       : july_dryrun
+report file : %WORK%\july\report_old.txt
+
+files parsed             : 5
+files skipped (no entry) : 0
+sheets                   : 15
+rows accepted            : 309
+hectares                 : 4955.41
+amount total             : 739054756.50
+received total           : 142042280.00
+other costs total        : 43517235.00
+distinct customers       : 152
+rows with a price cell   : 309
+
+by payment type:
+  cash        218 rows     2712.01 ha
+  transfer     91 rows     2243.40 ha
+  internal      0 rows        0.00 ha
+  unknown       0 rows        0.00 ha
+
+by date kind:
+  date        307 rows     4850.91 ha
+  span          0 rows        0.00 ha
+  none          2 rows      104.50 ha
+  unparsed      0 rows        0.00 ha
+
+by month (real date when present, manifest month otherwise):
+  2026-07    309 rows     4955.41 ha
+
+by MANIFEST month, against the prediction of 2026-08-04 for the
+28 REAL books -- a run over any other corpus differs wholesale:
+  month      rows          ha |   exp.     exp. ha | delta ha
+  2025-09       0        0.00 |    378     4937.73 |   -4937.73
+  2025-10       0        0.00 |     28      790.90 |    -790.90
+  2026-03       0        0.00 |     46     1378.48 |   -1378.48
+  2026-04       0        0.00 |    331     6388.83 |   -6388.83
+  2026-05       0        0.00 |    106     2179.72 |   -2179.72
+  2026-06       0        0.00 |     94     2002.64 |   -2002.64
+  2026-07     309     4955.41 |      6       62.73 |   +4892.68
+  TOTAL       309     4955.41 |    895    15738.39 |  -10782.98 (-68.51%)
+  The monthly rows are INDICATIVE: this tool groups a dated row by
+  its own date and one book straddles September and October. The
+  total is the firm number. 2026-04 is the anchor -- it agrees with our
+  own DJI flight data to 0.15 %. A disagreement is a finding to
+  report, not a number to force.
+
+customers matched to an alias : 0
+customers to be created       : 151
+payer a citizen, unidentified : 12 rows (no card)
+operator resolved rows        : 174
+operator UNRESOLVED rows      : 135
+duplicate rows skipped        : 0
+same-number pairs retained    : 0
+wage carryovers quarantined   : 0
+unsafe filename aliases       : 0
+rows already in the database  : 0
+rows rejected                 : 0
+wage rows ignored (Ish haki)  : 0
+formula cells with no cache   : 0
+
+sheets skipped (not "svod ichi") : 5
+headers matching no known phrase : 0 distinct
+rows with no payment block above : 0 (imported as cash)
+rows with an empty customer      : 1
+operator taken from the row cell : 0
+operator taken from sheet/file   : 309
+received figure of kind received     : 256
+received figure of kind operator_due : 53
+
+Cyrillic detail (farms, operators, sheets, every skipped and
+rejected row) is in the UTF-8 report file above.
+
+DRY RUN: nothing was written. Re-run with --apply to write.

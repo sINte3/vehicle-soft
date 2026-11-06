@@ -93,7 +93,9 @@ On Windows (PowerShell has no &&, one command per line):
 """
 
 import argparse
+import csv
 import datetime
+import hashlib
 import os
 import re
 import sqlite3
@@ -250,6 +252,44 @@ GENERIC_PAYER_KEYS = frozenset((
 def is_generic_payer(customer_raw):
     """True when the whole spelling names a citizen only generically."""
     return customer_key(customer_raw) in GENERIC_PAYER_KEYS
+
+
+# [REASON]: FIN-RECON-003, July 2026. «Когон Фукаро» (Kogon + «citizen», no
+# personal name) is written once, 6 ha, in «Дрон Ғиждувон ПТЗ Июль.xlsx /
+# свод ичи (Шахзод)» row 20. It is not in GENERIC_PAYER_KEYS, so the import
+# would make it a NEW 'external' card -- and every later «Когон Фукаро» would
+# land on that one card, the single-debtor fault #589 had. Whether it is
+# generic is the OWNER's call: it has the shape of «Ромитан Фукаро», which the
+# list above deliberately leaves open. So this list does not classify. A key
+# here, with no alias in the directory, is never turned into a card by the
+# importer itself: apply_rows() refuses while one is present, and the owner
+# decides -- an alias to a named person's card through the decision table, or
+# the key moves to GENERIC_PAYER_KEYS with a test. Exact keys, like the list
+# above: «Ахмад (фукаро)» and every other spelling with a person's name in it
+# are untouched.
+PAYER_DECISION_PENDING_KEYS = frozenset((
+    'когон фукаро',
+))
+
+
+def is_payer_decision_pending(key):
+    """True when a customer key waits for the owner. Compared after the
+    Uzbek fold: «Когон Фуқаро» is held like «Когон Фукаро». Holding refuses
+    to decide, so a wider match is the safe side; GENERIC_PAYER_KEYS, which
+    DOES decide, stays exact."""
+    folded = uz_fold(key)
+    return any(folded == uz_fold(k) for k in PAYER_DECISION_PENDING_KEYS)
+
+# The word itself, after the Uzbek fold («фуқаро» and «фукаро» alike). Used
+# only to LIST new cards whose spelling contains it, for a human to look at;
+# it never decides anything.
+GENERIC_PAYER_WORD = 'фукаро'
+
+
+def has_generic_payer_word(customer_raw):
+    """True when «фукаро» is a whole word of the spelling. Report only."""
+    words = re.split(r'[\W_]+', uz_fold(customer_raw))
+    return GENERIC_PAYER_WORD in words
 
 
 def _text(value):
@@ -647,6 +687,117 @@ def area_in_range(area):
     return area is not None and 0 < area <= MAX_AREA_HA
 
 
+# ─── FIN-RECON-003: a job row whose «№» cell is empty ────────────────────────
+#
+# [REASON]: «Дрон Ғиждувон ПТЗ Июль.xlsx / свод ичи (Усмон)» numbers its rows
+# 1..16 and then stops: rows 11 and 35..52 carry a farm, an area, a price, an
+# amount and a date, and an empty «№». The book's own «Жами сумма» lines add
+# them in (114.06 and 352.06 ha). The data-row rule of trap (b) demanded the
+# counter, so all nineteen -- 189.25 ha -- were dropped by a bare `continue`
+# and the run printed «rows rejected: 0». The counter is the dispatcher's
+# typing, not a property of the job: it is never stored, never part of any
+# identity (provenance is the physical Excel row), and it repeats inside one
+# sheet («2, 2» in Фаррух, «13, 15, 16, 18» twice in Шахзод).
+#
+# A row without the counter is a job only on positive evidence, because the
+# counter was what kept the totals line and the junk below it out:
+#   - it is not a totals line («Жами …», «ИТОГО», «Всего» as a whole first
+#     word in a cell up to the area column -- «Жамила фх» is a farm);
+#   - it names a farm in the customer column;
+#   - its area is in range, as for any job;
+#   - and the book says something about the job beyond name and area: a
+#     date, a price or an amount.
+# Anything else that carries job data and matches no rule is not skipped: it
+# is listed as UNPARSED_CANDIDATE and apply_rows() refuses until it is read.
+
+TOTAL_LABEL_WORDS = ('жами', 'итого', 'всего')
+
+
+def _first_word(value):
+    for word in re.split(r'[\W_]+', uz_fold(value)):
+        if word:
+            return word
+    return ''
+
+
+def total_label(cells, mapping):
+    """The totals label of the row, or ''. Cells up to the area column.
+
+    «Жами сумма:» stands in the customer column and «ИТОГО:» in the area
+    column of the July books; the fixtures carry «Жами сумма» in column A.
+    """
+    limit = 3
+    if mapping is not None and mapping.get('area') is not None:
+        limit = mapping.get('area') + 1
+    for value in cells[:limit]:
+        text = _text(value)
+        if text and _first_word(text) in TOTAL_LABEL_WORDS:
+            return text
+    return ''
+
+
+def _cell_at(cells, index):
+    if index is None or index >= len(cells):
+        return None
+    return cells[index]
+
+
+def _farm_name(cells, mapping):
+    """The farm column as text, or ''. A NUMBER there is not a farm name:
+    the July layout puts trap (b)'s «Доллар | 12220» exactly there."""
+    value = _cell_at(cells, mapping.get('customer'))
+    if isinstance(value, str):
+        return value.strip()
+    return ''
+
+
+def has_work_data(cells, mapping):
+    """A farm name, or anything at all in the area column.
+
+    [REASON]: the candidate test, deliberately NOT the acceptance test: it
+    ignores the counter altogether. A row with job data that no rule accepts
+    or names must surface, which is the whole point of this function. A job
+    is hectares for somebody, so the signs are the farm and the area; a price,
+    an amount or a date alone is not one -- trap (b)'s «Доллар | 12220» puts
+    its number in the date column of the fixture and is not a job. The area
+    column counts with ANY value, text included: next to a farm or a «№» a
+    word where the hectares belong is a job the parser cannot read; alone it
+    is a note, and parse_sheet() lists it under its own name.
+    """
+    if _farm_name(cells, mapping):
+        return True
+    value = _cell_at(cells, mapping.get('area'))
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return True
+    return bool(_text(value))
+
+
+def counterless_job_evidence(cells, mapping, area):
+    """(True, '') when a row with an empty «№» is a job; else (False, why)."""
+    if total_label(cells, mapping):
+        return False, 'totals line'
+    if not _farm_name(cells, mapping):
+        return False, 'no row number and no farm name'
+    if not area_in_range(area):
+        return False, 'no row number and no area in range'
+    _f, _t, kind = parse_date_cell(_cell_at(cells, mapping.get('date')))
+    if kind in (DATE_KIND_EXACT, DATE_KIND_SPAN):
+        return True, ''
+    if _number(_cell_at(cells, mapping.get('price'))) is not None:
+        return True, ''
+    if _number(_cell_at(cells, mapping.get('amount'))) is not None:
+        return True, ''
+    return False, 'no row number; farm and area only, no date, price or amount'
+
+
+def _numbered_with_numbers(cells):
+    """A counter in column A and at least one more number in the row."""
+    if _int_counter(cells[0] if cells else None) is None:
+        return False
+    return any(isinstance(c, (int, float)) and not isinstance(c, bool)
+               for c in cells[1:])
+
+
 def payment_when_no_block():
     """What a row with no payment block above it becomes. None = reject it.
 
@@ -859,6 +1010,33 @@ class SheetReport(object):
         self.operator_from_sheet = 0     # rows resolved from the sheet title
         self.unknown_payment_rows = 0
         self.empty_customer_rows = 0
+        # FIN-RECON-003. Every non-empty row lands in exactly one class; the
+        # report prints the bridge and the classes must add up to the rows.
+        self.row_classes = dict.fromkeys(ROW_CLASSES, 0)
+        self.counterless_rows = 0        # jobs accepted with an empty «№»
+        self.unparsed = []               # [(excel_row, reason, cells)]
+        # The book's own «Жами …» lines against what was read above them:
+        # [(excel_row, label, book_area, block_area, sheet_area, verdict)]
+        self.total_checks = []
+
+
+# The classes of a non-empty row of a detail sheet, in report order.
+#   job / job_no_number  -- accepted as a job (before the run-wide dedup)
+#   wage                 -- a job-shaped row of an «Иш хаки» block, trap (h)
+#   rejected             -- job data, refused by a NAMED rule (area out of
+#                           range, no payment block), listed with the reason
+#   unparsed             -- job data that no rule accepts or names: listed as
+#                           UNPARSED_CANDIDATE, and --apply refuses
+#   totals               -- «Жами …» / «ИТОГО» lines
+#   header, block_marker -- the header row; «Справка», «Нақд», «Иш хаки» lines
+#   empty_numbered       -- a counter and nothing else (the empty template)
+#   no_job_data          -- text or numbers outside the job columns
+#   above_header         -- the title, the phone, anything before the header
+ROW_CLASSES = ('job', 'job_no_number', 'wage', 'rejected', 'unparsed',
+               'totals', 'header', 'block_marker', 'empty_numbered',
+               'no_job_data', 'above_header')
+CANDIDATE_CLASSES = ('job', 'job_no_number', 'wage', 'rejected', 'unparsed')
+TOTAL_TOLERANCE_HA = 0.005
 
 
 def _row_cells(row):
@@ -881,6 +1059,14 @@ def parse_sheet(ws, file_name, sheet_name, period_month, subdivision,
     mapping = None
     current_payment = default_payment
     in_wage_block = False
+    # FIN-RECON-003: see ROW_CLASSES and counterless_job_evidence().
+    usable_header_seen = False
+    numbered_above_header = []   # listed only if no usable header ever comes
+    block_area = 0.0             # jobs since the last header, marker or total
+    sheet_area = 0.0             # jobs since the top of the sheet
+
+    def classify(name):
+        report.row_classes[name] += 1
 
     for excel_row, raw in enumerate(ws.iter_rows(values_only=True), 1):
         cells = _row_cells(raw)
@@ -888,6 +1074,7 @@ def parse_sheet(ws, file_name, sheet_name, period_month, subdivision,
             continue
 
         if is_header_row(cells):
+            classify('header')
             mapping = map_columns(cells)
             report.header_row = excel_row
             report.header_cells = [_text(c) for c in cells]
@@ -899,6 +1086,9 @@ def parse_sheet(ws, file_name, sheet_name, period_month, subdivision,
                     (excel_row, 'header without %s column'
                      % '/'.join(missing_required), cells))
                 mapping = None
+            else:
+                usable_header_seen = True
+            block_area = 0.0
             continue
 
         counter = _int_counter(cells[0] if cells else None)
@@ -907,24 +1097,102 @@ def parse_sheet(ws, file_name, sheet_name, period_month, subdivision,
                 and mapping.get('area') < len(cells)
                 else None)
         looks_like_data = counter is not None and area_in_range(area)
+        counter_missing = False
+        why_not = ''
+        if not looks_like_data and counter is None and mapping is not None:
+            looks_like_data, why_not = counterless_job_evidence(
+                cells, mapping, area)
+            counter_missing = looks_like_data
 
         if not looks_like_data:
             if is_wage_marker(cells):
+                classify('block_marker')
                 in_wage_block = True
                 report.blocks.append((excel_row, 'wage'))
+                block_area = 0.0
                 continue
             marker = payment_marker(cells)
             if marker is not None:
+                classify('block_marker')
                 current_payment = marker
                 in_wage_block = False
                 report.blocks.append((excel_row, marker))
+                block_area = 0.0
                 continue
             # Junk, totals rows and everything else that is not a job.
             if counter is not None and area is not None:
                 # Trap (b) proper: it has a counter and a number where the
                 # area lives, but the number cannot be a single job.
+                classify('rejected')
                 report.rejections.append(
                     (excel_row, 'area out of range (%.2f)' % area, cells))
+                continue
+            # [REASON]: FIN-RECON-003. Until 03.11.2026 every row reaching
+            # this point was dropped by a bare `continue`, and nineteen real
+            # jobs went with it. Now each one is named: a class for the
+            # bridge, or UNPARSED_CANDIDATE when it carries job data that no
+            # rule accepts -- and --apply refuses while one exists.
+            if mapping is None:
+                if not usable_header_seen and report.header_row is None:
+                    classify('above_header')
+                    if _numbered_with_numbers(cells):
+                        numbered_above_header.append((excel_row, cells))
+                elif _numbered_with_numbers(cells) and not in_wage_block:
+                    classify('unparsed')
+                    report.unparsed.append(
+                        (excel_row, 'numbered row under a header without '
+                         'the farm or area column', cells))
+                else:
+                    classify('no_job_data')
+                continue
+            label = total_label(cells, mapping)
+            if label:
+                classify('totals')
+                if area is not None:
+                    if abs(area - block_area) <= TOTAL_TOLERANCE_HA:
+                        verdict = 'block'
+                    elif abs(area - sheet_area) <= TOTAL_TOLERANCE_HA:
+                        verdict = 'sheet'
+                    else:
+                        verdict = 'MISMATCH'
+                    report.total_checks.append(
+                        (excel_row, label, area, block_area, sheet_area,
+                         verdict))
+                block_area = 0.0
+                continue
+            if not has_work_data(cells, mapping):
+                classify('empty_numbered' if counter is not None
+                         else 'no_job_data')
+                continue
+            if in_wage_block:
+                # Trap (h): nothing in an «Иш хаки» block is a job. Counted
+                # in the bridge only; wage_rows keeps its old meaning.
+                classify('wage')
+                continue
+            if area is not None and not area_in_range(area):
+                classify('rejected')
+                report.rejections.append(
+                    (excel_row, 'area out of range (%.2f)' % area, cells))
+                continue
+            if (counter is None and area is None
+                    and not _farm_name(cells, mapping)):
+                # [REASON]: words in the area column and nothing else of a
+                # job -- no farm, no «№». In «Имомов Бехзод Пешку ПТЗ.xlsx»
+                # it is «Кеча топширган» (cash handed over), under the
+                # totals. Named and listed like trap (b)'s «Доллар | 12220»,
+                # not a blocker: there is no job in it to lose.
+                classify('rejected')
+                report.rejections.append(
+                    (excel_row, 'note in the area column (no farm, no row '
+                     'number)', cells))
+                continue
+            if counter is not None:
+                area_text = _text(_cell_at(cells, mapping.get('area')))
+                why_not = ('numbered row whose area cell is not a number '
+                           '(%s)' % area_text if area_text
+                           else 'numbered row without an area')
+            classify('unparsed')
+            report.unparsed.append((excel_row, why_not, cells))
             continue
 
         # Mentioning wages in a job note must not discard the job.
@@ -933,10 +1201,12 @@ def parse_sheet(ws, file_name, sheet_name, period_month, subdivision,
                          and customer_index < len(cells)
                          and uz_fold(cells[customer_index]) == MARK_WAGE)
         if in_wage_block or wage_customer:
+            classify('wage')
             report.wage_rows += 1
             continue
 
         if mapping is None:
+            classify('rejected')
             report.rejections.append(
                 (excel_row, 'data row before any recognised header', cells))
             continue
@@ -979,6 +1249,7 @@ def parse_sheet(ws, file_name, sheet_name, period_month, subdivision,
             # names the gap; the owner sets the type on the works screen.
             payment = payment_when_no_block()
             if payment is None:
+                classify('rejected')
                 report.rejections.append(
                     (excel_row, 'no payment block above this row', cells))
                 continue
@@ -1047,9 +1318,28 @@ def parse_sheet(ws, file_name, sheet_name, period_month, subdivision,
             'subdivision_name': subdivision,
             'note': _text(cell('note')) or None,
             'formula_no_cache': formula_no_cache,
+            # FIN-RECON-003: the dispatcher's «№» as typed, for the report
+            # only. Never stored, never part of an identity -- provenance is
+            # source_file / source_sheet / source_row, the physical row.
+            'row_counter': counter,
+            'counter_missing': counter_missing,
         })
+        classify('job_no_number' if counter_missing else 'job')
+        if counter_missing:
+            report.counterless_rows += 1
         report.rows += 1
         report.area += area
+        block_area += area
+        sheet_area += area
+
+    # A «свод ичи» sheet whose header was never recognised gave no rows at
+    # all; the numbered rows it holds are named instead of vanishing.
+    if not usable_header_seen:
+        for excel_row, cells in numbered_above_header:
+            report.row_classes['above_header'] -= 1
+            report.row_classes['unparsed'] += 1
+            report.unparsed.append(
+                (excel_row, 'detail sheet without a recognised header', cells))
 
     return rows, report
 
@@ -1569,6 +1859,17 @@ class RunResult(object):
         self.received_kinds = {}          # kind -> row count
         # FIN-RECON-002: rows whose payer is a citizen named generically
         self.payer_unidentified_rows = 0
+        # FIN-RECON-003
+        self.unparsed = []          # [(file, sheet, row, reason, preview)]
+        self.row_classes = dict.fromkeys(ROW_CLASSES, 0)
+        self.bridge_sheets = 0      # «свод ичи» sheets the bridge covers
+        self.svodka_sheets = 0      # «СВОДКА …» sheets: own reader, no bridge
+        self.svodka_rows = 0        # rows those sheets gave, before dedup
+        self.total_checks = []      # [(file, sheet) + SheetReport.total_checks]
+        self.schema_warnings = []   # dry run only; --apply refuses instead
+        self.payer_decision_pending_rows = 0
+        self.payer_word_new_cards = []   # [(key, spelling)] -- report only
+        self.source_book_hashes = {}     # filename -> SHA256 of original XLSX
 
 
 def collect(directory_path, manifest, dirs_files, dir_obj, default_payment):
@@ -1585,6 +1886,14 @@ def collect(directory_path, manifest, dirs_files, dir_obj, default_payment):
         period_month = manifest[file_name]
         full = os.path.join(directory_path, file_name)
         subdivision = dir_obj.subdivision_for_file(file_name)
+        # FIN-RECON-003: pin physical source bytes for the shared write
+        # gate, independently of manifest month and filename. An untouched
+        # July XLSX renamed in the folder cannot bypass the July allowlist.
+        digest = hashlib.sha256()
+        with open(full, 'rb') as source_stream:
+            for chunk in iter(lambda: source_stream.read(1024 * 1024), b''):
+                digest.update(chunk)
+        result.source_book_hashes[file_name] = digest.hexdigest()
         formulas = _formula_cells(full)
         wb = load_workbook(full, data_only=True, read_only=True)
         try:
@@ -1627,6 +1936,20 @@ def collect(directory_path, manifest, dirs_files, dir_obj, default_payment):
                         default_payment=default_payment,
                         formula_cells=sheet_formulas)
                 result.sheets.append(report)
+                if svodka_period is not None:
+                    result.svodka_sheets += 1
+                    result.svodka_rows += len(rows)
+                else:
+                    result.bridge_sheets += 1
+                    for name, count in report.row_classes.items():
+                        result.row_classes[name] += count
+                    for excel_row, reason, cells in report.unparsed:
+                        result.unparsed.append(
+                            (file_name, ws.title, excel_row, reason,
+                             ' | '.join(_text(c) for c in cells)[:200]))
+                    for check in report.total_checks:
+                        result.total_checks.append((file_name, ws.title)
+                                                   + tuple(check))
                 result.wage_rows += report.wage_rows
                 result.unknown_payment_rows += report.unknown_payment_rows
                 result.empty_customer_rows += report.empty_customer_rows
@@ -1693,6 +2016,7 @@ def resolve(result, dir_obj):
         # customer_raw = '' and drone_customer_id NULL, and the reports say
         # «Заказчик не указан» -- which is the fact.
         row['payer_unidentified'] = False
+        row['payer_decision_pending'] = False
         if not row['customer_raw']:
             row['drone_customer_id'] = None
             row['customer_is_new'] = False
@@ -1717,10 +2041,25 @@ def resolve(result, dir_obj):
         else:
             row['drone_customer_id'] = None
             row['customer_is_new'] = True
+            # [REASON]: AFTER the alias lookup, unlike the generic list: an
+            # alias the owner gave this spelling through the decision table is
+            # a decision and is followed. Only the card the importer would
+            # make up on its own is held. The key stays in created_customers
+            # so tools/drone_import_alias_candidates.py keeps reconciling;
+            # apply_rows() is what refuses. See PAYER_DECISION_PENDING_KEYS.
+            if is_payer_decision_pending(key):
+                row['payer_decision_pending'] = True
+                result.payer_decision_pending_rows += 1
             if key not in pending_customers:
                 pending_customers[key] = row['customer_raw']
     result.created_customers = sorted(pending_customers.items(),
                                       key=lambda kv: kv[1])
+    # Cards that WILL be made and carry the word -- the held ones are listed
+    # under PAYER_DECISION_REQUIRED instead, not twice.
+    result.payer_word_new_cards = [
+        (key, name) for key, name in result.created_customers
+        if has_generic_payer_word(name)
+        and not is_payer_decision_pending(key)]
 
     result.already_in_db = sum(
         1 for row in result.rows
@@ -1731,8 +2070,48 @@ def resolve(result, dir_obj):
 
 # ─── Writing ─────────────────────────────────────────────────────────────────
 
-def apply_rows(con, result, batch):
+def apply_blockers(result, approved_rows=None):
+    """Why this parsed run must not be written, as ASCII lines; [] = none.
+
+    [REASON]: FIN-RECON-003, fail-closed. A row that carries job data and
+    matches no rule is unknown data, not a skipped line, and a spelling on
+    PAYER_DECISION_PENDING_KEYS waits for the owner; writing around either
+    would leave a ledger that looks complete and is not. Checked inside
+    apply_rows(), so the CLI and the upload screen refuse alike. Rows refused
+    by a NAMED rule (area out of range, «Иш хаки») do not block: they are
+    decided and listed, as before.
+    """
+    blockers = []
+    unparsed = getattr(result, 'unparsed', None) or []
+    if unparsed:
+        blockers.append('UNPARSED_CANDIDATE: %d row(s) carry job data that '
+                        'no rule accepts' % len(unparsed))
+    pending = [key for key, _name in result.created_customers
+               if is_payer_decision_pending(key)]
+    if pending:
+        blockers.append('PAYER_DECISION_REQUIRED: %d spelling(s) of '
+                        'PAYER_DECISION_PENDING_KEYS would become a new card'
+                        % len(pending))
+    # FIN-RECON-003: the five July books MUST NOT pass through the old
+    # all-rows CLI or web-upload apply path. A selected cohort must carry
+    # exact approved source keys AND hashes of the original row values.
+    try:
+        try:
+            from . import drone_works_selective as selective
+        except ImportError:
+            import drone_works_selective as selective
+        selective.verify_apply_preconditions(result, approved_rows)
+    except selective.SelectionError as exc:
+        blockers.append('SOURCE_KEY_GUARD: %s' % exc)
+    return blockers
+
+
+def apply_rows(con, result, batch, approved_rows=None):
     """Insert customers, aliases and works inside ONE transaction."""
+    blockers = apply_blockers(result, approved_rows=approved_rows)
+    if blockers:
+        raise ImportPreconditionError(
+            'ERROR APPLY_REFUSED: %s. Nothing written.' % '; '.join(blockers))
     now = datetime.datetime.utcnow().isoformat()
     cur = con.cursor()
     cur.execute('BEGIN')
@@ -1771,6 +2150,15 @@ def apply_rows(con, result, batch):
                     (row['source_file'], row['source_sheet'],
                      row['source_row']))
         if cur.fetchone():
+            # An approved subset is exact: a concurrent/late provenance
+            # collision must refuse the batch, not report a partial
+            # successful import. The caller rolls back the transaction.
+            if approved_rows is not None:
+                raise ImportPreconditionError(
+                    'ERROR SELECTED_WORK_ALREADY_IN_DB_DURING_APPLY: '
+                    '%s!%s!%d. Nothing written.' %
+                    (row['source_file'], row['source_sheet'],
+                     row['source_row']))
             skipped += 1
             continue
         cur.execute(
@@ -1822,7 +2210,12 @@ def summarize(result):
     received = 0.0
     other = 0.0
     priced = 0
+    counterless = 0
+    counterless_area = 0.0
     for row in rows:
+        if row.get('counter_missing'):
+            counterless += 1
+            counterless_area += row['area_ha']
         kinds[row['date_kind']] += 1
         kind_area[row['date_kind']] += row['area_ha']
         payments[row['payment_type']] += 1
@@ -1863,7 +2256,142 @@ def summarize(result):
         'payment_area': payment_area,
         'months': months,
         'manifest_months': manifest_months,
+        'counterless': counterless,
+        'counterless_area': counterless_area,
     }
+
+
+def apply_gate(result):
+    """Everything that would stop --apply of this run, ASCII. [] = none.
+
+    The dry run prints it as APPLY_PERMITTED, separately from what was read:
+    a database without a column is a reason not to WRITE, never a reason to
+    read the books differently (FIN-RECON-003, the 30.10.2026 snapshot).
+    """
+    gate = ['SCHEMA: %s' % _ascii(w) for w in result.schema_warnings]
+    gate.extend(apply_blockers(result))
+    if result.filename_alias_conflicts:
+        gate.append('UNSAFE_FILENAME_PROVENANCE: %d'
+                    % len(result.filename_alias_conflicts))
+    return gate
+
+
+def row_bridge(result):
+    """The numeric bridge of the detail sheets, as a dict of counts.
+
+    parsed  = job + job_no_number            (rows parse_sheet accepted)
+    rows    = parsed + svodka_rows - duplicates - quarantined
+    balanced is the identity checked, not assumed.
+    """
+    classes = result.row_classes
+    parsed = classes['job'] + classes['job_no_number']
+    candidates = sum(classes[name] for name in CANDIDATE_CLASSES)
+    expected_rows = (parsed + result.svodka_rows - len(result.duplicates)
+                     - len(result.quarantined_rows))
+    return {
+        'candidates': candidates,
+        'parsed': parsed,
+        'parsed_no_number': classes['job_no_number'],
+        'svodka_rows': result.svodka_rows,
+        'duplicates': len(result.duplicates),
+        'quarantined': len(result.quarantined_rows),
+        'rows': len(result.rows),
+        'balanced': expected_rows == len(result.rows),
+    }
+
+
+def _csv_value(value):
+    if value is None:
+        return ''
+    if isinstance(value, bool):
+        return '1' if value else '0'
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, (datetime.date, datetime.datetime)):
+        return value.isoformat()
+    return str(value)
+
+
+ROWS_CSV_COLUMNS = (
+    'source_key', 'source_file', 'source_sheet', 'source_row', 'status',
+    'reason', 'row_counter', 'counter_missing', 'payment_type',
+    'period_month', 'date_raw', 'work_date_from', 'work_date_to',
+    'date_kind', 'operator_raw', 'operator_source', 'drone_operator_id',
+    'customer_raw', 'customer_class', 'drone_customer_id', 'area_ha',
+    'price_per_ha', 'amount', 'other_costs', 'received_amount',
+    'received_kind', 'formula_no_cache')
+
+
+def customer_class(row):
+    """How resolve() left the payer of an accepted row. Report only."""
+    if not row.get('customer_raw'):
+        return 'EMPTY'
+    if row.get('payer_unidentified'):
+        return 'GENERIC_PAYER'
+    if row.get('payer_decision_pending'):
+        return 'PAYER_DECISION_REQUIRED'
+    if row.get('customer_is_new'):
+        return 'NEW'
+    if row.get('drone_customer_id') is not None:
+        return 'MATCHED'
+    return ''
+
+
+def write_rows_csv(path, result):
+    """One line per physical row that carries job data, in source order.
+
+    [REASON]: FIN-RECON-003. The reconciliation is done by key
+    («файл!лист!строка») against a registry built by someone else; a report
+    of totals cannot show WHICH row is missing. Accepted rows carry the parsed
+    fields; a duplicate or a quarantined row carries them too, with the
+    reason; a rejected or UNPARSED_CANDIDATE row carries the key and the
+    reason only. No note column and no raw preview: the books' notes hold
+    names and telephone numbers, and this file is meant to travel.
+    UTF-8 with BOM so Excel opens the Cyrillic as text.
+    """
+    lines = []
+
+    def emit(file_name, sheet, excel_row, status, reason, row=None):
+        record = dict.fromkeys(ROWS_CSV_COLUMNS, '')
+        record.update({
+            'source_key': '%s!%s!%d' % (file_name, sheet, excel_row),
+            'source_file': file_name, 'source_sheet': sheet,
+            'source_row': str(excel_row), 'status': status,
+            'reason': reason})
+        if row is not None:
+            for column in ROWS_CSV_COLUMNS[6:]:
+                if column == 'customer_class':
+                    continue
+                record[column] = _csv_value(row.get(column))
+            if status == 'ACCEPTED':
+                record['customer_class'] = customer_class(row)
+        lines.append(((file_name, sheet, excel_row), record))
+
+    for row in result.rows:
+        emit(row['source_file'], row['source_sheet'], row['source_row'],
+             'ACCEPTED', 'job without a row number' if
+             row.get('counter_missing') else '', row)
+    for first, second in result.duplicates:
+        emit(second['source_file'], second['source_sheet'],
+             second['source_row'], 'DUPLICATE_SKIPPED',
+             'same work as %s!%s!%d' % (first['source_file'],
+                                         first['source_sheet'],
+                                         first['source_row']), second)
+    for row in result.quarantined_rows:
+        emit(row['source_file'], row['source_sheet'], row['source_row'],
+             'WAGE_CARRYOVER_QUARANTINED', 'cross-period wage carryover', row)
+    for file_name, sheet, excel_row, reason, _preview in result.rejections:
+        emit(file_name, sheet, excel_row, 'REJECTED', reason)
+    for file_name, sheet, excel_row, reason, _preview in result.unparsed:
+        emit(file_name, sheet, excel_row, 'UNPARSED_CANDIDATE', reason)
+
+    lines.sort(key=lambda item: item[0])
+    with open(path, 'w', encoding='utf-8-sig', newline='') as fh:
+        writer = csv.writer(fh, lineterminator='\n')
+        writer.writerow(ROWS_CSV_COLUMNS)
+        for _key, record in lines:
+            writer.writerow([record[column] for column in ROWS_CSV_COLUMNS])
+    return len(lines)
 
 
 def print_console(result, stats, args, batch):
@@ -1945,6 +2473,36 @@ def print_console(result, stats, args, batch):
     print('wage rows ignored (Ish haki)  : %d' % result.wage_rows)
     print('formula cells with no cache   : %d' % result.formula_no_cache)
     print('')
+    # FIN-RECON-003: the bridge and the gate. Counts only, ASCII.
+    bridge = row_bridge(result)
+    print('row bridge, %d detail sheets (%d svodka sheets read separately,'
+          ' not bridged):' % (result.bridge_sheets, result.svodka_sheets))
+    for name in ROW_CLASSES:
+        print('  %-15s : %d' % (name, result.row_classes[name]))
+    print('  candidate rows with job data   : %d' % bridge['candidates'])
+    print('  parsed as jobs                 : %d (without "No": %d, %.2f ha)'
+          % (bridge['parsed'], bridge['parsed_no_number'],
+             stats.get('counterless_area', 0.0)))
+    print('  + svodka rows                  : %d' % bridge['svodka_rows'])
+    print('  - duplicates skipped           : %d' % bridge['duplicates'])
+    print('  - wage carryovers quarantined  : %d' % bridge['quarantined'])
+    print('  = rows accepted                : %d  balanced: %s'
+          % (bridge['rows'], 'YES' if bridge['balanced'] else 'NO'))
+    print('UNPARSED_CANDIDATE rows          : %d' % len(result.unparsed))
+    mismatched = [c for c in result.total_checks if c[-1] == 'MISMATCH']
+    print('book totals checked              : %d (MISMATCH %d)'
+          % (len(result.total_checks), len(mismatched)))
+    print('payer decision pending (rows)    : %d'
+          % result.payer_decision_pending_rows)
+    print('new cards whose name has "fukaro": %d'
+          % len(result.payer_word_new_cards))
+    for warning in result.schema_warnings:
+        print('SCHEMA_WARNING: %s' % _ascii(warning))
+    gate = apply_gate(result)
+    print('APPLY_PERMITTED: %s' % ('YES' if not gate else 'NO'))
+    for line in gate:
+        print('  %s' % _ascii(line))
+    print('')
     print('sheets skipped (not "svod ichi") : %d' % len(result.skipped_sheets))
     print('headers matching no known phrase : %d distinct'
           % len(result.unmatched_headers))
@@ -1965,6 +2523,113 @@ def print_console(result, stats, args, batch):
     print('')
     print('Cyrillic detail (farms, operators, sheets, every skipped and')
     print('rejected row) is in the UTF-8 report file above.')
+
+
+def _write_fin_recon_003_sections(add, result, stats):
+    """Bridge, UNPARSED_CANDIDATE, book totals, payer hold, apply gate."""
+    bridge = row_bridge(result)
+    add('')
+    add('МОСТ СТРОК ДЕТАЛЬНЫХ ЛИСТОВ «свод ичи»: листов %d' % result.bridge_sheets)
+    add('  Каждая непустая строка листа попадает ровно в один класс.')
+    names = {
+        'job': 'работа с «№»', 'job_no_number': 'работа без «№»',
+        'wage': 'строка блока «Иш хаки»',
+        'rejected': 'отклонена по названному правилу',
+        'unparsed': 'UNPARSED_CANDIDATE — данные работы без правила',
+        'totals': 'строка итога «Жами …» / «ИТОГО»', 'header': 'шапка',
+        'block_marker': 'метка блока (Справка, Нақд, Иш хаки)',
+        'empty_numbered': 'только номер, без данных',
+        'no_job_data': 'нет данных в колонках работы',
+        'above_header': 'выше шапки'}
+    for name in ROW_CLASSES:
+        add('  %-16s %5d  %s' % (name, result.row_classes[name], names[name]))
+    add('  кандидатов с данными работы: %d' % bridge['candidates'])
+    add('  разобрано как работы: %d (из них без «№»: %d, %.2f га)'
+        % (bridge['parsed'], bridge['parsed_no_number'],
+           stats.get('counterless_area', 0.0)))
+    add('  + строк листов «СВОДКА»: %d (свой читатель, в мост не входят)'
+        % bridge['svodka_rows'])
+    add('  − дублей: %d; − карантин переносов зарплаты: %d'
+        % (bridge['duplicates'], bridge['quarantined']))
+    add('  = принято строк: %d; мост сходится: %s'
+        % (bridge['rows'], 'ДА' if bridge['balanced'] else 'НЕТ'))
+    add('  По листам (работа / без «№» / зарплата / отклонено / UNPARSED):')
+    for sheet in result.sheets:
+        if sheet.skipped_reason or not any(sheet.row_classes.values()):
+            continue
+        c = sheet.row_classes
+        add('    %s / %s: %d / %d / %d / %d / %d'
+            % (sheet.file_name, sheet.sheet_name, c['job'], c['job_no_number'],
+               c['wage'], c['rejected'], c['unparsed']))
+
+    counterless = [r for r in result.rows if r.get('counter_missing')]
+    add('')
+    add('РАБОТЫ, ПРИНЯТЫЕ БЕЗ НОМЕРА «№»: %d строк, %.2f га'
+        % (len(counterless), sum(r['area_ha'] for r in counterless)))
+    add('  Номер — набор диспетчера, не признак работы; в идентичность не')
+    add('  входит. Принято только по доказательству: хозяйство, площадь и')
+    add('  дата, цена или сумма; строка итога работой не бывает.')
+    for row in counterless:
+        add('  - %s / %s / строка %d: «%s» %.2f га, %s, сумма %s'
+            % (row['source_file'], row['source_sheet'], row['source_row'],
+               row['customer_raw'], row['area_ha'],
+               row['work_date_from'] or row['date_raw'] or 'без даты',
+               '%.2f' % row['amount'] if row['amount'] is not None
+               else '—'))
+
+    add('')
+    add('UNPARSED_CANDIDATE — СТРОКИ С ДАННЫМИ РАБОТЫ БЕЗ ПРАВИЛА: %d'
+        % len(result.unparsed))
+    add('  Запись (--apply и загрузка через экран) ОТКАЗАНА, пока список')
+    add('  не пуст: строку нужно прочитать и решить, а не пропустить.')
+    for file_name, sheet_name, excel_row, reason, preview in result.unparsed:
+        add('  - %s / %s / строка %d: %s'
+            % (file_name, sheet_name, excel_row, reason))
+        add('      %s' % preview)
+
+    add('')
+    mismatched = [c for c in result.total_checks if c[-1] == 'MISMATCH']
+    add('ИТОГИ КНИГИ «Жами …» ПРОТИВ ПРОЧИТАННОГО: проверено %d, '
+        'расхождений %d' % (len(result.total_checks), len(mismatched)))
+    add('  block — сходится с работами с последней шапки, метки или итога;')
+    add('  sheet — с работами с начала листа. Допуск %.3f га.'
+        % TOTAL_TOLERANCE_HA)
+    for (file_name, sheet_name, excel_row, label, book_area, block_area,
+         sheet_area, verdict) in result.total_checks:
+        add('  - %s / %s / строка %d «%s»: книга %.2f, блок %.2f, лист %.2f'
+            ' — %s' % (file_name, sheet_name, excel_row, label, book_area,
+                       block_area, sheet_area, verdict))
+
+    add('')
+    add('ПЛАТЕЛЬЩИК ЖДЁТ РЕШЕНИЯ ВЛАДЕЛЬЦА (PAYER_DECISION_REQUIRED): %d строк'
+        % result.payer_decision_pending_rows)
+    add('  Написание из PAYER_DECISION_PENDING_KEYS без алиаса: карточка НЕ')
+    add('  заводится, запись отказана. Решение — алиас в таблице решений или')
+    add('  перенос ключа в GENERIC_PAYER_KEYS изменением кода.')
+    for key, name in result.created_customers:
+        if is_payer_decision_pending(key):
+            add('  - «%s»' % name)
+    add('НОВЫЕ КАРТОЧКИ, В ИМЕНИ КОТОРЫХ ЕСТЬ СЛОВО «фукаро»: %d'
+        % len(result.payer_word_new_cards))
+    add('  Только для глаз: «Ахмад (фукаро)» — названный гражданин, решение')
+    add('  владельца — своя карточка. Ничего не блокирует.')
+    for _key, name in result.payer_word_new_cards:
+        add('  - «%s»' % name)
+
+    add('')
+    gate = apply_gate(result)
+    add('ЗАПИСЬ РАЗРЕШЕНА (APPLY_PERMITTED): %s' % ('ДА' if not gate else 'НЕТ'))
+    for warning in result.schema_warnings:
+        add('  СХЕМА: %s' % warning)
+    for line in gate:
+        if not line.startswith('SCHEMA: '):
+            add('  %s' % line)
+    if result.schema_warnings:
+        add('  Предупреждение схемы не меняет прочитанное: строки выше')
+        add('  разобраны полностью; база без колонки не даёт только ЗАПИСАТЬ.')
+    if result.svodka_sheets:
+        add('  Листы «СВОДКА» (%d) читаются своим читателем и в мост не входят.'
+            % result.svodka_sheets)
 
 
 def write_report(path, result, stats, args, batch, include_prediction=True):
@@ -2199,6 +2864,7 @@ def write_report(path, result, stats, args, batch, include_prediction=True):
         add('  + %s' % raw_name)
     add('  плательщик-гражданин не установлен («Фукаро»): %d строк -- '
         'без карточки' % result.payer_unidentified_rows)
+    _write_fin_recon_003_sections(add, result, stats)
 
     if result.month_outliers:
         add('')
@@ -2244,6 +2910,10 @@ def build_parser():
                              "block marker. Off by default: such rows get "
                              "'unknown', which is reported and is fixable on "
                              'the works screen.')
+    parser.add_argument('--rows-csv', default=None,
+                        help='UTF-8 CSV, one line per physical row that '
+                             'carries job data: accepted, duplicate, '
+                             'quarantined, rejected or UNPARSED_CANDIDATE')
     return parser
 
 
@@ -2272,11 +2942,26 @@ def main(argv=None):
         try:
             _require_tables(con, ('drone_works', 'drone_customers',
                                   'drone_customer_aliases', 'drone_operators'))
-            _require_received_kind(con)
-            _require_payer_unidentified(con)
+            # [REASON]: FIN-RECON-003. A missing column is a reason not to
+            # WRITE, never a reason not to READ: the 30.10.2026 snapshot
+            # lacks payer_unidentified, and refusing the dry run there hid
+            # what the books contain behind a schema message. --apply still
+            # refuses exactly as before (same text, exit 2); the dry run
+            # reads the books and prints the refusal as APPLY_PERMITTED: NO.
+            # The upload screen calls the two checks itself and is unchanged.
+            schema_warnings = []
+            for check in (_require_received_kind,
+                          _require_payer_unidentified):
+                try:
+                    check(con)
+                except ImportPreconditionError as exc:
+                    if args.apply:
+                        raise
+                    schema_warnings.append(str(exc))
             dir_obj = Directory(con)
             result = collect(args.dir, manifest, files, dir_obj,
                              args.default_payment)
+            result.schema_warnings = schema_warnings
             result.manifest_problems = manifest_problems
             resolve(result, dir_obj)
             result.filename_alias_conflicts = filename_alias_conflicts(
@@ -2311,6 +2996,8 @@ def main(argv=None):
         return 2
 
     write_report(args.report, result, stats, args, batch)
+    if args.rows_csv:
+        write_rows_csv(args.rows_csv, result)
     print_console(result, stats, args, batch)
     if args.apply:
         print('')

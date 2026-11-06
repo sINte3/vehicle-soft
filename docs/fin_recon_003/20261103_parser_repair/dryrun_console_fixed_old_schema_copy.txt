@@ -1,0 +1,106 @@
+========================================================================
+DRONE-WORKS-001 import  --  DRY RUN (nothing written)
+========================================================================
+directory   : %WORK%\july\books
+manifest    : %WORK%\july\manifest.txt
+database    : %WORK%\july\replay_copy2.db
+batch       : replay_dry
+report file : %WORK%\july\report_replay.txt
+
+files parsed             : 5
+files skipped (no entry) : 0
+sheets                   : 15
+rows accepted            : 328
+hectares                 : 5144.66
+amount total             : 775357370.99
+received total           : 142042280.00
+other costs total        : 43517235.00
+distinct customers       : 163
+rows with a price cell   : 328
+
+by payment type:
+  cash        236 rows     2887.73 ha
+  transfer     92 rows     2256.93 ha
+  internal      0 rows        0.00 ha
+  unknown       0 rows        0.00 ha
+
+by date kind:
+  date        326 rows     5040.16 ha
+  span          0 rows        0.00 ha
+  none          2 rows      104.50 ha
+  unparsed      0 rows        0.00 ha
+
+by month (real date when present, manifest month otherwise):
+  2026-07    328 rows     5144.66 ha
+
+by MANIFEST month, against the prediction of 2026-08-04 for the
+28 REAL books -- a run over any other corpus differs wholesale:
+  month      rows          ha |   exp.     exp. ha | delta ha
+  2025-09       0        0.00 |    378     4937.73 |   -4937.73
+  2025-10       0        0.00 |     28      790.90 |    -790.90
+  2026-03       0        0.00 |     46     1378.48 |   -1378.48
+  2026-04       0        0.00 |    331     6388.83 |   -6388.83
+  2026-05       0        0.00 |    106     2179.72 |   -2179.72
+  2026-06       0        0.00 |     94     2002.64 |   -2002.64
+  2026-07     328     5144.66 |      6       62.73 |   +5081.93
+  TOTAL       328     5144.66 |    895    15738.39 |  -10593.73 (-67.31%)
+  The monthly rows are INDICATIVE: this tool groups a dated row by
+  its own date and one book straddles September and October. The
+  total is the firm number. 2026-04 is the anchor -- it agrees with our
+  own DJI flight data to 0.15 %. A disagreement is a finding to
+  report, not a number to force.
+
+customers matched to an alias : 0
+customers to be created       : 162
+payer a citizen, unidentified : 13 rows (no card)
+operator resolved rows        : 0
+operator UNRESOLVED rows      : 328
+duplicate rows skipped        : 0
+same-number pairs retained    : 0
+wage carryovers quarantined   : 0
+unsafe filename aliases       : 0
+rows already in the database  : 0
+rows rejected                 : 0
+wage rows ignored (Ish haki)  : 0
+formula cells with no cache   : 0
+
+row bridge, 10 detail sheets (0 svodka sheets read separately, not bridged):
+  job             : 309
+  job_no_number   : 19
+  wage            : 0
+  rejected        : 0
+  unparsed        : 0
+  totals          : 31
+  header          : 19
+  block_marker    : 32
+  empty_numbered  : 54
+  no_job_data     : 3
+  above_header    : 21
+  candidate rows with job data   : 328
+  parsed as jobs                 : 328 (without "No": 19, 189.25 ha)
+  + svodka rows                  : 0
+  - duplicates skipped           : 0
+  - wage carryovers quarantined  : 0
+  = rows accepted                : 328  balanced: YES
+UNPARSED_CANDIDATE rows          : 0
+book totals checked              : 22 (MISMATCH 0)
+payer decision pending (rows)    : 1
+new cards whose name has "fukaro": 0
+SCHEMA_WARNING: ERROR: drone_works.payer_unidentified is missing. Run migrate_drones_works_payer_unidentified_001.py first.
+APPLY_PERMITTED: NO
+  SCHEMA: ERROR: drone_works.payer_unidentified is missing. Run migrate_drones_works_payer_unidentified_001.py first.
+  PAYER_DECISION_REQUIRED: 1 spelling(s) of PAYER_DECISION_PENDING_KEYS would become a new card
+
+sheets skipped (not "svod ichi") : 5
+headers matching no known phrase : 0 distinct
+rows with no payment block above : 0 (imported as cash)
+rows with an empty customer      : 1
+operator taken from the row cell : 0
+operator taken from sheet/file   : 328
+received figure of kind received     : 275
+received figure of kind operator_due : 53
+
+Cyrillic detail (farms, operators, sheets, every skipped and
+rejected row) is in the UTF-8 report file above.
+
+DRY RUN: nothing was written. Re-run with --apply to write.
