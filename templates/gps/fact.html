@@ -11,14 +11,16 @@
 {% endif %}
 {% endblock %}
 {% block content %}
+{# Измеренное -- без «.0»: «точка раз в 30 с», «спутников 14». #}
+{% macro measured(value) -%}
+  {%- if value is none %}—{% else %}{{ '%g'|format(value) }}{% endif -%}
+{%- endmacro %}
 {% include 'gps/_gps_nav.html' %}
 
-<div class="vs-hero vs-mb">
-  <div>
-    <div class="vs-hero-title">{{ 'Работа за день' if is_ru else 'Кунлик иш' }}</div>
-    <div class="vs-hero-sub">{{ 'Сколько машина обработала за сутки — посчитано по её собственному треку, а не по обводу рукой. Участок, у которого нет геозоны, показывается как есть: работа по незаведённой земле это норма, а не ноль. Экран не решает, работа перед вами или проезд, — он спрашивает.' if is_ru else 'Машина бир кунда қанча ишлаганини ўз трекидан ҳисоблаб чиқарилган, қўлда чизилганидан эмас. Геозонаси йўқ участка борича кўрсатилади: рўйхатга олинмаган ерда ишлаш — бу норма, ноль эмас. Экран иш ёки ўтиш эканини ҳал қилмайди — сўрайди.' }}</div>
-  </div>
-</div>
+{# 04.11.2026, решение владельца: экраны модуля читают люди. Вместо карточки
+   с абзацем правил -- одна строка о том, что здесь делать; правила --
+   дословно, один раз, внизу в «Как считается». #}
+<p class="gps-fact-lead">{{ 'Что машина сделала за сутки по своему GPS-треку. Отметьте каждый участок: работа это или проезд.' if is_ru else 'Машина кун давомида ўз GPS-треки бўйича нима қилди. Ҳар бир участкани белгиланг: бу иш ёки ўтиш.' }}</p>
 
 {# ── Выбор суток и машины ──────────────────────────────────────────────────
    Замечания владельца 09.10.2026: машину искать набором номера, а не
@@ -135,7 +137,6 @@
   {% else %}
     <span class="vs-badge vs-badge-warning">{{ 'нет в справочнике техники' if is_ru else 'техника маълумотномасида йўқ' }}</span>
   {% endif %}
-  <span class="vs-soft">{{ 'объект Wialon' if is_ru else 'Wialon объекти' }} {{ unit_id }}</span>
   {# A3: та же машина за две недели по эти сутки. #}
   <a href="{{ url_for('gps.machine', unit=unit_id, to=day.isoformat(), **{'from': (day - period_back).isoformat()}) }}">{{ 'История машины' if is_ru else 'Машина тарихи' }}</a>
   <span class="gps-fact-head-nav">
@@ -144,12 +145,57 @@
   </span>
 </div>
 
+{# ── Итог суток -- одной карточкой над картой ─────────────────────────────
+   Что машина сделала за день -- первое, что ищет человек, открыв машину;
+   прежде это были одиннадцать одинаковых плиток под картой. Пять чисел --
+   крупно; качество записи трека -- одной строкой под ними: справка к
+   числам, а не новость. Подписи -- прежние слова плиток. #}
+<div class="gps-fact-day">
+  <div class="gps-fact-figs">
+    <div>
+      <span class="gps-fact-fig-label">{{ 'Обработано, га' if is_ru else 'Ишланган, га' }}</span>
+      <span class="gps-fact-fig-value">{% if aggregate.reason %}—{% else %}{{ total_ha }}{% endif %}</span>
+    </div>
+    <div>
+      <span class="gps-fact-fig-label">{{ 'Участков' if is_ru else 'Участкалар' }}</span>
+      <span class="gps-fact-fig-value">{{ sites|length }}</span>
+      {% if sites %}
+      {% set unanswered = sites|length - answered %}
+      <span class="gps-fact-fig-note{% if unanswered %} is-open{% endif %}">{% if unanswered %}{{ ('без ответа: %d' if is_ru else 'жавобсиз: %d')|format(unanswered) }}{% else %}{{ 'все отвечены' if is_ru else 'барчасига жавоб берилган' }}{% endif %}</span>
+      {% endif %}
+    </div>
+    <div>
+      <span class="gps-fact-fig-label">{{ 'В движении' if is_ru else 'Ҳаракатда' }}</span>
+      <span class="gps-fact-fig-value">{% if summary %}{{ duration(summary.moving_s / 60, is_ru) }}{% else %}—{% endif %}</span>
+    </div>
+    <div>
+      <span class="gps-fact-fig-label">{{ 'Первое и последнее движение' if is_ru else 'Биринчи ва охирги ҳаракат' }}</span>
+      <span class="gps-fact-fig-value">{% if summary and summary.first_move %}{{ summary.first_move.strftime('%H:%M') }}–{{ summary.last_move.strftime('%H:%M') }}{% else %}—{% endif %}</span>
+    </div>
+    <div>
+      <span class="gps-fact-fig-label">{{ 'Пробег по треку, км' if is_ru else 'Трек бўйича масофа, км' }}</span>
+      <span class="gps-fact-fig-value">{{ '%.1f'|format(aggregate.track_km or 0) }}</span>
+    </div>
+  </div>
+  {# [REASON]: разрывы и прыжки выделены цветом по факту, без порога: так же
+     прежде стоял жёлтый значок у участка (gps/daily.py, quality_flag --
+     «только наличие и счёт, никогда не порог»). #}
+  <div class="gps-fact-quality">
+    {{ 'Запись трека:' if is_ru else 'Трек ёзуви:' }}
+    {{ ('точек %d, из них в работе %d' if is_ru else 'нуқталар %d, шундан ишда %d')|format(aggregate.points_total or 0, aggregate.points_work or 0) }}
+    · {{ 'точка раз в' if is_ru else 'нуқта ҳар' }} {{ measured(aggregate.interval_median_s) }} {{ 'с' if is_ru else 'с да' }}
+    · {{ 'спутников' if is_ru else 'йўлдошлар' }} {{ measured(aggregate.sats_median) }}
+    · {{ 'молчаний на ходу' if is_ru else 'ҳаракатда сукунат' }} <b{% if aggregate.motion_gaps %} class="is-marked"{% endif %}>{{ aggregate.motion_gaps or 0 }}</b>
+    · {{ 'прыжков координат' if is_ru else 'координата сакрашлари' }} <b{% if aggregate.gps_jumps %} class="is-marked"{% endif %}>{{ aggregate.gps_jumps or 0 }}</b>
+  </div>
+</div>
+
 {% if aggregate.reason %}
   <div class="vs-alert is-warning vs-mb">
     <div>
       <b>{{ (reason_labels.get(aggregate.reason)[0] if is_ru else reason_labels.get(aggregate.reason)[1]) if reason_labels.get(aggregate.reason) else aggregate.reason }}</b>
       {% if aggregate.reason == 'sbor_nepolnyy' %}
-      <div>{{ 'Коллектор ещё не дошёл до конца этих суток: после долгого простоя сервер отдаёт историю частями. Точки не потеряны — они приедут следующим прогоном, и расчёт повторится сам (gps.daily --catch-up). Показанные ниже участки, если они есть, посчитаны по неполному треку и ответы по ним сохраняются.' if is_ru else 'Коллектор бу кун охирига ҳали етиб бормаган: узоқ танаффусдан кейин сервер тарихни қисмларга бўлиб беради. Нуқталар йўқолмаган — улар кейинги йиғишда келади ва ҳисоб ўзи қайтарилади (gps.daily --catch-up). Қуйида кўрсатилган участкалар, агар бўлса, тўлиқ бўлмаган трек бўйича ҳисобланган ва улар бўйича жавоблар сақланади.' }}</div>
+      <div>{{ 'Коллектор ещё не дошёл до конца этих суток: после долгого простоя сервер отдаёт историю частями. Точки не потеряны — они приедут следующим прогоном, и расчёт повторится сам. Показанные ниже участки, если они есть, посчитаны по неполному треку и ответы по ним сохраняются.' if is_ru else 'Коллектор бу кун охирига ҳали етиб бормаган: узоқ танаффусдан кейин сервер тарихни қисмларга бўлиб беради. Нуқталар йўқолмаган — улар кейинги йиғишда келади ва ҳисоб ўзи қайтарилади. Қуйида кўрсатилган участкалар, агар бўлса, тўлиқ бўлмаган трек бўйича ҳисобланган ва улар бўйича жавоблар сақланади.' }}</div>
       {% elif aggregate.reason == 'redkaya_zapis' %}
       <div>{{ 'Трекер писал реже, чем раз в 30 секунд. Редкая запись всегда занижает площадь и никогда не завышает: при удвоении интервала работа теряет 5,5% в медиане и до 45% на мелких участках. Заниженный гектар в счёте хуже невыданного, поэтому площадь не публикуется. Показатели трека выше измерены и верны.' if is_ru else 'Трекер 30 сониядан сийракроқ ёзган. Сийрак ёзув майдонни ҳамиша камайтиради ва ҳеч қачон оширмайди: интервал икки баравар бўлганда иш медианада 5,5%, майда участкаларда 45% гача йўқолади. Ҳисоб-китобда камайтирилган гектар берилмаган гектардан ёмонроқ, шунинг учун майдон эълон қилинмайди. Юқоридаги трек кўрсаткичлари ўлчанган ва тўғри.' }}</div>
       {% elif aggregate.reason == 'spetstekhnika' %}
@@ -174,7 +220,7 @@
 <div class="vs-card gps-fact-map-card">
   <div class="vs-card-header">
     <span class="vs-card-title">{{ 'Трек и участки' if is_ru else 'Трек ва участкалар' }}</span>
-    <span class="vs-soft">{{ 'колесо мыши — масштаб; номера на карте совпадают с таблицей; щелчок по участку — подробности' if is_ru else 'сичқонча ғилдираги — масштаб; харитадаги рақамлар жадвал билан бир хил; участкага босинг — тафсилотлар' }}</span>
+    <span class="vs-soft">{{ 'номера на карте — как в таблице участков' if is_ru else 'харитадаги рақамлар — участкалар жадвалидагидек' }}</span>
   </div>
   <div class="vs-card-body">
     <div class="vs-map" data-vs-map="gps-fact-map" role="region"
@@ -206,9 +252,15 @@
     {# Дату свежего снимка сюда пишет vs-map.js: на сервере её не знают. #}
     {% if fresh_on %}<div class="vs-soft vs-mt-sm" data-vs-map-note="fresh" hidden></div>{% endif %}
     {% if not satellite %}
-    <div class="vs-soft vs-mt-sm">{{ 'Спутниковая подложка не подключена — показана карта OpenStreetMap.' if is_ru else 'Спутник қатлами уланмаган — OpenStreetMap харитаси кўрсатилган.' }}{% if current_user.is_admin %} {{ 'Чёткий спутник включается ключом Esri в instance\\esri_api_key.txt, свежие снимки Sentinel-2 — идентификатором Copernicus в instance\\copernicus_instance_id.txt; порядок — docs/GPS_ROLLOUT_RUNBOOK.md, раздел 11.' if is_ru else 'Тиниқ спутник instance\\esri_api_key.txt даги Esri калити билан, янги Sentinel-2 суратлари instance\\copernicus_instance_id.txt даги Copernicus идентификатори билан ёқилади; тартиб — docs/GPS_ROLLOUT_RUNBOOK.md, 11-бўлим.' }}{% endif %}</div>
-    {% elif current_user.is_admin and not (sharp_on and fresh_on) %}
-    <div class="vs-soft vs-mt-sm">{% if not fresh_on %}{{ 'Свежие снимки Sentinel-2 не подключены — instance\\copernicus_instance_id.txt, ранбук, раздел 11.' if is_ru else 'Янги Sentinel-2 суратлари уланмаган — instance\\copernicus_instance_id.txt, ранбук, 11-бўлим.' }}{% else %}{{ 'Чёткий спутник Esri не подключён — instance\\esri_api_key.txt, ранбук, раздел 11.' if is_ru else 'Тиниқ Esri спутниги уланмаган — instance\\esri_api_key.txt, ранбук, 11-бўлим.' }}{% endif %}</div>
+    <div class="vs-soft vs-mt-sm">{{ 'Спутниковая подложка не подключена — показана карта OpenStreetMap.' if is_ru else 'Спутник қатлами уланмаган — OpenStreetMap харитаси кўрсатилган.' }}</div>
+    {% endif %}
+    {# Как подключить -- только администратору и свёрнуто: пути к файлам
+       нужны тому, кто кладёт ключи, а не тому, кто смотрит карту. #}
+    {% if current_user.is_admin and not (sharp_on and fresh_on) %}
+    <details class="gps-fact-rules">
+      <summary>{{ 'Подключение спутниковых снимков' if is_ru else 'Спутник суратларини улаш' }}</summary>
+      <p>{% if not satellite %}{{ 'Чёткий спутник включается ключом Esri в instance\\esri_api_key.txt, свежие снимки Sentinel-2 — идентификатором Copernicus в instance\\copernicus_instance_id.txt; порядок — docs/GPS_ROLLOUT_RUNBOOK.md, раздел 11.' if is_ru else 'Тиниқ спутник instance\\esri_api_key.txt даги Esri калити билан, янги Sentinel-2 суратлари instance\\copernicus_instance_id.txt даги Copernicus идентификатори билан ёқилади; тартиб — docs/GPS_ROLLOUT_RUNBOOK.md, 11-бўлим.' }}{% else %}{% if not fresh_on %}{{ 'Свежие снимки Sentinel-2 не подключены — instance\\copernicus_instance_id.txt, ранбук, раздел 11.' if is_ru else 'Янги Sentinel-2 суратлари уланмаган — instance\\copernicus_instance_id.txt, ранбук, 11-бўлим.' }}{% else %}{{ 'Чёткий спутник Esri не подключён — instance\\esri_api_key.txt, ранбук, раздел 11.' if is_ru else 'Тиниқ Esri спутниги уланмаган — instance\\esri_api_key.txt, ранбук, 11-бўлим.' }}{% endif %}{% endif %}</p>
+    </details>
     {% endif %}
   </div>
 </div>
@@ -220,7 +272,7 @@
 <div class="vs-table-wrap gps-fact-sites">
   <div class="vs-card-header">
     <span class="vs-card-title">{{ 'Участки за сутки' if is_ru else 'Кун участкалари' }}</span>
-    <span class="vs-soft">{{ 'подсказка машины — не ответ; отвечает человек' if is_ru else 'машина таклифи жавоб эмас; одам жавоб беради' }}</span>
+    <span class="vs-soft">{{ 'отметьте: работа или проезд' if is_ru else 'белгиланг: иш ёки ўтиш' }}</span>
   </div>
   <div class="vs-table-scroll">
     <table class="vs-table">
@@ -232,17 +284,21 @@
         </tr>
       </thead>
       <tbody>
+        {% set suggestion_uz = {'работа': 'иш', 'проезд': 'ўтиш'} %}
         {% for site in sites %}
         <tr>
           <td class="gps-fact-site-no">{{ site.site_number }}</td>
           <td>
-            <div><b>{{ site.area_ha }}</b> {{ 'га' if is_ru else 'га' }} · {{ site.minutes }} {{ 'мин' if is_ru else 'дақ' }}</div>
+            <div><b>{{ '%.2f'|format(site.area_ha or 0) }}</b> {{ 'га' if is_ru else 'га' }} · {{ duration(site.minutes, is_ru) }}</div>
+            {# [REASON]: значка качества у участка больше нет: quality_flag
+               (gps/daily.py) -- счёт разрывов и прыжков ВСЕХ суток, одинаковый
+               у каждого участка, и он стоит строкой «Запись трека» выше
+               словами, а не кодом «razryvy=3». Подсказка правила -- словом
+               языка экрана: в базе она русская. #}
             <div class="gps-fact-site-meta">
               {% if site.contour %}<span>{{ site.contour.name }}</span>
               {% else %}<span class="vs-soft">{{ 'без геозоны' if is_ru else 'геозонасиз' }}</span>{% endif %}
-              {% if site.quality_flag %}<span class="vs-badge vs-badge-warning">{{ site.quality_flag }}</span>
-              {% else %}<span class="vs-soft">{{ 'чисто' if is_ru else 'тоза' }}</span>{% endif %}
-              <span class="vs-soft">{{ 'подсказка:' if is_ru else 'таклиф:' }}</span> <span class="vs-badge">{{ site.suggested_label or '—' }}</span>
+              {% if site.suggested_label %}<span class="vs-soft">{{ 'программа предлагает:' if is_ru else 'дастур таклифи:' }} {{ site.suggested_label if is_ru else suggestion_uz.get(site.suggested_label, site.suggested_label) }}</span>{% endif %}
             </div>
           </td>
           <td>
@@ -255,9 +311,9 @@
               {# Вид карты кладёт сюда vs-map.js: ответ вернёт карту туда же. #}
               <input type="hidden" name="view" value="{{ map_view or '' }}" data-vs-map-view-of="gps-fact-map">
               <button type="submit" name="label" value="работа"
-                      class="vs-btn vs-btn-sm {% if site.operator_label == 'работа' %}vs-btn-success{% else %}vs-btn-ghost{% endif %}">{{ 'Работа' if is_ru else 'Иш' }}</button>
+                      class="vs-btn vs-btn-sm{% if site.operator_label == 'работа' %} vs-btn-success{% endif %}">{{ 'Работа' if is_ru else 'Иш' }}</button>
               <button type="submit" name="label" value="проезд"
-                      class="vs-btn vs-btn-sm {% if site.operator_label == 'проезд' %}vs-btn-warning{% else %}vs-btn-ghost{% endif %}">{{ 'Проезд' if is_ru else 'Ўтиш' }}</button>
+                      class="vs-btn vs-btn-sm{% if site.operator_label == 'проезд' %} vs-btn-warning{% endif %}">{{ 'Проезд' if is_ru else 'Ўтиш' }}</button>
               {% if site.operator_label %}
               <button type="submit" name="label" value=""
                       class="vs-btn vs-btn-sm vs-btn-ghost">{{ 'Снять' if is_ru else 'Олиб ташлаш' }}</button>
@@ -283,61 +339,12 @@
 
 </section>
 
-{# ── Измеренные показатели суток ───────────────────────────────────────────
-   Под картой, а не над ней: главный труд этого экрана -- посмотреть на карту
-   и ответить по участкам; показатели трека -- справка к нему. #}
-<div class="vs-caption vs-mb-sm">{{ 'Показатели трека за сутки' if is_ru else 'Кунлик трек кўрсаткичлари' }}</div>
-<div class="vs-stat-grid vs-mb">
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Обработано, га' if is_ru else 'Ишланган, га' }}</div>
-    <div class="vs-stat-value">{% if aggregate.reason %}—{% else %}{{ total_ha }}{% endif %}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Участков' if is_ru else 'Участкалар' }}</div>
-    <div class="vs-stat-value">{{ sites|length }}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Отвечено' if is_ru else 'Жавоб берилган' }}</div>
-    <div class="vs-stat-value">{{ answered }} / {{ sites|length }}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Точек, из них в работе' if is_ru else 'Нуқталар, шундан ишда' }}</div>
-    <div class="vs-stat-value">{{ aggregate.points_total }} / {{ aggregate.points_work }}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Пробег по треку, км' if is_ru else 'Трек бўйича масофа, км' }}</div>
-    <div class="vs-stat-value">{{ '%.1f'|format(aggregate.track_km or 0) }}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'В движении' if is_ru else 'Ҳаракатда' }}</div>
-    {% if summary %}{% set moving_min = (summary.moving_s / 60)|round|int %}{% endif %}
-    <div class="vs-stat-value">{% if summary %}{{ moving_min // 60 }} {{ 'ч' if is_ru else 'соат' }} {{ '%02d'|format(moving_min % 60) }} {{ 'мин' if is_ru else 'дақ' }}{% else %}—{% endif %}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Первое и последнее движение' if is_ru else 'Биринчи ва охирги ҳаракат' }}</div>
-    <div class="vs-stat-value">{% if summary and summary.first_move %}{{ summary.first_move.strftime('%H:%M') }}–{{ summary.last_move.strftime('%H:%M') }}{% else %}—{% endif %}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Запись, с' if is_ru else 'Ёзув, с' }}</div>
-    <div class="vs-stat-value">{% if aggregate.interval_median_s is none %}—{% else %}{{ aggregate.interval_median_s }}{% endif %}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Спутников' if is_ru else 'Йўлдошлар' }}</div>
-    <div class="vs-stat-value">{% if aggregate.sats_median is none %}—{% else %}{{ aggregate.sats_median }}{% endif %}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Молчание на ходу' if is_ru else 'Ҳаракатда сукунат' }}</div>
-    <div class="vs-stat-value">{{ aggregate.motion_gaps }}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Прыжков координат' if is_ru else 'Координата сакрашлари' }}</div>
-    <div class="vs-stat-value">{{ aggregate.gps_jumps }}</div>
-  </div>
-</div>
-
-<div class="vs-help vs-mb">
-  {{ 'Метод: точки в окне 1–15 км/ч, сгущение пути каждые 5 м, альфа-форма, площадь в UTM 41N. Ширина захвата агрегата не используется нигде — шаг между проходами измеряется из самого трека. Версия метода: ' if is_ru else 'Усул: 1–15 км/соат оралиғидаги нуқталар, йўлни ҳар 5 м да қуюқлаштириш, альфа-шакл, майдон UTM 41N да. Агрегат қамров кенглиги ҳеч қаерда ишлатилмайди — ўтишлар орасидаги қадам трекнинг ўзидан ўлчанади. Усул версияси: ' }}{{ aggregate.method_version }}.
-</div>
+{# ── Как считается -- правила экрана, дословно, один раз, свёрнуто ──────── #}
+<details class="gps-fact-rules">
+  <summary>{{ 'Как считается' if is_ru else 'Қандай ҳисобланади' }}</summary>
+  <p>{{ 'Сколько машина обработала за сутки — посчитано по её собственному треку, а не по обводу рукой. Участок, у которого нет геозоны, показывается как есть: работа по незаведённой земле это норма, а не ноль. Экран не решает, работа перед вами или проезд, — он спрашивает.' if is_ru else 'Машина бир кунда қанча ишлаганини ўз трекидан ҳисоблаб чиқарилган, қўлда чизилганидан эмас. Геозонаси йўқ участка борича кўрсатилади: рўйхатга олинмаган ерда ишлаш — бу норма, ноль эмас. Экран иш ёки ўтиш эканини ҳал қилмайди — сўрайди.' }}</p>
+  <p>{{ 'Метод: точки в окне 1–15 км/ч, сгущение пути каждые 5 м, альфа-форма, площадь в UTM 41N. Ширина захвата агрегата не используется нигде — шаг между проходами измеряется из самого трека. Версия метода: ' if is_ru else 'Усул: 1–15 км/соат оралиғидаги нуқталар, йўлни ҳар 5 м да қуюқлаштириш, альфа-шакл, майдон UTM 41N да. Агрегат қамров кенглиги ҳеч қаерда ишлатилмайди — ўтишлар орасидаги қадам трекнинг ўзидан ўлчанади. Усул версияси: ' }}{{ aggregate.method_version }}.</p>
+</details>
 
 {% endif %}
 {% endblock %}

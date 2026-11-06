@@ -48,8 +48,9 @@ function pageState(haLabel) {
   const track = [...document.querySelectorAll('path.vs-map-track')];
   const de = document.documentElement;
   const box = canvas ? canvas.getBoundingClientRect() : { width: 0, height: 0 };
-  const stat = [...document.querySelectorAll('.vs-stat')]
-    .find((s) => s.querySelector('.vs-stat-label').textContent.trim() === haLabel);
+  // 04.11.2026: итог периода -- одна карточка (gps-fact-figs), а не плитки.
+  const stat = [...document.querySelectorAll('.gps-fact-figs > div')]
+    .find((s) => s.querySelector('.gps-fact-fig-label').textContent.trim() === haLabel);
   return {
     ready: host ? host.getAttribute('data-vs-map-ready') : null,
     tracks: track.length,
@@ -60,7 +61,7 @@ function pageState(haLabel) {
     canvas: [Math.round(box.width), Math.round(box.height)],
     doc: [de.scrollWidth, de.clientWidth],
     legend: (document.querySelector('.vs-map-legend') || { textContent: '' }).textContent,
-    ha: stat ? stat.querySelector('.vs-stat-value').textContent.trim() : null,
+    ha: stat ? stat.querySelector('.gps-fact-fig-value').textContent.trim() : null,
     rows: document.querySelectorAll('tbody tr').length,
     body: document.body.innerText,
   };

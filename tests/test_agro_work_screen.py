@@ -412,7 +412,11 @@ class LateAndOpen(ScreenCase):
         row = self.row_of(html, 'APP-TEST-007')
         self.assertTrue(row.startswith('<tr class="is-danger-row">'))
         self.assertIn('<span class="vs-badge vs-badge-danger">Без вердикта</span>', row)
-        self.assertIn('Заявка открыта', row)
+        # Что она открыта, строка говорит одной фразой -- сколько суток;
+        # причина «Заявка открыта — вердикт после закрытия» её бы повторила
+        # (решение 04.11: «для человека»).
+        self.assertIn('открыта %d сут. с ввода' % self.days_open, row)
+        self.assertNotIn('вердикт после закрытия', row)
         # отрицательный контроль: выполненная заявка с вердиктом и закрытая
         # без него -- не красные строки
         for number in ('APP-TEST-001', 'APP-TEST-006'):
@@ -1147,6 +1151,147 @@ class DashboardForPeople(ScreenCase):
             with self.subTest(token=token):
                 self.assertRegex(DESIGN_SYSTEM, r'(?<![\w-])' + re.escape(token)
                                  + r'\s*:')
+
+
+class ListsForPeople(ScreenCase):
+    """Решение владельца 04.11.2026, второй шаг: таблицы списков короче.
+
+    «Заявка → работа» -- шесть колонок вместо восьми (статус и окно -- одна
+    «Срок», машина и вид работы -- одна), номер agro-work -- только у
+    машины, не связанной с нашей техникой; «Работа → заявка» --
+    организация под машиной. Сведения те же, строк в ячейке меньше.
+    """
+
+    @staticmethod
+    def heads(html):
+        head = html[html.index('<thead>'):html.index('</thead>')]
+        return [re.sub(r'<[^>]+>', '', h).strip()
+                for h in re.findall(r'<th[^>]*>(.*?)</th>', head, re.S)]
+
+    def test_the_applications_list_has_six_columns(self):
+        html = self.get('/agro-work/applications', lang='ru').get_data(as_text=True)
+        self.assertEqual(self.heads(html), [
+            'Заявка', 'Машина и работа', 'Срок', 'Вердикт',
+            'Га или часы по GPS в окне', 'Объём против GPS'])
+        row = row_of(html, 'APP-TEST-001')
+        self.assertEqual(row.count('<td'), 6)
+        # окно заявки и её статус -- в одной ячейке
+        self.assertRegex(row, r'<td><span class="aw-nowrap">10\.09 — 11\.09</span>\s*'
+                              r'<div class="vs-soft">Выполнено</div>')
+        # вид работы и способ проверки -- под машиной
+        self.assertIn('<div class="vs-soft">Култивация · гектары</div>', row)
+        uz = self.get('/agro-work/applications', lang='uz').get_data(as_text=True)
+        for head in self.heads(uz):
+            self.assertNotRegex(head.replace('GPS', ''), '[A-Za-z]', head)
+
+    def test_the_agro_work_plate_only_where_there_is_no_machine(self):
+        html = self.get('/agro-work/applications', lang='ru').get_data(as_text=True)
+        self.assertNotIn('agro-work:', row_of(html, 'APP-TEST-001'))
+        # A3 -- машина agro-work без нашей техники: её номер и есть машина
+        self.assertIn('agro-work: PT8', row_of(html, 'APP-TEST-003'))
+
+    def test_the_work_days_list_puts_the_organization_under_the_machine(self):
+        html = self.get('/agro-work/work-days', lang='ru').get_data(as_text=True)
+        self.assertEqual(self.heads(html), ['Сутки', 'Машина', 'Га по GPS',
+                                            'Покрытие', 'Заявки'])
+        self.assertRegex(html, r'МТЗ-82 80 002 EA</a>\s*<div class="vs-soft">'
+                               r'Buxoro agroklaster</div>')
+
+
+class ImportForPeople(ScreenCase):
+    """Решение владельца 04.11.2026, пятый шаг: служебная «Импорт заявок».
+
+    Сверху -- как прошёл последний прогон и что не настроено; слова те же,
+    что на «Заявки и GPS» («способ проверки»); таблица прогонов -- главные
+    колонки, служебные счётчики одной строкой; пути к инструментам --
+    администратору, свёрнуто. Данные страницы те же.
+    """
+
+    def page(self, user_id=None, lang='ru'):
+        return self.get('/agro-work/import', user_id=user_id, lang=lang).get_data(
+            as_text=True)
+
+    def test_no_wall_of_text_and_the_last_run_on_top(self):
+        html = self.page()
+        self.assertNotIn('vs-hero', html)
+        self.assertIn('<p class="aw-lead">Как прошла выгрузка заявок из agro-work', html)
+        status = html[html.index('<p class="aw-status">'):]
+        status = re.sub(r'\s+', ' ', status[:status.index('</p>')])
+        self.assertIn('Последний прогон: <b>21.09.2026 08:00</b>', status)
+        self.assertIn('полный', status)
+        self.assertIn('новых 4, изменилось 0, удалено в agro-work 0', status)
+
+    def test_an_unlinked_machine_is_the_thing_to_do(self):
+        html = self.page()
+        title = 'Машины agro-work с заявками не связаны с нашей техникой'
+        self.assertEqual(attention(html, title), '1')
+        self.assertIn('href="#aw-unmatched"', html)
+        self.assertIn('id="aw-unmatched"', html)
+        self.assertIsNone(attention(html, 'Виды работ без способа проверки'))
+        self.assertNotIn('Всё настроено', html)
+
+    def test_a_work_type_without_a_method_is_a_grey_line(self):
+        _sql(["UPDATE agro_work_work_types SET method = NULL WHERE id = 'W1'"])
+        html = self.page()
+        self.assertEqual(attention(html, 'Виды работ без способа проверки'), '1')
+        self.assertIn('<span class="aw-attn-num is-muted">1</span>', html)
+        self.assertRegex(html, r'заявок ждут: [1-9]')
+        self.assertIn('>не выбран<', html)
+
+    def test_when_everything_is_set_up_it_says_so(self):
+        """Отрицательный контроль к двум тестам выше."""
+        _sql(["UPDATE agro_work_transports SET equipment_id = ?, "
+              "match_status = 'manual' WHERE id = 'T8'"], (self.eq1_id,))
+        html = self.page()
+        self.assertIn('Всё настроено: машины с заявками связаны', html)
+        self.assertNotIn('<span class="aw-attn-num', html)
+
+    def test_the_words_are_the_words_of_the_dashboard(self):
+        html = self.page()
+        self.assertIn('Виды работ и способ проверки', html)
+        self.assertIn('<th>Способ проверки</th>', html)
+        for old in ('Метод сверки', 'метод сверки', 'не размечен', 'Видов работ размечено'):
+            with self.subTest(old=old):
+                self.assertNotIn(old, html)
+        self.assertIn('видов работ со способом проверки: 1 из 1', html)
+        self.assertNotIn('vs-stat', html)
+
+    def test_the_runs_table_has_the_main_columns(self):
+        html = self.page()
+        table = html[html.index('Прогоны импорта'):]
+        head = table[table.index('<thead>'):table.index('</thead>')]
+        self.assertEqual(re.findall(r'<th[^>]*>([^<]+)</th>', head),
+                         ['Начат', 'Состояние', 'Увидено', 'Новых', 'Изменилось',
+                          'Отвергнуто', 'Удалено в agro-work', 'Подробно'])
+        self.assertIn('без изменений 0 · история: загружено 0, ждёт 0 · запросов 0', html)
+
+    def test_tool_paths_are_folded_and_only_for_the_admin(self):
+        html = self.page()
+        rules = html[html.index('<details class="aw-rules">'):]
+        for path in ('tools/agro_work_links.py', 'tools/agro_work_methods.py'):
+            with self.subTest(path=path):
+                self.assertEqual(html.count(path), 1)
+                self.assertIn(path, rules)
+        operator = self.page(user_id=self.operator([self.org1_id]))
+        self.assertNotIn('tools/agro_work', operator)
+        self.assertNotIn('href="#aw-unmatched"', operator)   # таблица -- админу
+
+    def test_the_old_paragraph_is_kept_word_for_word_at_the_bottom(self):
+        html = self.page()
+        text = ('Что принёс каждый прогон импорта, какие машины agro-work не '
+                'связаны с нашей техникой')
+        self.assertEqual(html.count(text), 1)
+        self.assertGreater(html.index(text), html.index('<details class="aw-rules">'))
+
+    def test_the_uzbek_page_is_uzbek(self):
+        html = self.page(lang='uz')
+        for text in ('Сўнгги прогон:', 'Эътибор талаб қилади', 'Текшириш усули',
+                     'Бу саҳифани қандай ўқиш керак'):
+            with self.subTest(text=text):
+                self.assertIn(text, html)
+        for text in ('Последний прогон', 'Способ проверки', 'Как читать'):
+            with self.subTest(text=text):
+                self.assertNotIn(text, html)
 
 
 class Copies(unittest.TestCase):

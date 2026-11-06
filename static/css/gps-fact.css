@@ -1,8 +1,19 @@
-/* gps-fact.css -- raskladka ekrana "Fakt po tekhnike" (templates/gps/fact.html).
+/* gps-fact.css -- raskladka ekranov "Rabota za den" (templates/gps/fact.html)
+ * i "Istoriya mashiny" (templates/gps/machine.html).
  *
  * Tolko tokeny dizayn-sistemy. Otdelnyy fayl po toy zhe prichine, chto
  * vs-map.css: design-system.css -- obshchiy fayl proekta.
+ *
+ * 04.11.2026, reshenie vladeltsa: ekran chitayut lyudi -- odna stroka vmesto
+ * kartochki s abzatsem, itog sutok nad kartoy, pravila vnizu i svyornuty.
  */
+
+/* Odna stroka pod vkladkami vmesto kartochki s abzatsem pravil. */
+.gps-fact-lead {
+  margin: 0 0 14px;
+  color: var(--vs-text-muted);
+  font-size: var(--vs-fs-md);
+}
 
 /* [REASON]: polka vybora na etom ekrane NE lipkaya. Lipkaya polka v dve
  * stroki s pyatyu polyami otnimala by u karty vysotu ekrana, a perekhod k
@@ -98,4 +109,98 @@
   gap: 4px 8px;
   margin-top: 3px;
   font-size: var(--vs-fs-sm);
+}
+
+/* -- Itog sutok: pyat chisel i stroka o zapisi treka ---------------------- */
+.gps-fact-day {
+  margin-bottom: 16px;
+  padding: 14px 20px;
+  background: var(--vs-surface);
+  border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r-lg);
+  box-shadow: var(--vs-shadow-sm);
+}
+
+.gps-fact-figs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px 20px;
+}
+
+.gps-fact-fig-label {
+  display: block;
+  font-size: var(--vs-fs-sm);
+  color: var(--vs-text-muted);
+}
+
+.gps-fact-fig-value {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--vs-fs-lg);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--vs-text);
+}
+
+.gps-fact-fig-note {
+  display: block;
+  font-size: var(--vs-fs-sm);
+  color: var(--vs-text-muted);
+}
+
+/* Uchastki bez otveta -- rabota operatora na etom ekrane, ikh vidno. */
+.gps-fact-fig-note.is-open {
+  color: var(--vs-warning);
+  font-weight: 600;
+}
+
+.gps-fact-quality {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--vs-border);
+  font-size: var(--vs-fs-sm);
+  color: var(--vs-text-muted);
+}
+
+.gps-fact-quality b { font-weight: 600; }
+.gps-fact-quality b.is-marked { color: var(--vs-warning); }
+
+/* Ogovorki k chislam perioda ("Istoriya mashiny") -- slovami, ne melko. */
+.gps-fact-notes {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  font-size: var(--vs-fs);
+  color: var(--vs-text-muted);
+}
+
+.gps-fact-notes > li + li { margin-top: 4px; }
+
+/* Data, vremya i ssylka chitayutsya kak odno: ne rvutsya na dve stroki. */
+.gps-fact-nowrap { white-space: nowrap; }
+
+/* Sutki bez raschyota podryad -- odnoy stroki, priglushyonno: dyra vidna,
+ * no ne zaslonyaet sutki s rabotoy. */
+.gps-fact-gap > td { color: var(--vs-text-muted); }
+
+/* -- "Kak schitaetsya" i podklyuchenie sputnika: odin raz, svyornuto ------- */
+.gps-fact-rules {
+  margin: 10px 0 8px;
+  font-size: var(--vs-fs);
+  color: var(--vs-text-muted);
+}
+
+.gps-fact-rules > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--vs-primary);
+}
+
+.gps-fact-rules > p { margin: 8px 0 0; max-width: 960px; }
+
+@media (max-width: 1024px) {
+  .gps-fact-figs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 480px) {
+  .gps-fact-figs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

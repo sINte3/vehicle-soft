@@ -12,12 +12,10 @@
 {% block content %}
 {% include 'gps/_gps_nav.html' %}
 
-<div class="vs-hero vs-mb">
-  <div>
-    <div class="vs-hero-title">{{ 'История машины' if is_ru else 'Машина тарихи' }}</div>
-    <div class="vs-hero-sub">{{ 'Что одна машина сделала за выбранные сутки: пробег и время в движении по её треку, гектары опубликованных суток, сутки подряд и всё это на карте. Каждые сутки открываются на экране «Работа за день» — там участки размечаются ответом «работа» или «проезд».' if is_ru else 'Битта машина танланган кунларда нима қилгани: трекидан масофа ва ҳаракат вақти, эълон қилинган кунлар гектари, кунлар кетма-кет ва буларнинг ҳаммаси харитада. Ҳар бир кун «Кунлик иш» экранида очилади — у ерда участкалар «иш» ёки «ўтиш» жавоби билан белгиланади.' }}</div>
-  </div>
-</div>
+{# 04.11.2026, решение владельца: экраны модуля читают люди. Вместо карточки
+   с абзацем -- одна строка; прежний абзац и правила -- дословно, один раз,
+   внизу в «Как считается». #}
+<p class="gps-fact-lead">{{ 'Что машина сделала за период по своему GPS-треку. Любые сутки открываются на «Работе за день» — там отмечают участки.' if is_ru else 'Машина давр давомида ўз GPS-треки бўйича нима қилди. Ҳар бир кун «Кунлик иш»да очилади — у ерда участкалар белгиланади.' }}</p>
 
 {# ── Период и машина ───────────────────────────────────────────────────────
    Быстрые кнопки -- ссылки без скрипта, как у отчётов АЗС
@@ -135,7 +133,6 @@
   {% else %}
     <span class="vs-badge vs-badge-warning">{{ 'нет в справочнике техники' if is_ru else 'техника маълумотномасида йўқ' }}</span>
   {% endif %}
-  <span class="vs-soft">{{ 'объект Wialon' if is_ru else 'Wialon объекти' }} {{ unit_id }}</span>
   <span class="vs-soft">{{ date_from.strftime('%d.%m.%Y') }} — {{ date_to.strftime('%d.%m.%Y') }}</span>
 </div>
 
@@ -143,42 +140,45 @@
 <div class="vs-alert is-warning vs-mb">{{ 'Спецтехника — гектары не считаются (решение владельца от 28.09.2026). Пробег, время и трек измерены и верны.' if is_ru else 'Махсус техника — гектар ҳисобланмайди (эгасининг 28.09.2026 даги қарори). Масофа, вақт ва трек ўлчанган ва тўғри.' }}</div>
 {% endif %}
 
-{# ── Сводка периода ─────────────────────────────────────────────────────────
+{# ── Итог периода -- одной карточкой ────────────────────────────────────
    Гектары -- только опубликованных суток, «проезд» вычтен, участки без
-   ответа входят, и рядом сказано, на сколько цифра ещё может уменьшиться:
-   то же правило, что у сверки нарядов (gps_routes.fact_from_sites). #}
-{% set moving_min = (summary.moving_s / 60)|round|int %}
-<div class="vs-stat-grid vs-mb">
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Обработано, га' if is_ru else 'Ишланган, га' }}</div>
-    <div class="vs-stat-value">{% if summary.track_only or not summary.published %}—{% else %}{{ '%.2f'|format(summary.ha) }}{% endif %}</div>
+   ответа входят, и ниже сказано, на сколько цифра ещё может уменьшиться:
+   то же правило, что у сверки нарядов (gps_routes.fact_from_sites).
+   Прежде -- шесть плиток с дробями «3 / 1» и оговорки мелким шрифтом;
+   теперь пять чисел, строка о сутках периода и оговорки словами под ними. #}
+<div class="gps-fact-day">
+  <div class="gps-fact-figs">
+    <div>
+      <span class="gps-fact-fig-label">{{ 'Обработано, га' if is_ru else 'Ишланган, га' }}</span>
+      <span class="gps-fact-fig-value">{% if summary.track_only or not summary.published %}—{% else %}{{ '%.2f'|format(summary.ha) }}{% endif %}</span>
+    </div>
+    <div>
+      <span class="gps-fact-fig-label">{{ 'Суток с работой' if is_ru else 'Ишли кунлар' }}</span>
+      <span class="gps-fact-fig-value">{% if summary.track_only or not summary.published %}—{% else %}{{ summary.work_days }}{% endif %}</span>
+    </div>
+    <div>
+      <span class="gps-fact-fig-label">{{ 'Участков' if is_ru else 'Участкалар' }}</span>
+      <span class="gps-fact-fig-value">{{ summary.sites }}</span>
+      {% if summary.sites %}
+      <span class="gps-fact-fig-note{% if summary.unanswered %} is-open{% endif %}">{% if summary.unanswered %}{{ ('без ответа: %d' if is_ru else 'жавобсиз: %d')|format(summary.unanswered) }}{% else %}{{ 'все отвечены' if is_ru else 'барчасига жавоб берилган' }}{% endif %}</span>
+      {% endif %}
+    </div>
+    <div>
+      <span class="gps-fact-fig-label">{{ 'В движении' if is_ru else 'Ҳаракатда' }}</span>
+      <span class="gps-fact-fig-value">{{ duration(summary.moving_s / 60, is_ru) }}</span>
+    </div>
+    <div>
+      <span class="gps-fact-fig-label">{{ 'Пробег по треку, км' if is_ru else 'Трек бўйича масофа, км' }}</span>
+      <span class="gps-fact-fig-value">{{ '%.1f'|format(summary.km) }}</span>
+    </div>
   </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Суток с работой' if is_ru else 'Ишли кунлар' }}</div>
-    <div class="vs-stat-value">{% if summary.track_only or not summary.published %}—{% else %}{{ summary.work_days }}{% endif %}</div>
+  <div class="gps-fact-quality">
+    {{ ('Суток в периоде: %d · с расчётом %d · с площадью %d' if is_ru else 'Даврдаги кунлар: %d · ҳисобли %d · майдонли %d')|format(summary.days, summary.computed, summary.published) }}
   </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Участков, из них без ответа' if is_ru else 'Участкалар, шундан жавобсиз' }}</div>
-    <div class="vs-stat-value">{{ summary.sites }} / {{ summary.unanswered }}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Пробег по треку, км' if is_ru else 'Трек бўйича масофа, км' }}</div>
-    <div class="vs-stat-value">{{ '%.1f'|format(summary.km) }}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'В движении' if is_ru else 'Ҳаракатда' }}</div>
-    <div class="vs-stat-value">{{ moving_min // 60 }} {{ 'ч' if is_ru else 'соат' }} {{ '%02d'|format(moving_min % 60) }} {{ 'мин' if is_ru else 'дақ' }}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Суток с расчётом, из них с площадью' if is_ru else 'Ҳисобли кунлар, шундан майдонли' }}</div>
-    <div class="vs-stat-value">{{ summary.computed }} / {{ summary.published }}</div>
-  </div>
-</div>
-
-{# Оговорки к цифрам -- словами, а не мелким шрифтом в подсказке: каждая из
-   них меняет то, как цифру можно использовать. #}
-{% if summary.unanswered or summary.incomplete or summary.moving_unknown or (summary.computed < summary.days) or (summary.computed and not summary.published and not summary.track_only) %}
-<ul class="vs-help vs-mb">
+  {# Оговорки к цифрам -- словами, а не мелким шрифтом в подсказке: каждая из
+     них меняет то, как цифру можно использовать. Тексты -- прежние. #}
+  {% if summary.unanswered or summary.incomplete or summary.moving_unknown or (summary.computed < summary.days) or (summary.computed and not summary.published and not summary.track_only) %}
+  <ul class="gps-fact-notes">
   {% if summary.unanswered %}
   <li>{{ ('Без ответа «работа/проезд» — участков: %d, %.2f га. Они в гектарах: на столько цифра может уменьшиться, если их назовут проездом.' if is_ru else '«Иш/ўтиш» жавобисиз участкалар: %d та, %.2f га. Улар гектарда: агар ўтиш деб аталса, рақам шунчага камайиши мумкин.')|format(summary.unanswered, summary.unanswered_ha) }}</li>
   {% endif %}
@@ -194,14 +194,15 @@
   {% if summary.computed < summary.days %}
   <li>{{ ('Суток без расчёта: %d из %d. Их в сводке нет: «расчёта нет» — не то же самое, что «работы нет».' if is_ru else 'Ҳисобсиз кунлар: %d / %d. Улар жамламада йўқ: «ҳисоб йўқ» — «иш йўқ» билан бир хил эмас.')|format(summary.days - summary.computed, summary.days) }}</li>
   {% endif %}
-</ul>
-{% endif %}
+  </ul>
+  {% endif %}
+</div>
 
 {% if map_data %}
 <div class="vs-card gps-fact-map-card vs-mb">
   <div class="vs-card-header">
     <span class="vs-card-title">{{ 'Трек и участки за период' if is_ru else 'Давр треки ва участкалари' }}</span>
-    <span class="vs-soft">{{ 'наведите на трек или участок — сутки и подробности; слои включаются в переключателе карты' if is_ru else 'трек ёки участкага курсорни олиб боринг — кун ва тафсилотлар; қатламлар харита переключателида ёқилади' }}</span>
+    <span class="vs-soft">{{ 'наведите на трек или участок — сутки и подробности' if is_ru else 'трек ёки участкага курсорни олиб боринг — кун ва тафсилотлар' }}</span>
   </div>
   <div class="vs-card-body">
     <div class="vs-map" data-vs-map="gps-machine-map" role="region"
@@ -226,8 +227,9 @@
 {% endif %}
 
 {# ── Сутки подряд ──────────────────────────────────────────────────────────
-   Каждые сутки периода, и посчитанные, и нет. Ссылка ведёт на «Факт по
-   технике» той же машины за те же сутки -- там карта суток и ответы. #}
+   Каждые сутки периода, и посчитанные, и нет; подряд идущие сутки без
+   расчёта -- одной строкой (gps_routes.table_runs). Ссылка ведёт на «Работу
+   за день» той же машины за те же сутки -- там карта суток и ответы. #}
 <div class="vs-table-wrap vs-mb">
   <div class="vs-card-header">
     <span class="vs-card-title">{{ 'Сутки периода' if is_ru else 'Давр кунлари' }}</span>
@@ -239,7 +241,7 @@
           <th>{{ 'Сутки' if is_ru else 'Кун' }}</th>
           <th>{{ 'Расчёт' if is_ru else 'Ҳисоб' }}</th>
           <th class="text-right">{{ 'Обработано, га' if is_ru else 'Ишланган, га' }}</th>
-          <th class="text-right">{{ 'Участков, без ответа' if is_ru else 'Участкалар, жавобсиз' }}</th>
+          <th class="text-right">{{ 'Участков' if is_ru else 'Участкалар' }}</th>
           <th class="text-right">{{ 'Пробег, км' if is_ru else 'Масофа, км' }}</th>
           <th class="text-right">{{ 'В движении' if is_ru else 'Ҳаракатда' }}</th>
           <th>{{ 'Первое и последнее движение' if is_ru else 'Биринчи ва охирги ҳаракат' }}</th>
@@ -247,22 +249,29 @@
         </tr>
       </thead>
       <tbody>
-        {% for row in rows %}
+        {% for item in table %}
+        {% if item.gap %}
+        <tr class="gps-fact-gap">
+          <td class="gps-fact-nowrap">{% if item.days == 1 %}{{ item.first.strftime('%d.%m.%Y') }}{% elif item.first.year == item.last.year %}{{ item.first.strftime('%d.%m') }}–{{ item.last.strftime('%d.%m.%Y') }}{% else %}{{ item.first.strftime('%d.%m.%Y') }}–{{ item.last.strftime('%d.%m.%Y') }}{% endif %}</td>
+          <td colspan="7">{{ 'расчёта нет' if is_ru else 'ҳисоб йўқ' }}{% if item.days > 1 %} · {{ ('%d сут.' if is_ru else '%d кун')|format(item.days) }}{% endif %}</td>
+        </tr>
+        {% else %}
+        {% set row = item.row %}
         {% set a = row.aggregate %}
         <tr>
-          <td>{{ row.day.strftime('%d.%m.%Y') }}</td>
+          <td class="gps-fact-nowrap">{{ row.day.strftime('%d.%m.%Y') }}</td>
           <td>
-            {% if a is none %}<span class="vs-soft">{{ 'расчёта нет' if is_ru else 'ҳисоб йўқ' }}</span>
-            {% elif a.reason is none %}<span class="vs-badge vs-badge-success">{{ 'площадь опубликована' if is_ru else 'майдон эълон қилинган' }}</span>
+            {% if a.reason is none %}<span class="vs-soft">{{ 'посчитан' if is_ru else 'ҳисобланган' }}</span>
             {% else %}<span class="vs-badge{% if a.reason == 'sbor_nepolnyy' or a.reason == 'redkaya_zapis' %} vs-badge-warning{% endif %}">{{ (reason_labels[a.reason][0] if is_ru else reason_labels[a.reason][1]) if a.reason in reason_labels else a.reason }}</span>{% endif %}
           </td>
           <td class="text-right">{% if row.ha is none %}—{% else %}{{ '%.2f'|format(row.ha) }}{% endif %}</td>
-          <td class="text-right">{% if a is none or a.reason %}—{% else %}{{ row.sites|length }} / {{ row.unanswered }}{% endif %}</td>
-          <td class="text-right">{% if a is none %}—{% else %}{{ '%.1f'|format(a.track_km or 0) }}{% endif %}</td>
-          <td class="text-right">{% if row.moving_s is none %}—{% else %}{% set m = (row.moving_s / 60)|round|int %}{{ m // 60 }}:{{ '%02d'|format(m % 60) }}{% endif %}</td>
-          <td>{% if row.first_move %}{{ row.first_move.strftime('%H:%M') }}–{{ row.last_move.strftime('%H:%M') }}{% else %}—{% endif %}</td>
-          <td>{% if a is not none %}<a href="{{ url_for('gps.fact', date=row.day.isoformat(), unit=unit_id) }}">{{ 'открыть сутки' if is_ru else 'кунни очиш' }}</a>{% endif %}</td>
+          <td class="text-right">{% if a.reason %}—{% else %}{{ row.sites|length }}{% if row.unanswered %}<span class="gps-fact-fig-note is-open">{{ ('без ответа: %d' if is_ru else 'жавобсиз: %d')|format(row.unanswered) }}</span>{% endif %}{% endif %}</td>
+          <td class="text-right">{{ '%.1f'|format(a.track_km or 0) }}</td>
+          <td class="text-right gps-fact-nowrap">{% if row.moving_s is none %}—{% else %}{{ duration(row.moving_s / 60, is_ru) }}{% endif %}</td>
+          <td class="gps-fact-nowrap">{% if row.first_move %}{{ row.first_move.strftime('%H:%M') }}–{{ row.last_move.strftime('%H:%M') }}{% else %}—{% endif %}</td>
+          <td class="gps-fact-nowrap"><a href="{{ url_for('gps.fact', date=row.day.isoformat(), unit=unit_id) }}">{{ 'открыть сутки' if is_ru else 'кунни очиш' }}</a></td>
         </tr>
+        {% endif %}
         {% endfor %}
       </tbody>
     </table>
@@ -270,9 +279,12 @@
 </div>
 </section>
 
-<div class="vs-help vs-mb">
-  {{ 'Пробег — сумма пробега по треку посчитанных суток. Время в движении — сумма промежутков между соседними сообщениями, где машина ехала от 1 км/ч, без разрывов дольше 5 минут: то же число, что экран «Работа за день» показывает за каждые сутки. Часы зажигания здесь не показываются, пока их не проверили по счётчику Wialon.' if is_ru else 'Масофа — ҳисобланган кунлар трек масофаси йиғиндиси. Ҳаракат вақти — машина 1 км/соатдан тез юрган қўшни хабарлар орасидаги оралиқлар йиғиндиси, 5 дақиқадан узун узилишларсиз: «Кунлик иш» экрани ҳар бир кун учун кўрсатадиган рақамнинг ўзи. Ўт олдириш соатлари Wialon ҳисоблагичи бўйича текширилмагунча бу ерда кўрсатилмайди.' }}
-</div>
+{# ── Как считается -- дословно, один раз, свёрнуто ───────────────────────── #}
+<details class="gps-fact-rules">
+  <summary>{{ 'Как считается' if is_ru else 'Қандай ҳисобланади' }}</summary>
+  <p>{{ 'Что одна машина сделала за выбранные сутки: пробег и время в движении по её треку, гектары опубликованных суток, сутки подряд и всё это на карте. Каждые сутки открываются на экране «Работа за день» — там участки размечаются ответом «работа» или «проезд».' if is_ru else 'Битта машина танланган кунларда нима қилгани: трекидан масофа ва ҳаракат вақти, эълон қилинган кунлар гектари, кунлар кетма-кет ва буларнинг ҳаммаси харитада. Ҳар бир кун «Кунлик иш» экранида очилади — у ерда участкалар «иш» ёки «ўтиш» жавоби билан белгиланади.' }}</p>
+  <p>{{ 'Пробег — сумма пробега по треку посчитанных суток. Время в движении — сумма промежутков между соседними сообщениями, где машина ехала от 1 км/ч, без разрывов дольше 5 минут: то же число, что экран «Работа за день» показывает за каждые сутки. Часы зажигания здесь не показываются, пока их не проверили по счётчику Wialon.' if is_ru else 'Масофа — ҳисобланган кунлар трек масофаси йиғиндиси. Ҳаракат вақти — машина 1 км/соатдан тез юрган қўшни хабарлар орасидаги оралиқлар йиғиндиси, 5 дақиқадан узун узилишларсиз: «Кунлик иш» экрани ҳар бир кун учун кўрсатадиган рақамнинг ўзи. Ўт олдириш соатлари Wialon ҳисоблагичи бўйича текширилмагунча бу ерда кўрсатилмайди.' }}</p>
+</details>
 
 {% endif %}
 {% endblock %}

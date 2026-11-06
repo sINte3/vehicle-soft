@@ -1,25 +1,72 @@
 {% extends g.base_template %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Импорт заявок agro-work — GPS' if is_ru else 'agro-work буюртмалари импорти — GPS' }}{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ static_v('css/agro-work.css') }}">
+{% endblock %}
 {% block content %}
 {% include 'agro_work/_nav.html' %}
-
-<div class="vs-hero vs-mb">
-  <div>
-    <div class="vs-hero-title">{{ 'Импорт заявок agro-work' if is_ru else 'agro-work буюртмаларини импорт қилиш' }}</div>
-    <div class="vs-hero-sub">{{ 'Что принёс каждый прогон импорта, какие машины agro-work не связаны с нашей техникой и какие виды работ ещё без метода сверки. Импорт только читает agro-work и не хранит имён и телефонов фермеров, водителей и операторов.' if is_ru else 'Импортнинг ҳар бир прогони нима олиб келди, қайси agro-work машиналари бизнинг техника билан боғланмаган ва қайси иш турлари ҳали солиштириш усулисиз. Импорт agro-work ни фақат ўқийди ва фермерлар, ҳайдовчилар ва операторларнинг исм ва телефонларини сақламайди.' }}</div>
-  </div>
-</div>
+{# 04.11.2026, решение владельца: и служебные страницы читают люди. Сверху --
+   как прошла последняя выгрузка и что не настроено; таблицы -- главные
+   колонки, остальное одной строкой; прежний абзац и пути к инструментам --
+   внизу, свёрнуто. Слова -- те же, что на «Заявки и GPS»: «способ
+   проверки», а не «метод сверки». #}
+<p class="aw-lead">{{ 'Как прошла выгрузка заявок из agro-work и что ещё не настроено, чтобы заявки можно было проверить по GPS.' if is_ru else 'agro-work дан буюртмалар юкланиши қандай ўтди ва буюртмаларни GPS бўйича текшириш учун ҳали нима созланмаган.' }}</p>
 
 {% if empty %}
 {% include 'agro_work/_notices.html' %}
 {% else %}
+
+{% macro state(run) -%}
+  {%- if run.status == 'ok' %}<span class="vs-badge vs-badge-success">{{ 'полный' if is_ru else 'тўлиқ' }}</span>
+  {%- elif run.status == 'incomplete' %}<span class="vs-badge vs-badge-warning">{{ 'неполный' if is_ru else 'тўлиқ эмас' }}</span>
+  {%- elif run.status == 'running' %}<span class="vs-badge vs-badge-info">{{ 'идёт' if is_ru else 'давом этмоқда' }}</span>
+  {%- else %}<span class="vs-badge vs-badge-danger">{{ 'прерван' if is_ru else 'узилди' }}</span>{% endif -%}
+{%- endmacro %}
 
 {% if not runs %}
   <div class="vs-empty vs-mb">
     <div class="vs-empty-title">{{ 'Импорт ещё не запускался' if is_ru else 'Импорт ҳали ишга туширилмаган' }}</div>
   </div>
 {% else %}
+{% set last = runs[0] %}
+<p class="aw-status">
+  {{ 'Последний прогон:' if is_ru else 'Сўнгги прогон:' }} <b>{{ local_time(last.started_at) }}</b> {{ state(last) }}
+  · {{ ('новых %d, изменилось %d, удалено в agro-work %d' if is_ru else 'янги %d, ўзгарди %d, agro-work да ўчирилган %d')|format(last.rows_new or 0, last.rows_updated or 0, last.rows_gone or 0) }}
+  {% if last.message %}<span class="aw-sub">{{ last.message }}</span>{% endif %}
+</p>
+{% endif %}
+
+{# ── Что не настроено ────────────────────────────────────────────────────
+   Пустая строка не показывается; нет ничего -- так и сказано. Виды работ без
+   способа -- серым, как на «Заявки и GPS»: это настройка, а не нарушение. #}
+{% set unlinked = links.get('unmatched_with_applications', 0) %}
+{% set unmarked = work_types|length - marked %}
+<h2 class="aw-section">{{ 'Требует внимания' if is_ru else 'Эътибор талаб қилади' }}</h2>
+<ul class="aw-attn">
+  {% if unlinked %}
+  <li>
+    <span class="aw-attn-num">{{ unlinked }}</span>
+    <span><span class="aw-attn-title">{{ 'Машины agro-work с заявками не связаны с нашей техникой' if is_ru else 'Буюртмали agro-work машиналари бизнинг техника билан боғланмаган' }}</span>
+      <span class="aw-attn-sub">{{ 'их заявки не с чем сверить по GPS' if is_ru else 'уларнинг буюртмаларини GPS бўйича солиштиришга ҳеч нарса йўқ' }}</span></span>
+    {% if unmatched %}<a class="aw-attn-link" href="#aw-unmatched">{{ 'К списку ↓' if is_ru else 'Рўйхатга ↓' }}</a>{% else %}<span></span>{% endif %}
+  </li>
+  {% endif %}
+  {% if unmarked %}
+  <li>
+    <span class="aw-attn-num is-muted">{{ unmarked }}</span>
+    <span><span class="aw-attn-title">{{ 'Виды работ без способа проверки' if is_ru else 'Текшириш усули танланмаган иш турлари' }}</span>
+      <span class="aw-attn-sub">{{ ('заявок ждут: %d' if is_ru else 'кутаётган буюртмалар: %d')|format(waiting) }}</span></span>
+    <a class="aw-attn-link" href="#aw-methods">{{ 'К списку ↓' if is_ru else 'Рўйхатга ↓' }}</a>
+  </li>
+  {% endif %}
+  {% if not unlinked and not unmarked %}
+  <li class="aw-attn-clear">{{ 'Всё настроено: машины с заявками связаны, у каждого вида работ выбран способ проверки.' if is_ru else 'Ҳаммаси созланган: буюртмали машиналар боғланган, ҳар бир иш турига текшириш усули танланган.' }}</li>
+  {% endif %}
+</ul>
+<p class="aw-foot">{{ ('Машин связано: по номеру %d, владельцем %d · не связано %d · видов работ со способом проверки: %d из %d' if is_ru else 'Боғланган машиналар: рақам бўйича %d, эгаси %d · боғланмаган %d · текшириш усули танланган иш турлари: %d / %d')|format(links.get('auto', 0), links.get('manual', 0), links.get('none', 0) + links.get('ambiguous', 0), marked, work_types|length) }}</p>
+
+{% if runs %}
 <div class="vs-table-wrap vs-mb">
   <div class="vs-card-header">
     <span class="vs-card-title">{{ 'Прогоны импорта' if is_ru else 'Импорт прогонлари' }}</span>
@@ -34,32 +81,23 @@
           <th class="right">{{ 'Увидено' if is_ru else 'Кўрилди' }}</th>
           <th class="right">{{ 'Новых' if is_ru else 'Янги' }}</th>
           <th class="right">{{ 'Изменилось' if is_ru else 'Ўзгарди' }}</th>
-          <th class="right">{{ 'Без изменений' if is_ru else 'Ўзгаришсиз' }}</th>
           <th class="right">{{ 'Отвергнуто' if is_ru else 'Рад этилди' }}</th>
           <th class="right">{{ 'Удалено в agro-work' if is_ru else 'agro-work да ўчирилган' }}</th>
-          <th class="right">{{ 'История: загружено / ждёт' if is_ru else 'Тарих: юкланди / кутмоқда' }}</th>
-          <th class="right">{{ 'Запросов' if is_ru else 'Сўровлар' }}</th>
+          <th>{{ 'Подробно' if is_ru else 'Батафсил' }}</th>
         </tr>
       </thead>
       <tbody>
         {% for run in runs %}
         <tr>
-          <td>{{ local_time(run.started_at) }}</td>
-          <td>
-            {% if run.status == 'ok' %}<span class="vs-badge vs-badge-success">{{ 'полный' if is_ru else 'тўлиқ' }}</span>
-            {% elif run.status == 'incomplete' %}<span class="vs-badge vs-badge-warning">{{ 'неполный' if is_ru else 'тўлиқ эмас' }}</span>
-            {% elif run.status == 'running' %}<span class="vs-badge vs-badge-info">{{ 'идёт' if is_ru else 'давом этмоқда' }}</span>
-            {% else %}<span class="vs-badge vs-badge-danger">{{ 'прерван' if is_ru else 'узилди' }}</span>{% endif %}
-            {% if run.message %}<div class="vs-soft">{{ run.message }}</div>{% endif %}
-          </td>
+          <td class="aw-nowrap">{{ local_time(run.started_at) }}</td>
+          <td>{{ state(run) }}{% if run.message %}<span class="aw-sub">{{ run.message }}</span>{% endif %}</td>
           <td class="right">{{ run.rows_seen }}</td>
           <td class="right">{{ run.rows_new }}</td>
           <td class="right">{{ run.rows_updated }}</td>
-          <td class="right">{{ run.rows_unchanged }}</td>
           <td class="right">{{ run.rows_rejected }}</td>
           <td class="right">{{ run.rows_gone }}</td>
-          <td class="right">{{ run.history_fetched }} / {{ run.history_pending if run.history_pending is not none else '—' }}</td>
-          <td class="right">{{ run.requests }}</td>
+          {# Служебные счётчики -- одной строкой: нужны, когда разбирают сбой. #}
+          <td class="aw-sub">{{ ('без изменений %d · история: загружено %d' if is_ru else 'ўзгаришсиз %d · тарих: юкланди %d')|format(run.rows_unchanged or 0, run.history_fetched or 0) }}{% if run.history_pending is not none %}{{ (', ждёт %d' if is_ru else ', кутмоқда %d')|format(run.history_pending) }}{% endif %} · {{ ('запросов %d' if is_ru else 'сўровлар %d')|format(run.requests or 0) }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -68,34 +106,10 @@
 </div>
 {% endif %}
 
-<div class="vs-stat-grid vs-mb">
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Машин связано по номеру' if is_ru else 'Рақам бўйича боғланган машиналар' }}</div>
-    <div class="vs-stat-value">{{ links.get('auto', 0) }}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Связано владельцем' if is_ru else 'Эгаси боғлаган' }}</div>
-    <div class="vs-stat-value">{{ links.get('manual', 0) }}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Не связано, из них с заявками' if is_ru else 'Боғланмаган, шулардан буюртмали' }}</div>
-    <div class="vs-stat-value">{{ links.get('none', 0) + links.get('ambiguous', 0) }} / {{ links.get('unmatched_with_applications', 0) }}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Видов работ размечено' if is_ru else 'Белгиланган иш турлари' }}</div>
-    <div class="vs-stat-value">{{ marked }} / {{ work_types|length }}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Заявок ждут разметки вида работ' if is_ru else 'Иш тури белгиланишини кутаётган буюртмалар' }}</div>
-    <div class="vs-stat-value">{{ waiting }}</div>
-  </div>
-</div>
-
 {% if unmatched %}
-<div class="vs-table-wrap vs-mb">
+<div class="vs-table-wrap vs-mb" id="aw-unmatched">
   <div class="vs-card-header">
     <span class="vs-card-title">{{ 'Машины agro-work с заявками, не связанные с нашей техникой' if is_ru else 'Бизнинг техника билан боғланмаган буюртмали agro-work машиналари' }}</span>
-    <span class="vs-soft">{{ 'связываются инструментом tools/agro_work_links.py' if is_ru else 'tools/agro_work_links.py воситаси билан боғланади' }}</span>
   </div>
   <div class="vs-table-scroll">
     <table class="vs-table">
@@ -127,10 +141,10 @@
 {% endif %}
 
 {% if work_types %}
-<div class="vs-table-wrap vs-mb">
+<div class="vs-table-wrap vs-mb" id="aw-methods">
   <div class="vs-card-header">
-    <span class="vs-card-title">{{ 'Виды работ и метод сверки' if is_ru else 'Иш турлари ва солиштириш усули' }}</span>
-    <span class="vs-soft">{{ 'метод ставит владелец: tools/agro_work_methods.py' if is_ru else 'усулни эгаси қўяди: tools/agro_work_methods.py' }}</span>
+    <span class="vs-card-title">{{ 'Виды работ и способ проверки' if is_ru else 'Иш турлари ва текшириш усули' }}</span>
+    <span class="vs-soft">{{ 'способ выбирает владелец' if is_ru else 'усулни эгаси танлайди' }}</span>
   </div>
   <div class="vs-table-scroll">
     <table class="vs-table">
@@ -139,7 +153,7 @@
           <th>{{ 'Вид работы' if is_ru else 'Иш тури' }}</th>
           <th>{{ 'Единица' if is_ru else 'Бирлик' }}</th>
           <th class="right">{{ 'Заявок' if is_ru else 'Буюртмалар' }}</th>
-          <th>{{ 'Метод сверки' if is_ru else 'Солиштириш усули' }}</th>
+          <th>{{ 'Способ проверки' if is_ru else 'Текшириш усули' }}</th>
         </tr>
       </thead>
       <tbody>
@@ -148,7 +162,7 @@
           <td>{{ row.name }}</td>
           <td>{{ row.unit_display or row.unit or '' }}</td>
           <td class="right">{{ row.applications }}</td>
-          <td>{% if row.method %}{{ method_label(row.method) }}{% else %}<span class="vs-badge vs-badge-warning">{{ 'не размечен' if is_ru else 'белгиланмаган' }}</span>{% endif %}</td>
+          <td>{% if row.method %}{{ method_label(row.method) }}{% else %}<span class="vs-badge vs-badge-warning">{{ 'не выбран' if is_ru else 'танланмаган' }}</span>{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -156,5 +170,15 @@
   </div>
 </div>
 {% endif %}
+
+{# ── Как читать -- прежний абзац дословно; пути к инструментам -- тому, кто
+   ими пользуется (администратору). #}
+<details class="aw-rules">
+  <summary>{{ 'Как читать эту страницу' if is_ru else 'Бу саҳифани қандай ўқиш керак' }}</summary>
+  <p>{{ 'Что принёс каждый прогон импорта, какие машины agro-work не связаны с нашей техникой и какие виды работ ещё без метода сверки. Импорт только читает agro-work и не хранит имён и телефонов фермеров, водителей и операторов.' if is_ru else 'Импортнинг ҳар бир прогони нима олиб келди, қайси agro-work машиналари бизнинг техника билан боғланмаган ва қайси иш турлари ҳали солиштириш усулисиз. Импорт agro-work ни фақат ўқийди ва фермерлар, ҳайдовчилар ва операторларнинг исм ва телефонларини сақламайди.' }}</p>
+  {% if current_user.is_admin %}
+  <p>{{ 'Машины agro-work с нашей техникой связывает инструмент tools/agro_work_links.py; способ проверки вида работ ставит владелец инструментом tools/agro_work_methods.py.' if is_ru else 'agro-work машиналарини бизнинг техника билан tools/agro_work_links.py воситаси боғлайди; иш турининг текшириш усулини эгаси tools/agro_work_methods.py воситаси билан қўяди.' }}</p>
+  {% endif %}
+</details>
 {% endif %}
 {% endblock %}

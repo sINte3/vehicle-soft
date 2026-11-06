@@ -70,6 +70,20 @@ const headName = (page) => page.locator('.gps-fact-head-name').textContent().the
 const viewOf = (page) => page.$eval('input[data-vs-map-view-of="gps-fact-map"]', (e) => e.value).catch(() => '');
 const zoomOf = (view) => parseFloat((view || 'NaN').split('/')[0]);
 
+// [REASON]: фокус выделяет имя в поле не сразу, а следующей задачей
+// (vs-combobox.js, setTimeout 0). Набор, начатый в ту же миллисекунду,
+// дописывался к имени, и проверка падала через раз -- на экране до 04.11.2026
+// тоже: три прогона на свежем стенде, три падения. Человек так быстро не
+// печатает; проверка ждёт выделения, как он.
+async function clickToType(page, input) {
+  await input.click();
+  await page.waitForFunction(() => {
+    const el = document.getElementById('gps-fact-machine');
+    return document.activeElement === el
+      && el.selectionStart === 0 && el.selectionEnd === el.value.length;
+  }, null, { timeout: 5000 }).catch(() => {});
+}
+
 async function checkTyping(state) {
   const tag = 'picker';
   const { ctx, page, errors } = await open(state, TRACTOR, [1440, 900]);
@@ -92,7 +106,7 @@ async function checkTyping(state) {
   expect((await headName(page)) === 'New Holland 7060 — 80 156 СА', `${tag} the opened machine is named in the head`);
 
   await page.waitForSelector('[data-vs-combobox-ready="1"]');
-  await input.click();
+  await clickToType(page, input);
   await input.pressSequentially('777');
   await input.press('ArrowDown');
   const active = await input.getAttribute('aria-activedescendant');
@@ -101,7 +115,7 @@ async function checkTyping(state) {
   expect(unitOf(page) === '103', `${tag} Enter on the marked option opens it (${page.url()})`);
 
   await page.waitForSelector('[data-vs-combobox-ready="1"]');
-  await input.click();
+  await clickToType(page, input);
   await input.pressSequentially('zzz');
   const empty = await page.locator('.vs-combobox-empty').isVisible();
   expect(empty && (await shownOptions(page)).length === 0, `${tag} nothing found is said`);
@@ -163,7 +177,7 @@ async function checkHidden(state, lang) {
     : `«${q}» бўйича фильтрлар яширган машиналар: ${n}.`);
   expect(!(await more.isVisible()), `${tag} no line before anything is typed`);
 
-  await input.click();
+  await clickToType(page, input);
   await input.pressSequentially('156');
   expect((await more.isVisible()) && (await moreText()) === say('156', 1),
     `${tag} a number the filter hides is counted (${await moreText()})`);
@@ -320,6 +334,13 @@ async function checkAnswerKeepsPlace(state) {
 async function checkTopbar(state) {
   const tag = 'topbar';
   const { ctx, page } = await open(state, TRACTOR, [1440, 900]);
+  // [REASON]: с 04.11.2026 под картой нет одиннадцати плиток, и страница
+  // суток с одним участком короче, чем нужно, чтобы кнопки масштаба доехали
+  // до шапки: без запаса проверка видела бы underBar:false и не мерила бы
+  // ничего. Запас в конце страницы не меняет того, что здесь проверяется, --
+  // кто кого перекрывает.
+  await page.evaluate(() => document.body.insertAdjacentHTML('beforeend',
+    '<div data-check-spacer style="height:100vh"></div>'));
   // Цель -- кнопки масштаба Leaflet: они есть всегда (плитки в песочнице
   // могут не загрузиться, и в пустом месте карты сравнивать было бы нечего).
   // Страница сдвигается так, чтобы кнопки встали под середину шапки.
